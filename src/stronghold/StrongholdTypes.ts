@@ -3,24 +3,26 @@
  *
  * Towers are the elements, but they cannot run the 1v1 ability code: every element kit is
  * hard-wired to the arena's single `player` slot (see DuoKit's header for the long version).
- * So a tower carries a *tower moveset*: five abilities that keep the element's real names,
- * key order (Click → E → R → F → Q), colours and statuses, with the mechanics bent into shapes a
- * tower can use.
+ * So a tower carries a *tower moveset* built from the vocabulary below, keeping the element's
+ * colours, statuses and ability names.
  *
- * What makes towers play differently is not the numbers but four other axes, all declared here:
+ * A tower is placed with one or two base attacks and grows through three upgrade PATHS of five
+ * tiers each, BTD-style: any path may go to tier 5, a second path to tier 2, the third stays
+ * shut. Each upgrade can retune an attack, add or replace one, change the tower's own stats and
+ * passives, and paints a little more onto the tower. The middle path always earns an activated
+ * ability. Shop upgrades, perks and masteries play no part here.
+ *
+ * What else makes towers play differently, all declared here:
  *   - the BODY: where it stands and how it moves (ground, naval, a looping flyer, a hovering
- *     flyer that chases the pack, a drifting storm cloud);
- *   - the ROLE: what it is for (attack, support, control, traps, summons, economy, sniping,
- *     artillery) — printed on its card;
- *   - the effect VOCABULARY: bolts, beams and blasts, but also traps on the road, minions that
- *     walk against the flow, mini-sentries, conversions, fences, overclocks;
- *   - its SIGNATURE: one passive only that element has (Echo recasts, Illusion mimics, Soul
- *     raises the fallen, Gold banks interest...).
+ *     flyer that chases the pack, a drifting storm cloud, a prowler);
+ *   - the ROLE: what it is for — printed on its card;
+ *   - the effect VOCABULARY: bolts, beams and blasts, but also traps, minions that walk against
+ *     the flow, mini-sentries, conversions, fences, overclocks, map-wide fields, keep repairs;
+ *   - TRAITS: passives (detection, buff auras, income, discounts, keep wards, veterans...).
  */
 
+/** The old five ability keys. Kept as gesture hints for the rig. */
 export type TowerSlot = 'click' | 'e' | 'r' | 'f' | 'q';
-export const TOWER_SLOTS: TowerSlot[] = ['click', 'e', 'r', 'f', 'q'];
-export const TOWER_SLOT_KEYS: Record<TowerSlot, string> = { click: 'Click', e: 'E', r: 'R', f: 'F', q: 'Q' };
 
 /**
  * What kind of hurt a hit is. Husk armour cares: Metal shrugs off sharp, Earth blunts blasts,
@@ -52,7 +54,7 @@ export const ROLE_LABEL: Record<TowerRole, string> = {
 export type TowerBodyKind = 'ground' | 'water' | 'amphibious' | 'ace' | 'heli' | 'drift' | 'roam';
 export interface TowerBody {
   kind: TowerBodyKind;
-  /** ace: loop radius. heli/drift: how far from the pad it may go. */
+  /** ace: loop radius. heli/drift/roam: how far from the pad it may go. */
   leash?: number;
   /** px/s for flyers. */
   speed?: number;
@@ -61,7 +63,7 @@ export const BODY_LABEL: Record<TowerBodyKind, string> = {
   ground: 'GROUND', water: 'NAVAL', amphibious: 'AMPHIBIOUS', ace: 'FLYER', heli: 'HOVER', drift: 'CLOUD', roam: 'PROWLER',
 };
 
-/** On-hit statuses a tower ability leaves on a husk. All durations in ms. */
+/** On-hit statuses a tower attack leaves on a husk. All durations in ms. */
 export interface Rider {
   burn?: number;
   toxic?: { ms: number; dps: number };
@@ -100,6 +102,17 @@ export interface Rider {
   reveal?: number;
   /** Encased in wax: stopped, and blasts land ×1.6. */
   encase?: number;
+  // ── Added with the upgrade-path overhaul ──
+  /** Extra damage as a fraction of the husk's CURRENT health (bosses take a quarter of it). */
+  pct?: number;
+  /** Grounded: an airborne husk drops to the road for ms (traps, walls and zones reach it). */
+  ground?: number;
+  /** Chance (0–1) to throw a non-boss husk back to its breach. */
+  banish?: number;
+  /** Strips a hidden husk's camouflage for good. */
+  unmask?: boolean;
+  /** Brittle: every hit it takes for ms lands `add` extra flat damage. */
+  brittle?: { add: number; ms: number };
   /** Chance (0–1) to apply this rider at all — omitted means always. */
   chance?: number;
 }
@@ -108,8 +121,10 @@ export type ProjectileLook =
   | 'orb' | 'dart' | 'fan' | 'card' | 'shell' | 'star' | 'note' | 'needle' | 'coin'
   | 'bubble' | 'feather' | 'bone' | 'shard' | 'bolt' | 'plane' | 'bee' | 'pawn';
 export type TrapLook = 'spike' | 'mine' | 'rune' | 'seed' | 'glue' | 'coin' | 'bone' | 'pin' | 'hive';
-export type MinionLook = 'soldier' | 'ghost' | 'golem' | 'car' | 'wolf' | 'convert' | 'curling' | 'stone' | 'piece' | 'crow' | 'shark';
+export type MinionLook = 'soldier' | 'ghost' | 'golem' | 'car' | 'wolf' | 'convert' | 'curling' | 'stone' | 'piece' | 'crow' | 'shark' | 'spider';
 export type SentryLook = 'turret' | 'drone' | 'idol' | 'crystal' | 'barracks' | 'pawn' | 'hive';
+export type ZoneShape = 'puddle' | 'fire' | 'ice' | 'rune' | 'sand' | 'acid' | 'paint' | 'mold' | 'storm' | 'glue' | 'holy' | 'smoke' | 'lava';
+export type SplashShape = 'burst' | 'ring' | 'crater' | 'strike' | 'geyser' | 'meteor';
 
 export type TowerFx =
   /** A projectile toward the target. */
@@ -135,8 +150,10 @@ export type TowerFx =
       bounces?: number;
       /** Fire two volleys out of the tower's sides instead of at the target (a broadside). */
       broadside?: boolean;
+      /** Fire the volley this many times in a row, 90ms apart (a burst, not a spread). */
+      salvo?: number;
     }
-  | { kind: 'splash'; radius: number; color: number; delayMs?: number; shape?: 'burst' | 'ring' | 'crater' | 'strike' | 'geyser' | 'meteor' }
+  | { kind: 'splash'; radius: number; color: number; delayMs?: number; shape?: SplashShape }
   | { kind: 'line'; length: number; width: number; color: number }
   /** A lingering ground zone at the target. `damage` is per second. `pull` drags husks back toward the breach (px/s). */
   | { kind: 'zone'; radius: number; ms: number; color: number; shape?: ZoneShape; pull?: number }
@@ -153,6 +170,7 @@ export type TowerFx =
   /** A wall on the road. Husks must chew through `hp`. `damage` is its retaliation per second. */
   | { kind: 'barrier'; ms: number; hp: number; color: number; label: string }
   | { kind: 'execute'; thresholdFrac: number; color: number }
+  /** Pays `amount` gold. */
   | { kind: 'gold'; amount: number; color: number }
   /** Drops `count` traps on the road near the target. Each hurts `hits` husks for `damage`, then breaks. `blast` makes it a mine. */
   | { kind: 'trap'; count: number; hits: number; ms: number; color: number; look: TrapLook; blast?: number }
@@ -165,58 +183,87 @@ export type TowerFx =
   /** A line across the road at the target; every husk that crosses it takes `damage` once. */
   | { kind: 'fence'; ms: number; color: number; width: number }
   /** Supercharges the strongest other tower in range. */
-  | { kind: 'overclock'; ms: number; fireRateMult: number; damageMult: number; color: number };
+  | { kind: 'overclock'; ms: number; fireRateMult: number; damageMult: number; color: number }
+  /** Hits EVERY husk on the map (hidden and submerged ones too) — for map-wide abilities. */
+  | { kind: 'field'; color: number }
+  /** Repairs the keep: `amount` lives back (never above the starting count). */
+  | { kind: 'mend'; amount: number; color: number };
 
-export type ZoneShape = 'puddle' | 'fire' | 'ice' | 'rune' | 'sand' | 'acid' | 'paint' | 'mold' | 'storm' | 'glue' | 'holy' | 'smoke' | 'lava';
+/**
+ * Every tunable field across the fx kinds, so an upgrade can patch one without restating the
+ * whole effect. Fields that do not exist on the attack's kind are ignored.
+ */
+export interface FxPatch {
+  color?: number; texture?: string; look?: string; shape?: string; label?: string;
+  speed?: number; count?: number; spread?: number; pierce?: number; homing?: boolean; size?: number;
+  splash?: number; splashMult?: number; lob?: boolean; returns?: boolean; bounces?: number;
+  broadside?: boolean; salvo?: number;
+  radius?: number; delayMs?: number; length?: number; width?: number; ms?: number; pull?: number;
+  ramp?: number; jumps?: number; jumpRange?: number; falloff?: number;
+  fireRateMult?: number; damageMult?: number; rangeMult?: number;
+  attackMs?: number; attackRange?: number; hp?: number; thresholdFrac?: number; amount?: number;
+  hits?: number; blast?: number; max?: number;
+}
 
 export interface TowerAbilityDef {
-  /** Base damage (per hit, or per second for aura/zone/beam). Scaled by tier and mods. */
+  /** Base damage (per hit, or per second for aura/zone/beam). */
   damage: number;
   cooldown: number;
-  /** Range multiplier on the tower's base range (default 1). Auras use it as radius scale. */
+  /** Range multiplier on the tower's range (default 1). Auras use it as radius scale. */
   range?: number;
+  /** The name the panel and the journal print. */
   name?: string;
   desc: string;
   rider?: Rider;
   /** Overrides the damage type the effect kind implies. */
   dtype?: DamageType;
+  /** Which arm move the rig plays when it fires. */
+  gesture?: TowerSlot;
+  /** Charge-up: damage grows by this fraction per second since the last cast, up to ×chargeCap. */
+  charge?: { perSec: number; cap: number };
   fx: TowerFx;
 }
 
-/** A shop upgrade, perk or mastery folded onto a tower ability. */
+/** A change an upgrade makes to one of the tower's attacks. */
 export interface TowerMod {
   damageMult?: number;
+  /** Flat damage added before the multiplier. */
+  damageAdd?: number;
   cooldownMult?: number;
   rangeMult?: number;
+  /** Scales every area field (radius, length, splash, jumpRange, attackRange, blast, line width). */
   areaMult?: number;
+  /** +shots / +jumps / +traps / +sentries / +minion hits. */
   countAdd?: number;
+  /** +bodies pierced / +trap hits / +minion hits. */
   pierceAdd?: number;
+  /** Merged over the attack's rider. */
   rider?: Rider;
-  note: string;
+  dtype?: DamageType;
+  fx?: FxPatch;
+  charge?: { perSec: number; cap: number };
 }
 
 /**
- * The passives that make an element's tower its own. Each key is one mechanic; the scene and
- * combat engine implement them. A tower carries one or two, never all.
+ * The passives that make a tower its own. The scene and combat engine implement them. Upgrades
+ * merge their own `traits` over the base ones (later tiers overwrite).
  */
 export interface TowerTraits {
-  /** Can target hidden husks from the start. */
+  /** Can target hidden husks. */
   detect?: boolean;
-  /** Learns to see hidden husks at this tier (0–4). */
-  detectTier?: number;
   /** A permanent buff to towers around it (Sound's drum, Psychic's pieces). */
   aura?: {
     radius: number; fireRate?: number; damage?: number; range?: number;
     detect?: boolean; pierce?: number; label: string; color: number;
   };
-  /** Gold paid every wave clear, + perTier each tier. */
-  income?: { perWave: number; perTier: number };
-  /** Pays this fraction of your banked gold at wave clear (capped at 10% of 1000). */
+  /** Gold paid every wave clear. */
+  income?: number;
+  /** Pays this fraction of your banked gold at wave clear (capped at 50 + 2 per wave). */
   interest?: number;
   crit?: { chance: number; mult: number };
-  /** Every cast repeats itself `delayMs` later at `mult` strength. */
+  /** Every instant cast repeats itself `delayMs` later at `mult` strength. */
   echo?: { delayMs: number; mult: number };
-  /** Its Click copies the nearest other tower's Click. */
+  /** Its main attack copies the nearest other tower's main attack. */
   mimic?: boolean;
   /** +per damage for every kill it lands, up to cap. */
   killRamp?: { per: number; cap: number };
@@ -234,7 +281,7 @@ export interface TowerTraits {
   bane?: { elements: string[]; mult: number };
   /** Immune to husk sabotage (stuns, hacks, blinds). */
   steadfast?: boolean;
-  /** Kills pay this fraction extra gold. */
+  /** Kills in range pay this fraction extra gold. */
   plunder?: number;
   /** Damage multiplier on frozen or heavily frosted husks. */
   shatter?: number;
@@ -242,33 +289,124 @@ export interface TowerTraits {
   vsHidden?: number;
   /** Damage multiplier on husks of these categories (normal / abstract / corrupt). */
   vsCategory?: { cats: string[]; mult: number };
+  // ── Added with the upgrade-path overhaul ──
+  /** Towers built or upgraded within radius cost `mult` as much (the best discount applies). */
+  discount?: { radius: number; mult: number };
+  /** Soaks this many lives' worth of breaches each wave before the keep loses any. */
+  keepWard?: number;
+  /** +per damage for every wave cleared while it stands, up to cap. */
+  veteran?: { per: number; cap: number };
+  /** Each hit it lands pays `perHit` gold, up to `cap` gold a wave. */
+  goldOnHit?: { perHit: number; cap: number };
+  /** Consecutive hits on the same husk ramp +per damage each, up to cap. */
+  focus?: { per: number; cap: number };
+  /** Husks it kills burst into `count` shards that hit the husks around for `frac` of their max HP... of the victim's max HP. */
+  shrapnel?: { count: number; frac: number };
+  /** Gold paid every second while a wave is on. */
+  trickle?: number;
+  /** Damage multiplier on husks that are slowed, stunned, frozen, asleep or encased. */
+  bully?: number;
+}
+
+/**
+ * A button the player presses. Fired at the tower's current target (or, when `global`, the
+ * lead husk anywhere on the map); `selfBuff` also pumps the tower itself for ms.
+ */
+export interface TowerActive {
+  name: string;
+  desc: string;
+  /** ms between uses. */
+  cooldown: number;
+  /** Optional: an attack cast once when pressed. */
+  cast?: TowerAbilityDef;
+  /** Optional: a burst of speed/damage on the tower for ms. */
+  selfBuff?: { ms: number; fireRateMult?: number; damageMult?: number; rangeMult?: number };
+  /** Aim at the lead husk anywhere on the map, not just in range. */
+  global?: boolean;
+}
+
+/**
+ * The little things an upgrade paints onto the tower, so a glance tells you what it has bought.
+ * Each kind has a home on the tower (head, orbit, base, side) and grows with its tier.
+ */
+export type DecoKind =
+  // over the head
+  | 'crown' | 'halo' | 'horns' | 'antenna' | 'hat' | 'eye' | 'star' | 'moon' | 'sun' | 'skull' | 'flame'
+  // circling
+  | 'orbit' | 'sparks' | 'bubbles' | 'coins' | 'leaves' | 'motes' | 'notes' | 'bees' | 'cards'
+  // on the plinth
+  | 'spikes' | 'runes' | 'gears' | 'chains' | 'crystals' | 'roots' | 'bricks' | 'gold-trim' | 'moat' | 'bones'
+  // at the side
+  | 'banner' | 'shield' | 'barrel' | 'scope' | 'drum' | 'book' | 'wings' | 'cape' | 'lantern' | 'sack' | 'pennant';
+
+export interface TowerDeco {
+  kind: DecoKind;
+  /** Defaults to the tower's colour. */
+  color?: number;
+}
+
+export interface TowerUpgrade {
+  name: string;
+  /** One line: what buying it does. */
+  desc: string;
+  cost: number;
+  /** Changes to attacks by id; '*' applies to every attack the tower has at that point. */
+  mods?: Record<string, TowerMod>;
+  /** Attacks added, or replaced when the id already exists. */
+  add?: Record<string, TowerAbilityDef>;
+  /** Attack ids taken away (when an upgrade turns one attack into another). */
+  remove?: string[];
+  /** Tower reach multiplier (stacks). */
+  range?: number;
+  /** Merged over the tower's traits. */
+  traits?: Partial<TowerTraits>;
+  /** Grants or replaces the tower's activated ability. Middle path only. */
+  active?: TowerActive;
+  /** Patches the tower's body (a longer leash, faster flight). */
+  body?: Partial<TowerBody>;
+  deco: TowerDeco;
+}
+
+export interface TowerPath {
+  name: string;
+  /** What the path is about, in a few words. */
+  theme: string;
+  upgrades: [TowerUpgrade, TowerUpgrade, TowerUpgrade, TowerUpgrade, TowerUpgrade];
 }
 
 export interface TowerDef {
-  /** Tier 0 is the placed tower; tiers 1–4 are the four purchasable upgrades. */
-  tiers: [string, string, string, string, string];
+  /** Placement price. */
   cost: number;
-  /** Targeting range in px (tier 0). */
+  /** Targeting range in px. */
   range: number;
   role: TowerRole;
   body: TowerBody;
   /** One line on how this tower plays — the card and the panel print it. */
   blurb: string;
-  /** Signature passive: its name and one-line description, plus the mechanics. */
+  /** Signature passive: its name and one-line description. */
   signature: { name: string; desc: string };
   traits: TowerTraits;
-  /** One ability per slot, unlocked in slot order as the tower tiers up. */
-  abilities: Record<TowerSlot, TowerAbilityDef>;
-  upgrades: Partial<Record<TowerSlot, TowerMod>>;
-  mastery?: TowerAbilityDef & { name: string };
+  /** What it does the moment it is built. Keyed by attack id; upgrades refer to these ids. */
+  attacks: Record<string, TowerAbilityDef>;
+  /** Top (0), middle (1, carries the activated ability) and bottom (2). */
+  paths: [TowerPath, TowerPath, TowerPath];
 }
 
-/** Flat stat ramp every tower follows as it tiers up. */
-export const TIER_DAMAGE_MULT = [1, 1.2, 1.42, 1.7, 2.05];
-export const TIER_RANGE_MULT = [1, 1.05, 1.1, 1.16, 1.22];
-export const TIER_COOLDOWN_MULT = [1, 0.95, 0.9, 0.85, 0.78];
-/** Tier costs as a fraction of the tower's placement cost. */
-export const TIER_COST_MULT = [0, 1.1, 1.6, 2.3, 3.2];
+/** BTD crosspathing: one path may reach 5, a second may reach 2, the third stays at 0. */
+export const PATH_MAX_TIER = 5;
+export const CROSSPATH_MAX = 2;
+
+/** Which path tiers can be bought from here. Returns null when allowed, or why not. */
+export function pathBlock(tiers: readonly number[], path: number): string | null {
+  const t = tiers[path];
+  if (t >= PATH_MAX_TIER) return 'MAXED';
+  const others = tiers.filter((_, i) => i !== path);
+  const opened = others.filter((x) => x > 0).length;
+  if (t === 0 && opened >= 2) return 'TWO PATHS ALREADY CHOSEN';
+  // Going past 2 is only allowed if no other path is past 2.
+  if (t + 1 > CROSSPATH_MAX && others.some((x) => x > CROSSPATH_MAX)) return 'ANOTHER PATH IS PAST TIER 2';
+  return null;
+}
 
 /** The damage type an ability's effect implies, unless it says otherwise. */
 export function damageTypeOf(a: TowerAbilityDef): DamageType {

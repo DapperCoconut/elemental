@@ -75,7 +75,12 @@ const HUSK_TRICKS: Record<string, string> = {
   radiation: 'Everything inside a wide ring around it is being cooked, bite or no bite.',
   bind: 'Throws a chain and shackles you where you stand for a second or so.',
   gum: 'Trails a thick green mire. Crossing one costs you most of your speed.',
-  gluttony: 'A sack-headed scarecrow husk. It bites into any corpse that falls near it and grows off the meal.',
+  gluttony: 'A hollow birch husk with eyes in its bark. It roots into any corpse that falls near it and grows off the meal.',
+  pressure: 'A rusted boiler on legs with one huge fist. It winds up, then charges — get out of the line before the valve blows.',
+  astra: 'A cracked husk with a guttering star inside. It keeps its distance and fires level bolts of sunlight.',
+  memory: 'A husk in a top hat, leaning on a cane, its face nothing but static. It keeps its distance and flicks obsidian shards at you.',
+  string: 'A husk on eight long legs, its swollen back marked with a pale hourglass. It keeps its distance and throws hooks on taut lines.',
+  ink: 'A grinning black-and-white cartoon husk. It keeps its distance and plinks at you with finger guns.',
   myth: 'Fights to a crowd only it can hear. Every bite it lands is applauded, and the husks around it hit harder for the cheering.',
 };
 

@@ -1126,6 +1126,8 @@ export class IceKit {
     // desync. The bar belongs to whoever is freezing them, which in every mode this kit runs
     // in is simply the other side.
     const froster = f === this.arena.player ? this.arena.npc : this.arena.player;
+    // Memory's Rebirth: a sealed froster lays no stacks.
+    if (froster.passivesSealed()) return;
     if (meterStep(froster, 'frost') <= 0) return;
     const useVoid = forceVoid ?? this.playerBlackIceMorphActive;
     const stackMs = this.stackMsFor(f);
@@ -1163,6 +1165,7 @@ export class IceKit {
     } else {
       const player = this.arena.player;
       if (Date.now() < player.frostImmuneUntil) return;
+      if (this.arena.npc.passivesSealed()) return;
       if (this.playerFrostStacks < 5) this.playerFrostStackTimers.push(Date.now() + this.stackMsFor(player));
       this.playerFrostStacks = Math.min(5, this.playerFrostStacks + 1);
       const baseMult = this.frostDamageMultiplier(this.playerFrostStacks);

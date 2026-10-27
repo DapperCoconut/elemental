@@ -311,10 +311,11 @@ export class OnlineKit {
         * p.passionIncomingMult
         // Sound's Smooth soul song, likewise self-granted.
         * p.soundIncomingMult
-        // Harvest's Meat Broth (Corrupt Cooking), likewise self-granted.
-        * p.harvestIncomingMult * 1000) / 1000,
+        // Wood's Oakbrew, likewise self-granted.
+        * p.woodIncomingMult * 1000) / 1000,
       fr: p.flatDamageReduction,
       dc: p.hardDamageCap,
+      sap: Math.round(p.sapHp),
     });
   }
 
@@ -412,6 +413,9 @@ export class OnlineKit {
         };
         const npc = this.api.npc;
         npc.netSyncVitals(msg.hp, msg.maxHp, msg.shieldHp, msg.shieldCharges);
+        // Wood: their Sap HP, for the health bar and our Final Harvest's execute check. A ghost
+        // never spends it — hits on it are resolved, and soaked, on their own sim.
+        npc.sapHp = msg.sap ?? 0;
         // Their defences, applied when our sim resolves a hit on them.
         npc.netDefenseMult = msg.dm ?? 1;
         npc.netFlatReduction = msg.fr ?? 0;

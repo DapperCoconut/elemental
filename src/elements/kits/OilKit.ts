@@ -2,11 +2,12 @@ import Phaser from 'phaser';
 import { Fighter } from '../../entities/Fighter';
 import { Projectile } from '../../combat/Projectile';
 import {
-  ArmGesture, DroneArrayLattice, OilAvatar, OilCoat, OilColorFn, OilFx, oilFlame, OIL,
+  ArmGesture, DroneArrayLattice, OilAvatar, OilCoat, OilColorFn, OilFx, oilFlame, OIL, laserGun, laserGunMuzzle,
 } from './OilVisuals';
 import { BaseAvatar } from './ElementVisuals';
 import { makeSkinAvatar } from './skins/SkinAvatars';
 import { AmberFx } from './skins/AmberFx';
+import { Sfx } from '../../audio';
 
 // ── Oil Mastery constants ────────────────────────────────────────────────────
 
@@ -40,6 +41,26 @@ const TURRET_COLOR = OIL.teal;
 /** Field radius of the Shield Generator's point defence — also the radius it paints. */
 const SHIELD_GEN_RANGE = 150;
 
+// ── Click: the arm laser ─────────────────────────────────────────────────────
+
+/** Hold Click: one hitscan shot this often. */
+const ARM_LASER_INTERVAL_MS = 110;
+const ARM_LASER_DAMAGE = 2;
+const ARM_LASER_RANGE = 560;
+/** Each shot's heat, on a 0–1 gauge: 22 shots (≈2.4s held) to overheat from cold. */
+const ARM_HEAT_PER_SHOT = 0.046;
+/** Heat bled per second once the trigger has been off for `ARM_COOL_DELAY_MS`. */
+const ARM_COOL_PER_S = 0.5;
+const ARM_COOL_DELAY_MS = 220;
+/** Overheated: locked out this long while the gauge drains to empty. */
+const ARM_OVERHEAT_MS = 2200;
+/** Click+: the cook-off blast round the wearer. */
+const ARM_OVERHEAT_BLAST_R = 110;
+const ARM_OVERHEAT_BLAST_DMG = 16;
+/** Bot: lets go of the trigger at this heat, and picks it up again once cooled to the second. */
+const NPC_ARM_REST_AT = 0.85;
+const NPC_ARM_RESUME_AT = 0.25;
+
 // ── Arena API ────────────────────────────────────────────────────────────────
 
 export interface OilArenaApi {
@@ -56,6 +77,10 @@ export interface OilArenaApi {
   get sKey(): Phaser.Input.Keyboard.Key;
   get dKey(): Phaser.Input.Keyboard.Key;
   get projectiles(): Phaser.Physics.Arcade.Group;
+  /** The player's enemies: `[npc]` in a duel, the husks in an Invasion. */
+  get enemies(): Fighter[];
+  get isInvasion(): boolean;
+  isTargetable(f: Fighter): boolean;
   get nukeChanneling(): boolean;
   set nukeChanneling(v: boolean);
   get nukeChannelEnd(): number;
@@ -124,6 +149,28 @@ const BASH_DRONE_KNOCKBACK = 620;
 const BASH_DRONE_KNOCK_MS = 220;
 const BASH_DRONE_MS = 420;
 const BLAST_DRONE_DAMAGE = 10;
+
+/** One side's arm laser. Times are scene-clock ms. */
+interface ArmGun {
+  heat: number;
+  lastShotAt: number;
+  /** Overheated until then (0 = not). */
+  ventUntil: number;
+  /** Last frame the trigger was held — drives the raised-gun pose and holds off cooling. */
+  triggerAt: number;
+  /** 0–1 recoil, kicked to 1 by a shot. */
+  kick: number;
+  /** Shots fired this match — rides in the relay id so the online dedupe never eats one. */
+  shots: number;
+  /** Bot: resting the trigger to cool (hysteresis between NPC_ARM_REST_AT and NPC_ARM_RESUME_AT). */
+  resting: boolean;
+  steamAccum: number;
+  gfx: Phaser.GameObjects.Graphics | null;
+}
+
+function makeArmGun(): ArmGun {
+  return { heat: 0, lastShotAt: -Infinity, ventUntil: 0, triggerAt: -Infinity, kick: 0, shots: 0, resting: false, steamAccum: 0, gfx: null };
+}
 
 interface Drone {
   gfx: Phaser.GameObjects.Graphics;
@@ -277,7 +324,10 @@ export class OilKit {
   private playerOilPuddles: OilPuddle[] = [];
   private npcOilPuddles: OilPuddle[] = [];
 
-  // Click hold detection
+  // Click: the arm laser, one per side
+  private guns: Record<'player' | 'npc', ArmGun> = { player: makeArmGun(), npc: makeArmGun() };
+
+  // Right-click hold detection (drones)
   private pointerWasDown = false;
   private pointerDownAt = 0;
   private holdDroneAccum = 0;
@@ -398,6 +448,8 @@ export class OilKit {
     // built Player already defaults to 1 — reset() runs before this match's Player exists.
 
     this.clearTrain();
+    for (const g of Object.values(this.guns)) g.gfx?.destroy();
+    this.guns = { player: makeArmGun(), npc: makeArmGun() };
     this.pointerWasDown = false;
     this.holdDroneAccum = 0;
     this.holdModeActive = false;
@@ -455,7 +507,7 @@ export class OilKit {
       this.handleTurretInput(time, delta, pointer, mx, my);
       // Mounted: the turret owns both the movement keys and the mouse button.
       if (this.turret?.mounted) {
-        this.pointerWasDown = pointer.isDown;
+        this.pointerWasDown = pointer.rightButtonDown();
         return;
       }
     }
@@ -468,13 +520,14 @@ export class OilKit {
 
     const player = this.arena.player;
 
-    // Click: hold-to-spawn or single tap to commandDrones
-    if (pointer.isDown && !this.pointerWasDown) {
+    // Right-click: hold-to-spawn or single tap to commandDrones
+    const right = pointer.rightButtonDown();
+    if (right && !this.pointerWasDown) {
       this.pointerDownAt = time;
       this.holdDroneAccum = 0;
       this.holdModeActive = false;
     }
-    if (pointer.isDown) {
+    if (right) {
       const held = time - this.pointerDownAt;
       if (held >= 300) {
         if (!this.holdModeActive) {
@@ -484,11 +537,12 @@ export class OilKit {
         this.holdDroneAccum += delta;
         if (this.holdDroneAccum >= 1000) {
           this.holdDroneAccum -= 1000;
+          if (this.playerDrones.length < 6) this.arena.broadcastMasteryCast('oil-spawn');
           this.doSpawnDrone('player');
         }
       }
     }
-    if (!pointer.isDown && this.pointerWasDown) {
+    if (!right && this.pointerWasDown) {
       const held = time - this.pointerDownAt;
       if (held < 300) {
         // Short tap: command drones or barrel-explode
@@ -498,13 +552,19 @@ export class OilKit {
           this.explodeBarrel(this.playerBarrel, 'player', true);
           this.playerBarrel = null;
         } else if (time >= this.playerCommandCooldownUntil) {
-          if (this.playerDrones.length > 0) this.playPlayerGesture('punch', this.aimFrom(player, mx, my));
+          if (this.playerDrones.length > 0) {
+            this.playPlayerGesture('punch', this.aimFrom(player, mx, my));
+            this.arena.broadcastMasteryCast(`oil-cmd:${Math.round(mx)}:${Math.round(my)}`);
+          }
           this.doCommandDrones(mx, my, 'player');
           if (this.playerDrones.length > 0) this.playerCommandCooldownUntil = time + 1000;
         }
       }
     }
-    this.pointerWasDown = pointer.isDown;
+    this.pointerWasDown = right;
+
+    // Click: the arm laser, for as long as it is held and the gun is not cooking off.
+    if (pointer.leftButtonDown() && !right) this.triggerArmLaser('player', mx, my);
 
     // A slot the Turret is bound over no longer fires its base ability.
     const turretSlot = this.arena.masteryActive ? this.turretSlot() : null;
@@ -605,6 +665,8 @@ export class OilKit {
       this.updateDroneArray();
       this.updateTurret(time, mouseX, mouseY);
     }
+    this.updateArmGun('player', isPlayer, delta);
+    this.updateArmGun('npc', isNpc, delta);
     if (isNpc) {
       this.updateDroneOrbits(this.npcDrones, this.arena.npc, 'npc', time, delta);
       this.updateOilPuddles(this.npcOilPuddles, time, delta, 'npc');
@@ -624,6 +686,189 @@ export class OilKit {
     this.updateOilyBurn(time, delta, 'npc');
     this.updateOilyVisual('player', time, delta);
     this.updateOilyVisual('npc', time, delta);
+  }
+
+  // ── Click: the arm laser ──────────────────────────────────────────────────
+
+  private oilFighter(owner: 'player' | 'npc'): Fighter {
+    return owner === 'player' ? this.arena.player : this.arena.npc;
+  }
+
+  /** The trigger was held within the last few frames — the gun is up. */
+  private armTriggerHeld(owner: 'player' | 'npc'): boolean {
+    return this.arena.scene.time.now - this.guns[owner].triggerAt < 160;
+  }
+
+  /** The hand the gun is strapped to, or a point off the body's right side when no rig stands. */
+  private armGunHand(owner: 'player' | 'npc', ang: number): { x: number; y: number } {
+    const av = owner === 'player' ? this.playerAvatar : this.npcAvatar;
+    if (av) return av.handPos(1);
+    const f = this.oilFighter(owner);
+    return { x: f.x + Math.cos(ang + 0.5) * 24, y: f.y + Math.sin(ang + 0.5) * 24 };
+  }
+
+  /**
+   * The trigger is held this frame: fire if the gun is off its interval and not cooking off.
+   * Rate, heat and lockout all live here, so a caller may squeeze it every frame.
+   */
+  private triggerArmLaser(owner: 'player' | 'npc', tx: number, ty: number): void {
+    const f = this.oilFighter(owner);
+    if (!f?.active || f.hp <= 0) return;
+    const now = this.arena.scene.time.now;
+    const g = this.guns[owner];
+    g.triggerAt = now;
+    if (Date.now() < f.disarmedUntil || Date.now() < f.chickenUntil) return;
+    if (now < g.ventUntil || now - g.lastShotAt < ARM_LASER_INTERVAL_MS) return;
+    const ang = this.aimFrom(f, tx, ty);
+    // The beam stops at the cursor: its reach is the cursor's distance past the emitter.
+    const hand = this.armGunHand(owner, ang);
+    const m = laserGunMuzzle(hand.x, hand.y, ang);
+    const reach = Math.max(0, (tx - m.x) * Math.cos(ang) + (ty - m.y) * Math.sin(ang));
+    this.fireArmLaser(owner, ang, reach);
+    if (owner === 'player') this.arena.broadcastMasteryCast(`oil-zap:${g.shots}:${Math.round(ang * 1000)}:${Math.round(reach)}`);
+  }
+
+  /**
+   * One hitscan shot along `ang` from the gun's emitter: the first enemy across the line takes
+   * it, or it runs out at `reach` (the cursor), its range, or the wall. Runs on every sim that sees the shot — damage on a
+   * replica is feedback-only, so the victim's sim is the one that counts.
+   */
+  private fireArmLaser(owner: 'player' | 'npc', ang: number, reach: number): void {
+    const f = this.oilFighter(owner);
+    if (!f?.active || f.hp <= 0) return;
+    const now = this.arena.scene.time.now;
+    const g = this.guns[owner];
+    g.lastShotAt = now;
+    g.kick = 1;
+    g.shots++;
+    g.heat = Math.min(1, g.heat + ARM_HEAT_PER_SHOT);
+
+    const hand = this.armGunHand(owner, ang);
+    const o = laserGunMuzzle(hand.x, hand.y, ang);
+    const dx = Math.cos(ang), dy = Math.sin(ang);
+    // Out to range, or the wall if that comes first.
+    let len = Math.min(ARM_LASER_RANGE, reach);
+    const W = this.arena.getSceneWidth(), H = this.arena.getSceneHeight();
+    if (dx > 0) len = Math.min(len, (W - o.x) / dx); else if (dx < 0) len = Math.min(len, -o.x / dx);
+    if (dy > 0) len = Math.min(len, (H - o.y) / dy); else if (dy < 0) len = Math.min(len, -o.y / dy);
+    len = Math.max(0, len);
+
+    const targets = owner === 'player'
+      ? this.arena.enemies.filter((t) => this.arena.isTargetable(t))
+      : (this.arena.isInvasion ? [] : [this.arena.player]);
+    let hit: Fighter | null = null;
+    let hitU = len;
+    for (const t of targets) {
+      if (!t?.active || t.hp <= 0) continue;
+      const u = (t.x - o.x) * dx + (t.y - o.y) * dy;
+      if (u < -8 || u > hitU) continue;
+      const perp = Math.abs((t.x - o.x) * dy - (t.y - o.y) * dx);
+      const r = ((t.body as Phaser.Physics.Arcade.Body | null)?.radius || 20) + 3;
+      if (perp > r) continue;
+      hit = t;
+      hitU = Math.max(0, u - Math.sqrt(Math.max(0, r * r - perp * perp)));
+    }
+    const ex = o.x + dx * hitU, ey = o.y + dy * hitU;
+    (owner === 'player' ? this.pfx : this.nfx).armLaser(o.x, o.y, ex, ey, g.heat, !!hit);
+    Sfx.playAt('zap', o.x, { rate: 1.5 + g.heat * 0.4, volume: 0.25 });
+    if (hit) hit.takeDamage(ARM_LASER_DAMAGE, { source: f, sourceX: f.x, sourceY: f.y });
+
+    if (g.heat >= 1) this.overheatArmGun(owner, ang);
+  }
+
+  /** The gauge tops out: the gun locks for `ARM_OVERHEAT_MS` — and with Click+ it blows up round you. */
+  private overheatArmGun(owner: 'player' | 'npc', ang: number): void {
+    const f = this.oilFighter(owner);
+    const g = this.guns[owner];
+    g.ventUntil = this.arena.scene.time.now + ARM_OVERHEAT_MS;
+    g.heat = 1;
+    const blast = owner === 'player' && this.arena.hasUpgrade('click');
+    const hand = this.armGunHand(owner, ang);
+    (owner === 'player' ? this.pfx : this.nfx).overheat(hand.x, hand.y, ang, blast, ARM_OVERHEAT_BLAST_R);
+    this.arena.showFloatingText(f.x, f.y - 44, blast ? 'OVERHEAT — BOOM!' : 'OVERHEAT!', '#ff6600');
+    if (blast) {
+      this.arena.damagePlayerTargets(f.x, f.y, ARM_OVERHEAT_BLAST_R, ARM_OVERHEAT_BLAST_DMG, OIL.flame);
+      this.arena.scene.cameras.main.shake(140, 0.004);
+    }
+  }
+
+  /** Heat bleed, the cook-off lockout, the bot's rest hysteresis, and the gun on the hand. */
+  private updateArmGun(owner: 'player' | 'npc', active: boolean, delta: number): void {
+    const g = this.guns[owner];
+    const f = this.oilFighter(owner);
+    if (!active || !f?.active) {
+      if (g.gfx) { g.gfx.destroy(); g.gfx = null; }
+      return;
+    }
+    const now = this.arena.scene.time.now;
+    const dt = delta / 1000;
+    g.kick = Math.max(0, g.kick - dt * 9);
+    if (g.ventUntil > 0) {
+      if (now >= g.ventUntil) { g.ventUntil = 0; g.heat = 0; }
+      else g.heat = (g.ventUntil - now) / ARM_OVERHEAT_MS;
+    } else if (now - g.lastShotAt > ARM_COOL_DELAY_MS) {
+      g.heat = Math.max(0, g.heat - ARM_COOL_PER_S * dt);
+    }
+    if (g.heat >= NPC_ARM_REST_AT || g.ventUntil > 0) g.resting = true;
+    else if (g.heat <= NPC_ARM_RESUME_AT) g.resting = false;
+
+    const av = owner === 'player' ? this.playerAvatar : this.npcAvatar;
+    const hidden = (owner === 'player' && this.playerTrainActive) || f.forceInvisible || f.hp <= 0;
+    const ang = owner === 'player'
+      ? this.aimFrom(f, this.lastMouseX || f.x + 1, this.lastMouseY || f.y)
+      : this.aimFrom(f, this.arena.player.x, this.arena.player.y);
+    const hand = this.armGunHand(owner, ang);
+    const shown = !!av && !hidden && (BaseAvatar.rigFilter === null || BaseAvatar.rigFilter(av, f.x, f.y));
+    if (!g.gfx) g.gfx = this.arena.scene.add.graphics().setDepth(7);
+    g.gfx.clear();
+    if (shown) {
+      laserGun(g.gfx, owner === 'player' ? this.pcol : this.ncol, hand.x, hand.y, ang,
+        g.heat, g.ventUntil > 0, g.kick, this.worldT, f.alpha);
+    }
+    // Venting: steam off the fins.
+    if (g.ventUntil > 0 && shown) {
+      g.steamAccum += delta;
+      if (g.steamAccum >= 120) {
+        g.steamAccum = 0;
+        (owner === 'player' ? this.pfx : this.nfx).smoke(hand.x - Math.sin(ang) * 6, hand.y + Math.cos(ang) * -6, 1, 5, 8);
+      }
+    }
+  }
+
+  /** 0–1 heat on a side's arm laser — 1 while it is locked out cooling. */
+  getArmHeat(owner: 'player' | 'npc'): number { return this.guns[owner].heat; }
+
+  /** Bot: the trigger is worth squeezing — the gun is cool enough and not cooking off. */
+  npcOilArmLaserReady(): boolean {
+    return !this.guns.npc.resting;
+  }
+
+  /** Bot (via CastContext): squeeze the arm laser at a point. */
+  doNpcArmLaser(tx: number, ty: number): void {
+    if (this.npcOverdriveActive) return;
+    if (Date.now() < this.arena.npc.stunnedUntil) return;
+    this.triggerArmLaser('npc', tx, ty);
+  }
+
+  /**
+   * Online: the remote Oil's inputs that never touch a cooldown — a laser shot (`oil-zap:<n>:<ang>:<reach>`),
+   * a drone off the line (`oil-spawn`), a volley (`oil-cmd:<x>:<y>`). Their x is seen from across
+   * the arena, and so is an angle.
+   */
+  replayNet(id: string): void {
+    const parts = id.split(':');
+    const n = (i: number): number => { const v = Number(parts[i]); return Number.isFinite(v) ? v : 0; };
+    const W = this.arena.getSceneWidth();
+    if (parts[0] === 'oil-zap') {
+      const g = this.guns.npc;
+      g.triggerAt = this.arena.scene.time.now;
+      g.ventUntil = 0;
+      this.fireArmLaser('npc', Math.PI - n(2) / 1000, parts.length > 3 ? n(3) : ARM_LASER_RANGE);
+    } else if (parts[0] === 'oil-spawn') {
+      this.doSpawnDrone('npc');
+    } else if (parts[0] === 'oil-cmd') {
+      this.doCommandDrones(W - n(1), n(2), 'npc');
+    }
   }
 
   // ── Character rig ─────────────────────────────────────────────────────────
@@ -648,6 +893,7 @@ export class OilKit {
       if (this.turret?.mounted) this.playerAvatar.setHold('brace', aim);
       else if (this.playerBarrel?.ridden) this.playerAvatar.setHold('ride', aim);
       else if (this.holdModeActive) this.playerAvatar.setHold('charge', aim);
+      else if (this.armTriggerHeld('player')) this.playerAvatar.setHold('gun', aim);
       else this.playerAvatar.setHold(null);
       // While morphed the player *is* the locomotive, so the rig steps aside for it entirely.
       const hidden = this.playerTrainActive || player.forceInvisible;
@@ -659,9 +905,10 @@ export class OilKit {
 
     if (isNpc && npc?.active) {
       if (!this.npcAvatar) this.npcAvatar = this.makeAvatar('npc');
-      this.npcAvatar.setFacing(this.aimFrom(npc, player.x, player.y));
+      const npcAim = this.aimFrom(npc, player.x, player.y);
+      this.npcAvatar.setFacing(npcAim);
       this.npcAvatar.setIntensity(this.npcOverdriveActive ? 1.35 : 1);
-      this.npcAvatar.setHold(this.npcBarrel?.ridden ? 'ride' : null);
+      this.npcAvatar.setHold(this.npcBarrel?.ridden ? 'ride' : this.armTriggerHeld('npc') ? 'gun' : null, npcAim);
       this.npcAvatar.update(delta, npc.x, npc.y, npc.forceInvisible ? 0 : npc.alpha);
     } else if (this.npcAvatar) {
       this.npcAvatar.destroy();

@@ -339,8 +339,13 @@ export const STATUS_DESCRIPTORS: StatusDescriptor[] = [
     write: (f, t) => { f.mythJeeredUntil = t; },
   },
   {
+    id: 'toxin', name: 'Toxin', emoji: '🐍', color: 0x66dd22, priority: 41.9, kind: 'stack',
+    description: 'Venom. It never fades. 25+: 3 damage a second. 50+: you drip acid as you walk. 100+: you deal 20% less and burn for 5 a second. 250+: 50 max HP gone. 500+: another 100 max HP gone, 40% less damage dealt, 8 a second. 1000: dead.',
+    read: (f) => Math.floor(f.toxinStacks),
+  },
+  {
     id: 'purged', name: 'Purged', emoji: '☠️', color: 0x99ff33, priority: 42, kind: 'timer',
-    description: 'Acid purge — your speed boosts are suppressed while this lasts.',
+    description: 'Venom purge — every buff was stripped off you, and speed boosts stay suppressed while this lasts.',
     read: (f) => f.purgedUntil,
     write: (f, t) => { f.purgedUntil = t; },
   },
@@ -423,12 +428,6 @@ export const STATUS_DESCRIPTORS: StatusDescriptor[] = [
     write: (f, t) => { f.goldStatueUntil = t; },
   },
   {
-    id: 'harvest-corruption', name: 'Corruption', emoji: '🟣', color: 0x8a2fc9, priority: 46.6, kind: 'amount',
-    description: 'The scarecrow\'s rot is in you. The more of it there is, the more of every hit the Harvest heals off you, the harder its crows bite, and the higher the line under which its scythe simply kills you (10% of your health, up to 25% at full rot). It grows while you stand on its mold and fades slowly once you are off it.',
-    read: (f) => Math.round(f.harvestCorruption),
-    suffix: '%',
-  },
-  {
     id: 'devotion-faith', name: 'Faith', emoji: '🙏', color: 0xf5e08a, priority: 46.7, kind: 'amount',
     description: 'The priest\'s faith is in you, and nothing takes it out. At 200 you are converted on the spot — no shield or armour saves you. At 25% it fills on its own, 2 a second; at 50% your blows land 20% softer on the priest; at 75% you are drawn toward their holy water and every attack fills it 25% faster.',
     read: (f) => Math.round(f.devotionFaith),
@@ -464,16 +463,89 @@ export const STATUS_DESCRIPTORS: StatusDescriptor[] = [
     write: (f, t) => { f.dreamParalysisUntil = t; },
   },
   {
-    id: 'harvest-poison', name: 'Rot Poison', emoji: '🧪', color: 0x8fd14f, priority: 46.75, kind: 'timer',
-    description: 'Splashed by a shattered crow vial. You take 4 damage a second until it wears off; every vial that hits you adds another 4.',
-    read: (f) => f.harvestPoisonUntil,
-    write: (f, t) => { f.harvestPoisonUntil = t; },
+    id: 'wood-slow', name: 'Gummed Up', emoji: '🍯', color: 0xd98a1c, priority: 46.75, kind: 'timer',
+    description: 'You cut into an ent\'s Sap HP and it stuck to you. You move 30% slower until it wears off.',
+    read: (f) => f.woodSlowUntil,
+    write: (f, t) => { f.woodSlowUntil = t; },
   },
   {
-    id: 'harvest-reaped', name: 'Reaped', emoji: '🌾', color: 0x5c2a7a, priority: 46.8, kind: 'amount',
-    description: 'Cut by Reaping Hour. Every cut is another permanent 15% more damage taken, compounded, for the rest of the match.',
-    read: (f) => (f.gluttonyIncomingMult > 1.001 ? Math.round((f.gluttonyIncomingMult - 1) * 100) : 0),
-    suffix: '%',
+    id: 'wood-tainted', name: 'Tainted', emoji: '🍂', color: 0xa86a12, priority: 46.8, kind: 'flag',
+    description: 'Cut by an ent\'s Final Harvest and not killed by it. For the rest of the match, every 25 damage that ent deals you gives it 5 Sap HP.',
+    read: (f) => f.woodTainted,
+  },
+  {
+    id: 'pain-lock', name: 'PainLock', emoji: '🔴', color: 0xe0232f, priority: 46.82, kind: 'timer',
+    description: 'A Pressure Point found a nerve. Every ability you use stuns you briefly and costs you health until it wears off.',
+    read: (f) => f.painLockUntil,
+    write: (f, t) => { f.painLockUntil = t; },
+  },
+  {
+    id: 'pressure-slow', name: 'Pressurized', emoji: '♨️', color: 0xd9d4cc, priority: 46.84, kind: 'timer',
+    description: 'Battered by a Pressure punch or caught in its steam. You move slower until it wears off.',
+    read: (f) => f.pressureSlowUntil,
+    write: (f, t) => { f.pressureSlowUntil = t; },
+  },
+  {
+    id: 'astra-slow', name: 'Smitten', emoji: '🌩️', color: 0xb05cff, priority: 46.85, kind: 'timer',
+    description: 'Struck by a Celestial Smite. You move at a third of your speed until it wears off.',
+    read: (f) => f.astraSlowUntil,
+    write: (f, t) => { f.astraSlowUntil = t; },
+  },
+  {
+    id: 'memory-sealed', name: 'Reborn', emoji: '⚪', color: 0xf4f2ff, priority: 46.855, kind: 'timer',
+    description: 'Struck by Rebirth. Your passive does nothing until this wears off.',
+    read: (f) => f.passivesSealedUntil,
+    write: (f, t) => { f.passivesSealedUntil = t; },
+  },
+  {
+    id: 'memory-shards', name: 'Forgotten', emoji: '🗿', color: 0x5d527a, priority: 46.856, kind: 'stack',
+    description: 'Obsidian shards latched into you. 1: the Memory and its health bar are lost in static. 2: so is your own health. 3: so are your cooldowns.',
+    read: (f) => f.memoryShardCount(),
+  },
+  {
+    id: 'guilt', name: 'Guilt', emoji: '⚖️', color: 0x8b1e3f, priority: 46.857, kind: 'stack',
+    description: 'Every hit you take while fighting a Memory leaves a stack. Each stack: +1% damage taken, for the rest of the match.',
+    read: (f) => f.guiltStacks,
+  },
+  {
+    id: 'string-hexed', name: 'Hexed', emoji: '🟣', color: 0x9b3dff, priority: 46.8575, kind: 'timer',
+    description: 'Brushing a Hexing Strand. You move at 60% speed while you touch it and a moment after.',
+    read: (f) => f.stringHexUntil,
+    write: (f, t) => { f.stringHexUntil = t; },
+  },
+  {
+    id: 'string-snared', name: 'Snared', emoji: '🕸️', color: 0xd4a6ff, priority: 46.858, kind: 'timer',
+    description: 'Caught in a Hexing Strand as it snapped. You move at 30% speed until it wears off.',
+    read: (f) => f.stringSnareUntil,
+    write: (f, t) => { f.stringSnareUntil = t; },
+  },
+  {
+    id: 'string-puppet', name: 'Puppet', emoji: '🎎', color: 0xf0d6ac, priority: 46.8585, kind: 'timer',
+    description: 'On a Marionette\'s control bar. While the spider holds the arrow keys, you walk where it steers.',
+    read: (f) => f.stringPuppetUntil,
+  },
+  {
+    id: 'string-entombed', name: 'Entombed', emoji: '🪢', color: 0xf2ece0, priority: 46.859, kind: 'timer',
+    description: 'Wrapped in a Linen Tomb. You cannot move or hurt the spider until your attacks cut through the silk, and trying to move tears at you.',
+    read: (f) => f.stringTombedUntil,
+  },
+  {
+    id: 'ink-slip', name: 'Slippery', emoji: '🍌', color: 0xf2f2f2, priority: 46.86, kind: 'timer',
+    description: 'Slipped on a banana peel. Your feet keep sliding: you turn and stop slowly until it wears off.',
+    read: (f) => f.inkSlipUntil,
+    write: (f, t) => { f.inkSlipUntil = t; },
+  },
+  {
+    id: 'ink-flat', name: 'Flattened', emoji: '🥞', color: 0x9a9a9a, priority: 8.6, kind: 'timer',
+    description: 'Squashed flat by an anvil. You move at half speed and your ability keys are shuffled.',
+    read: (f) => f.inkFlatUntil,
+    write: (f, t) => { f.inkFlatUntil = t; },
+  },
+  {
+    id: 'grounded', name: 'Grounded', emoji: '🔩', color: 0x8a7f74, priority: 8.5, kind: 'timer',
+    description: 'Slammed into the floor. You cannot move, but you can still attack. Any hit knocks you loose.',
+    read: (f) => f.pressureGroundedUntil,
+    write: (f, t) => { f.pressureGroundedUntil = t; },
   },
   {
     id: 'fragile', name: 'Fragile', emoji: '📛', color: 0xdd3355, priority: 46, kind: 'amount',
@@ -554,9 +626,9 @@ export const STATUS_DESCRIPTORS: StatusDescriptor[] = [
     read: (f) => Math.round(f.weakHp),
   },
   {
-    id: 'corrupt-hp', name: 'Corrupt HP', emoji: '🫀', color: 0x8a2fc9, priority: 104.5, kind: 'amount',
-    description: 'Rotten bonus health. Spent before your real health — and whoever chews through it catches the corruption.',
-    read: (f) => Math.round(f.corruptHp),
+    id: 'sap-hp', name: 'Sap HP', emoji: '🪵', color: 0xd98a1c, priority: 104.5, kind: 'amount',
+    description: 'Amber bonus health. Spent before your real health — and whoever chews through it is gummed up and slowed.',
+    read: (f) => Math.round(f.sapHp),
   },
   {
     id: 'absorbing', name: 'Absorbing', emoji: '🌫️', color: 0xaaccdd, priority: 105, kind: 'flag',
@@ -859,6 +931,33 @@ export function clearDebuffs(f: Fighter): number {
 }
 
 /**
+ * Venom's Purge: strip every buff a fighter is carrying, and report how many came off.
+ *
+ * The mirror of {@link clearDebuffs}: every `timer` buff with a writer is expired, and the
+ * protective pools — shield charges, shield HP, clotted, weak and sap HP, evasion — are emptied.
+ * The co-owned multiplier fields (`walkSpeedMult`, `outgoingDamageMult`, `cooldownMult`, crit) are
+ * left alone (as is regeneration, which items grant as a standing stat) for the reason `clearDebuffs` leaves them: kits rewrite them every frame, so the
+ * Purged timer suppresses speed boosts for its duration instead.
+ */
+export function stripBuffs(f: Fighter): number {
+  let n = 0;
+  for (const desc of STATUS_DESCRIPTORS) {
+    if (isDebuff(desc) || desc.priority >= 150 || desc.kind !== 'timer' || !desc.write) continue;
+    if (desc.read(f) <= 0) continue;
+    desc.write(f, 0);
+    n++;
+  }
+  if (f.shieldCharges > 0) { f.shieldCharges = 0; n++; }
+  if (f.shieldHp > 0) { f.shieldHp = 0; n++; }
+  if (f.clottedHp > 0) { f.clottedHp = 0; n++; }
+  if (f.weakHp > 0) { f.weakHp = 0; n++; }
+  if (f.sapHp > 0) { f.sapHp = 0; n++; }
+  if (f.dodgeChance > 0) { f.dodgeChance = 0; n++; }
+  if (f.windDodge > 0) { f.windDodge = 0; n++; }
+  return n;
+}
+
+/**
  * How much there is to wash off a fighter, measured over exactly what {@link clearDebuffs} would
  * remove: how many debuffs, how many seconds the timed ones had left (each capped at
  * `secCapEach`), and how many stacks the stacking ones carried. Devotion's Purge Sins pays faith
@@ -887,28 +986,3 @@ export function measureDebuffs(
   return { count, seconds, stacks };
 }
 
-/**
- * Harvest's Consume: take every *transferable* positive effect off `victim` and put it on `thief`,
- * and report what came across by name.
- *
- * "Transferable" is the same honesty rule {@link clearDebuffs} keeps: only the pools and counters
- * that a fighter genuinely carries on its own body — shield charges and shield HP, weak HP, dodge
- * and wind dodge. Kit-owned multiplier buffs (damage, speed, haste) are rewritten every frame by
- * whoever grants them, so moving the number would be undone on the next tick; the kit copies
- * those for itself instead.
- *
- * `thief` may be null: the pools are still stripped off the victim and simply go nowhere. That is
- * the online replay of an opponent's bite on this machine — the victim's own sim is the one that
- * owns its shields, and the thief's copy lives on the thief's machine.
- */
-export function stealBuffs(victim: Fighter, thief: Fighter | null): string[] {
-  const took: string[] = [];
-  const give = (fn: (t: Fighter) => void): void => { if (thief) fn(thief); };
-  if (victim.shieldCharges > 0) { const v = victim.shieldCharges; give((t) => { t.shieldCharges += v; }); victim.shieldCharges = 0; took.push('Shield'); }
-  if (victim.shieldHp > 0) { const v = victim.shieldHp; give((t) => { t.shieldHp += v; }); victim.shieldHp = 0; took.push('Shield HP'); }
-  if (victim.weakHp > 0) { const v = victim.weakHp; give((t) => { t.weakHp += v; }); victim.weakHp = 0; took.push('Weak HP'); }
-  if (victim.corruptHp > 0) { const v = victim.corruptHp; give((t) => { t.corruptHp += v; }); victim.corruptHp = 0; took.push('Corrupt HP'); }
-  if (victim.dodgeChance > 0) { const v = victim.dodgeChance; give((t) => { t.dodgeChance += v; }); victim.dodgeChance = 0; took.push('Evasion'); }
-  if (victim.windDodge > 0) { const v = victim.windDodge; give((t) => { t.windDodge += v; }); victim.windDodge = 0; took.push('Wind Dodge'); }
-  return took;
-}

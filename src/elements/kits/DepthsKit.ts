@@ -1104,7 +1104,8 @@ export class DepthsKit implements SummonPurgeTarget {
     }
 
     // Being carried is not standing still — an eel does the moving for you.
-    const still = this.isStill(f) && !this.isHeld(f);
+    // Memory's Rebirth: a sealed angler cannot fade or lure — it never counts as still.
+    const still = this.isStill(f) && !this.isHeld(f) && !f.passivesSealed();
     if (still) s.stillMs += delta; else s.stillMs = 0;
 
     const want = s.stillMs > LURE_DELAY_MS && time >= s.lureArmedAt ? 1 : 0;

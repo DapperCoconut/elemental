@@ -711,7 +711,7 @@ export class ElementPanels {
       if (perk) {
         const ELEM_EMOJI: Record<string, string> = {
           fire: '🔥', water: '💧', life: '🌿', air: '💨', earth: '🪨',
-          electricity: '⚡', slime: '🟢', fate: '🃏', sound: '🔊', light: '✨',
+          electricity: '⚡', slime: '🐍', fate: '🃏', sound: '🔊', light: '✨',
         };
         heading('— FORGED FROM —', '#8f7ab8');
         prose(perk.ingredients.map((r) => `${ELEM_EMOJI[r] ?? ''} ${r}`).join('   +   '), '#a493c4');
@@ -1566,7 +1566,7 @@ export class ElementPanels {
 
     const ELEM_EMOJI: Record<string, string> = {
       fire: '🔥', water: '💧', life: '🌿', air: '💨', earth: '🪨',
-      electricity: '⚡', slime: '🟢', fate: '🃏', sound: '🔊', light: '✨',
+      electricity: '⚡', slime: '🐍', fate: '🃏', sound: '🔊', light: '✨',
     };
 
     // ── MASTERY ─────────────────────────────────────────────────────
@@ -2454,7 +2454,7 @@ export class ElementPanels {
 
     const ELEM_EMOJI: Record<string, string> = {
       fire: '🔥', water: '💧', life: '🌿', air: '💨', earth: '🪨',
-      electricity: '⚡', slime: '🟢', fate: '🃏', sound: '🔊', light: '✨',
+      electricity: '⚡', slime: '🐍', fate: '🃏', sound: '🔊', light: '✨',
     };
 
     const SCROLL_TOP = 104;

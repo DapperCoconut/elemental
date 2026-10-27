@@ -1636,6 +1636,15 @@ export class GrowthKit {
 
   // ── AI query helpers ──────────────────────────────────────────────────
 
+  /** Memory's Rebirth: the struck side loses part of what it has built up. Returns a label, or null. */
+  rebirthDrain(owner: Owner): string | null {
+    const have = owner === 'player' ? this.playerDna : this.npcDna;
+    const take = Math.ceil(have * 0.4);
+    if (take <= 0) return null;
+    if (owner === 'player') this.playerDna -= take; else this.npcDna -= take;
+    return `−${take} DNA`;
+  }
+
   getDna(owner: Owner): number { return owner === 'player' ? this.playerDna : this.npcDna; }
   hasClone(owner: Owner): boolean { return this.clones.some((c) => c.owner === owner); }
   hasNest(owner: Owner): boolean { return this.nests.some((n) => n.owner === owner); }
@@ -2367,6 +2376,7 @@ export class GrowthKit {
       // Body-block enemy fighters: shove them back out of the wall.
       for (const t of this.targetsOf(s.owner)) {
         if (!t.active || t.hp <= 0) continue;
+        if (t.soulWalking) continue; // Bind's Blackened Eyes walks through.
         const d = Phaser.Math.Distance.Between(s.x, s.y, t.x, t.y);
         const minD = radius + SPORE_BLOCK_PAD;
         if (d < minD && d > 0.001) {
@@ -2480,6 +2490,8 @@ export class GrowthKit {
   }
 
   private addDna(owner: Owner, amount: number): void {
+    // Memory's Rebirth: no DNA while the passive is sealed.
+    if ((owner === 'player' ? this.arena.player : this.arena.npc).passivesSealed()) return;
     // Mitosis (secret): the strand copies itself on the way in.
     if (owner === 'player' && this.hasSecret('mitosis') && Math.random() < MITOSIS_CHANCE) {
       amount *= 2;

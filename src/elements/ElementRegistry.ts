@@ -1,4 +1,4 @@
-import { Element } from './Element';
+import { CLICK_ABILITY_IDS, Element } from './Element';
 import { airElement } from './air';
 import { clothElement } from './cloth';
 import { marrowElement } from './marrow';
@@ -21,6 +21,11 @@ import { fireElement } from './fire';
 import { fortuneElement } from './fortune';
 import { duneElement } from './dune';
 import { gluttonyElement } from './gluttony';
+import { pressureElement } from './pressure';
+import { astraElement } from './astra';
+import { memoryElement } from './memory';
+import { stringElement } from './string';
+import { inkElement } from './ink';
 import { gravityElement } from './gravity';
 import { growthElement } from './growth';
 import { gumElement } from './gum';
@@ -128,4 +133,13 @@ export const ELEMENT_MAP: Record<string, Element> = {
   bind: bindElement,
   gum: gumElement,
   gluttony: gluttonyElement,
+  pressure: pressureElement,
+  astra: astraElement,
+  memory: memoryElement,
+  string: stringElement,
+  ink: inkElement,
 };
+for (const el of Object.values(ELEMENT_MAP)) {
+  for (const a of el.abilities) if (a.displayKey === 'Click') CLICK_ABILITY_IDS.add(a.id);
+}
+

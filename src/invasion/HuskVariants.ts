@@ -49,7 +49,7 @@ export type HuskMarker =
   | 'bolt' | 'flask' | 'card' | 'note' | 'star' | 'magnet' | 'gear' | 'orb'
   | 'skull' | 'ball' | 'book' | 'mask' | 'scribble' | 'banner' | 'heart'
   | 'coin' | 'bone' | 'eye' | 'rad' | 'chain' | 'meat' | 'echo' | 'dagger'
-  | 'wave' | 'brick' | 'page' | 'pit' | 'cross';
+  | 'wave' | 'brick' | 'page' | 'pit' | 'cross' | 'spool';
 
 export interface HuskVariantDef {
   id: string;
@@ -134,7 +134,7 @@ export const HUSK_FAMILIES: HuskFamily[] = [
 
   // ── Abstract — BRUTAL and up ─────────────────────────────────────
   { elementId: 'electricity', name: 'Electric', emoji: '⚡', color: 0xffee00, category: 'abstract', behavior: 'ranged', marker: 'bolt', quirk: 'lean', hp: 0.85, speed: 1.15, damage: 0.7, preferredRange: 260 },
-  { elementId: 'slime', name: 'Acid', emoji: '🟢', color: 0x66cc44, category: 'abstract', behavior: 'melee', marker: 'flask', quirk: 'sac', hp: 1.05, speed: 0.95, damage: 0.9 },
+  { elementId: 'slime', name: 'Venom', emoji: '🐍', color: 0x66cc44, category: 'abstract', behavior: 'melee', marker: 'flask', quirk: 'sac', hp: 1.05, speed: 0.95, damage: 0.9 },
   { elementId: 'fate', name: 'Fate', emoji: '🃏', color: 0x88eecc, category: 'abstract', behavior: 'melee', marker: 'card', quirk: 'lean', hp: 0.95, speed: 1.05, damage: 1 },
   { elementId: 'sound', name: 'Sound', emoji: '🔊', color: 0x8a1c33, category: 'abstract', behavior: 'ranged', marker: 'note', quirk: 'sac', hp: 0.9, speed: 1, damage: 0.65, preferredRange: 300 },
   { elementId: 'light', name: 'Light', emoji: '✨', color: 0xfff4a8, category: 'abstract', behavior: 'charger', marker: 'star', quirk: 'lean', hp: 1.2, speed: 1.05, damage: 1.4 },
@@ -167,8 +167,13 @@ export const HUSK_FAMILIES: HuskFamily[] = [
   { elementId: 'radiation', name: 'Radiation', emoji: '☢️', color: 0x7cff3d, category: 'corrupt', behavior: 'melee', marker: 'rad', quirk: 'gut', hp: 1.15, speed: 0.9, damage: 1 },
   { elementId: 'bind', name: 'Bind', emoji: '⛓️', color: 0xe0b743, category: 'corrupt', behavior: 'melee', marker: 'chain', quirk: 'horns', hp: 1.2, speed: 0.9, damage: 1 },
   { elementId: 'gum', name: 'Slime', emoji: '🫠', color: 0x46b93f, category: 'corrupt', behavior: 'melee', marker: 'slick', quirk: 'bulk', hp: 1.6, speed: 0.8, damage: 1, size: 1.12 },
-  { elementId: 'gluttony', name: 'Harvest', emoji: '🌾', color: 0x6a2c91, category: 'corrupt', behavior: 'melee', marker: 'meat', quirk: 'bulk', hp: 1.4, speed: 0.85, damage: 1.2, size: 1.1 },
+  { elementId: 'gluttony', name: 'Wood', emoji: '🌳', color: 0xd9d3c3, category: 'corrupt', behavior: 'melee', marker: 'meat', quirk: 'bulk', hp: 1.4, speed: 0.85, damage: 1.2, size: 1.1 },
   { elementId: 'myth', name: 'Myth', emoji: '🌠', color: 0x7d5cff, category: 'corrupt', behavior: 'melee', marker: 'star', quirk: 'halo', hp: 1.25, speed: 1, damage: 1.1 },
+  { elementId: 'pressure', name: 'Pressure', emoji: '🔩', color: 0xc7462e, category: 'corrupt', behavior: 'charger', marker: 'gear', quirk: 'bulk', hp: 1.5, speed: 0.8, damage: 1.35, size: 1.1 },
+  { elementId: 'astra', name: 'Astra', emoji: '🌟', color: 0x6a4cff, category: 'corrupt', behavior: 'ranged', marker: 'star', quirk: 'halo', hp: 1, speed: 0.95, damage: 1, preferredRange: 300 },
+  { elementId: 'ink', name: 'Ink', emoji: '🖋️', color: 0x1a1a1a, category: 'corrupt', behavior: 'ranged', marker: 'scribble', quirk: 'lean', hp: 0.85, speed: 1.25, damage: 0.8, preferredRange: 280 },
+  { elementId: 'memory', name: 'Memory', emoji: '🎩', color: 0x4a4458, category: 'corrupt', behavior: 'ranged', marker: 'mask', quirk: 'lean', hp: 0.95, speed: 1, damage: 0.95, preferredRange: 290 },
+  { elementId: 'string', name: 'String', emoji: '🕸️', color: 0xd9c8a6, category: 'corrupt', behavior: 'ranged', marker: 'spool', quirk: 'lean', hp: 0.9, speed: 1.05, damage: 0.9, preferredRange: 300 },
 ];
 
 /** Wave a tier first appears on. */
@@ -532,6 +537,11 @@ export const ELEMENT_KIN: Record<string, string[]> = {
   bind: ['bind', 'metal', 'conquest', 'gravity', 'cloth'],
   gum: ['gum', 'slime', 'rubber', 'growth', 'gluttony'],
   gluttony: ['gluttony', 'hunt', 'gum', 'depths', 'growth', 'marrow'],
+  pressure: ['pressure', 'metal', 'technology', 'magma', 'earth'],
+  ink: ['ink', 'chalk', 'paper', 'illusion', 'shadow'],
+  astra: ['astra', 'light', 'gravity', 'myth', 'plasma'],
+  memory: ['memory', 'psychic', 'illusion', 'silence', 'shadow'],
+  string: ['string', 'cloth', 'bind', 'psychic', 'paper'],
 };
 
 export interface InvasionTheme {

@@ -251,7 +251,7 @@ export function orderRing(
   tint: RuinColorFn,
   x: number, y: number, r: number, t: number, alpha: number, charge: number, seed = 0,
 ): void {
-  const sq = 0.62;
+  const sq = 1;
   g.fillStyle(tint(O.marble), alpha * (0.1 + charge * 0.16));
   g.fillEllipse(x, y, r * 2, r * 2 * sq);
   g.fillStyle(tint(O.white), alpha * (0.06 + charge * 0.1));
@@ -729,20 +729,20 @@ export class OrderFx extends RuinFx {
         const a = (i / count) * TAU + seed;
         const d = r * (i % 2 === 0 ? 0.85 : 0.5);
         const sx = x + Math.cos(a) * d;
-        const sy = y + Math.sin(a) * d * 0.62;
+        const sy = y + Math.sin(a) * d;
         orderSpike(g, this.tint, sx, sy + 6, -Math.PI / 2, (26 + (i % 2) * 10) * up, 6 * up, 1);
       }
     });
   }
 
-  ring(x: number, y: number, r0: number, r1: number, color = RUI.red, ms = 460, depth = 9): void {
+  ring(x: number, y: number, r0: number, r1: number, color = RUI.red, ms = 460, depth = 9, squash = 0.7): void {
     const c = color === RUI.red ? O.gold : color;
     this.anim(depth, ms, (g, t) => {
       const r = r0 + (r1 - r0) * easeOut(t);
       g.lineStyle(3.5 * (1 - t) + 0.8, this.tint(c), (1 - t) * 0.85);
-      g.strokeEllipse(x, y, r * 2, r * 1.4);
+      g.strokeEllipse(x, y, r * 2, r * 2 * squash);
       g.lineStyle(1.2, this.tint(O.white), (1 - t) * 0.6);
-      g.strokeEllipse(x, y, r * 1.68, r * 1.18);
+      g.strokeEllipse(x, y, r * 1.68, r * 1.68 * squash);
       g.fillStyle(this.tint(O.goldLit), (1 - t) * 0.8);
       for (let i = 0; i < 8; i++) {
         const a = (i / 8) * TAU;
@@ -767,10 +767,10 @@ export class OrderFx extends RuinFx {
     });
   }
 
-  crack(x: number, y: number, r = 50, ms = 620, depth = 4): void {
+  crack(x: number, y: number, r = 50, ms = 620, depth = 4, squash = 0.65): void {
     const seed = Math.random() * 999;
     this.anim(depth, ms, (g, t) => {
-      orderInlay(g, this.tint, x, y, r, seed, 1 - t, Math.min(1, t * 2.4), { runs: 8, squash: 0.65, width: 2.6 });
+      orderInlay(g, this.tint, x, y, r, seed, 1 - t, Math.min(1, t * 2.4), { runs: 8, squash, width: 2.6 });
     });
   }
 

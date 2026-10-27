@@ -1037,6 +1037,7 @@ export class MagicKit {
         const wallR = w.radius + 16;
         for (const e of enemies) {
           if (!e.active || e.hp <= 0) continue;
+          if (e.soulWalking) continue; // Bind's Blackened Eyes walks through.
           const d = Phaser.Math.Distance.Between(w.x, w.y, e.x, e.y);
           if (Math.abs(d - wallR) > 15) continue;
           if (!w.links.some(l => !l.free && Phaser.Math.Distance.Between(l.x, l.y, e.x, e.y) <= 34)) continue;
@@ -3919,6 +3920,7 @@ export class MagicKit {
       }
       for (const e of (w.owner === 'player' ? this.api.enemies : [this.api.player])) {
         if (!e.active || e.hp <= 0) continue;
+        if (e.soulWalking) continue; // Bind's Blackened Eyes walks through.
         const d = this._pointToSegDist(e.x, e.y, w.x1, w.y1, w.x2, w.y2);
         if (d > 20) continue;
         // Put them back out on their own side of the stone.

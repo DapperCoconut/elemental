@@ -29,7 +29,7 @@ const shredSlice: Ability = {
 const lockdown: Ability = {
   id: 'ruin-lockdown',
   name: 'Lockdown',
-  description: 'Snap a rusted padlock onto the nearest enemy. Whatever ability they used last is dead for 20 seconds, however ready its cooldown says it is.',
+  description: 'Snap a rusted padlock onto the nearest enemy. The last ability they used, other than their Click, is dead for 20 seconds, however ready its cooldown says it is.',
   displayKey: 'E',
   cooldown: 25000,
   cast(ctx: CastContext) { ctx.ruinLockdown(ctx.targetX, ctx.targetY); },

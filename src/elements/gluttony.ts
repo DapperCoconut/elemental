@@ -2,69 +2,70 @@ import { Element } from './Element';
 import { Ability, CastContext } from './Ability';
 
 /**
- * Harvest — a test element, reachable only from a cheat-mode save for now. The id is still
- * `gluttony` (it replaced the chef of that name), so saves, unlocks and campaign data keep it.
+ * Wood — a test element, reachable only from a cheat-mode save for now. The id is still
+ * `gluttony` (it has been the chef and then Harvest's scarecrow before this), so saves, unlocks
+ * and campaign data keep it.
  *
- * A dark scarecrow with a sack over its head, a purple grin that will not stop drooling, and a
- * scythe taller than it is. It plants rot: Sow Corruption seeds the ground with a purple mold
- * that slowly spreads into eyes and mouths, everything standing on it rots, and the rot is what
- * the rest of the kit feeds on — the sickle heals more off a rotten body, the crows bite it
- * harder, the scythe kills it sooner. The mold grows hearts; cutting one with the sickle is
- * Corrupt HP, and whoever chews through Corrupt HP catches the rot too.
+ * A birch ent: pale bark, black marks, and the eye scars birches are known for. The arena is
+ * ringed with the same watching birches (Haunting Hollows). Its resource is **Sap HP** — health
+ * that sits on top of its own, can climb 100 past its maximum, slowly grows back, and gums up
+ * whoever cuts into it. Everything in the kit makes sap, spends it, or reads it: the brew turns
+ * health into it, stepping out of a tree grants it, digesting a beating turns the beating into
+ * it, and the great scythe kills outright when the ent has enough more health than its victim.
  *
  * Every `cast` below is a one-line delegate; the whole simulation lives in GluttonyKit.
  */
 
-const sickle: Ability = {
-  id: 'harvest-sickle',
-  name: 'Sickle',
-  description: 'Throw a sickle that flies a full loop out toward the cursor and back to your hand, like a boomerang. 12 damage to everything it passes through — it pierces. Right-click swaps which way the loop curls. Cutting one of your own corrupt hearts bursts it for 75 Corrupt HP, then 5 more a second for 5 seconds.',
+const carverang: Ability = {
+  id: 'wood-carverang',
+  name: 'Carverang',
+  description: 'Throw a big wooden boomerang that flies a full loop out to the cursor and back to your hand. 12 damage to everything it passes through — it pierces. Right-click swaps which way the loop curls. Throw again just as one is coming home and the returning boomerang swings round and flies back out to the cursor.',
   displayKey: 'Click',
   cooldown: 650,
-  cast(ctx: CastContext) { ctx.harvestSickle(ctx.targetX, ctx.targetY); },
+  cast(ctx: CastContext) { ctx.woodCarverang(ctx.targetX, ctx.targetY); },
 };
 
-const sow: Ability = {
-  id: 'harvest-sow',
-  name: 'Sow Corruption',
-  description: 'Scatter a burst of corruption seeds on the ground around you. Each one slowly grows into a purple mold of eyes and mouths that keeps spreading, a little further over time. Enemies standing on it slowly gain Corruption. Mature mold now and then grows a corrupt heart — cut it with your sickle.',
+const oakbrew: Ability = {
+  id: 'wood-oakbrew',
+  name: 'Oakbrew',
+  description: 'Drink a teacup of oakbrew: take 15% less damage for 8 seconds, and 25 of your health turns into Sap HP.',
   displayKey: 'E',
-  cooldown: 10000,
-  cast(ctx: CastContext) { ctx.harvestSow(); },
+  cooldown: 12000,
+  cast(ctx: CastContext) { ctx.woodOakbrew(); },
 };
 
-const frenzy: Ability = {
-  id: 'harvest-frenzy',
-  name: 'Feeding Frenzy',
-  description: 'Release 3 crows that circle your cursor for 6 seconds, pecking anything they fly through for 5 — up to three times that against a fully corrupted enemy.',
+const commensalism: Ability = {
+  id: 'wood-commensalism',
+  name: 'Commensalism',
+  description: 'Sink into the ground and step out of the tree at the edge of the arena nearest your cursor, taking its place — the tree is gone until it grows back. Gain 50 Sap HP.',
   displayKey: 'R',
   cooldown: 14000,
-  cast(ctx: CastContext) { ctx.harvestFrenzy(ctx.targetX, ctx.targetY); },
+  cast(ctx: CastContext) { ctx.woodCommensalism(ctx.targetX, ctx.targetY); },
 };
 
-const consume: Ability = {
-  id: 'harvest-consume',
-  name: 'Consume',
-  description: 'Open the sack and bite forward for 18. Anything bitten has its shields, Corrupt HP and evasion stolen, copies of its damage and speed buffs go to you, and it cannot heal for 8 seconds. Biting a fighter tears off a piece of Corrupt Flesh: below 75 health you eat one at once for 75 Corrupt HP. With half or more of your health as Corrupt HP, the bite also floods them with Corruption.',
+const digest: Ability = {
+  id: 'wood-digest',
+  name: 'Digest',
+  description: 'Digest the damage you just took. A healing aura opens around you: 15% of everything you took in the last 5 seconds comes back at once as Sap HP, and another 25% as health over the next 5 seconds. Teammates in the aura are healed too.',
   displayKey: 'F',
-  cooldown: 9000,
-  cast(ctx: CastContext) { ctx.harvestConsume(ctx.targetX, ctx.targetY); },
+  cooldown: 12000,
+  cast(ctx: CastContext) { ctx.woodDigest(); },
 };
 
-const reap: Ability = {
-  id: 'harvest-reap',
-  name: 'Reaping Hour',
-  description: 'Swing the great scythe in a wide arc in front of you for 30. Everything cut takes 15% more damage for the rest of the match, and it stacks. Anything left below 10% health is killed outright — a line that rises to 25% the more corrupted they are.',
+const finalHarvest: Ability = {
+  id: 'wood-final-harvest',
+  name: 'Final Harvest',
+  description: 'Take the giant scythe off your back and swing it in a wide arc for 35. If you then have at least 60% more health than an enemy it cut (Sap HP counts), that enemy dies on the spot. Anyone it does not kill is Tainted for the rest of the match: every 25 damage you deal them gives you 5 Sap HP.',
   displayKey: 'Q',
   isUltimate: true,
   cooldown: 35000,
-  cast(ctx: CastContext) { ctx.harvestReap(ctx.targetX, ctx.targetY); },
+  cast(ctx: CastContext) { ctx.woodFinalHarvest(ctx.targetX, ctx.targetY); },
 };
 
 export const gluttonyElement: Element = {
   id: 'gluttony',
-  name: 'Harvest',
-  color: 0x6a2c91,
-  emoji: '🌾',
-  abilities: [sickle, sow, frenzy, consume, reap],
+  name: 'Wood',
+  color: 0xd9d3c3,
+  emoji: '🌳',
+  abilities: [carverang, oakbrew, commensalism, digest, finalHarvest],
 };

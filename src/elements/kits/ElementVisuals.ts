@@ -115,6 +115,7 @@ export type ArmHold =
   | 'brace'    // hands hauled in tight behind a guard, shaking (charged blocks, shield bashes)
   | 'ride'     // arms thrown out wide for balance while something carries you
   | 'reach'    // one hand thrown far out along the aim, the other tucked in (grapples, long limbs)
+  | 'gun'      // the right hand levelled along the aim, the left at rest (a weapon strapped to one hand)
   | null;
 
 export interface ArmPose { ang: number; dist: number; scale: number }
@@ -285,6 +286,11 @@ export abstract class BaseAvatar {
   setHold(hold: ArmHold, angle?: number): void {
     this.hold = hold;
     if (angle !== undefined) this.holdAngle = angle;
+  }
+
+  /** World position of one hand: 0 is the left (`side -1`), 1 the right (`side +1`). */
+  handPos(i: 0 | 1): { x: number; y: number } {
+    return { x: this.armX[i], y: this.armY[i] };
   }
 
   /** World position of the hand that just threw something — good for muzzle effects. */
@@ -552,6 +558,11 @@ export abstract class BaseAvatar {
           scale: idle.scale * (1.05 + pull * 0.25),
         };
       }
+      case 'gun':
+        // Only the right hand comes up; it sits a touch off the aim line so the gun clears the face.
+        return side > 0
+          ? { ang: this.holdAngle + 0.22, dist: 30, scale: idle.scale * 1.05 }
+          : idle;
       case 'sow': {
         // Low and cupped, working close to the ground rather than out at arm's length.
         const knead = Math.sin(this.t * 5 + side * 1.4);

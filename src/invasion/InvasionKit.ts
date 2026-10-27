@@ -1375,6 +1375,7 @@ export class InvasionKit implements HuskWorld, EffectWorld {
     husk.noRewardKill = !!(opts.noReward || variant.noReward);
     if (opts.alpha !== undefined) husk.setAlpha(opts.alpha);
     husk.onBite = (dmg, target) => {
+      if (this.wardedFrom(husk, target, dmg)) return;
       this.damageTargetInternal(target, dmg);
       this.effects?.onBiteLanded(husk, target);
     };
@@ -1637,6 +1638,32 @@ export class InvasionKit implements HuskWorld, EffectWorld {
   }
 
   /**
+   * String's Linen Tomb: a husk wrapped in the silk cannot reach the spider. Husk damage carries
+   * no source, so the ward is checked here, where the husk is still known. True when it was blocked.
+   */
+  private wardedFrom(husk: Husk, target: Fighter, amount: number): boolean {
+    if (target.stringWardFrom !== husk) return false;
+    target.onStringWardHit?.(amount);
+    return true;
+  }
+
+  /**
+   * String's strings and its tomb: every husk shot in flight (velocity in px/s), with who fired it
+   * and a way to take it out of the air. The kit does its own geometry.
+   */
+  liveShots(): { x: number; y: number; vx: number; vy: number; damage: number; from: Fighter | null; kill: () => void }[] {
+    return this.shots.map((s) => ({
+      x: s.gfx.x, y: s.gfx.y, vx: s.vx, vy: s.vy, damage: s.damage, from: s.from ?? null,
+      kill: () => {
+        const i = this.shots.indexOf(s);
+        if (i < 0) return;
+        s.gfx.destroy();
+        this.shots.splice(i, 1);
+      },
+    }));
+  }
+
+  /**
    * Devotion's crucifix: every husk shot inside a circle, left in the air, with who fired it.
    * The shot object itself is the key, so the kit can pay each one out once.
    */
@@ -1857,6 +1884,7 @@ export class InvasionKit implements HuskWorld, EffectWorld {
   }
 
   bossHit(from: Husk, target: Fighter, amount: number, color: number): void {
+    if (this.wardedFrom(from, target, amount)) return;
     this.damageTargetInternal(target, amount);
     if (this.inView(from.roomIndex)) this.arena.spawnHitFlash(target.x, target.y, color);
   }

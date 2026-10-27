@@ -15,6 +15,7 @@ import {
 import { MythView, ViewEntity } from './MythView';
 import { makeSkinAvatar } from './skins/SkinAvatars';
 import { bfgBall, doomBanter, doomLine } from './skins/DoomFx';
+import { getEnhancement } from '../../data/Mastery';
 
 type Owner = 'player' | 'npc';
 const BOTH: Owner[] = ['player', 'npc'];
@@ -2430,6 +2431,8 @@ export class MythKit {
       if (Number.isNaN(s.lastRawTaken)) s.lastRawTaken = f.rawDamageTaken;
       const dTaken = f.rawDamageTaken - s.lastRawTaken;
       s.lastRawTaken = f.rawDamageTaken;
+      // Memory's Rebirth: a sealed Myth has no crowd — nothing is remembered to cheer or boo.
+      if (f.passivesSealed()) { s.dealt = []; s.taken = []; continue; }
       if (dTaken > 0) { s.taken.push({ at: now, amount: dTaken }); s.hurt = 1; }
       s.dealt = s.dealt.filter((t) => now - t.at <= CROWD_WINDOW_MS);
       s.taken = s.taken.filter((t) => now - t.at <= CROWD_WINDOW_MS);
@@ -3008,12 +3011,16 @@ export class MythKit {
       });
       return;
     }
+    // Back to the sword: the key Wormhole was bound over keeps the Wormhole's name.
     const abs = this.api.playerAbilities;
+    const worm = this.wormSlot('player');
+    const enh = getEnhancement('myth', WORMHOLE_ID);
     bars.forEach((bar, i) => {
       if (i >= abs.length || i >= 5) return;
       const ab = abs[i];
-      bar.lbl?.setText(`${ab.displayKey}  ${ab.name}`);
-      bar.desc?.setText(ab.description);
+      const bound = enh && worm && ab.displayKey.toLowerCase() === worm;
+      bar.lbl?.setText(`${ab.displayKey}  ${bound ? enh.name : ab.name}`);
+      bar.desc?.setText(bound ? (enh.hudDescription ?? enh.description) : ab.description);
     });
   }
 
@@ -3704,6 +3711,15 @@ export class MythKit {
   }
 
   // ── Readers for ArenaScene ─────────────────────────────────────────────────
+
+  /** Memory's Rebirth: the struck side loses part of what it has built up. Returns a label, or null. */
+  rebirthDrain(owner: Owner): string | null {
+    const s = this.side(owner);
+    if (s.dealt.length === 0) return null;
+    // The crowd forgets what it was cheering for.
+    s.dealt = [];
+    return '−CHEERS';
+  }
 
   getPlayerSpeedMult(): number { return this.speedMult('player'); }
   getNpcSpeedMult(): number { return this.speedMult('npc'); }

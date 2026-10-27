@@ -734,14 +734,14 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
   },
   slime: {
     elementId: 'slime',
-    name: 'Acid Mastery',
+    name: 'Venom Mastery',
     enhancedEmoji: '☣️',
     enhancedColor: 0x1b3d10,
     requirements: [
       {
         key: 'acidCoverageTotal',
         label: 'Acid Flood',
-        howTo: 'Cover the screen in acid — every pool adds up across all your matches (500% total)',
+        howTo: 'Cover the arena in acid — every cell you lay adds up across all your matches (500% total)',
         target: 5,
       },
       {
@@ -754,7 +754,7 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
       {
         key: 'melts',
         label: 'Meltdown',
-        howTo: 'Finish enemies off with acid — pools, rain, and footprints all count',
+        howTo: 'Finish enemies off with venom — the floor, toxin, the bite, rain and footprints all count',
         target: 20,
       },
       {
@@ -771,11 +771,11 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
         description: 'Passive: after stepping through acid, you leave burning acid footprints for 5 seconds as you walk onto clean ground. Each print lasts ~3s and eats anyone standing on it like an acid puddle. Footprints laid within 3s of surfacing from Snake Burrow are larger, darker, and hurt more.',
       },
       {
-        id: 'breakdown',
-        name: 'Breakdown',
+        id: 'shed-skin',
+        name: 'Shed Skin',
         bindable: true,
-        hudDescription: 'Root yourself and spray 200 acid lashes in every direction',
-        description: 'Only castable while the screen is at least half covered in acid. You root in place for 3 seconds and spray 200 acid lashes out in every direction, leaking acid particles that pool up beneath you the whole time. 12 second cooldown.',
+        hudDescription: 'Slough your skin: shorter tail, +15% speed, a ring of lashes and a pool of acid',
+        description: 'No cooldown — instead, one shed is earned at each acidification milestone: 20%, 40%, 60% and 80% of the arena. Shedding leaves your old skin lying where you were and you come out of it smaller and quicker: your tail is 33% shorter and you move 15% faster, for the rest of the match, stacking with every shed. You throw a spiralling barrage of 48 acid lashes in every direction as you do, and leave a pool of acid and six splashes around you.',
       },
     ],
   },
@@ -1486,50 +1486,46 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
   bind: {
     elementId: 'bind',
     name: 'Bind Mastery',
-    enhancedEmoji: '👁️',
-    enhancedColor: 0x8a3fe0,
+    enhancedEmoji: '🗿',
+    enhancedColor: 0xd8202a,
     requirements: [
       {
-        key: 'wardBlocks',
-        label: 'Behind The Hexes',
-        howTo: "Have the bound one block attacks for you — every hit Prophet's Protection (F) eats whole counts one",
+        key: 'soulsBound',
+        label: 'Soul Catcher',
+        howTo: 'Capture lost souls — every soul you bind with Bind (E) counts one',
         target: 25,
       },
       {
-        key: 'cultistsAwakened',
-        label: 'Hoods Off',
-        howTo: 'Awaken cultists — every convert that throws back its hood when the sky opens counts one (needs the R+ Cult and Q+ Awakening upgrades)',
-        target: 30,
+        key: 'revenantSeconds',
+        label: 'Hunted',
+        howTo: 'Survive with a revenant on you — every second at least one is stalking you counts, across any number of matches',
+        target: 120,
       },
       {
-        key: 'shardHits',
-        label: 'Oblivion',
-        howTo: 'Obliterate entities with Shards of Oblivion (E) — every body a shard of the barrage bursts on counts one',
-        target: 100,
+        key: 'godSummons',
+        label: 'False God',
+        howTo: 'Summon the god with the Ritual (Q)',
+        target: 5,
       },
       {
-        key: 'unbindings',
-        label: 'Unbound',
-        howTo: 'Unbind your god with God of Treachery (Q)',
+        key: 'cultistsMade',
+        label: 'Converts',
+        howTo: 'Bring revenants to faith as cultists (needs the F+ Trial by Faith upgrade)',
         target: 5,
       },
     ],
     enhancements: [
       {
-        id: 'vessel-of-the-broken-god',
-        name: 'Vessel Of The Broken God',
-        description: 'Passive: a knot of the patron\'s own cosmic dark hangs off your body with a small copy of its eye set into it — the same veil, the same gold lid, the same drifting purple iris. You are not asking any more; you are carrying a piece of it.\n\nThree things follow from wearing it. Shards of Oblivion (E) no longer comes only out of the sky: your own body throws 3 more of them at your cursor for 10 apiece, from where you are standing rather than from the hole in the ceiling. When God of Treachery (Q) opens the sky, the eye on you reddens and spikes with the one above it and you are Enraged for the full 15 seconds and the 5 seconds of wrath that always follow them — 35% more speed, 40% less damage taken, and every debuff on you scoured off four times a second for as long as it lasts, so the god cannot make the punishment stick.\n\nAnd the limb the god takes for that ultimate is no longer a hole in your tray. Whichever slot you give up comes back as Pathetic Stab: a short lunge at your cursor for 15 melee damage on a 1.8 second cooldown. It is not a replacement for what was taken. It is what a vessel is trusted with.',
+        id: 'permanent-bond',
+        name: 'Permanent Bond',
+        description: 'Passive: whatever you lose of your curse, your enemy gains in its place. Every bit Siphon wears off you lands on them, for good — and while the Ritual lifts your curse completely, they carry the whole of it for exactly as long.',
       },
       {
-        id: 'ritual-sacrifice',
-        name: 'Ritual Sacrifice',
+        id: 'false-idol',
+        name: 'False Idol',
         bindable: true,
-        // The whole point of the enhancement is buying patience *back* mid-fight, and both the
-        // enrage and the Pathetic Stab clause of the passive hang off Q existing. Binding it there
-        // would delete the ultimate, the enrage and the stab in one drop.
-        excludeSlots: ['q'],
-        hudDescription: 'Stab yourself for 25 to take 15 anger off the patron. No cooldown at all',
-        description: 'Put the vessel\'s own dagger into your own chest. 25 damage to you, and 15 anger straight off the patron\'s bar.\n\nThere is no cooldown on it whatsoever — press it as many times in a row as you can afford. This is the only thing in the entire element that lowers the bar faster than its own 2 a second, which makes it the answer to every mistake the kit charges you for: an overheated beam is 20 anger and two stabs, a starved idol is 5 a second and one, and a ward that ate something enormous is however many you are willing to pay for.\n\nTwo refusals, both of them the point. It will not fire on a calm patron — there has to be anger there to spend. And it will not fire at 25 health or less: the god does not accept a sacrifice that finishes the job for it.',
+        hudDescription: 'Plant an idol: stand in it for growing buffs, leave it and it burns you',
+        description: 'Plant an idol at your cursor with a ring of ground around it. Standing in the ring builds its favour over 8 seconds: up to 35% more damage, 20% more speed and 25% less damage taken while you stay in it. Leave it alone for more than 4 seconds and it loses patience — it zaps you with a laser every 1.2 seconds until you come back.\n\nBind (E) the idol while you have a soul on your chain to set the soul in the ring in your place: it keeps the favour growing and the idol calm while you are away, but the idol slowly drains it. 18 second cooldown; a new idol replaces the old one.',
       },
     ],
   },
@@ -1798,53 +1794,6 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
       },
     ],
   },
-  cloth: {
-    elementId: 'cloth',
-    name: 'Cloth Mastery',
-    enhancedEmoji: '🪡',
-    enhancedColor: 0xffd98a,
-    requirements: [
-      {
-        key: 'pinnedDamage',
-        label: 'Bleeding Both Ways',
-        howTo: 'Deal damage while you have Pinned HP in you — every point counts, whatever dealt it, as long as the cushion (F) is holding something at the time',
-        target: 100,
-      },
-      {
-        key: 'tapestryPieces',
-        label: 'A Working Loom',
-        howTo: 'Get three artworks onto one tapestry — a single match that reaches three sewn pieces completes this permanently',
-        target: 3,
-        isBest: true,
-      },
-      {
-        key: 'webDamage',
-        label: 'Held Still',
-        howTo: 'Deal damage to somebody wrapped in one of your cloth webs (needs the E+ corrupt upgrade)',
-        target: 200,
-      },
-      {
-        key: 'safetyRetreats',
-        label: 'Always Roped In',
-        howTo: 'Get hauled back to a Safety Line anchor (R) — the recast and the automatic 75-damage trigger both count',
-        target: 25,
-      },
-    ],
-    enhancements: [
-      {
-        id: 'outfit-change',
-        name: 'Outfit Change',
-        description: 'Passive, bound to **Space**, and it is a wardrobe rather than a buff.\n\nOne press sheds whatever you are wearing in a spray of panels and leaves you standing in the next thing. There are four, and they cycle in order:\n\n**🤵 Black Suit** — every hit that reaches you lands for **3 less**, flat, before anything else. It is the one you start the match in and it is quietly the best against a swarm, because it is subtracted from each hit rather than from the total.\n\n**🧥 Heavy Coat** — **10% less damage** from every source. No conditions, no exceptions, and the only one of the four that is never wrong.\n\n**👘 Thin Silks** — every negative status on you runs **33% shorter**. Stuns, slows, burns, freezes, roots, silences: all of them. Against a control element it is worth more than any amount of armour.\n\n**🧢 Casual Hoodie** — **20% less** from anything that arrives as an area blast or a piercing shot. Against a normal shot it does nothing at all; against an ultimate it is the largest number on this list.\n\nSwapping costs nothing but the moment it takes, so the real skill is reading what is about to be thrown at you and being in the right thing when it lands.',
-      },
-      {
-        id: 'bleed-stop',
-        name: 'Bleed Stop',
-        bindable: true,
-        hudDescription: 'Tie off for 5s: half the scarf, and you can lose at most 75 in total',
-        description: 'The tailor knots the scarf off short and cinches it tight round the middle.\n\nFor **5 seconds** the scarf is **50% shorter** — half the tail, so half the target trailing behind you — and you can take **at most 75 damage** across the whole window. Every point past that is simply not received: the hit lands, the number is spent, and your health does not move.\n\nArmour and outfits are applied first, so the 75 is counted after them — a Heavy Coat stretches it further.\n\nIt is a licence to make the risky play: walk into the ultimate, take the trade, stand in the fire for the pin you need. 20 second cooldown.',
-      },
-    ],
-  },
   ruin: {
     elementId: 'ruin',
     name: 'Ruin Mastery',
@@ -2046,55 +1995,8 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
     ],
   },
   // Sound's mastery was retired with the 2026-10-15 marching-band rework; a new one is owed.
-  // Harvest. The element id is `gluttony` (it replaced the chef of that name); the chef's
-  // Snacking / Chef's Friend mastery was retired with it on 2026-10-15.
-  gluttony: {
-    elementId: 'gluttony',
-    name: 'Harvest Mastery',
-    enhancedEmoji: '🌾',
-    enhancedColor: 0x7a2fb0,
-    requirements: [
-      {
-        key: 'moldCoverBest',
-        label: 'Blight the Land',
-        howTo: 'Infect 75% of the map with your mold in a single game — Sow Corruption (E) everywhere and let it spread',
-        target: 75,
-        isBest: true,
-      },
-      {
-        key: 'heartsHarvested',
-        label: 'Heartless',
-        howTo: 'Cut corrupt hearts out of your mold with the Sickle (Click)',
-        target: 25,
-      },
-      {
-        key: 'enemiesPoisoned',
-        label: 'Poisoner',
-        howTo: 'Splash enemies with poison vials dropped by your crows (needs the R+ Poison Payload corrupt upgrade)',
-        target: 50,
-      },
-      {
-        key: 'mealsCooked',
-        label: 'Delicious',
-        howTo: 'Cook dishes out of Corrupt Flesh on the cooking menu (needs the F+ Corrupt Cooking corrupt upgrade)',
-        target: 15,
-      },
-    ],
-    enhancements: [
-      {
-        id: 'invasive-species',
-        name: 'Invasive Species',
-        description: 'Passive: rot thrives on what would kill anything else. While **any harmful status effect** is on you — a burn, a poison, a slow, a stun, Corruption, a heal block, any debuff at all — you regenerate **2 HP a second**.',
-      },
-      {
-        id: 'corrupt-predation',
-        name: 'Corrupt Predation',
-        bindable: true,
-        hudDescription: 'Spend 50 Corrupt HP: a long-range shotgun of 12 rot pellets, 5 each. Every pellet that hits corrupts and plants a corrupt seed',
-        description: 'Pull **50 Corrupt HP** out of the sack and fire it as a **long-range shotgun**: **12 pellets** of rot in a tight cone about **5°** wide, **5 damage** each, out to 720px.\n\nEvery pellet that hits a foe puts **Corruption** on them, and the volley leaves **corrupt seeds** where it landed — new colonies of mold that grow right under whoever you shot, to feed the rest of the kit.\n\nNo Corrupt HP, no shot: the card holds short of full until you have 50 to spend. 3 second cooldown.',
-      },
-    ],
-  },
+  // Wood (id `gluttony`). The chef's Snacking / Chef's Friend and Harvest's Invasive Species /
+  // Corrupt Predation masteries were retired with their elements; Wood's is owed.
   // Marrow (test element, restored 2026-10-12). Its first mastery — there is no retired one under it.
   marrow: {
     elementId: 'marrow',

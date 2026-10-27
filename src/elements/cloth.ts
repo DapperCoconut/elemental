@@ -2,67 +2,65 @@ import { Element } from './Element';
 import { Ability, CastContext } from './Ability';
 
 /**
- * Cloth — a tailor who fights with pins and wears their health on their back.
+ * Cloth — a tailor whose one long arm is their scarf.
  *
- * Two things make Cloth unlike anything else on the roster. The first is that it has no health
- * bar: it has a **scarf**, a long trail of wool dragging behind wherever the player has just
- * been, and that scarf is the hitbox. A shot that sails a clear foot wide of the body still
- * catches the tail and still hurts. The compensation is that the scarf *shrinks* as it is
- * chewed through, so a Cloth player on their last legs is a very small target indeed — the
- * element gets harder to kill precisely because it is nearly dead.
+ * The tailor does not walk. The scarf is wound round their crown and paid out to a stitched cloth
+ * hand, and every inch of ground they cover is covered by gripping the floor or a wall with that
+ * hand and dragging the mouse, so the scarf hauls the body the other way. The same hand punches,
+ * catches shots out of the air, and carries everything else the kit puts on the field: needles
+ * that drop out of the sky, and anybody the bola has tied up.
  *
- * The second is the **tapestry**. Q offers three artworks out of a deck of thirty-seven and the
- * player chooses one, then places it as a tetromino on a 5×5 loom. Space is finite, the pieces
- * are all different shapes, and a few of them hand over an entirely new button — a right-click
- * ability that the element does not otherwise have. No two Cloth runs are the same kit.
+ * The pincushion is the one thing it does not carry. Punch it and it fires a ring of pins; walk
+ * into it and the pins go into you instead — and the next three hits you take each throw pins
+ * back out at whoever landed them. Burning Man sets the whole kit on fire for six seconds.
  *
  * Every `cast` below is a one-line delegate; the whole simulation lives in ClothKit.
  */
 
-const pin: Ability = {
-  id: 'cloth-pin',
-  name: 'Pin',
-  description: 'Jab a pin at whatever is in front of you. It reaches barely past your own arms and it deals almost nothing — but it fires about seven times a second, so it is the fastest attack in the game and it is always on. Every tenth pin that lands is the one that matters.',
+const scarfHand: Ability = {
+  id: 'cloth-scarf-hand',
+  name: 'Scarf Hand',
+  description: 'Hold to grip with the hand on the end of your scarf. On the floor or a wall it takes your weight — drag the mouse and the scarf hauls you the other way, which is the only way you move. On a needle, a bound enemy or an enemy shot it picks the thing up to be thrown. On an enemy it is a 20-damage punch, on your pincushion it sets the cushion off, and simply whipping the hand over someone smacks them for 14.',
   displayKey: 'Click',
-  cooldown: 145,
-  cast(ctx: CastContext) { ctx.clothPin(ctx.targetX, ctx.targetY); },
+  cooldown: 420,
+  cast(ctx: CastContext) { ctx.clothGrab(ctx.targetX, ctx.targetY); },
 };
 
-const longpin: Ability = {
-  id: 'cloth-longpin',
-  name: 'Longpin',
-  description: 'Throw a pin the length of your arm. It buries itself in the first thing it touches for 15 — a body or a wall, either will hold it. Press E again and the thread pulls you to it: anybody you plough through on the way takes 10, and arriving on a pinned enemy is 10 more and throws them a long way.',
+const needleNexus: Ability = {
+  id: 'cloth-needle-nexus',
+  name: 'Needle Nexus',
+  description: 'Three giant needles drop out of the sky in front of you and stick in the floor — anybody standing where one lands is stabbed for 8. The scarf hand pulls them out and throws them: a hit is 26. A needle that hits a wall sticks in it, and can be pulled out and thrown again.',
   displayKey: 'E',
   cooldown: 7000,
-  cast(ctx: CastContext) { ctx.clothLongpin(ctx.targetX, ctx.targetY); },
+  cast(ctx: CastContext) { ctx.clothNeedles(ctx.targetX, ctx.targetY); },
 };
 
-const safetyLine: Ability = {
-  id: 'cloth-safety-line',
-  name: 'Safety Line',
-  description: 'Drive an anchor into the floor where you stand. Press R again — or take 75 damage with it out — and the line snaps taut and hauls you back to it, out of whatever you had walked into. It is a bail-out you have to remember to set before you need it.',
+const constrainingCloth: Ability = {
+  id: 'cloth-constraining-cloth',
+  name: 'Constraining Cloth',
+  description: 'Throw a bola straight ahead. Whoever it catches takes 10 and is bound in cloth for 5 seconds — badly slowed, and now something your scarf hand can pick up. Thrown into a wall, a bound body takes 30 and is pinned there for 2.5 seconds.',
   displayKey: 'R',
   cooldown: 9000,
-  cast(ctx: CastContext) { ctx.clothSafetyLine(); },
+  cast(ctx: CastContext) { ctx.clothBola(ctx.targetX, ctx.targetY); },
 };
 
-const pinCushion: Ability = {
-  id: 'cloth-pin-cushion',
-  name: 'Pin Cushion',
-  description: 'Stab yourself. 50 of your health becomes Pinned: it is spent before the rest of you, it takes 25% more from everything, and a quarter of everything it eats is thrown straight back at whoever landed the hit. The cooldown is almost nothing, so the only question is how much of yourself you want made of pins.',
+const pincushion: Ability = {
+  id: 'cloth-pincushion',
+  name: 'Pincushion',
+  description: 'Set a pincushion down with six pins in it. Punch it with the scarf hand and it fires 14 pins in every direction for 7 each, losing one pin. Walk into it yourself and three pins go into you instead, taking one from the cushion: while you are pinned, each of the next three hits you take throws a ring of pins out of you and stabs whoever landed it for 12.',
   displayKey: 'F',
-  cooldown: 3200,
-  cast(ctx: CastContext) { ctx.clothPinCushion(); },
+  cooldown: 10000,
+  cast(ctx: CastContext) { ctx.clothCushion(ctx.targetX, ctx.targetY); },
 };
 
-const tapestry: Ability = {
-  id: 'cloth-tapestry',
-  name: 'Tapestry',
-  description: 'Three artworks are offered. Take one and sew it into your loom — a 5×5 grid that each artwork occupies as a differently-shaped tetromino, so what you can still fit later depends on what you have already sewn. Most are flat power. A few hand you a right-click ability you did not have, and you may only ever carry one of those.',
+const burningMan: Ability = {
+  id: 'cloth-burning-man',
+  name: 'Burning Man',
+  description: 'Your clothes catch fire for 6 seconds. The scarf burns, shedding scraps of burning cloth that hit for 6 and set people alight. Needles go red-hot for 50% more damage and ignite what they hit, anybody bound in your cloth burns, and your pincushion catches — it spits bursts of pins on its own until it is empty, and then it is gone.',
   displayKey: 'Q',
   isUltimate: true,
-  cooldown: 21000,
-  cast(ctx: CastContext) { ctx.clothTapestry(); },
+  cooldown: 22000,
+  cast(ctx: CastContext) { ctx.clothBurningMan(); },
 };
 
 export const clothElement: Element = {
@@ -70,5 +68,5 @@ export const clothElement: Element = {
   name: 'Cloth',
   color: 0xd1435c,
   emoji: '🧣',
-  abilities: [pin, longpin, safetyLine, pinCushion, tapestry],
+  abilities: [scarfHand, needleNexus, constrainingCloth, pincushion, burningMan],
 };

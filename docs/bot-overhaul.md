@@ -36,7 +36,7 @@ fate, creation, growth, rubber, acid, hunt, time; then the remainder). For each 
 1. **Kit owner-awareness** — every upgrade branch reachable from an NPC path goes
    through the `up(owner, slot)` pattern (`hasUpgrade` vs `hasNpcUpgrade`). Kits still
    player-only as of Batch 0: Fire, Water, Life, Air, Earth, Oil, Ice, Growth, Crystal,
-   Soul, Hunt, Time, Gravity, Creation, Electricity, Slime(acid), Sound, Light, Magnet,
+   Soul, Hunt, Time, Gravity, Creation, Electricity, Sound, Light, Magnet,
    Metal, Plasma, Gunpowder, Rubber, Magic, Technology, Echo, Fate.
 2. **NPC mastery** — npc mirror state for the passive; a kit-side cast path for the
    bound ability driven by `arena.npcMasteryBindFor(slot)` (enhancement ids are NOT in
@@ -227,6 +227,29 @@ fate, creation, growth, rubber, acid, hunt, time; then the remainder). For each 
   **Steps 1, 3 and 5 are untouched** — the kit was already fully owner-aware via `up(owner, slot)`,
   but the base rotation has not been rewritten and the movement profile has not been retuned.
 
+- **Bind (2026-10-26), rewritten with the soul-binder rework.** BindKit is owner-aware via
+  `up(owner, slot)`. Kit-published fields, read first: `npcBindSeek` (walk to the nearest wild soul
+  while Blackened Eyes is open), `npcBindChainAim` (E target in priority order: wild soul in reach →
+  E+ revenant lined up to run back *through* the foe → cultist low on faith with a spare soul → the
+  foe), `npcBindSiphonAim` (F+ revenant first, to make a cultist; else a visible wild soul; a bound
+  soul only with 5+ banked), `npcBindOffering` (Q at 3+ — the curse lifts — or 1+ under 30% hp).
+  **Kit-side bot hands:** right-click detonation (`updateBot`: a flying dagger within 70px of the
+  foe, or 2+ stuck daggers within 240px), the chain's anchor recast when hurt, letting go of a
+  siphon before a soul turns into a revenant (unless F+ can use one), and False Idol (bound over F
+  by `NPC_MASTERY_BINDS`; planted at its feet, fed a spare soul). `npcBindIdolSlot` keeps the
+  rotation off that key. Movement profile untouched.
+
+- **Venom / `slime` (2026-10-25), all five steps — rewritten with the Venom rework.** SlimeKit is
+  owner-aware throughout (`up(owner, slot)`, per-side grid/tail/burrow/rain/shed). Synergies, each a
+  kit-published `NpcAiState` field read first: `npcAcidBiteReady` (target inside the coverage-scaled
+  bite reach — the purge strips shields before the fangs land), `npcAcidApocalypseReady` (target
+  standing on the bot's acid), `npcAcidBurrowReady` + `acidSeekPoint` (R+ ambush: walk onto own acid,
+  go under, and the **kit surfaces the bot** within 80px of the target for the ×1.5 toxin blast),
+  `npcAcidSprayWorth` (spray the target's footing when it is off the bot's acid). `npcAcidBurrowed`
+  silences the rotation while under. Shed Skin (bound over R by `NPC_MASTERY_BINDS`) is **cast
+  kit-side** at a banked milestone within 220px; `npcAcidShedSlot` keeps the rotation off that key.
+  Profile `skirmisher [100, 240]`. The bot dodge is ×3 like the player's (Serpentine).
+
 - **Slime / `gum` (2026-08-12), step 2 + step 4 only.** Slime Mastery shipped, so the kit now has
   its npc half. `npcMasteryActive` already drove `setMastered`; **Slime Split runs for the bot as
   well as the player** — a Nightmare Slime that is killed comes apart into three 50 HP slimelings
@@ -283,23 +306,18 @@ fate, creation, growth, rubber, acid, hunt, time; then the remainder). For each 
   A player in the bot's wormhole sets `targetInvisible`; a bot in the player's sets `isLocked`
   (`mythKit.isTrapped`).
 
-- **Cloth (2026-08-16), built to the contract rather than retrofitted.** Cloth replaced Marrow
-  outright, so `doClothAbilities` was written against the synergy contract from the first line
-  instead of being rewritten into it. The element is four two-press combos and nothing else, and
-  every one of them is a kit-published `NpcAiState` field the AI never re-derives:
-  `npcClothPinPlanted` (a long pin is in a body or a wall, so E is the reel and not a throw),
-  `npcClothAnchored` + `npcClothAnchorPressure` (an anchor is down and here is how close the
-  75-damage auto-trigger is, so the bot leaves on its own terms rather than being dragged),
-  `npcClothCombo` (0–1 toward the Click+ grapple spin — near 1 nothing is worth pressing except
-  another pin) and `npcClothWebbed` (E+ has somebody held, which is the free-damage window).
-  `npcClothPinned` gates F, because the thorns only pay while something is close enough to catch
-  them. The right-click artworks are **not** in the rotation at all: the bot has no mouse, so
-  `ClothKit.npcRightClick` drives whichever one it drafted off a single condition each, and the
-  draft itself is kit-side (`npcDraft` takes the biggest card that fits, since a bot cannot plan a
-  loom). `NPC_MASTERY_BINDS.cloth` gives up **R** — the safety-line combo is the one the rotation
-  runs best without help. Wretched Scarf was deleted 2026-10-15; the bind is now **Bleed Stop**,
-  which `ClothKit` ties off for the bot itself (kit-driven, like the right-click artworks). **Steps 1 and 5 are untouched**: the movement profile has not been retuned, and a
-  short-reach element that wants to live inside 62px probably needs its own.
+- **Cloth rework (2026-10-26): the scarf hand.** The tailor/tapestry kit is gone; Cloth is now
+  Slime's hand-drag locomotion with a scarf for an arm. The bot cannot drag, so (like Slime) its
+  speed is pulsed by `ClothKit.haulMult`, and its **Click is the hand's decision made for it**:
+  `ClothKit.botClick` flings a bound body within reach toward the nearest wall, punches its own
+  cushion when somebody is within 190px of it, or throws a needle within reach at the target, in
+  that order, before falling back to the punch. Published fields: `npcClothTargetWrapped` (R →
+  Click), `npcClothCushionPunch` (F → Click), `npcClothNeedles` (E → Click), `npcClothHasCushion`
+  (don't replace a live cushion) and `npcClothBurning` (Q multiplies everything, so E/R/F are
+  pressed through skip-chance while it burns). R+'s jacket is steered **kit-side**: the bot drags
+  its victim onto its own cushion, or into its reach when it has none. The self-pin happens
+  naturally — F plants the cushion 46px toward the target, so the chase walks the bot over it.
+  No mastery exists for the reworked element (Bleed Stop and Outfit Change were retired with it).
 
 - **Illusion F rework (2026-10-15), Tesseract → Guise, Mind-Boggle → Re-Trick.** Being fooled
   by the clone is the ability working, so ArenaScene hands `doAI` **`IllusionKit.npcDecoyTarget()`**
@@ -481,30 +499,93 @@ fate, creation, growth, rubber, acid, hunt, time; then the remainder). For each 
   stack) → Fermata inside 300px, read first. Detonations (both kinds, `npcWantsDetonate`) hold
   ≥3s on a Dissonant victim so the bleed works before the double pop.
 
-- **Harvest (id `gluttony`, 2026-10-15 rework replacing the chef), steps 3–5.**
+- **Wood (id `gluttony`, 2026-10-25 birch-ent rework replacing Harvest), steps 3–5.**
   `doGluttonyAbilities` was rewritten around GluttonyKit's fields, all checked before the
-  rotation: `npcHarvestCanExecute` (the kit says Reaping Hour's 30, through the target's own
-  vulnerability, lands under the execute line) → Q inside 175px; `npcHarvestHeartAim` (one of
-  its own corrupt hearts within sickle reach — aiming the click at it puts the loop's far side
-  through the heart: 75 Corrupt HP); `npcHarvestBiteHeavy` (its Corrupt HP ≥ its health, so
-  Consume adds 40% corruption) and `npcHarvestTargetBuffed` (shields/weak HP/dodge/buffs worth
-  stealing) → F inside 100px; `npcHarvestTargetCorruption` ≥ 40 or `npcHarvestTargetOnMold` →
-  Feeding Frenzy. Rotation: re-sow when `npcHarvestMatureMold` < 30, bite up close, scythe a
-  ≥55%-corrupted target, sickle under 460px. `harvestSeekPoint` walks it into the middle of
-  its own mold while the target is 120–420px away and off the rot, so the chase happens on
-  the mold. The kit picks the bot's sickle curl at random per throw (no right mouse button).
-  Movement profile: brawler 90–240px, retreat at 20%.
-  **Upgrades (2026-10-16):** Click+ Recursive and E+ Vile Rot are passive (the kit re-aims the
-  second loop at the target and rolls the grabs/worms itself). R+ Poison Payload and F+ Corrupt
-  Cooking are kit-played, Conquest-style, in `GluttonyKit.updateNpcUpgradePlay`: the bot lets go
-  of the vials the frame a vial-carrying crow is over its target, and cooks the Vile Feast the
-  moment it has 3 flesh, Meat Broth at 2 below 50% health, Jerky below 35%. Q+ Endless Harvest
-  needs no AI: `npcHarvestCanExecute` already lines up the killing swing.
-  **Mastery (2026-10-17):** Nightmare binds Corrupt Predation over R (Feeding Frenzy). Invasive
-  Species is passive. The shotgun is kit-fired in `GluttonyKit.updateNpcMastery` the moment the
-  bot has 50 Corrupt HP, the cooldown is up and its target is within 520px — Corrupt HP comes
-  from the hearts `npcHarvestHeartAim` already cuts, so that synergy feeds it. The rotation reads
-  `npcHarvestPredationSlot` and leaves the bound key alone.
+  rotation, in pay order: `npcWoodCanExecute` (after the 35, the bot's health + Sap HP is ≥1.6×
+  the target's — the kit checks reach too) → Q; `npcWoodExecuteNeedsSap` (the line is ≤60 sap
+  away and there is room for it) → Oakbrew first; `npcWoodRecarve` (one of its carverangs is in
+  the last stretch of its loop) → Click, which re-carves it; `npcWoodPruneAim` (Q+, a sprout of
+  its own with ≥40 health in scythe reach) → Q at the sprout above 35% health;
+  `npcWoodDigestValue` ≥ 40 (damage in the last 5s) → Digest; `npcWoodTreeAim` (the kit picks a
+  tree: the one furthest from the target below 45% health, the one nearest the target when it is
+  >380px off) → Commensalism. Rotation: brew inside 260px, scythe inside 170px (Taints), carverang
+  under 460px. `woodSeekPoint` walks it onto its own sprouts while its Digest aura runs (R+ feeds
+  them, Mutualism pays it back) and to its own apples (F+). The kit picks the curl at random per
+  throw. Movement profile: brawler 90–240px, retreat at 20%.
+  **Upgrades:** Click+ Amber Edge, R+ Mutualism, F+ Friend of the Forest and Q+ Prune need no
+  extra AI beyond the fields above. E+ Brewmaster is kit-played: the bot's Oakbrew puts the cup on
+  and `GluttonyKit.updateCooking` drinks it after a random 1.2–3s boil, or spills it on a hit;
+  `npcWoodCooking` keeps the rotation off E meanwhile. No mastery yet.
+- **Pressure (new test element, 2026-10-25), steps 3–5.** Every key is a hold, so the kit holds
+  them for the bot: `castAbility` *starts* the charge (`PressureKit.botBegins`), the kit plans the
+  pressure (`botPlan`) and lets go in `updateBotHolds` once the plan is reached and the target is
+  in reach (or after a 2.5s grace). `npcPressureCharging` keeps the rotation off every key
+  meanwhile. Release is banked in the background whenever its hands are free. Synergies, checked
+  first: `npcPressureTargetPinned` (target grounded or stunned for >0.9s — slam 100, punch 100,
+  vent blast, Shell-Shock) → punch, which the kit plans to as much pressure as the pin leaves
+  time for, or (E+) a quick 35 on a grounded target to Shell-Shock it; `npcPressureVentShot`
+  (≥50 banked, target in the jet, and the bank not worth more kept — a full bank's +20% charge
+  rate, F+ at 75+ — unless it finishes them, peels them off, or they are pinned) → Release;
+  `npcPressureExceedReady` (inside 320px, above 35% health) → Exceed, after which `botPlan`
+  asks for full charges. `pressureCompressPoint` (R+) walks it into its own orb above 50% health.
+  Rotation: slam inside 170px, orb 130–460px, punch inside 300px. Movement profile: brawler
+  70–200px, retreat at 18%. No mastery yet.
+- **Ink (new test element, 2026-10-25), steps 3–5.** Skedaddle and the anvil are holds the kit
+  drives: the bot's R `castAbility` starts the run and `InkKit.updateBotCharge` lets go at the
+  planned length (`botSkedPlan`: 3–4.2s on a helpless target, 1.2–2.1s otherwise); its F starts the
+  haul and `updateBotAnvil` drops it — at once on a stunned/slipping/flattened target in reach,
+  on anyone in reach after 1.2s overhead, and always by 2.5s, so a bot never crushes itself.
+  `npcInkBusy` keeps the rotation off every key meanwhile. Finger Guns have no cooldown, so
+  `npcInkGunReady` paces the bot's "clicks" at 170ms. Synergies, checked first:
+  `npcInkTargetHelpless` (target slipping >2.5s or flattened >1.5s — the peel's and the anvil's
+  own debuffs) → anvil, else a long Skedaddle; `npcInkPeelLane` (the bot is running from the
+  target, so a peel dropped behind its stride lands in their path) → peel; `npcInkFouxReady`
+  (inside 380px, no Foux World up) → Q. `inkSeekPoint` walks it (F+) to its hungry anvil with five
+  peels out, and during its own Foux World out through the wall furthest from the target so
+  following costs foam damage. A flattened bot's casts are remapped through `Fighter.inkSwap` in
+  `NpcOpponent.castAbility`. Rotation: peel inside 150px, anvil 140–330px, bounce inside 420px,
+  guns inside 520px. Movement profile: skirmisher 150–320px, retreat at 25%. No mastery yet.
+- **Astra (new test element, 2026-10-25), steps 3–5.** Everything is direction-locked until star
+  mode, so the kit owns the geometry. `astraSeekPoint` walks the bot onto the target's row, 14px
+  below it (the click only flies level, and the smite picks the highest body) — 240px off, 150px
+  during the trial; absent in star mode. Synergies, checked first: `npcAstraFlareShot` (target
+  smitten or stunned so it cannot leave an arm, or already on a plus/X arm; with E+ on the ring)
+  → E; `npcAstraSmiteSafe` (the target is the highest body, not the bot) → R, and (R+) the kit
+  fires the second bolt itself in `AstraKit.updateBot` once `npcAstraRecastSafe`;
+  `npcAstraWarpShot` (star mode with ≥2 of the target's abilities ready to steal; F+ any time;
+  otherwise a swap with a target below the bot, which puts the bot underneath for the smite) → F;
+  `npcAstraTrialReady` (inside 380px, above 45% health, Q not lost) → Q. A Q+ bot holds to 1–2
+  stars (`botStars`) and the kit lets go; the slap is kit-fired when it finishes the target or
+  with under 3s of star mode left. `npcAstraBusy` (holding, or the five-star finale) keeps the
+  rotation off every key. Rotation: Starstruck whenever `npcAstraLanedUp`. Movement profile:
+  zoner 200–340px, retreat at 25%. No mastery yet.
+- **Memory (new test element, 2026-10-26), steps 3–5.** The kit owns the geometry: Snatch's
+  release aims at the target when the 2s spin ends, and Rebirth's pivot is planted 90px off the
+  target with the kit striking the moment the sweeping line lies across them. Synergies, checked
+  first: `npcMemoryTraumaReady` (the Snatch beam is under 0.9s from going, the static copy still
+  has ≥2 casts to replay, the recording is ending with ≥2 casts in it, or the target's Guilt is
+  ≥40) → Q — every hit in the window is a wound relived every second; `npcMemorySnatchShot`
+  (target inside 500px sitting on ≥2 ready non-ultimate abilities, or stunned) → E;
+  `npcMemoryRepressReady` (target inside 420px) → F; `npcMemoryRebirthWorth` (passives not
+  already sealed, inside 600px) → R. `npcMemoryInTrauma` lifts the skip roll off E and R.
+  `npcMemoryBusy` (spinning or sweeping) keeps everything but Q off the keys. Rotation: Forget
+  inside 600px to keep three shards latched. Bots carrying shards are handicapped in turn: one
+  → 40% of their casts at a Memory player go 16–32° wide (`ArenaScene.scatterAim`); three →
+  `memoryBlindUntil` re-rolled every 0.8s at 45%, refusing all but the click in
+  `NpcOpponent.castAbility`. Movement profile: zoner 220–380px, retreat at 30%. No mastery.
+- **String (new test element, 2026-10-26), steps 3–5.** The kit owns the geometry: where the
+  strands lie, where the puppet is walked (`botSteerGoal`: onto the nearest of the bot's spiders,
+  else 40px past the nearest of its strings so the push snaps it over them, else in front of the
+  bot) and the hex strand's recast, which is kit-fired (`StringKit.botHexSnap`) once the target is
+  tied to it or within ~28px+body of it and the strand is ≥0.9s old. Synergies, checked first:
+  `npcStringTombReady` (no tomb up, and Spider Dance ready or the target under 40%) → Q, so E
+  follows and the spiders walk the four guy-lines into the cocoon; `npcStringSpiderReady` (a tomb
+  up, a string tied to the target, or ≥2 strands) → E; `npcStringPuppetShot` (target inside 476px,
+  not already a puppet or entombed, and spiders or ≥2 strands to walk them into) → F;
+  `npcStringHexShot` (no hex out, target inside 640px) → R. Rotation: Tension Snag at the target
+  inside 700px. A bot *inside* a Linen Tomb holds still (`stringTombedUntil` zeroes its velocity
+  ahead of the movement switch) and spends itself cutting the silk. Movement profile: zoner
+  200–360px, retreat at 30%. No mastery.
 - **Dream (2026-10-17 sandman rework replacing the pendulum), steps 3–5.** One info object,
   `npcDream` (`DreamKit.npcAiInfo`, side-effect free), plus `dreamSeekPoint`. In the waking
   world: a sleeping target is never shot (Sandmen damage wakes it) — the bot tops the meter up

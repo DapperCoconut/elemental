@@ -120,6 +120,21 @@ interface WeatherCast {
   tx: number;
   ty: number;
 }
+// ── Element perks ─────────────────────────────────────────────────────────────
+
+/** Quick: every cooldown the dancer has, the kit's own clocks (spin charges, the cycle) included. */
+const QUICK_COOLDOWN_MULT = 0.8;
+/** Gust: the press id that relays a recall, and how close the bot lets the glaive get first. */
+const GUST_RECALL_ID = 'air-gust-recall';
+const NPC_GUST_RECALL_RANGE = 90;
+/** Vacuum: the aura's reach, its draw (added to velocity, never set), and the hits it softens. */
+const VACUUM_RADIUS = 170;
+const VACUUM_PULL_PER_S = 55;
+const VACUUM_INCOMING_MULT = 0.85;
+/** Blowback: the share of a dodged hit thrown back, and the steeper price of each dodge. */
+const BLOWBACK_SHARE = 0.2;
+const BLOWBACK_DODGE_COST = 0.15;
+
 /** Wind dodge at which the Sharpshooter achievement (and the Sand skin) unlocks. */
 const PERFECT_DODGE = 1.0;
 
@@ -215,6 +230,8 @@ interface Glaive {
   lastTickAt: number;
   /** Targets already caught on this leg; cleared when the glaive turns for home. */
   hit: Set<Fighter>;
+  /** Gust perk: the thrower can still teleport to this glaive with a second R. */
+  gust: boolean;
 }
 
 /** An enemy thrown out of Wind Breaker, flying until a wall stops it. */
@@ -356,6 +373,12 @@ export class AirKit {
 
   /** Fighters we installed a damage absorber on, so `reset` can take them back off. */
   private absorbed = new Set<Fighter>();
+  /** Fighters whose perk multipliers this kit has written, so they can be handed back. */
+  private perkMultsWritten = new Set<Fighter>();
+  /** Vacuum: who each side's aura is holding right now, for the entry callout and the resist. */
+  private vacuumed: Record<Owner, Set<Fighter>> = { player: new Set(), npc: new Set() };
+  /** Blowback: true while a reflected hit is landing, so two Blowback dancers cannot rally forever. */
+  private blowingBack = false;
 
   // last known aim, captured in handleInput so update() can steer the rig
   private lastMouseX = 0;
@@ -389,6 +412,10 @@ export class AirKit {
     // answering for a body that no longer exists.
     for (const f of this.absorbed) f.damageAbsorber = null;
     this.absorbed.clear();
+    for (const f of this.perkMultsWritten) { f.perkCooldownMult = 1; f.perkIncomingMult = 1; }
+    this.perkMultsWritten.clear();
+    this.vacuumed = { player: new Set(), npc: new Set() };
+    this.blowingBack = false;
 
     this.sides = { player: makeSide('player'), npc: makeSide('npc') };
     this.shears = [];
@@ -474,23 +501,26 @@ export class AirKit {
    * `damageAbsorber` so it covers melee, area and tick damage too — a dodge that only worked on
    * projectiles would miss most of what actually kills you.
    */
-  private absorb(owner: Owner): boolean {
+  private absorb(owner: Owner, amount: number): boolean {
     const s = this.sides[owner];
     const f = this.fighter(owner);
     if (!this.alive(f)) return false;
     // Self-inflicted damage is not something you can dance out of the way of.
     if (f.damageWasSelfInflicted) return false;
+    const blowback = this.arena.hasPerk(owner, 'air-blowback');
 
     if (this.now < s.invulnUntil) {
       s.lastRawTaken = f.rawDamageTaken;
       this.arena.spawnDamageNumber(f.x, f.y - 34, -1); // DODGED
       this.fx(owner).motes(f.x, f.y, 6, { speed: 160, size: 2.4, life: 320, swirl: 2, depth: 7 });
+      if (blowback) this.blowback(owner, amount);
       return true;
     }
-    if (s.dodge <= 0) return false;
+    // Memory's Rebirth: no wind dodge while the passive is sealed.
+    if (s.dodge <= 0 || f.passivesSealed()) return false;
     if (Math.random() >= s.dodge) return false;
 
-    s.dodge = Math.max(0, s.dodge - DODGE_PER_DODGE);
+    s.dodge = Math.max(0, s.dodge - (blowback ? BLOWBACK_DODGE_COST : DODGE_PER_DODGE));
     // `rawDamageTaken` was already incremented upstream of the absorber, so the momentum poll
     // would read a dodge as a hit. Move its watermark past this one: nothing touched her.
     s.lastRawTaken = f.rawDamageTaken;
@@ -498,7 +528,39 @@ export class AirKit {
     this.fx(owner).featherPuff(f.x, f.y, 5);
     this.fx(owner).bloom(f.x, f.y, 44, 7, 6);
     if (owner === 'player') this.arena.recordMasteryStat('windDodges', 1);
+    if (blowback) this.blowback(owner, amount);
     return true;
+  }
+
+  /**
+   * Blowback perk: the air a dodge displaced keeps going, back the way the hit came. Nothing on
+   * a hit says who threw it, so it goes to the nearest enemy — in a duel, that is the thrower.
+   */
+  private blowback(owner: Owner, amount: number): void {
+    if (this.blowingBack) return;
+    const dmg = Math.round(amount * BLOWBACK_SHARE);
+    if (dmg < 1) return;
+    const f = this.fighter(owner);
+    let near: Fighter | null = null;
+    let best = Infinity;
+    for (const t of this.targetsOf(owner)) {
+      const d = Phaser.Math.Distance.Between(f.x, f.y, t.x, t.y);
+      if (d < best) { best = d; near = t; }
+    }
+    if (!near) return;
+    this.blowingBack = true;
+    try {
+      near.takeDamage(dmg);
+    } finally {
+      this.blowingBack = false;
+    }
+    const ang = Math.atan2(near.y - f.y, near.x - f.x);
+    const fx = this.fx(owner);
+    fx.muzzleGust(f.x + Math.cos(ang) * 18, f.y + Math.sin(ang) * 18, ang, 0.8);
+    fx.slipstream(f.x, f.y, near.x, near.y);
+    fx.gustBurst(near.x, near.y, 40, { duration: 320, dust: false });
+    this.arena.spawnHitFlash(near.x, near.y, this.col(owner)(AIR.white));
+    this.arena.showFloatingText(near.x, near.y - 44, '💨 BLOWBACK', '#e4f2ff');
   }
 
   private installAbsorbers(): void {
@@ -510,7 +572,7 @@ export class AirKit {
         // overwriting a foreign absorber would quietly break whoever else set one.
         if (this.absorbed.has(f)) return;
         if (f.damageAbsorber !== null) return;
-        f.damageAbsorber = () => this.absorb(owner);
+        f.damageAbsorber = (amount) => this.absorb(owner, amount);
         this.absorbed.add(f);
       } else if (this.absorbed.has(f)) {
         f.damageAbsorber = null;
@@ -557,7 +619,14 @@ export class AirKit {
       this.trySpin(mouseX, mouseY);
     }
     if (this.slotFree('r') && Phaser.Input.Keyboard.JustDown(this.arena.rKey)) {
-      p.castAbility('gale-glaive', ctx);
+      // Gust: while the thrown glaive is still out, R is the recall — the cast would only be
+      // refused by its own cooldown anyway.
+      if (this.gustGlaive('player')) {
+        // Stamped for the sound and the online relay; the peer replays it through `doGustRecall`.
+        if (this.doGustRecall('player')) p.triggerCooldown(GUST_RECALL_ID);
+      } else {
+        p.castAbility('gale-glaive', ctx);
+      }
     }
     if (this.slotFree('f') && Phaser.Input.Keyboard.JustDown(this.arena.fKey)) {
       p.castAbility('sky-grapple', ctx);
@@ -609,6 +678,8 @@ export class AirKit {
     this.updateHawks(time, delta);
     this.tickWeather(time);
     this.updateNpcWeather(time);
+    this.updateVacuum();
+    this.updatePerkMults();
 
     // Mirror both pools onto the fighters so the status tray (and anything else generic) can
     // read them without knowing air exists.
@@ -680,6 +751,8 @@ export class AirKit {
     const s = this.sides.player;
     if (!this.arena.masteryActive) { s.momentum = 0; return; }
     if (!this.alive(this.arena.player)) return;
+    // Memory's Rebirth: no momentum builds while the passive is sealed.
+    if (this.arena.player.passivesSealed()) return;
     s.momentum = Math.min(MOMENTUM_MAX,
       s.momentum + meterGain(this.arena.player, MOMENTUM_PER_SEC * (delta / 1000)));
   }
@@ -690,7 +763,7 @@ export class AirKit {
       const s = this.sides[owner];
       const max = this.maxSpinCharges(owner);
       if (s.spinCharges >= max) { s.spinCharges = max; continue; }
-      s.spinCharges = Math.min(max, s.spinCharges + delta / SPIN_COOLDOWN_MS);
+      s.spinCharges = Math.min(max, s.spinCharges + delta / (SPIN_COOLDOWN_MS * this.quickMult(owner)));
     }
   }
 
@@ -919,6 +992,13 @@ export class AirKit {
     if (!this.alive(f)) return;
     this.noteCast(owner, 'gale-glaive', tx, ty);
     const ang = this.aimOf(owner, tx, ty);
+    const gust = this.arena.hasPerk(owner, 'air-gust');
+
+    // Gust: the throw is a turn — a free Spin Dance goes off as the fans leave her hands.
+    if (gust) {
+      this.arena.showFloatingText(f.x, f.y - 46, '🌬️ GUST!', '#bbe8ff');
+      this.resolveSpin(owner, tx, ty, false);
+    }
 
     this.avatar(owner)?.play('punch', ang);
     // Her hands are empty until it comes home.
@@ -934,6 +1014,7 @@ export class AirKit {
       spin: 0,
       lastTickAt: 0,
       hit: new Set(),
+      gust,
     });
   }
 
@@ -988,6 +1069,7 @@ export class AirKit {
               spin: g.spin,
               lastTickAt: time,
               hit: new Set(),
+              gust: false,
             });
             this.arena.showFloatingText(g.x, g.y - 32, '🌳 AFTERIMAGE', '#b4854a');
           }
@@ -1027,6 +1109,51 @@ export class AirKit {
         if (g.owner === 'player') this.arena.recordMasteryStat('glaiveReturns', 1);
       }
     }
+  }
+
+  /** Gust perk: the thrown glaive this side can still teleport to, or null. */
+  private gustGlaive(owner: Owner): Glaive | null {
+    return this.glaives.find((g) => g.owner === owner && g.gust && g.phase !== 'phantom') ?? null;
+  }
+
+  /**
+   * Gust's second R: she is where the glaive is, the fans are back in her hands, and the
+   * arrival is another Spin Dance. Player press, bot pick and online replay all land here.
+   */
+  doGustRecall(owner: Owner): boolean {
+    const f = this.fighter(owner);
+    if (!this.alive(f)) return false;
+    const g = this.gustGlaive(owner);
+    if (!g) return false;
+    const b = this.arena.worldBounds;
+    const x = Phaser.Math.Clamp(g.x, b.x + 20, b.right - 20);
+    const y = Phaser.Math.Clamp(g.y, b.y + 20, b.bottom - 20);
+    const fx = this.fx(owner);
+    fx.featherPuff(f.x, f.y, 6);
+    fx.slipstream(f.x, f.y, x, y);
+    this.body(f).reset(x, y);
+    this.glaives.splice(this.glaives.indexOf(g), 1);
+    this.setFanSpread(owner, 1);
+    fx.bloom(x, y, 46, 8, 6);
+    fx.ring(x, y, 10, 70, AIR.mist, 320, 3, 6);
+    this.arena.showFloatingText(x, y - 46, '🌬️ GUST RECALL!', '#bbe8ff');
+    const ang = this.aimOf(owner);
+    this.resolveSpin(owner, x + Math.cos(ang) * 100, y + Math.sin(ang) * 100, false);
+    return true;
+  }
+
+  /**
+   * Bot synergy for Gust: recall the moment the glaive is on top of the target, so the arrival
+   * spin connects. Read by the AI (side-effect free); the AI answers with GUST_RECALL_ID.
+   */
+  npcGustRecallReady(): boolean {
+    if (!this.arena.npcAutonomous || !this.arena.isNpcAir) return false;
+    const g = this.gustGlaive('npc');
+    const { npc, player } = this.arena;
+    if (!g || !this.alive(npc) || !this.alive(player)) return false;
+    if (Phaser.Math.Distance.Between(g.x, g.y, player.x, player.y) > NPC_GUST_RECALL_RANGE) return false;
+    // Already standing on it: the jump would be a spin in place, which E does on its own.
+    return Phaser.Math.Distance.Between(g.x, g.y, npc.x, npc.y) > SPIN_RADIUS;
   }
 
   // ── F: Sky Grapple ───────────────────────────────────────────────────────
@@ -1274,7 +1401,7 @@ export class AirKit {
 
   private tryWeatherCycle(time: number): void {
     const s = this.sides.player;
-    if (time - s.weatherLastCastAt < WEATHER_COOLDOWN_MS) return;
+    if (time - s.weatherLastCastAt < WEATHER_COOLDOWN_MS * this.quickMult('player')) return;
     s.weatherLastCastAt = time;
     // Stamped on the fighter for the sound and the online relay; the peer's sim opens the same
     // window on its replica through `doWeatherCycle('npc')`.
@@ -1383,7 +1510,7 @@ export class AirKit {
   private updateNpcWeather(time: number): void {
     if (!this.arena.npcAutonomous || !this.arena.isNpcAir || !this.npcWeatherSlot()) return;
     const s = this.sides.npc;
-    if (time - s.weatherLastCastAt < WEATHER_COOLDOWN_MS || this.isWeatherCycling('npc')) return;
+    if (time - s.weatherLastCastAt < WEATHER_COOLDOWN_MS * this.quickMult('npc') || this.isWeatherCycling('npc')) return;
     const { npc, player } = this.arena;
     if (!this.alive(npc) || !this.alive(player)) return;
     if (Phaser.Math.Distance.Between(npc.x, npc.y, player.x, player.y) > NPC_WEATHER_RANGE) return;
@@ -1395,7 +1522,73 @@ export class AirKit {
 
   /** 0–1 cooldown fill for the Weather Cycle HUD card. */
   getWeatherCooldownRatio(time: number): number {
-    return Math.min(1, (time - this.sides.player.weatherLastCastAt) / WEATHER_COOLDOWN_MS);
+    return Math.min(1, (time - this.sides.player.weatherLastCastAt) / (WEATHER_COOLDOWN_MS * this.quickMult('player')));
+  }
+
+  // ── Element perks: Quick, Vacuum ─────────────────────────────────────────
+
+  /** Quick's factor on the kit's own clocks; the ability table gets it through `perkCooldownMult`. */
+  private quickMult(owner: Owner): number {
+    return this.arena.hasPerk(owner, 'air-quick') ? QUICK_COOLDOWN_MULT : 1;
+  }
+
+  /**
+   * Quick and Vacuum land on the fighter as `perkCooldownMult` / `perkIncomingMult`. Single
+   * writer per fighter: written every frame while that side is air, handed back the frame it
+   * stops being air, and never touched for a fighter this kit did not write.
+   */
+  private updatePerkMults(): void {
+    for (const owner of ['player', 'npc'] as Owner[]) {
+      const f = this.fighter(owner);
+      if (!f) continue;
+      if (!this.isAir(owner)) {
+        if (this.perkMultsWritten.has(f)) {
+          f.perkCooldownMult = 1;
+          f.perkIncomingMult = 1;
+          this.perkMultsWritten.delete(f);
+        }
+        continue;
+      }
+      this.perkMultsWritten.add(f);
+      f.perkCooldownMult = this.quickMult(owner);
+      // A hit carries no word of who threw it, so "foes in the vacuum hit 15% softer" is kept
+      // on her side: while anyone is caught in it, what reaches her is cut by that much.
+      f.perkIncomingMult = this.vacuumed[owner].size > 0 ? VACUUM_INCOMING_MULT : 1;
+    }
+  }
+
+  /**
+   * Vacuum: a standing draw toward the dancer. Added to velocity after movement has written
+   * it — a set would be a capture, and a reset would pin them.
+   */
+  private updateVacuum(): void {
+    for (const owner of ['player', 'npc'] as Owner[]) {
+      const held = this.vacuumed[owner];
+      const f = this.fighter(owner);
+      if (!this.isAir(owner) || !this.arena.hasPerk(owner, 'air-vacuum') || !this.alive(f)) {
+        held.clear();
+        continue;
+      }
+      const s = this.sides[owner];
+      const inside = new Set<Fighter>();
+      for (const t of this.targetsOf(owner)) {
+        const d = Phaser.Math.Distance.Between(f.x, f.y, t.x, t.y);
+        if (d > VACUUM_RADIUS) continue;
+        inside.add(t);
+        if (!held.has(t)) {
+          this.arena.showFloatingText(t.x, t.y - 40, '🌀 VACUUM −15% DMG', '#bbe8ff');
+          this.fx(owner).motes(t.x, t.y, 5, { speed: 90, size: 2.2, life: 360, swirl: 2, depth: 6 });
+        }
+        if (d < 4 || t.unstoppable) continue;
+        // A net ghost's own machine owns its position, and the funnel already holds its own.
+        if (t.netGhost || s.tornadoCaptives.has(t) || this.launches.some((l) => l.target === t)) continue;
+        const body = t.body as Phaser.Physics.Arcade.Body | null;
+        if (!body) continue;
+        body.velocity.x += ((f.x - t.x) / d) * VACUUM_PULL_PER_S;
+        body.velocity.y += ((f.y - t.y) / d) * VACUUM_PULL_PER_S;
+      }
+      this.vacuumed[owner] = inside;
+    }
   }
 
   // ── Public accessors read by ArenaScene ──────────────────────────────────
@@ -1520,6 +1713,7 @@ export class AirKit {
   /** Mirrors the opponent's casts onto their rig. */
   handleNpcCastId(id: string | null): void {
     if (!id) return;
+    if (id === GUST_RECALL_ID) { this.doGustRecall('npc'); return; }
     const gesture = NPC_GESTURES[id];
     if (!gesture) return;
     const { npc, player } = this.arena;
@@ -1586,6 +1780,15 @@ export class AirKit {
     }
     for (const g of this.glaives) {
       (this.sakura(g.owner) ? SakuraFx : AirFx).drawGlaive(air, this.col(g.owner), g.x, g.y, 26, g.spin, 1, g.phase === 'phantom');
+    }
+
+    // Vacuum: the standing draw, under the fighters so whoever it holds stands inside it.
+    for (const owner of ['player', 'npc'] as Owner[]) {
+      if (!this.isAir(owner) || !this.arena.hasPerk(owner, 'air-vacuum')) continue;
+      const f = this.fighter(owner);
+      if (!this.alive(f) || f.alpha < 0.05) continue;
+      (this.sakura(owner) ? SakuraFx : AirFx).drawVacuum(ground, this.col(owner), f.x, f.y, VACUUM_RADIUS, this.vizT,
+        this.vacuumed[owner].size > 0);
     }
 
     // The funnel itself, under the fighters so a captive is visible turning inside it.

@@ -7,8 +7,8 @@
  * when either side is about to fall. Each set is written for the opponent's element so the
  * player learns something true about that element from its own mouth.
  *
- * Keyed by element id (mind the traps: `sand` is Time, `dune` is Sand, `slime` is Acid,
- * `gum` is Slime, `passion` is Devotion, `fortune` is Gold, `gluttony` is Harvest). `king` is
+ * Keyed by element id (mind the traps: `sand` is Time, `dune` is Sand, `slime` is Venom,
+ * `gum` is Slime, `passion` is Devotion, `fortune` is Gold, `gluttony` is Wood). `king` is
  * the Disgraced King, `reality` the finale, `myth` a mirror. Anything unlisted — husks, odd
  * bosses — gets `default` through `banterFor`.
  */
@@ -291,18 +291,18 @@ export const MYTH_BANTER: Record<string, BanterSet> = {
   },
   slime: {
     opener: [
-      m('Acid. The only element whose real resource is square footage.'),
-      f('Permanent pools. They never fade. Coverage decides how hard everything hits.'),
-      m('Lashes, a snake burrow, a purge. All of it reads how much of the floor you own.'),
+      m('Venom. A serpent with a tail longer than its patience, and toxin that never wears off.'),
+      f('It never fades. Twenty-five burns. A hundred weakens. A thousand is the end.'),
+      m('Lashes, a burrow, a bite that strips everything I am wearing first.'),
       f('Unremarkable damage per second, Myth. Remarkable damage per minute.'),
     ],
     mid: [
       m('You are turning the arena into a map of where I cannot stand.'),
-      f('Correct. The map gets smaller. You get slower. The crowd gets quieter.'),
+      f('Correct. And every second you stand on it, the count climbs.'),
     ],
     closer: [
-      m('Even acid eats through to something it cannot dissolve.'),
-      f('Nothing yet. You are not it either.'),
+      m('Even venom needs a body to work on.'),
+      f('Yours is doing nicely.'),
     ],
   },
   fate: {
@@ -776,18 +776,18 @@ export const MYTH_BANTER: Record<string, BanterSet> = {
   },
   cloth: {
     opener: [
-      m('Cloth. You have no health bar. You have a scarf, trailing wherever you just walked.'),
-      f('The scarf is the hitbox. Miss me by a foot and you still catch the tail.'),
-      m('And it shrinks as it is cut. A dying tailor is harder to hit than a healthy one.'),
-      f('A pin seven times a second, a long pin that reels you in. Hold still for a fitting.'),
+      m('Cloth. No legs. A ball of wool hauling itself about by its own scarf.'),
+      f('The scarf has a hand on the end. It grips the floor, it grips the wall, it grips you.'),
+      m('Needles out of the sky. A bola to tie me up. And then the scarf throws me at a wall.'),
+      f('Hold still for a fitting.'),
     ],
     mid: [
-      m('You build the rest of your kit out of tetrominoes. The crowd is leaning in.'),
-      f('A five-by-five loom. The tapestry sews itself over the floor. Mind the stitches.'),
+      m('You walked into your own pincushion. On purpose. The crowd winced.'),
+      f('Three pins in me, Myth. Hit me and find out where they go next.'),
     ],
     closer: [
       m('Every thread has an end, Tailor.'),
-      f('Mine is three inches long now and nobody can hit it.'),
+      f('Mine is on fire. Come and put it out.'),
     ],
   },
   marrow: {
@@ -888,18 +888,18 @@ export const MYTH_BANTER: Record<string, BanterSet> = {
   },
   gluttony: {
     opener: [
-      m('A scarecrow with a burlap sack for a head, and a scythe taller than it is.'),
-      f('I plant rot. Purple mold with eyes and mouths. It spreads. It does not stop.'),
-      m('The sickle heals more off a rotten body. The crows bite harder. The scythe reaps sooner.'),
-      f('The mold grows hearts, storyteller. Cut one and see what the field does.'),
+      m('A birch with eyes in its bark, and a scythe slung across its back.'),
+      f('Every tree around this ring has eyes too. They are all mine, storyteller.'),
+      m('Sap on top of its health. It drinks tea. It steps out of trees.'),
+      f('And when I have enough more life than you, the scythe simply ends it.'),
     ],
     mid: [
-      m('Harvest. The crowd came for a hero and found a field of eyes.'),
-      f('The field was always watching. The crowd only noticed today.'),
+      m('Wood. The crowd came for a hero and found a forest staring back.'),
+      f('The forest was always watching. The crowd only noticed today.'),
     ],
     closer: [
-      m('Every harvest ends with the field cut back to stubble.'),
-      f('And the scarecrow still standing in it. Always.'),
+      m('Every forest is cut back in the end.'),
+      f('And it grows back. Always.'),
     ],
   },
 

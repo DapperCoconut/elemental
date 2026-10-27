@@ -534,6 +534,48 @@ export class OilFx extends FxBase {
   }
 
   /** Recoil flare at a barrel — sells that something was actually fired rather than teleported. */
+  /**
+   * One shot of the arm laser: a needle-thin teal line, hot white core, that is gone in a tenth
+   * of a second — rapid fire reads as a stutter of separate bolts, never a held beam. `heat`
+   * pulls the colour toward flame as the gun runs hot.
+   */
+  armLaser(x1: number, y1: number, x2: number, y2: number, heat: number, hit: boolean, depth = 8): void {
+    const k = Phaser.Math.Clamp((heat - 0.4) / 0.6, 0, 1);
+    const a = Phaser.Display.Color.ValueToColor(OIL.teal);
+    const b = Phaser.Display.Color.ValueToColor(OIL.flame);
+    const mix = Phaser.Display.Color.Interpolate.ColorWithColor(a, b, 100, Math.round(k * 100));
+    const col = Phaser.Display.Color.GetColor(mix.r, mix.g, mix.b);
+    const ang = Math.atan2(y2 - y1, x2 - x1);
+    this.anim(depth, 110, (g, t) => {
+      const fade = 1 - t;
+      g.lineStyle(4.2 * fade, this.tint(col), 0.22 * fade);
+      g.lineBetween(x1, y1, x2, y2);
+      g.lineStyle(1.6 * fade, this.tint(col), 0.9 * fade);
+      g.lineBetween(x1, y1, x2, y2);
+      g.lineStyle(0.7, this.tint(OIL.white), 0.95 * fade);
+      g.lineBetween(x1, y1, x2, y2);
+      g.fillStyle(this.tint(OIL.white), 0.85 * fade);
+      g.fillCircle(x1, y1, 2.6 * fade);
+      g.fillStyle(this.tint(col), (hit ? 0.75 : 0.4) * fade);
+      g.fillCircle(x2, y2, (hit ? 6 : 3.5) * (0.7 + t * 0.6));
+    });
+    if (hit) this.sparks(x2, y2, 2, { angle: ang + Math.PI, spread: 1.2, speed: 120, life: 200, depth: depth + 1 });
+  }
+
+  /**
+   * The arm laser cooks off: the fins blow a ring of white-hot steam and the gun coughs sparks.
+   * `blast` (Click+) adds a real fireball of radius `r` around the wearer.
+   */
+  overheat(x: number, y: number, ang: number, blast: boolean, r: number): void {
+    this.sparks(x, y, 9, { angle: ang - Math.PI / 2, spread: 1.6, speed: 160, life: 360, fall: 60, depth: 9 });
+    this.smoke(x, y, 4, 10, 9);
+    this.ring(x, y, 4, 22, OIL.flame, 260, 2.4, 9);
+    if (blast) {
+      this.explosion(x, y, r, { debris: 6, smoke: 4 });
+      this.ring(x, y, 10, r, OIL.ember, 340, 4, 8);
+    }
+  }
+
   muzzleFlash(x: number, y: number, angle: number, scale = 1, depth = 8): void {
     this.anim(depth, 140, (g, t) => {
       const fade = 1 - t;
@@ -1575,6 +1617,100 @@ export function pressureGauge(
   // Glass glint, always up-left, so the dial reads as covered rather than open.
   g.fillStyle(tint(OIL.white), alpha * 0.22);
   g.fillEllipse(cx - r * 0.3, cy - r * 0.36, r * 0.8, r * 0.42);
+}
+
+/** Heat 0–1 → the colour a coil glows: cold steel, then amber, flame, and white-hot at the top. */
+export function heatColor(heat: number): number {
+  const stops = [OIL.steel, OIL.amber, OIL.flame, OIL.white];
+  const k = Phaser.Math.Clamp(heat, 0, 1) * (stops.length - 1);
+  const i = Math.min(stops.length - 2, Math.floor(k));
+  const a = Phaser.Display.Color.ValueToColor(stops[i]);
+  const b = Phaser.Display.Color.ValueToColor(stops[i + 1]);
+  const c = Phaser.Display.Color.Interpolate.ColorWithColor(a, b, 100, Math.round((k - i) * 100));
+  return Phaser.Display.Color.GetColor(c.r, c.g, c.b);
+}
+
+/**
+ * The laser gun strapped over the right hand, drawn in the hand's frame with +x along the aim.
+ * Two tar straps bite round the crude hand; a steel receiver runs forward of it with a teal
+ * power cell behind, four cooling fins on top that glow up through amber and flame to white as
+ * `heat` climbs, and a short barrel ending in the emitter lens. A five-pip heat strip runs down
+ * the side. `kick` (0–1) jolts the whole gun back along the aim; `vented` blinks the fins red
+ * and dims the lens while it is locked out cooling.
+ */
+export function laserGun(
+  g: Phaser.GameObjects.Graphics, tint: OilColorFn,
+  hx: number, hy: number, ang: number,
+  heat: number, vented: boolean, kick: number, t: number, alpha: number,
+): void {
+  const c = Math.cos(ang), s = Math.sin(ang);
+  const back = kick * 3.2;
+  const P = (lx: number, ly: number) => new Phaser.Geom.Point(hx + c * (lx - back) - s * ly, hy + s * (lx - back) + c * ly);
+  const poly = (pts: [number, number][], color: number, a = 1) => {
+    g.fillStyle(tint(color), alpha * a);
+    g.fillPoints(pts.map(([x, y]) => P(x, y)), true);
+  };
+  const line = (x0: number, y0: number, x1: number, y1: number, w: number, color: number, a = 1) => {
+    const p0 = P(x0, y0), p1 = P(x1, y1);
+    g.lineStyle(w, tint(color), alpha * a);
+    g.lineBetween(p0.x, p0.y, p1.x, p1.y);
+  };
+
+  // Power cell behind the hand, and its lead into the receiver.
+  poly([[-12, -3], [-6, -3.6], [-6, 3.6], [-12, 3]], OIL.tar);
+  poly([[-11, -2], [-7, -2.5], [-7, 2.5], [-11, 2]], OIL.teal, vented ? 0.35 : 0.65 + 0.2 * Math.sin(t * 6));
+  line(-6, 0, -2, 0, 1.4, OIL.steel);
+
+  // Receiver: outline, steel, a chrome spine.
+  poly([[-4, -5.4], [13, -4.4], [14.4, 0], [13, 4.4], [-4, 5.4]], OIL.tar);
+  poly([[-3, -4.3], [12.4, -3.4], [13.4, 0], [12.4, 3.4], [-3, 4.3]], OIL.steel);
+  line(-2, -2.8, 11.6, -2.2, 1.1, OIL.chrome, 0.55);
+
+  // Straps round the hand.
+  for (const sx of [-1.5, 3.5]) {
+    poly([[sx - 1.3, -8.4], [sx + 1.3, -8.4], [sx + 1.3, 8.4], [sx - 1.3, 8.4]], OIL.tar, 0.95);
+    poly([[sx - 0.5, -7.6], [sx + 0.5, -7.6], [sx + 0.5, 7.6], [sx - 0.5, 7.6]], OIL.brown, 0.8);
+  }
+
+  // Cooling fins on the top edge — the heat read.
+  const blink = vented ? (Math.sin(t * 18) > 0 ? 1 : 0.55) : 1;
+  const fin = vented ? OIL.ember : heatColor(heat);
+  for (let i = 0; i < 4; i++) {
+    const fx = 5 + i * 2.2;
+    poly([[fx - 0.7, -4.2], [fx + 0.7, -4.2], [fx + 0.5, -7.4], [fx - 0.5, -7.4]], OIL.tar);
+    poly([[fx - 0.4, -4.2], [fx + 0.4, -4.2], [fx + 0.3, -7], [fx - 0.3, -7]], fin, blink);
+  }
+  if (heat > 0.45 || vented) {
+    const glowA = vented ? 0.35 * blink : (heat - 0.45) * 0.6;
+    const m = P(8.3, -6);
+    g.fillStyle(tint(vented ? OIL.ember : fin), alpha * glowA);
+    g.fillCircle(m.x, m.y, 6.5);
+  }
+
+  // Heat strip down the side: five pips.
+  for (let i = 0; i < 5; i++) {
+    const lit = vented ? blink > 0.9 : heat >= (i + 0.5) / 5;
+    const px = 0 + i * 2.2;
+    poly([[px - 0.8, 1.6], [px + 0.8, 1.6], [px + 0.8, 3.2], [px - 0.8, 3.2]],
+      lit ? (vented ? OIL.ember : heatColor((i + 1) / 5)) : OIL.tar, lit ? 1 : 0.8);
+  }
+
+  // Barrel and emitter.
+  poly([[13, -1.7], [20.5, -1.4], [20.5, 1.4], [13, 1.7]], OIL.tar);
+  line(13.5, -0.6, 20, -0.5, 0.9, OIL.chrome, 0.5);
+  const tip = P(21, 0);
+  const lensA = vented ? 0.25 : 0.75 + 0.2 * Math.sin(t * 9);
+  g.fillStyle(tint(OIL.teal), alpha * lensA * 0.35);
+  g.fillCircle(tip.x, tip.y, 4.4);
+  g.fillStyle(tint(vented ? OIL.steel : OIL.teal), alpha);
+  g.fillCircle(tip.x, tip.y, 2);
+  g.fillStyle(tint(OIL.white), alpha * lensA);
+  g.fillCircle(tip.x - c * 0.4, tip.y - s * 0.4, 0.9);
+}
+
+/** Where `laserGun`'s emitter sits for a hand at (hx, hy) aiming along `ang`. */
+export function laserGunMuzzle(hx: number, hy: number, ang: number): { x: number; y: number } {
+  return { x: hx + Math.cos(ang) * 21, y: hy + Math.sin(ang) * 21 };
 }
 
 /** A valve handwheel seen face-on: a rim, four spokes and a hub nut. */

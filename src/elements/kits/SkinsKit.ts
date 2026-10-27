@@ -127,6 +127,11 @@ export class SkinsKit {
   bindColor(owner: Owner, base: number): number { return this.remap(owner, base); }
   gumColor(owner: Owner, base: number): number { return this.remap(owner, base); }
   gluttonyColor(owner: Owner, base: number): number { return this.remap(owner, base); }
+  pressureColor(owner: Owner, base: number): number { return this.remap(owner, base); }
+  astraColor(owner: Owner, base: number): number { return this.remap(owner, base); }
+  inkColor(owner: Owner, base: number): number { return this.remap(owner, base); }
+  memoryColor(owner: Owner, base: number): number { return this.remap(owner, base); }
+  stringColor(owner: Owner, base: number): number { return this.remap(owner, base); }
 
   // ── Per-frame repaint ───────────────────────────────────────────────────
 

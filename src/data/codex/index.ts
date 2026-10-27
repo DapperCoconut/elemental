@@ -36,6 +36,11 @@ import tempest from './tempest';
 import myth from './myth';
 import justice from './justice';
 import gluttony from './gluttony';
+import pressure from './pressure';
+import ink from './ink';
+import astra from './astra';
+import memory from './memory';
+import string from './string';
 import quantum from './quantum';
 import illusion from './illusion';
 import passion from './passion';
@@ -100,6 +105,11 @@ export const CODEX: Record<string, ElementCodex> = {
   myth,
   justice,
   gluttony,
+  pressure,
+  ink,
+  astra,
+  memory,
+  string,
   quantum,
   illusion,
   passion,

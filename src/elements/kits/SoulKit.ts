@@ -762,6 +762,14 @@ export class SoulKit {
     return this.ascended[owner] ? GOLD_TONES : tonesFor(owner);
   }
 
+  /** Memory's Rebirth: the struck side loses part of what it has built up. Returns a label, or null. */
+  rebirthDrain(owner: Owner): string | null {
+    const take = Math.ceil(this.kills[owner] * 0.4);
+    if (take <= 0) return null;
+    this.kills[owner] -= take;
+    return `−${take} KILL${take === 1 ? '' : 'S'}`;
+  }
+
   /** Kills on the lantern family this match. */
   killCount(owner: Owner): number { return this.kills[owner]; }
 

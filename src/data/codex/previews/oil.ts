@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { PreviewScript, PreviewCtx } from '../../../ui/AbilityPreview';
-import { OilFx, OIL, OilAvatar, DroneArrayLattice } from '../../../elements/kits/OilVisuals';
+import { OilFx, OIL, OilAvatar, DroneArrayLattice, laserGun, laserGunMuzzle } from '../../../elements/kits/OilVisuals';
 
 /**
  * Oil's showcases.
@@ -61,18 +61,61 @@ function puddle(
   return { ignite: () => { lit = true; } };
 }
 
+/**
+ * The arm laser on the avatar's right hand, run off the kit's numbers: `fire(from, to)` holds the
+ * trigger over that window (one shot per 110ms, +0.046 heat each), and the gauge overheats at 1
+ * into a 2.2s lockout. Returns a hook that fires on the overheat.
+ */
+function armGun(ctx: PreviewCtx, fx: OilFx, av: OilAvatar, windows: [number, number][], onOverheat?: (x: number, y: number) => void): void {
+  const g = ctx.adopt(ctx.scene.add.graphics().setDepth(7));
+  let heat = 0, kick = 0, ventUntil = 0, lastShot = -1e9;
+  ctx.onFrame((dt, e) => {
+    const held = windows.some(([a, b]) => e >= a && e < b);
+    kick = Math.max(0, kick - dt / 1000 * 9);
+    av.setHold(held ? 'gun' : null, ctx.aim);
+    const hand = av.handPos(1);
+    if (ventUntil > 0) {
+      if (e >= ventUntil) { ventUntil = 0; heat = 0; } else heat = (ventUntil - e) / 2200;
+      if (e % 120 < dt) fx.smoke(hand.x, hand.y - 6, 1, 5, 8);
+    } else if (held && e - lastShot >= 110) {
+      lastShot = e;
+      kick = 1;
+      heat = Math.min(1, heat + 0.046);
+      const m = laserGunMuzzle(hand.x, hand.y, ctx.aim);
+      fx.armLaser(m.x, m.y, ctx.tx - 14, ctx.ty, heat, true);
+      if (e % 330 < 110) {
+        const t = ctx.adopt(ctx.scene.add.text(ctx.tx + (Math.random() - 0.5) * 16, ctx.ty - 30, '2', {
+          fontSize: '11px', fontFamily: 'Arial Black', color: '#2fd6c0',
+        }).setOrigin(0.5).setDepth(12));
+        ctx.scene.tweens.add({ targets: t, y: t.y - 16, alpha: 0, duration: 600 });
+      }
+      if (heat >= 1) {
+        ventUntil = e + 2200;
+        fx.overheat(hand.x, hand.y, ctx.aim, !!onOverheat, 110);
+        onOverheat?.(hand.x, hand.y);
+      }
+    } else if (e - lastShot > 220) {
+      heat = Math.max(0, heat - 0.5 * dt / 1000);
+    }
+    g.clear();
+    laserGun(g, ctx.tint, hand.x, hand.y, ctx.aim, heat, ventUntil > 0, kick, e / 1000, 1);
+  });
+}
+
 // ══ ABILITIES ═════════════════════════════════════════════════════════
 
 export const droneCommand: PreviewScript = {
-  duration: 6000,
-  caption: 'Click — hold to build (0.5s then 1/s, cap 6); tap to fire the whole fleet for 3 each',
+  duration: 9000,
+  caption: 'Click — hold the arm laser (2 per shot, ~9/s) until it overheats; RMB — hold to build drones, tap to fire the fleet',
   run(ctx) {
     const { fx, av } = stage(ctx);
+    // The arm laser: held until the gauge tops out, then a 2.2s cook-off.
+    armGun(ctx, fx, av, [[300, 3400]]);
     const drones = swarm(ctx, { count: 0 });
-    // Held: one airframe assembles at 0.5s, then one a second.
-    av.setHold('spray', ctx.aim);
-    for (let i = 0; i < 6; i++) {
-      ctx.at(500 + i * 1000 * 0.55, () => {
+    // Right button held: one airframe assembles at 0.5s, then one a second.
+    ctx.at(4900, () => av.setHold('charge', ctx.aim));
+    for (let i = 0; i < 4; i++) {
+      ctx.at(5300 + i * 550, () => {
         const g = ctx.adopt(ctx.scene.add.graphics().setDepth(8));
         drones.push({ g, angle: (i / 6) * Math.PI * 2, shots: 3, max: 3, spin: 0, overcharged: false });
         const sx = ctx.cx + Math.cos((i / 6) * Math.PI * 2) * 46;
@@ -82,8 +125,8 @@ export const droneCommand: PreviewScript = {
         fx.ring(sx, sy, 3, 24, OIL.gold, 300, 2.5, 8);
       });
     }
-    // Then the tap: every lens snaps to the cursor at once, 3 damage each.
-    ctx.at(4400, () => {
+    // Then the right-click tap: every lens snaps to the cursor at once, 3 damage each.
+    ctx.at(7800, () => {
       av.setHold(null);
       av.play('punch', ctx.aim);
       for (const d of drones) {
@@ -93,7 +136,7 @@ export const droneCommand: PreviewScript = {
         d.shots -= 1;
       }
       fx.flash(ctx.tx, ctx.ty, 26);
-      const t = ctx.adopt(ctx.scene.add.text(ctx.tx, ctx.ty - 34, '18', {
+      const t = ctx.adopt(ctx.scene.add.text(ctx.tx, ctx.ty - 34, '12', {
         fontSize: '13px', fontFamily: 'Arial Black', color: '#ffaa00',
       }).setOrigin(0.5).setDepth(12));
       ctx.scene.tweens.add({ targets: t, y: t.y - 20, alpha: 0, duration: 1200 });
@@ -102,12 +145,18 @@ export const droneCommand: PreviewScript = {
 };
 
 export const droneCommandUpgraded: PreviewScript = {
-  duration: 5200,
-  caption: 'Bomb Drones — a drone out of shots tumbles to the mark and detonates for 5 in 60px',
+  caption: 'Click+ — an overheat blows up round you (16 in 110px); a drone out of shots tumbles to the mark for 5 in 60px',
+  duration: 8200,
   run(ctx) {
     const { fx, av } = stage(ctx);
+    armGun(ctx, fx, av, [[200, 3300]], (x, y) => {
+      const t = ctx.adopt(ctx.scene.add.text(x, y - 40, 'OVERHEAT — BOOM!', {
+        fontSize: '12px', fontFamily: 'Arial Black', color: '#ff6600',
+      }).setOrigin(0.5).setDepth(12));
+      ctx.scene.tweens.add({ targets: t, y: t.y - 18, alpha: 0, duration: 1100 });
+    });
     const drones = swarm(ctx, { count: 3, shots: 1 });
-    ctx.at(600, () => {
+    ctx.at(3600, () => {
       av.play('punch', ctx.aim);
       for (const d of drones) {
         const a = Math.atan2(ctx.ty - d.g.y, ctx.tx - d.g.x);
@@ -121,7 +170,7 @@ export const droneCommandUpgraded: PreviewScript = {
           const from = { x: d.g.x, y: d.g.y };
           d.g.clear();
           const tumble = ctx.adopt(ctx.scene.add.graphics().setDepth(8));
-          const born = 900 + i * 160;
+          const born = 3900 + i * 160;
           ctx.onFrame((_dt, elapsed) => {
             const t = Phaser.Math.Clamp((elapsed - born) / 400, 0, 1);
             tumble.clear();
@@ -138,8 +187,8 @@ export const droneCommandUpgraded: PreviewScript = {
         });
       });
     });
-    // And the other half of the upgrade: the orbit itself now bites.
-    ctx.at(3800, () => {
+    // And the drones' half of the upgrade: the orbit itself now bites.
+    ctx.at(6800, () => {
       fx.ring(ctx.cx + 40, ctx.cy, 4, 26, OIL.gold, 280, 3, 9);
       fx.sparks(ctx.cx + 40, ctx.cy, 5, { speed: 120, life: 280, depth: 9 });
       const t = ctx.adopt(ctx.scene.add.text(ctx.cx + 40, ctx.cy - 28, '5', {

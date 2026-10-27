@@ -1820,7 +1820,7 @@ export class FortuneKit {
       const s = this.side(owner);
       const f = this.fighter(owner);
       const was = s.augment;
-      if (!this.masteryOn(owner) || this.isReplica(owner) || !this.alive(f)) {
+      if (!this.masteryOn(owner) || this.isReplica(owner) || !this.alive(f) || f.passivesSealed()) {
         s.augment = false;
         continue;
       }
@@ -2119,6 +2119,15 @@ export class FortuneKit {
   }
 
   /** Stride, the gold floor, Gilded Augment and a heart attack, pulled by ArenaScene's speed block. */
+  /** Memory's Rebirth: the struck side loses part of what it has built up. Returns a label, or null. */
+  rebirthDrain(owner: Owner): string | null {
+    const s = this.side(owner);
+    const take = Math.ceil(s.gold * 0.4);
+    if (take <= 0) return null;
+    s.gold -= take;
+    return `−${take} 🪙`;
+  }
+
   getPlayerSpeedMult(): number {
     const p = this.api.player;
     if (!p) return 1;

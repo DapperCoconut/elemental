@@ -517,6 +517,15 @@ export class GunpowderKit {
 
   // ── Public accessors ──────────────────────────────────────────────────────
 
+  /** Memory's Rebirth: the struck side loses part of what it has built up. Returns a label, or null. */
+  rebirthDrain(owner: 'player' | 'npc'): string | null {
+    const arsenal = owner === 'player' ? this.playerArsenal : this.npcArsenal;
+    const lost = arsenal.pop();
+    if (!lost) return null;
+    if (owner === 'player') this.rebuildArsenalHud();
+    return `−${WEAPON_DEFS[lost.type].name.toUpperCase()}`;
+  }
+
   getArsenalSize(owner: 'player' | 'npc'): number {
     return (owner === 'player' ? this.playerArsenal : this.npcArsenal).length;
   }

@@ -1,861 +1,724 @@
 import Phaser from 'phaser';
 import { PreviewScript, PreviewCtx } from '../../../ui/AbilityPreview';
 import {
-  ARTWORKS, ARTWORK_MAP, TAPESTRY_SIZE, emptyTapestry, place,
-} from '../../../elements/kits/ClothTapestry';
-import {
-  CLT, ClothAvatar, ClothFx, OUTFIT_COLOR, OUTFIT_EMOJI, OUTFIT_NAME, OUTFITS, Outfit,
-  anchorGlyph, loomCell, longpinGlyph, nailGlyph, pinGlyph, scarfRibbon, webGlyph,
+  CLT, ClothAvatar, ClothFx, bolaGlyph, burnScrap, clothWrap, clothesline, effigy, flameTongue,
+  jacketGlyph, needleGlyph, pinGlyph, pincushion, scarfArm, scarfHand,
 } from '../../../elements/kits/ClothVisuals';
 
 /**
  * Cloth's showcases.
  *
- * There is no `proj-cloth` — the scarf, the pins, the webs and the loom are all Graphics the kit
- * repaints every frame — so these loops keep the same little records the kit keeps and paint with
- * the real painters: `scarfRibbon` for the passive, `pinGlyph` and `longpinGlyph` for the two
- * attacks, `anchorGlyph` for the safety line, `webGlyph` for the hold and `loomCell` for the
- * tapestry. One-shots go through a real `ClothFx` with a sticky sink.
+ * The one object every loop has to have in frame is **the scarf hand**: the scarf wound round the
+ * tailor's crown, paid out to a stitched cloth hand. It is the legs, the punch and the inventory,
+ * so most of these scripts drive the caster themselves through `moveCaster` — the body is
+ * *supposed* to be hauled by the scarf.
  *
- * The scarf is the one thing every loop has to get right, because it is the hitbox: each script
- * keeps a knot trail off `ctx.casterAt()` exactly the way `ClothKit.updateScarf` does, so a
- * showcase of a dash shows the wool arriving late in precisely the way it does in the arena.
+ * Cloth puts no sprite in the world: needles, pins, the bola, the cushion, scraps and the
+ * clotheslines are Graphics repainted per frame out of `ClothVisuals`, the same way the kit does.
  */
 
-// ── Staging ───────────────────────────────────────────────────────────
+// ── The kit's constants, mirrored ─────────────────────────────────────
 
-function fxOf(ctx: PreviewCtx): ClothFx {
-  return ctx.capture(() => new ClothFx(ctx.scene, ctx.tint).setSink(ctx.sink));
+const HAND_MAX = 250;
+const HAND_MIN = 20;
+const HAND_SPRING = 16;
+const PUNCH_DAMAGE = 20;
+const SMACK_DAMAGE = 14;
+const SMACK_SPEED = 620;
+const NEEDLE_LEN = 36;
+const NEEDLE_DAMAGE = 26;
+const NEEDLE_DROP_DAMAGE = 8;
+const BOMB_PINS = 9;
+const BOMB_SPREAD = 0.95;
+const BOMB_PIN_DAMAGE = 6;
+const PIN_SPEED = 520;
+const BOLA_SPEED = 600;
+const BOLA_DAMAGE = 10;
+const WALL_SLAM_DAMAGE = 30;
+const CUSHION_R = 18;
+const CUSHION_BARRAGE = 14;
+const CUSHION_PIN_DAMAGE = 7;
+const RETALIATE_DAMAGE = 12;
+const SCRAP_DAMAGE = 6;
+const CLAW_PUNCH_BONUS = 15;
+const LINE_SPEED = 680;
+const TAU = Math.PI * 2;
+
+interface Mark { x: number; y: number }
+
+function hex(color: number): string {
+  return `#${color.toString(16).padStart(6, '0')}`;
 }
 
-function dummyAt(
-  ctx: PreviewCtx, at: { x: number; y: number }, depth = 5, alive: () => boolean = () => true,
-): void {
-  const g = ctx.adopt(ctx.scene.add.graphics().setDepth(depth));
+// ── Shared staging ────────────────────────────────────────────────────
+
+interface Tailor {
+  fx: ClothFx;
+  av: ClothAvatar | null;
+  /** Where the body is. Written by the script and handed to `moveCaster`. */
+  at: Mark;
+  /** Where the hand is this frame, sprung after `reach` exactly as the kit springs it. */
+  hand: Mark;
+  handV: Mark;
+  /** Where the hand is being sent. Clamped to the scarf's reach. */
+  reach: Mark;
+  grip: boolean;
+  burn: boolean;
+  char: boolean;
+  maxReach: number;
+}
+
+function tailor(ctx: PreviewCtx, at: Mark): Tailor {
+  const fx = ctx.capture(() => new ClothFx(ctx.scene, ctx.tint).setSink(ctx.sink));
+  const av = ctx.useAvatar(() => new ClothAvatar(ctx.scene, ctx.tint));
+  const t: Tailor = {
+    fx, av: av instanceof ClothAvatar ? av : null,
+    at, hand: { x: at.x + 40, y: at.y }, handV: { x: 0, y: 0 }, reach: { x: at.x + 60, y: at.y },
+    grip: false, burn: false, char: false, maxReach: HAND_MAX,
+  };
+  const g = ctx.adopt(ctx.scene.add.graphics().setDepth(5.8));
+  ctx.onFrame((dt, elapsed) => {
+    const step = Math.max(0.001, dt / 1000);
+    const dx = t.reach.x - t.at.x;
+    const dy = t.reach.y - t.at.y;
+    const d = Phaser.Math.Clamp(Math.hypot(dx, dy) || 1, HAND_MIN, t.maxReach);
+    const a = Math.atan2(dy, dx);
+    const tx = t.at.x + Math.cos(a) * d;
+    const ty = t.at.y + Math.sin(a) * d;
+    const k = Math.min(1, HAND_SPRING * step);
+    const nx = t.hand.x + (tx - t.hand.x) * k;
+    const ny = t.hand.y + (ty - t.hand.y) * k;
+    t.handV.x = (nx - t.hand.x) / step;
+    t.handV.y = (ny - t.hand.y) / step;
+    t.hand.x = nx;
+    t.hand.y = ny;
+    ctx.moveCaster(t.at.x, t.at.y, { facing: Math.atan2(t.hand.y - t.at.y, t.hand.x - t.at.x) });
+    t.av?.setBurn(t.burn);
+    t.av?.setEffigy(t.char);
+
+    const time = elapsed / 1000;
+    const scale = t.char ? 1.35 : 1;
+    const cy = t.at.y - 14 * scale;
+    g.clear();
+    scarfArm(g, ctx.tint, t.at.x, cy, t.hand.x, t.hand.y, 1, time,
+      { width: 10 * scale, slack: t.grip ? 0.05 : 0.45, seed: 1, burn: t.burn ? 1 : 0, char: t.char });
+    scarfHand(g, ctx.tint, t.hand.x, t.hand.y, Math.atan2(t.hand.y - cy, t.hand.x - t.at.x), 1, time,
+      { grip: t.grip ? 1 : 0, scale, burn: t.burn ? 1 : 0, char: t.char });
+  });
+  return t;
+}
+
+function tick(ctx: PreviewCtx, x: number, y: number, text: string, color: number): void {
+  const t = ctx.adopt(ctx.scene.add.text(x, y, text, {
+    fontSize: '11px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif',
+    color: hex(color), stroke: '#1a0d12', strokeThickness: 3,
+  }).setOrigin(0.5).setDepth(20));
+  const y0 = y;
+  let age = 0;
+  ctx.onFrame((dt) => {
+    age += dt;
+    t.setY(y0 - (age / 760) * 20);
+    t.setAlpha(Phaser.Math.Clamp(1 - age / 760, 0, 1));
+  });
+}
+
+function label(ctx: PreviewCtx, x: number, y: number, text: string, color: number): void {
+  ctx.adopt(ctx.scene.add.text(x, y, text, {
+    fontSize: '9px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif',
+    color: hex(color), align: 'center',
+  }).setOrigin(0.5).setDepth(19));
+}
+
+function dummy(ctx: PreviewCtx, at: Mark): void {
+  const g = ctx.adopt(ctx.scene.add.graphics().setDepth(5));
   ctx.onFrame(() => {
     g.clear();
-    if (!alive()) return;
-    g.fillStyle(0x2b2f3d, 1); g.fillCircle(at.x, at.y, 17);
-    g.fillStyle(0x3c4254, 1); g.fillCircle(at.x, at.y, 13);
-    g.fillStyle(0x8e97ad, 0.9); g.fillCircle(at.x - 5, at.y - 4, 3.2); g.fillCircle(at.x + 5, at.y - 4, 3.2);
-    g.fillStyle(0x11131b, 1); g.fillCircle(at.x - 5.6, at.y - 4, 1.6); g.fillCircle(at.x + 4.4, at.y - 4, 1.6);
+    g.fillStyle(0x2b2f3d, 1);
+    g.fillCircle(at.x, at.y, 17);
+    g.fillStyle(0x3c4254, 1);
+    g.fillCircle(at.x, at.y, 13);
+    g.fillStyle(0x8e97ad, 0.9);
+    g.fillCircle(at.x - 5, at.y - 4, 3.2);
+    g.fillCircle(at.x + 5, at.y - 4, 3.2);
+    g.fillStyle(0x11131b, 1);
+    g.fillCircle(at.x - 5.6, at.y - 4, 1.6);
+    g.fillCircle(at.x + 4.4, at.y - 4, 1.6);
   });
 }
 
-function float(ctx: PreviewCtx, x: number, y: number, text: string, color: string, size = 11): void {
-  const t = ctx.adopt(ctx.scene.add.text(x, y, text, {
-    fontSize: `${size}px`, fontFamily: 'Arial Black', color,
-  }).setOrigin(0.5).setDepth(24));
-  ctx.scene.tweens.add({ targets: t, y: y - 16, alpha: 0, duration: 900 });
-}
-
-function label(ctx: PreviewCtx, x: number, y: number, color: string, size = 11): Phaser.GameObjects.Text {
-  return ctx.adopt(ctx.scene.add.text(x, y, '', {
-    fontSize: `${size}px`, fontFamily: 'Arial Black', color,
-  }).setOrigin(0.5).setDepth(24));
-}
-
-const hex = (c: number): string => `#${c.toString(16).padStart(6, '0')}`;
-
-interface Knot { x: number; y: number }
-
-/**
- * A scarf that follows the caster, sampled at the kit's own 13px spacing.
- *
- * Returned so a script can read the knots back — Scarf Slice freezes them, and the passive loop
- * shoots at them.
- */
-function scarf(
-  ctx: PreviewCtx, depth = 6,
-  opts: { segments?: () => number; burn?: () => number; frozen?: () => Knot[] | null } = {},
-): { knots: Knot[] } {
-  const knots: Knot[] = [];
-  const g = ctx.adopt(ctx.scene.add.graphics().setDepth(depth));
-  let last = { ...ctx.casterAt() };
-  let t = 0;
+/** Pins in flight, painted the way the kit paints them, with a hit callback against one body. */
+function pinField(ctx: PreviewCtx, foe: Mark | null, onHit: (dmg: number) => void): {
+  spray(x: number, y: number, ang: number, count: number, spread: number, damage: number, hot?: boolean): void;
+} {
+  interface P { x: number; y: number; vx: number; vy: number; life: number; damage: number; hot: boolean }
+  const list: P[] = [];
+  const g = ctx.adopt(ctx.scene.add.graphics().setDepth(16));
   ctx.onFrame((dt) => {
-    t += dt / 1000;
-    const at = ctx.casterAt();
-    if (knots.length === 0) { knots.push({ x: at.x, y: at.y }); last = { x: at.x, y: at.y }; }
-    if (Phaser.Math.Distance.Between(at.x, at.y, last.x, last.y) >= 13) {
-      knots.unshift({ x: at.x, y: at.y });
-      last = { x: at.x, y: at.y };
-    } else {
-      knots[0] = { x: at.x, y: at.y };
-    }
-    const want = (opts.segments?.() ?? 13) + 1;
-    if (knots.length > want) knots.length = want;
-    while (knots.length < want) {
-      const tail = knots[knots.length - 1];
-      const prev = knots[knots.length - 2] ?? { x: tail.x, y: tail.y + 1 };
-      const ang = Math.atan2(tail.y - prev.y, tail.x - prev.x);
-      knots.push({ x: tail.x + Math.cos(ang) * 13, y: tail.y + Math.sin(ang) * 13 });
-    }
+    const step = dt / 1000;
     g.clear();
-    const frozen = opts.frozen?.() ?? null;
-    if (frozen) {
-      scarfRibbon(g, ctx.tint, frozen, 13, 0.85, { t, ghost: true });
-      for (let i = 1; i < frozen.length; i += 3) {
-        pinGlyph(g, ctx.tint, frozen[i].x, frozen[i].y, -Math.PI / 2, 14, 0.85, { head: 2 });
+    for (let i = list.length - 1; i >= 0; i--) {
+      const p = list[i];
+      p.x += p.vx * step;
+      p.y += p.vy * step;
+      p.life -= dt;
+      if (foe && Phaser.Math.Distance.Between(p.x, p.y, foe.x, foe.y) <= 18) {
+        onHit(p.damage);
+        list.splice(i, 1);
+        continue;
       }
-      return;
+      if (p.life <= 0) { list.splice(i, 1); continue; }
+      pinGlyph(g, ctx.tint, p.x, p.y, Math.atan2(p.vy, p.vx), 13, 1, { head: 1.8, hot: p.hot });
     }
-    if (knots.length >= 2) scarfRibbon(g, ctx.tint, knots, 13, 0.97, { t, burn: opts.burn?.() ?? 0 });
   });
-  return { knots };
+  return {
+    spray(x, y, ang, count, spread, damage, hot = false) {
+      for (let i = 0; i < count; i++) {
+        const a = spread >= TAU - 0.01
+          ? ang + (i / count) * TAU
+          : ang + (count > 1 ? (i / (count - 1) - 0.5) * spread : 0);
+        list.push({ x, y, vx: Math.cos(a) * PIN_SPEED, vy: Math.sin(a) * PIN_SPEED, life: 460, damage, hot });
+      }
+    },
+  };
 }
 
-/** A little wandering path so the scarf in a loop is a shape rather than a straight line. */
-function amble(ctx: PreviewCtx, radius = 46, period = 5200): void {
-  const home = { x: ctx.cx, y: ctx.cy };
-  ctx.onFrame((_dt, elapsed) => {
-    const a = (elapsed / period) * Math.PI * 2;
-    ctx.moveCaster(home.x + Math.cos(a) * radius, home.y + Math.sin(a * 2) * radius * 0.45, {
-      facing: ctx.aim,
-    });
-  });
-}
+// ── Click ─────────────────────────────────────────────────────────────
 
-// ══ PASSIVE — The Scarf ═══════════════════════════════════════════════
-
-export const theScarf: PreviewScript = {
-  duration: 12000,
-  scale: 0.9,
-  caption: 'The scarf is the hitbox. Shots that miss the tailor by a mile still catch the wool — and every point of health lost is length off the tail.',
-  run(ctx) {
-    const fx = fxOf(ctx);
-    const av = ctx.useAvatar(() => new ClothAvatar(ctx.scene, ctx.tint));
-    av.setFacing(ctx.aim);
-    let hp = 1;
-    amble(ctx, 52, 5600);
-    const s = scarf(ctx, 6, { segments: () => Math.round(17 * (0.3 + 0.7 * hp)) });
-
-    const bar = label(ctx, ctx.w * 0.5, 12, hex(CLT.clothPale), 11);
-    ctx.onFrame(() => {
-      if (av instanceof ClothAvatar) av.setWound(hp);
-      bar.setText(`🧣  scarf ${Math.round(hp * 100)}%   —   ${s.knots.length - 1} knots of hitbox`);
-    });
-
-    // A shot that sails past the body and clips the tail.
-    const shoot = (delay: number): void => {
-      ctx.at(delay, () => {
-        const aimAt = s.knots[Math.min(s.knots.length - 1, 6)];
-        if (!aimAt) return;
-        const from = { x: aimAt.x + 250, y: aimAt.y - 90 };
-        const shot = ctx.adopt(ctx.scene.add.graphics().setDepth(8));
-        const start = { ...from };
-        const to = { x: aimAt.x, y: aimAt.y };
-        let k = 0;
-        const step = (dt: number): void => {
-          k = Math.min(1, k + dt / 520);
-          shot.clear();
-          const x = Phaser.Math.Linear(start.x, to.x, k);
-          const y = Phaser.Math.Linear(start.y, to.y, k);
-          nailGlyph(shot, () => 0xd8dfe8, x, y, Math.atan2(to.y - start.y, to.x - start.x), 15, 1);
-          if (k < 1) return;
-          shot.clear();
-          fx.lint(to.x, to.y, 6, 16, 400);
-          float(ctx, to.x, to.y - 14, '-8', '#ff8888', 12);
-          hp = Math.max(0.25, hp - 0.16);
-        };
-        ctx.onFrame(step);
-      });
-    };
-    shoot(1400); shoot(3400); shoot(5400); shoot(7400);
-    ctx.at(9600, () => {
-      hp = 1;
-      float(ctx, ctx.casterAt().x, ctx.casterAt().y - 34, '🧣 re-woven', hex(CLT.clothPale), 12);
-    });
-  },
-};
-
-// ══ PASSIVE — The Tapestry ════════════════════════════════════════════
-
-export const theTapestry: PreviewScript = {
-  duration: 13000,
-  scale: 0.9,
-  caption: 'A 5×5 loom, and every artwork is a different tetromino. What still fits later is decided by what you sewed first.',
-  run(ctx) {
-    const tap = emptyTapestry();
-    const picks = ['sharpness-2', 'speedy-3', 'technique-1', 'clothstorm', 'braid-1'];
-    // Hand-checked against the 5×5: none of these five overlap and none overhang.
-    const spots: Array<[number, number]> = [[0, 0], [2, 0], [0, 2], [2, 2], [4, 1]];
-    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(10));
-    const cell = 26;
-    const ox = ctx.cx - (TAPESTRY_SIZE * cell) / 2 + 60;
-    const oy = ctx.cy - (TAPESTRY_SIZE * cell) / 2;
-    const note = label(ctx, ctx.w * 0.5, ctx.h - 14, hex(CLT.clothPale), 11);
-
-    ctx.onFrame(() => {
-      g.clear();
-      g.fillStyle(ctx.tint(CLT.loom), 0.92);
-      g.fillRoundedRect(ox - 7, oy - 7, TAPESTRY_SIZE * cell + 14, TAPESTRY_SIZE * cell + 14, 6);
-      for (let gy = 0; gy < TAPESTRY_SIZE; gy++) {
-        for (let gx = 0; gx < TAPESTRY_SIZE; gx++) {
-          const id = tap.grid[gy * TAPESTRY_SIZE + gx];
-          loomCell(g, ctx.tint, ox + gx * cell + 1, oy + gy * cell + 1, cell - 2,
-            id ? ARTWORK_MAP[id]?.color ?? CLT.cloth : null, 1);
-        }
-      }
-    });
-
-    picks.forEach((id, i) => {
-      ctx.at(1300 + i * 2100, () => {
-        const def = ARTWORK_MAP[id];
-        if (!def) return;
-        const [gx, gy] = spots[i];
-        if (!place(tap, def, gx, gy)) return;
-        fxOf(ctx).sew(ox + (gx + 0.5) * cell, oy + (gy + 0.5) * cell, def.color);
-        note.setText(`🧵 ${def.name} — ${def.blurb}`);
-        note.setColor(hex(def.color));
-      });
-    });
-  },
-};
-
-// ══ CLICK — Pin ═══════════════════════════════════════════════════════
-
-export const pin: PreviewScript = {
-  duration: 11000,
-  scale: 0.9,
-  caption: 'Click — 7 damage at arm\'s length, about seven times a second. The count in the corner is the only thing that matters.',
-  run(ctx) {
-    const fx = fxOf(ctx);
-    const av = ctx.useAvatar(() => new ClothAvatar(ctx.scene, ctx.tint));
-    av.setFacing(ctx.aim);
-    const victim = { x: ctx.cx + 92, y: ctx.cy };
-    dummyAt(ctx, victim);
-    scarf(ctx);
-    const count = label(ctx, ctx.w * 0.5, 12, hex(CLT.brassLit), 12);
-    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
-
-    let hits = 0;
-    let next = 500;
-    let flash = 0;
-    ctx.onFrame((dt, elapsed) => {
-      flash = Math.max(0, flash - dt / 130);
-      g.clear();
-      // The reach arc — short, and the whole balance of the ability.
-      g.lineStyle(1.2, ctx.tint(CLT.steelDark), 0.35);
-      g.beginPath();
-      g.arc(ctx.cx, ctx.cy, 62, ctx.aim - 1.1, ctx.aim + 1.1);
-      g.strokePath();
-      if (flash > 0) {
-        pinGlyph(g, ctx.tint, ctx.cx + Math.cos(ctx.aim) * 48, ctx.cy + Math.sin(ctx.aim) * 48,
-          ctx.aim, 30 + flash * 8, 1);
-      }
-      if (elapsed < next) return;
-      next += 145;
-      hits++;
-      flash = 1;
-      av.play('punch', ctx.aim, 120);
-      fx.stab(victim.x - 14, victim.y, ctx.aim, 0.8);
-      float(ctx, victim.x, victim.y - 18, '-7', '#ffdddd', 10);
-      count.setText(`🧵  ${hits % 10 === 0 ? 'COMBO!' : `${hits % 10} / 10`}`);
-      if (hits % 10 === 0) {
-        fx.burst(victim.x, victim.y, 60);
-        float(ctx, victim.x, victim.y - 36, '🧵 GRAPPLE SPIN', hex(CLT.brassLit), 12);
-      }
-    });
-  },
-};
-
-export const pinUpgraded: PreviewScript = {
+export const scarfHandBase: PreviewScript = {
   duration: 9000,
   scale: 0.9,
-  caption: 'Click+ — the tenth pin drags you onto them and whips you round once, which parks you inside your own reach for the whole revolution.',
+  bodyTexture: '',
+  caption: 'Click — grip the floor with the scarf hand and drag the mouse back: the scarf hauls you forward, then punches',
   run(ctx) {
-    const fx = fxOf(ctx);
-    const av = ctx.useAvatar(() => new ClothAvatar(ctx.scene, ctx.tint));
-    const victim = { x: ctx.cx + 190, y: ctx.cy };
-    dummyAt(ctx, victim);
-    scarf(ctx);
-    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
-    let spinning = false;
-    let spinT = 0;
-
+    const home: Mark = { x: ctx.w * 0.22, y: ctx.h * 0.62 };
+    const t = tailor(ctx, home);
+    const foe: Mark = { x: ctx.w * 0.8, y: ctx.h * 0.42 };
+    dummy(ctx, foe);
+    const anchor: Mark = { x: ctx.w * 0.56, y: ctx.h * 0.74 };
+    const ground = ctx.adopt(ctx.scene.add.graphics().setDepth(4));
+    ctx.onFrame(() => {
+      ground.clear();
+      if (!t.grip) return;
+      ground.fillStyle(ctx.tint(CLT.clothDeep), 0.45);
+      ground.fillEllipse(anchor.x, anchor.y + 2, 22, 10);
+    });
+    ctx.at(600, () => { t.reach.x = anchor.x; t.reach.y = anchor.y; });
     ctx.at(900, () => {
-      fx.reel(ctx.casterAt().x, ctx.casterAt().y, victim.x, victim.y);
-      float(ctx, ctx.cx, ctx.cy - 34, '🧵 10th PIN', hex(CLT.brassLit), 12);
+      t.grip = true;
+      t.fx.grip(anchor.x, anchor.y, false);
+      tick(ctx, anchor.x, anchor.y - 24, '✊ GRIP', CLT.clothPale);
     });
-    ctx.at(1200, () => { spinning = true; });
-
-    ctx.onFrame((dt) => {
-      g.clear();
-      if (!spinning) return;
-      spinT += dt / 1400;
-      if (spinT >= 1) { spinning = false; spinT = 0; return; }
-      const ang = Math.PI + spinT * Math.PI * 2;
-      const px = victim.x + Math.cos(ang) * 44;
-      const py = victim.y + Math.sin(ang) * 44;
-      ctx.moveCaster(px, py, { facing: Math.atan2(victim.y - py, victim.x - px) });
-      g.lineStyle(2.6, ctx.tint(CLT.cloth), 0.85);
-      g.lineBetween(px, py, victim.x, victim.y);
-      g.lineStyle(1.1, ctx.tint(CLT.clothPale), 0.7);
-      g.lineBetween(px, py - 1, victim.x, victim.y - 1);
-      if (Math.random() < 0.3) {
-        av.play('punch', Math.atan2(victim.y - py, victim.x - px), 100);
-        fx.stab(victim.x, victim.y, Math.atan2(victim.y - py, victim.x - px), 0.7);
-        float(ctx, victim.x, victim.y - 16, '-4', '#ffdddd', 10);
-      }
+    ctx.onFrame((dt, elapsed) => {
+      if (!t.grip || elapsed < 1100) return;
+      t.reach.x = anchor.x; t.reach.y = anchor.y;
+      const d = Phaser.Math.Distance.Between(home.x, home.y, anchor.x, anchor.y);
+      if (d <= 30) return;
+      const step = Math.min(d - 30, 560 * 0.45 * (dt / 1000));
+      home.x += ((anchor.x - home.x) / d) * step;
+      home.y += ((anchor.y - home.y) / d) * step;
     });
+    ctx.at(4300, () => { t.grip = false; t.reach.x = foe.x; t.reach.y = foe.y; });
+    ctx.at(5100, () => {
+      t.av?.play('punch', Math.atan2(foe.y - home.y, foe.x - home.x));
+      t.fx.lint(foe.x, foe.y, 8, 20);
+      tick(ctx, foe.x, foe.y - 18, `${PUNCH_DAMAGE}`, CLT.clothLit);
+    });
+    ctx.onFrame((_dt, elapsed) => {
+      if (elapsed < 5700) return;
+      const sweep = (elapsed - 5700) / 1000;
+      t.reach.x = foe.x + Math.cos(sweep * 4) * 90;
+      t.reach.y = foe.y + Math.sin(sweep * 4) * 60;
+    });
+    let gate = 0;
+    ctx.onFrame((_dt, elapsed) => {
+      if (elapsed < 5700 || elapsed < gate) return;
+      if (Math.hypot(t.handV.x, t.handV.y) < SMACK_SPEED) return;
+      if (Phaser.Math.Distance.Between(t.hand.x, t.hand.y, foe.x, foe.y) > 32) return;
+      gate = elapsed + 520;
+      t.fx.lint(foe.x, foe.y, 6, 16);
+      tick(ctx, foe.x, foe.y - 18, `${SMACK_DAMAGE}`, CLT.clothLit);
+    });
+    label(ctx, ctx.w * 0.5, ctx.h - 10, 'grip → haul → 20 punch → free 14 smacks from a hand moving over 620 px/s', CLT.clothPale);
   },
 };
 
-// ══ E — Longpin ═══════════════════════════════════════════════════════
-
-export const longpin: PreviewScript = {
-  duration: 11000,
-  scale: 0.85,
-  caption: 'E — 15 on the way in, then E again to be hauled to it: 10 through anybody on the line, 10 and a long shove on arrival.',
+export const scarfHandUpgraded: PreviewScript = {
+  duration: 7000,
+  scale: 0.9,
+  bodyTexture: '',
+  caption: 'Click+ Clotheslines — catch a line with the scarf hand and it zips you along it to the wall',
   run(ctx) {
-    const fx = fxOf(ctx);
-    const av = ctx.useAvatar(() => new ClothAvatar(ctx.scene, ctx.tint));
-    av.setFacing(ctx.aim);
-    const victim = { x: ctx.cx + 300, y: ctx.cy - 10 };
-    const bystander = { x: ctx.cx + 150, y: ctx.cy + 6 };
-    dummyAt(ctx, victim);
-    dummyAt(ctx, bystander);
-    scarf(ctx);
-    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
-
-    let fly: { x: number; y: number } | null = null;
-    let planted: { x: number; y: number } | null = null;
-    let t = 0;
-
-    ctx.at(900, () => {
-      av.play('punch', ctx.aim, 240);
-      fly = { x: ctx.cx + 20, y: ctx.cy };
-    });
-
-    ctx.onFrame((dt) => {
-      t += dt / 1000;
+    const lineY = ctx.h * 0.4;
+    const home: Mark = { x: ctx.w * 0.14, y: ctx.h * 0.7 };
+    const t = tailor(ctx, home);
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(15));
+    let riding = false;
+    ctx.onFrame((_dt, elapsed) => {
       g.clear();
-      if (fly) {
-        fly.x += 700 * (dt / 1000);
-        longpinGlyph(g, ctx.tint, fly.x, fly.y, 0, 1, t);
-        if (fly.x >= victim.x - 16) {
-          planted = { x: victim.x, y: victim.y };
-          fly = null;
-          fx.plant(victim.x, victim.y);
-          float(ctx, victim.x, victim.y - 24, '-15', '#ffdddd', 12);
-          float(ctx, victim.x, victim.y - 44, '📌 PLANTED', hex(CLT.brassLit), 11);
-        }
-      }
-      if (planted) {
-        longpinGlyph(g, ctx.tint, planted.x, planted.y, 0, 0.95, t);
-        const at = ctx.casterAt();
-        g.lineStyle(1.4, ctx.tint(CLT.cloth), 0.45);
-        g.beginPath();
-        g.moveTo(planted.x, planted.y);
-        g.lineTo((planted.x + at.x) / 2, (planted.y + at.y) / 2 + 18);
-        g.lineTo(at.x, at.y);
-        g.strokePath();
-      }
+      clothesline(g, ctx.tint, 10, lineY, ctx.w - 10, lineY, riding ? 1 : 0.85, elapsed / 1000, { seed: 3, lit: riding });
     });
-
-    ctx.at(3600, () => {
-      if (!planted) return;
-      float(ctx, ctx.cx, ctx.cy - 34, 'E again', hex(CLT.clothPale), 12);
-      fx.reel(ctx.casterAt().x, ctx.casterAt().y, planted.x, planted.y);
-      ctx.glideCaster({ to: { x: victim.x - 34, y: victim.y }, ms: 420, ease: 'in' });
-    });
-    ctx.at(3900, () => {
-      fx.lint(bystander.x, bystander.y, 6, 20, 380);
-      float(ctx, bystander.x, bystander.y - 22, '-10', '#ffdddd', 11);
-    });
-    ctx.at(4040, () => {
-      fx.burst(victim.x, victim.y, 66);
-      float(ctx, victim.x, victim.y - 24, '-10  SHOVE', '#ffdddd', 12);
-      planted = null;
-    });
-  },
-};
-
-export const longpinUpgraded: PreviewScript = {
-  duration: 11000,
-  scale: 0.85,
-  caption: 'E+ Cloth Hold — arriving on a pinned body wraps it in 50 HP of wool. It is not a timer: it is a damage check, and they have to cut their own way out.',
-  run(ctx) {
-    const fx = fxOf(ctx);
-    const av = ctx.useAvatar(() => new ClothAvatar(ctx.scene, ctx.tint));
-    av.setFacing(ctx.aim);
-    const victim = { x: ctx.cx + 250, y: ctx.cy - 6 };
-    dummyAt(ctx, victim);
-    scarf(ctx);
-    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(4));
-    const readout = label(ctx, ctx.w * 0.5, 12, hex(CLT.web), 11);
-    let web = 0;
-    let t = 0;
-
-    ctx.at(800, () => {
-      fx.reel(ctx.casterAt().x, ctx.casterAt().y, victim.x, victim.y);
-      ctx.glideCaster({ to: { x: victim.x - 40, y: victim.y }, ms: 380, ease: 'in' });
-    });
+    ctx.at(700, () => { t.reach.x = home.x + 60; t.reach.y = lineY; });
     ctx.at(1200, () => {
-      web = 50;
-      fx.wrap(victim.x, victim.y, 40);
-      float(ctx, victim.x, victim.y - 40, '🕸️ HELD', hex(CLT.web), 12);
+      riding = true;
+      t.grip = true;
+      t.fx.grip(t.hand.x, lineY, false);
+      tick(ctx, home.x, home.y - 40, '🧺 CLOTHESLINE', CLT.brassLit);
     });
-
-    ctx.onFrame((dt) => {
-      t += dt / 1000;
-      g.clear();
-      if (web <= 0) { readout.setText(''); return; }
-      webGlyph(g, ctx.tint, victim.x, victim.y, 40, web / 50, 0.95, t);
-      readout.setText(`🕸️  web ${Math.round(web)} / 50  —  they cannot move until it is gone`);
-      // The victim chewing their way out.
-      if (Math.random() < 0.06) {
-        web -= 6;
-        fx.lint(victim.x, victim.y, 3, 14, 300, CLT.web);
-        if (web <= 0) {
-          float(ctx, victim.x, victim.y - 34, '🕸️ TORN FREE', hex(CLT.webDark), 11);
-          fx.lint(victim.x, victim.y, 12, 30, 500, CLT.web);
-        }
-      }
-    });
-  },
-};
-
-// ══ R — Safety Line ═══════════════════════════════════════════════════
-
-export const safetyLine: PreviewScript = {
-  duration: 12000,
-  scale: 0.85,
-  caption: 'R — drive an anchor in. Press it again, or take 75 damage with it out, and the line hauls you back to it.',
-  run(ctx) {
-    const fx = fxOf(ctx);
-    const av = ctx.useAvatar(() => new ClothAvatar(ctx.scene, ctx.tint));
-    av.setFacing(ctx.aim);
-    scarf(ctx);
-    const anchor = { x: ctx.cx - 30, y: ctx.cy + 10 };
-    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(4));
-    const tally = label(ctx, ctx.w * 0.5, 12, hex(CLT.lineLit), 11);
-    let set = false;
-    let taken = 0;
-    let t = 0;
-
-    ctx.at(700, () => {
-      set = true;
-      av.play('slam', Math.PI / 2, 260);
-      fx.plant(anchor.x, anchor.y);
-      float(ctx, anchor.x, anchor.y - 26, '⚓ ANCHORED', hex(CLT.lineLit), 12);
-    });
-    ctx.at(1400, () => {
-      ctx.glideCaster({ to: { x: ctx.cx + 250, y: ctx.cy - 30 }, ms: 2200, ease: 'linear' });
-    });
-    for (let i = 0; i < 5; i++) {
-      ctx.at(2400 + i * 700, () => {
-        if (!set) return;
-        taken += 16;
-        const at = ctx.casterAt();
-        fx.lint(at.x, at.y, 5, 14, 340);
-        float(ctx, at.x, at.y - 22, '-16', '#ff8888', 11);
-        if (taken >= 75) {
-          set = false;
-          fx.snap(at.x, at.y, anchor.x, anchor.y);
-          ctx.glideCaster({ to: { x: anchor.x, y: anchor.y }, ms: 300, ease: 'in' });
-          float(ctx, anchor.x, anchor.y - 40, '⚓ HAULED BACK', hex(CLT.lineLit), 12);
-        }
-      });
-    }
-
-    ctx.onFrame((dt) => {
-      t += dt / 1000;
-      g.clear();
-      if (!set) { tally.setText(''); return; }
-      const armed = Phaser.Math.Clamp(taken / 75, 0, 1);
-      anchorGlyph(g, ctx.tint, anchor.x, anchor.y, 0.95, t, armed);
-      const at = ctx.casterAt();
-      const mx = (anchor.x + at.x) / 2;
-      const my = (anchor.y + at.y) / 2 + (1 - armed) * 26;
-      g.lineStyle(1.8, ctx.tint(CLT.line), 0.35 + armed * 0.5);
-      g.beginPath();
-      g.moveTo(anchor.x, anchor.y - 11);
-      g.lineTo(mx, my);
-      g.lineTo(at.x, at.y);
-      g.strokePath();
-      tally.setText(`⚓  ${taken} / 75 taken  —  the slack is the tally`);
-    });
-  },
-};
-
-export const safetyLineUpgraded: PreviewScript = {
-  duration: 10000,
-  scale: 0.85,
-  caption: 'R+ — the trip home is untouchable, and you land with 20% speed and 5 Pinned HP a second for five seconds.',
-  run(ctx) {
-    const fx = fxOf(ctx);
-    const av = ctx.useAvatar(() => new ClothAvatar(ctx.scene, ctx.tint));
-    av.setFacing(ctx.aim);
-    scarf(ctx);
-    const anchor = { x: ctx.cx - 120, y: ctx.cy + 10 };
-    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(4));
-    const buff = label(ctx, ctx.w * 0.5, 12, hex(CLT.lineLit), 11);
-    let pinned = 0;
-    let buffUntil = 0;
-    let t = 0;
-
-    ctx.at(600, () => {
-      ctx.moveCaster(ctx.cx + 210, ctx.cy - 20, { facing: ctx.aim });
-      fx.plant(anchor.x, anchor.y);
-    });
-    ctx.at(1600, () => {
-      const at = ctx.casterAt();
-      fx.snap(at.x, at.y, anchor.x, anchor.y);
-      ctx.glideCaster({ to: anchor, ms: 340, ease: 'in' });
-      float(ctx, at.x, at.y - 28, '🛡️ UNTOUCHABLE', hex(CLT.lineLit), 11);
-    });
-    ctx.at(1980, () => { buffUntil = 5000; pinned = 0; });
-
     ctx.onFrame((dt, elapsed) => {
-      t += dt / 1000;
-      g.clear();
-      anchorGlyph(g, ctx.tint, anchor.x, anchor.y, 0.8, t, 0.4);
-      if (buffUntil <= 0 || elapsed > 1980 + 5000) { buff.setText(''); return; }
-      pinned = Math.min(25, pinned + (5 * dt) / 1000);
-      const at = ctx.casterAt();
-      g.lineStyle(2, ctx.tint(CLT.line), 0.35 + 0.2 * Math.sin(t * 8));
-      g.strokeCircle(at.x, at.y, 26);
-      buff.setText(`⚡ +20% speed   📍 +${Math.round(pinned)} pinned`);
+      if (!riding || elapsed < 1200) return;
+      const step = dt / 1000;
+      home.y += (lineY + 18 - home.y) * Math.min(1, step * 6);
+      home.x = Math.min(ctx.w - 30, home.x + LINE_SPEED * 0.5 * step);
+      t.reach.x = home.x + 46; t.reach.y = lineY;
+      if (home.x >= ctx.w - 30) { riding = false; t.grip = false; }
     });
+    label(ctx, ctx.w * 0.5, ctx.h - 10, '4 lines · 22px to catch one · 680 px/s until a wall', CLT.brassLit);
   },
 };
 
-// ══ F — Pin Cushion ═══════════════════════════════════════════════════
+// ── E ─────────────────────────────────────────────────────────────────
 
-export const pinCushion: PreviewScript = {
-  duration: 11000,
-  scale: 0.9,
-  caption: 'F — 50 of your health becomes pins. They are spent first, they burn 25% faster, and a quarter of everything they eat goes straight back.',
+function needleLoop(ctx: PreviewCtx, bomb: boolean): void {
+  const home: Mark = { x: ctx.w * 0.2, y: ctx.h * 0.6 };
+  const t = tailor(ctx, home);
+  const foe: Mark = { x: ctx.w * 0.82, y: ctx.h * 0.5 };
+  dummy(ctx, foe);
+  interface N { x: number; y: number; ang: number; vx: number; vy: number; state: 'fall' | 'ground' | 'held' | 'fly' | 'wall'; at: number; gone: boolean }
+  const needles: N[] = [];
+  const pins = pinField(ctx, foe, (d) => tick(ctx, foe.x, foe.y - 18, `${d}`, CLT.steelLit));
+  const g = ctx.adopt(ctx.scene.add.graphics().setDepth(16));
+  let now = 0;
+  ctx.onFrame((dt) => {
+    now += dt;
+    const step = dt / 1000;
+    g.clear();
+    for (const n of needles) {
+      if (n.gone) continue;
+      if (n.state === 'fall' && now >= n.at) n.state = 'ground';
+      if (n.state === 'held') { n.x = t.hand.x; n.y = t.hand.y; n.ang = Math.atan2(t.hand.y - home.y, t.hand.x - home.x); }
+      if (n.state === 'fly') {
+        n.x += n.vx * step;
+        n.y += n.vy * step;
+        if (Phaser.Math.Distance.Between(n.x, n.y, foe.x, foe.y) <= 20) {
+          n.gone = true;
+          t.fx.stab(foe.x, foe.y, n.ang, 1.4);
+          tick(ctx, foe.x, foe.y - 18, `${NEEDLE_DAMAGE}`, CLT.steelLit);
+          if (bomb) { pins.spray(n.x, n.y, n.ang, BOMB_PINS, BOMB_SPREAD * 2, BOMB_PIN_DAMAGE); t.fx.barrage(n.x, n.y, 36, CLT.cloth); }
+          continue;
+        }
+        if (n.y <= 8) {
+          n.y = 8; n.state = 'wall'; n.vx = 0; n.vy = 0;
+          t.fx.stab(n.x, n.y, n.ang, 1.2);
+          if (bomb) { pins.spray(n.x, n.y, Math.PI / 2, BOMB_PINS, BOMB_SPREAD * 2, BOMB_PIN_DAMAGE); t.fx.barrage(n.x, n.y, 36, CLT.cloth); }
+        }
+      }
+      if (n.state === 'fall') {
+        const k = 1 - Phaser.Math.Clamp((n.at - now) / 420, 0, 1);
+        g.fillStyle(ctx.tint(CLT.ink), 0.25 + 0.3 * k);
+        g.fillEllipse(n.x, n.y, 8 + k * 10, 3 + k * 4);
+        continue;
+      }
+      needleGlyph(g, ctx.tint, n.x, n.y, n.ang, NEEDLE_LEN, 1, now / 1000,
+        { stuck: n.state === 'ground' || n.state === 'wall', wrapped: bomb && (n.state === 'held' || n.state === 'fly') });
+    }
+  });
+  ctx.at(400, () => {
+    t.av?.play('raise');
+    tick(ctx, home.x, home.y - 46, '🪡 NEEDLE NEXUS', CLT.steelLit);
+    for (let i = 0; i < 3; i++) {
+      const a = (i - 1) * 0.45;
+      const d = i === 1 ? 96 : 78;
+      const x = home.x + Math.cos(a) * d;
+      const y = home.y + Math.sin(a) * d;
+      needles.push({ x, y, ang: Math.PI / 2 + (i - 1) * 0.25, vx: 0, vy: 0, state: 'fall', at: now + 420 + i * 70, gone: false });
+      ctx.at(400 + i * 70, () => t.fx.needleFall(x, y));
+    }
+  });
+  ctx.at(1600, () => { const n = needles[1]; if (n) { t.reach.x = n.x; t.reach.y = n.y; } });
+  ctx.at(2100, () => { const n = needles[1]; if (n) { n.state = 'held'; t.grip = true; } });
+  ctx.at(2400, () => { t.reach.x = home.x - 40; t.reach.y = home.y + 10; });
+  ctx.at(2900, () => {
+    const n = needles[1];
+    if (!n) return;
+    t.grip = false;
+    const a = Math.atan2(foe.y - n.y, foe.x - n.x);
+    n.state = 'fly'; n.vx = Math.cos(a) * 760; n.vy = Math.sin(a) * 760; n.ang = a;
+    t.reach.x = foe.x; t.reach.y = foe.y;
+  });
+  ctx.at(4300, () => { const n = needles[0]; if (n) { t.reach.x = n.x; t.reach.y = n.y; } });
+  ctx.at(4800, () => { const n = needles[0]; if (n) { n.state = 'held'; t.grip = true; } });
+  ctx.at(5400, () => {
+    const n = needles[0];
+    if (!n) return;
+    t.grip = false;
+    const a = -Math.PI / 2 + 0.2;
+    n.state = 'fly'; n.vx = Math.cos(a) * 760; n.vy = Math.sin(a) * 760; n.ang = a;
+    tick(ctx, n.x, n.y - 30, '📌 STUCK IN THE WALL', CLT.clothPale);
+  });
+  label(ctx, ctx.w * 0.5, ctx.h - 10, bomb
+    ? 'wrapped needles burst into 9 pins × 6 — on a hit and off a wall'
+    : `${NEEDLE_DROP_DAMAGE} where they land · ${NEEDLE_DAMAGE} thrown · a wall keeps the needle`, CLT.steelLit);
+}
+
+export const needleNexus: PreviewScript = {
+  duration: 7600, scale: 0.9, bodyTexture: '',
+  caption: 'E — three needles drop from the sky; the scarf pulls one out and throws it',
+  run(ctx) { needleLoop(ctx, false); },
+};
+
+export const needleNexusUpgraded: PreviewScript = {
+  duration: 7600, scale: 0.9, bodyTexture: '',
+  caption: 'E+ Needle Bombs — every thrown needle is wrapped, and the wrap bursts into a shotgun spray of pins',
+  run(ctx) { needleLoop(ctx, true); },
+};
+
+// ── R ─────────────────────────────────────────────────────────────────
+
+export const constrainingCloth: PreviewScript = {
+  duration: 8000, scale: 0.9, bodyTexture: '',
+  caption: 'R — a bola binds them; the scarf picks them up and throws them into the wall',
   run(ctx) {
-    const fx = fxOf(ctx);
-    const av = ctx.useAvatar(() => new ClothAvatar(ctx.scene, ctx.tint));
-    av.setFacing(ctx.aim);
-    const victim = { x: ctx.cx + 170, y: ctx.cy };
-    dummyAt(ctx, victim);
-    scarf(ctx);
-    const bars = ctx.adopt(ctx.scene.add.graphics().setDepth(11));
-    const read = label(ctx, ctx.w * 0.5, 12, hex(CLT.pinnedLit), 11);
-    let hp = 200;
+    const home: Mark = { x: ctx.w * 0.2, y: ctx.h * 0.55 };
+    const t = tailor(ctx, home);
+    const foe: Mark = { x: ctx.w * 0.6, y: ctx.h * 0.5 };
+    dummy(ctx, foe);
+    let bola: Mark | null = null;
+    let bound = false;
+    let carried = false;
+    let flying: Mark | null = null;
     let pinned = 0;
-
-    ctx.at(900, () => {
-      hp -= 50;
-      pinned += 50;
-      av.play('clap', 0, 220);
-      const at = ctx.casterAt();
-      fx.thorns(at.x, at.y, -Math.PI / 2, 6);
-      fx.lint(at.x, at.y, 8, 18, 420, CLT.pinned);
-      float(ctx, at.x, at.y - 40, '📍 50 PINNED', hex(CLT.pinnedLit), 12);
-    });
-
-    for (let i = 0; i < 4; i++) {
-      ctx.at(2400 + i * 1500, () => {
-        const at = ctx.casterAt();
-        const raw = 12;
-        const spend = Math.min(pinned, raw * 1.25);
-        pinned -= spend;
-        if (spend < raw * 1.25) hp -= raw - spend / 1.25;
-        fx.lint(at.x, at.y, 5, 14, 320, CLT.pinned);
-        float(ctx, at.x, at.y - 22, `-${raw}`, '#ff8888', 11);
-        if (spend > 0) {
-          const back = Math.round(spend * 0.25);
-          fx.thorns(at.x, at.y, Math.atan2(victim.y - at.y, victim.x - at.x), 5);
-          float(ctx, victim.x, victim.y - 22, `-${back} THORNS`, hex(CLT.thorn), 11);
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(16));
+    ctx.onFrame((dt, elapsed) => {
+      const step = dt / 1000;
+      const time = elapsed / 1000;
+      g.clear();
+      if (bola) {
+        bola.x += BOLA_SPEED * step;
+        bolaGlyph(g, ctx.tint, bola.x, bola.y, time * 16, 1, time);
+        if (Phaser.Math.Distance.Between(bola.x, bola.y, foe.x, foe.y) <= 26) {
+          bola = null;
+          bound = true;
+          t.fx.wrap(foe.x, foe.y, 24);
+          tick(ctx, foe.x, foe.y - 20, `${BOLA_DAMAGE} · 🪢 BOUND`, CLT.web);
         }
+      }
+      if (carried) { foe.x = t.hand.x; foe.y = t.hand.y; }
+      if (flying) {
+        foe.x += flying.x * step;
+        foe.y += flying.y * step;
+        if (foe.x >= ctx.w - 20) {
+          foe.x = ctx.w - 20;
+          flying = null;
+          pinned = elapsed + 2500;
+          t.fx.burst(foe.x, foe.y, 30, CLT.web);
+          tick(ctx, foe.x - 20, foe.y - 22, `${WALL_SLAM_DAMAGE} · 📌 PINNED`, CLT.clothLit);
+        }
+      }
+      if (bound) clothWrap(g, ctx.tint, foe.x, foe.y, 22, 0.95, time, { seed: 4 });
+      if (elapsed < pinned) {
+        for (let i = 0; i < 4; i++) {
+          const a = (i / 4) * TAU + 0.4;
+          pinGlyph(g, ctx.tint, foe.x + Math.cos(a) * 20, foe.y + Math.sin(a) * 20, a + Math.PI, 16, 1, { head: 2.2 });
+        }
+      }
+    });
+    ctx.at(500, () => {
+      t.av?.play('sweep', 0);
+      bola = { x: home.x + 24, y: foe.y };
+      tick(ctx, home.x, home.y - 46, '🪢 CONSTRAINING CLOTH', CLT.web);
+    });
+    ctx.at(1600, () => { t.reach.x = foe.x; t.reach.y = foe.y; });
+    ctx.at(2300, () => { carried = true; t.grip = true; tick(ctx, foe.x, foe.y - 30, '🫳 GRABBED', CLT.clothLit); });
+    ctx.at(2600, () => { t.reach.x = home.x + 30; t.reach.y = home.y - 60; });
+    ctx.at(3400, () => { t.reach.x = home.x + 240; t.reach.y = home.y - 20; });
+    ctx.at(3650, () => { carried = false; t.grip = false; flying = { x: 820, y: 0 }; tick(ctx, foe.x, foe.y - 30, '🤾 THROWN', CLT.clothLit); });
+    label(ctx, ctx.w * 0.5, ctx.h - 10, `${BOLA_DAMAGE} + bound 5s at 45% speed → thrown into a wall: ${WALL_SLAM_DAMAGE} and pinned 2.5s`, CLT.web);
+  },
+};
+
+export const constrainingClothUpgraded: PreviewScript = {
+  duration: 7000, scale: 0.9, bodyTexture: '',
+  caption: 'R+ Mystical Jacket — whoever it catches is buckled in, and the arrow keys drag them around',
+  run(ctx) {
+    const home: Mark = { x: ctx.w * 0.18, y: ctx.h * 0.5 };
+    const t = tailor(ctx, home);
+    const foe: Mark = { x: ctx.w * 0.55, y: ctx.h * 0.5 };
+    dummy(ctx, foe);
+    let jacket: Mark | null = null;
+    let worn = false;
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(16));
+    const keys = ctx.adopt(ctx.scene.add.text(ctx.w * 0.18, ctx.h * 0.18, '', {
+      fontSize: '14px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif', color: hex(CLT.jacketLit),
+    }).setOrigin(0.5).setDepth(20));
+    ctx.onFrame((dt, elapsed) => {
+      const step = dt / 1000;
+      const time = elapsed / 1000;
+      g.clear();
+      if (jacket) {
+        jacket.x += BOLA_SPEED * step;
+        bolaGlyph(g, ctx.tint, jacket.x, jacket.y, 0, 1, time, { jacket: true, heading: 0 });
+        if (Phaser.Math.Distance.Between(jacket.x, jacket.y, foe.x, foe.y) <= 26) {
+          jacket = null;
+          worn = true;
+          t.fx.wrap(foe.x, foe.y, 24, true);
+          tick(ctx, foe.x, foe.y - 20, '🧥 JACKETED', CLT.jacketLit);
+        }
+      }
+      if (worn) {
+        // The arrow keys: up, then right, then down — the body goes where they point.
+        const phase = elapsed < 2600 ? null : elapsed < 3600 ? '↑' : elapsed < 4800 ? '→' : elapsed < 5800 ? '↓' : null;
+        keys.setText(phase ? `[ ${phase} ]` : '');
+        const v = 300 * step;
+        if (phase === '↑') foe.y = Math.max(24, foe.y - v);
+        if (phase === '→') foe.x = Math.min(ctx.w - 24, foe.x + v);
+        if (phase === '↓') foe.y = Math.min(ctx.h - 24, foe.y + v);
+        jacketGlyph(g, ctx.tint, foe.x, foe.y, 0, 22, 0.95, time);
+      }
+    });
+    ctx.at(500, () => { t.av?.play('sweep', 0); jacket = { x: home.x + 24, y: foe.y }; });
+    label(ctx, ctx.w * 0.5, ctx.h - 10, 'arrow keys drive a jacketed body at 300 px/s while held', CLT.jacketLit);
+  },
+};
+
+// ── F ─────────────────────────────────────────────────────────────────
+
+function cushionLoop(ctx: PreviewCtx, purple: boolean): void {
+  const home: Mark = { x: ctx.w * 0.18, y: ctx.h * 0.55 };
+  const t = tailor(ctx, home);
+  const foe: Mark = { x: ctx.w * 0.66, y: ctx.h * 0.45 };
+  dummy(ctx, foe);
+  const max = purple ? 8 : 6;
+  const cushion: Mark & { pins: number; on: boolean; squash: number } = { x: ctx.w * 0.42, y: ctx.h * 0.55, pins: max, on: false, squash: 0 };
+  const pins = pinField(ctx, foe, (d) => tick(ctx, foe.x, foe.y - 18, `${d}`, CLT.steelLit));
+  const g = ctx.adopt(ctx.scene.add.graphics().setDepth(4));
+  const shots: Mark[] = [];
+  const sg = ctx.adopt(ctx.scene.add.graphics().setDepth(16));
+  ctx.onFrame((dt, elapsed) => {
+    cushion.squash = Math.max(0, cushion.squash - dt / 220);
+    g.clear();
+    sg.clear();
+    if (cushion.on) {
+      pincushion(g, ctx.tint, cushion.x, cushion.y, CUSHION_R, cushion.pins, max, 1, elapsed / 1000,
+        { purple, squash: cushion.squash, seed: 3 });
+    }
+    for (let i = shots.length - 1; i >= 0; i--) {
+      const s = shots[i];
+      s.x -= 420 * (dt / 1000);
+      sg.fillStyle(0xff8a3d, 1);
+      sg.fillCircle(s.x, s.y, 5);
+      if (Phaser.Math.Distance.Between(s.x, s.y, cushion.x, cushion.y) <= CUSHION_R + 10) {
+        shots.splice(i, 1);
+        cushion.pins = Math.min(max, cushion.pins + 1);
+        cushion.squash = 0.6;
+        t.fx.stab(cushion.x, cushion.y - 6, -Math.PI / 2, 1.2);
+        tick(ctx, cushion.x, cushion.y - 34, '♻ +1 PIN', CLT.pinnedLit);
+      }
+    }
+  });
+  ctx.at(400, () => {
+    cushion.on = true;
+    t.fx.burst(cushion.x, cushion.y, 26, purple ? CLT.pinned : CLT.tomato);
+    tick(ctx, cushion.x, cushion.y - 36, purple ? '🟣 PINCUSHION' : '🍅 PINCUSHION', purple ? CLT.pinnedLit : CLT.tomatoLit);
+  });
+  ctx.at(1100, () => { t.reach.x = cushion.x; t.reach.y = cushion.y; });
+  ctx.at(1700, () => {
+    cushion.pins--;
+    cushion.squash = 1;
+    pins.spray(cushion.x, cushion.y, 0.2, CUSHION_BARRAGE, TAU, CUSHION_PIN_DAMAGE);
+    t.fx.barrage(cushion.x, cushion.y, 44, purple ? CLT.pinnedLit : CLT.clothPale);
+    tick(ctx, cushion.x, cushion.y - 36, `📌 ${cushion.pins} LEFT`, CLT.tomatoLit);
+  });
+  if (purple) {
+    ctx.at(2600, () => shots.push({ x: ctx.w - 10, y: cushion.y }));
+    ctx.at(3000, () => shots.push({ x: ctx.w - 10, y: cushion.y + 4 }));
+  }
+  // The self-pin: the tailor hauls across the cushion.
+  ctx.at(3600, () => { t.reach.x = cushion.x + 60; t.reach.y = cushion.y; t.grip = true; });
+  ctx.onFrame((dt, elapsed) => {
+    if (elapsed < 3700 || elapsed > 4700) return;
+    home.x += ((cushion.x - home.x) * Math.min(1, (dt / 1000) * 4));
+    home.y += ((cushion.y - home.y) * Math.min(1, (dt / 1000) * 4));
+  });
+  ctx.at(4300, () => {
+    cushion.pins--;
+    t.fx.selfPin(home.x, home.y);
+    t.av?.setPins(3);
+    tick(ctx, home.x, home.y - 44, '📌 PINNED ×3', CLT.pinnedLit);
+  });
+  ctx.at(4800, () => { t.grip = false; t.reach.x = foe.x; t.reach.y = foe.y; });
+  // Hit while pinned: a ring of pins and a stab back.
+  ctx.at(5600, () => {
+    t.fx.barrage(home.x, home.y, 40, CLT.pinnedLit);
+    pins.spray(home.x, home.y, 0, 10, TAU, 4);
+    t.fx.stab(foe.x, foe.y, Math.atan2(foe.y - home.y, foe.x - home.x), 1.3);
+    tick(ctx, foe.x, foe.y - 30, `${RETALIATE_DAMAGE} BACK`, CLT.pinnedLit);
+    t.av?.setPins(2);
+  });
+  ctx.at(7400, () => t.av?.setPins(0));
+  label(ctx, ctx.w * 0.5, ctx.h - 10, purple
+    ? '8 pins · enemy shots that reach it become pins'
+    : `punch: ${CUSHION_BARRAGE} pins × ${CUSHION_PIN_DAMAGE} · walk in: pinned ×3 → each hit taken stabs back for ${RETALIATE_DAMAGE}`,
+  purple ? CLT.pinnedLit : CLT.tomatoLit);
+}
+
+export const pincushionBase: PreviewScript = {
+  duration: 8000, scale: 0.9, bodyTexture: '',
+  caption: 'F — punch the cushion and it fires; walk into it and the pins go into you, ready to stab back',
+  run(ctx) { cushionLoop(ctx, false); },
+};
+
+export const pincushionUpgraded: PreviewScript = {
+  duration: 8000, scale: 0.9, bodyTexture: '',
+  caption: 'F+ Recycle — a purple cushion with 8 pins, refilled by the shots that hit it',
+  run(ctx) { cushionLoop(ctx, true); },
+};
+
+// ── Q ─────────────────────────────────────────────────────────────────
+
+function fireLoop(ctx: PreviewCtx, father: boolean): void {
+  const home: Mark = { x: ctx.w * 0.3, y: ctx.h * 0.58 };
+  const t = tailor(ctx, home);
+  const foe: Mark = { x: ctx.w * 0.82, y: ctx.h * 0.45 };
+  dummy(ctx, foe);
+  interface S { x: number; y: number; vx: number; vy: number; spin: number; life: number; seed: number }
+  const scraps: S[] = [];
+  const g = ctx.adopt(ctx.scene.add.graphics().setDepth(16));
+  const back = ctx.adopt(ctx.scene.add.graphics().setDepth(4.6));
+  let burning = false;
+  let nextScrap = 0;
+  let foeBurn = 0;
+  ctx.onFrame((dt, elapsed) => {
+    const step = dt / 1000;
+    const time = elapsed / 1000;
+    g.clear();
+    back.clear();
+    if (burning && elapsed >= nextScrap) {
+      nextScrap = elapsed + 150;
+      const u = Math.random();
+      scraps.push({
+        x: home.x + (t.hand.x - home.x) * u, y: home.y - 14 + (t.hand.y - home.y + 14) * u,
+        vx: (Math.random() - 0.5) * 160, vy: (Math.random() - 0.5) * 160 - 30,
+        spin: Math.random() * TAU, life: 1000, seed: Math.random() * 99,
       });
     }
-
-    ctx.onFrame(() => {
-      if (av instanceof ClothAvatar) av.setPinned(Math.min(1, pinned / 120));
-      bars.clear();
-      const bx = ctx.w * 0.5 - 90;
-      const by = 30;
-      bars.fillStyle(ctx.tint(CLT.deep), 0.9);
-      bars.fillRoundedRect(bx, by, 180, 11, 5);
-      bars.fillStyle(ctx.tint(CLT.cloth), 1);
-      bars.fillRoundedRect(bx, by, 180 * Phaser.Math.Clamp(hp / 200, 0, 1), 11, 5);
-      bars.fillStyle(ctx.tint(CLT.deep), 0.9);
-      bars.fillRoundedRect(bx, by + 14, 180, 7, 3.5);
-      bars.fillStyle(ctx.tint(CLT.pinned), 1);
-      bars.fillRoundedRect(bx, by + 14, 180 * Phaser.Math.Clamp(pinned / 200, 0, 1), 7, 3.5);
-      read.setText(`🧣 ${Math.round(hp)}    📍 ${Math.round(pinned)}`);
-    });
-  },
-};
-
-export const pinCushionUpgraded: PreviewScript = {
-  duration: 9000,
-  scale: 0.9,
-  caption: 'F+ Pin Push — every hit you take with pins in you sprays eight of them back out, 2 damage each, in every direction at once.',
-  run(ctx) {
-    const fx = fxOf(ctx);
-    const av = ctx.useAvatar(() => new ClothAvatar(ctx.scene, ctx.tint));
-    av.setFacing(ctx.aim);
-    dummyAt(ctx, { x: ctx.cx + 150, y: ctx.cy - 30 });
-    dummyAt(ctx, { x: ctx.cx - 140, y: ctx.cy + 24 });
-    scarf(ctx);
-    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
-    const pins: Array<{ x: number; y: number; vx: number; vy: number; a: number }> = [];
-
-    const burst = (): void => {
-      const at = ctx.casterAt();
-      fx.lint(at.x, at.y, 5, 14, 300, CLT.pinned);
-      float(ctx, at.x, at.y - 26, '-12', '#ff8888', 11);
-      const base = Math.random() * Math.PI * 2;
-      for (let i = 0; i < 8; i++) {
-        const a = base + (i / 8) * Math.PI * 2;
-        pins.push({ x: at.x + Math.cos(a) * 16, y: at.y + Math.sin(a) * 16, vx: Math.cos(a) * 430, vy: Math.sin(a) * 430, a });
-      }
-    };
-    ctx.at(1100, burst);
-    ctx.at(3300, burst);
-    ctx.at(5500, burst);
-
-    ctx.onFrame((dt) => {
-      g.clear();
-      for (let i = pins.length - 1; i >= 0; i--) {
-        const p = pins[i];
-        p.x += p.vx * (dt / 1000);
-        p.y += p.vy * (dt / 1000);
-        nailGlyph(g, ctx.tint, p.x, p.y, p.a, 13, 0.95);
-        if (p.x < -40 || p.x > ctx.w + 40 || p.y < -40 || p.y > ctx.h + 40) pins.splice(i, 1);
-      }
-    });
-  },
-};
-
-// ══ Q — Tapestry ══════════════════════════════════════════════════════
-
-export const tapestry: PreviewScript = {
-  duration: 13000,
-  scale: 0.9,
-  caption: 'Q — three artworks are offered, one is sewn. Pieces are all different shapes, and the loom only has twenty-five squares.',
-  run(ctx) {
-    const offers = ['sharpness-3', 'technique-2', 'nail-storm'].map((id) => ARTWORK_MAP[id]).filter(Boolean);
-    const tap = emptyTapestry();
-    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(10));
-    const cell = 22;
-    const ox = ctx.cx - 250;
-    const oy = ctx.cy - (TAPESTRY_SIZE * cell) / 2;
-    const names = offers.map((_, i) => label(ctx, 0, 0, hex(CLT.clothPale), 10));
-    let chosen = -1;
-    let ghost: [number, number] | null = null;
-
-    ctx.at(2400, () => { chosen = 2; });
-    ctx.at(3600, () => { ghost = [1, 1]; });
-    ctx.at(5200, () => {
-      const def = offers[chosen];
-      if (!def || !ghost) return;
-      place(tap, def, ghost[0], ghost[1]);
-      fxOf(ctx).sew(ox + (ghost[0] + 1) * cell, oy + (ghost[1] + 1) * cell, def.color);
-      float(ctx, ctx.w * 0.5, 30, '🖱️ RIGHT CLICK UNLOCKED', hex(CLT.brassLit), 12);
-      ghost = null;
-      chosen = -1;
-    });
-
-    ctx.onFrame((_dt, elapsed) => {
-      g.clear();
-      // The loom.
-      g.fillStyle(ctx.tint(CLT.loom), 0.92);
-      g.fillRoundedRect(ox - 6, oy - 6, TAPESTRY_SIZE * cell + 12, TAPESTRY_SIZE * cell + 12, 6);
-      for (let gy = 0; gy < TAPESTRY_SIZE; gy++) {
-        for (let gx = 0; gx < TAPESTRY_SIZE; gx++) {
-          const id = tap.grid[gy * TAPESTRY_SIZE + gx];
-          loomCell(g, ctx.tint, ox + gx * cell + 1, oy + gy * cell + 1, cell - 2,
-            id ? ARTWORK_MAP[id]?.color ?? CLT.cloth : null, 1);
-        }
-      }
-      if (ghost && chosen >= 0) {
-        const def = offers[chosen];
-        for (const [cx2, cy2] of def.cells) {
-          g.fillStyle(ctx.tint(def.color), 0.5 + Math.sin(elapsed / 120) * 0.15);
-          g.fillRect(ox + (ghost[0] + cx2) * cell + 1, oy + (ghost[1] + cy2) * cell + 1, cell - 2, cell - 2);
-        }
-      }
-
-      // The three cards.
-      offers.forEach((def, i) => {
-        const cw = 128;
-        const cx2 = ctx.cx - 60 + i * (cw + 12);
-        const cy2 = ctx.cy - 74;
-        const on = chosen === i;
-        g.fillStyle(ctx.tint(CLT.deep), on ? 1 : 0.9);
-        g.fillRoundedRect(cx2, cy2, cw, 132, 6);
-        g.lineStyle(on ? 3 : 1.6, ctx.tint(on ? CLT.brassLit : def.color), 0.95);
-        g.strokeRoundedRect(cx2, cy2, cw, 132, 6);
-        const sc = 15;
-        const w = Math.max(...def.cells.map((c) => c[0])) + 1;
-        const sx = cx2 + cw / 2 - (w * sc) / 2;
-        for (const [ccx, ccy] of def.cells) {
-          loomCell(g, ctx.tint, sx + ccx * sc, cy2 + 18 + ccy * sc, sc - 2, def.color, 1);
-        }
-        names[i].setPosition(cx2 + cw / 2, cy2 + 116);
-        names[i].setText(def.name);
-        names[i].setColor(hex(on ? CLT.brassLit : def.color));
-      });
-    });
-  },
-};
-
-export const tapestryUpgraded: PreviewScript = {
-  duration: 11000,
-  scale: 0.9,
-  caption: 'Q+ Salvage — a couple of artworks survive your death and are on the loom when the next match starts. It also opens three artworks the deck did not have.',
-  run(ctx) {
-    const tap = emptyTapestry();
-    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(10));
-    const cell = 26;
-    const ox = ctx.cx - (TAPESTRY_SIZE * cell) / 2;
-    const oy = ctx.cy - (TAPESTRY_SIZE * cell) / 2 + 6;
-    const note = label(ctx, ctx.w * 0.5, 14, hex(CLT.clothPale), 11);
-    const extra = ['combo', 'grand-hold', 'slicing-hold'].map((id) => ARTWORK_MAP[id]).filter(Boolean);
-
-    ctx.at(600, () => {
-      place(tap, ARTWORK_MAP['sharpness-2'], 0, 0);
-      place(tap, ARTWORK_MAP['speedy-1'], 3, 0);
-      place(tap, ARTWORK_MAP['technique-1'], 0, 2);
-      note.setText('the loom you died with');
-    });
-    ctx.at(3200, () => {
-      note.setText('💀 …and the two pieces that survived it');
-      tap.placed = tap.placed.slice(-2);
-      tap.grid = new Array(TAPESTRY_SIZE * TAPESTRY_SIZE).fill(null);
-      for (const p of tap.placed) {
-        const def = ARTWORK_MAP[p.id];
-        for (const [cx2, cy2] of def.cells) tap.grid[(p.gy + cy2) * TAPESTRY_SIZE + (p.gx + cx2)] = def.id;
-      }
-    });
-    ctx.at(6000, () => { note.setText('and three artworks only Salvage can offer'); });
-
-    ctx.onFrame((_dt, elapsed) => {
-      g.clear();
-      g.fillStyle(ctx.tint(CLT.loom), 0.92);
-      g.fillRoundedRect(ox - 7, oy - 7, TAPESTRY_SIZE * cell + 14, TAPESTRY_SIZE * cell + 14, 6);
-      for (let gy = 0; gy < TAPESTRY_SIZE; gy++) {
-        for (let gx = 0; gx < TAPESTRY_SIZE; gx++) {
-          const id = tap.grid[gy * TAPESTRY_SIZE + gx];
-          loomCell(g, ctx.tint, ox + gx * cell + 1, oy + gy * cell + 1, cell - 2,
-            id ? ARTWORK_MAP[id]?.color ?? CLT.cloth : null, 1);
-        }
-      }
-      if (elapsed < 6000) return;
-      extra.forEach((def, i) => {
-        const sc = 13;
-        const bx = ox + TAPESTRY_SIZE * cell + 34;
-        const by = oy + i * 44;
-        for (const [cx2, cy2] of def.cells) {
-          loomCell(g, ctx.tint, bx + cx2 * sc, by + cy2 * sc, sc - 2, def.color, 1);
-        }
-      });
-    });
-  },
-};
-
-// ══ MASTERY — Outfit Change ═══════════════════════════════════════════
-
-export const outfitChange: PreviewScript = {
-  duration: 12000,
-  scale: 0.9,
-  caption: 'Mastery passive — Space sheds what you are wearing. Four outfits, four different things to be resistant to, swapped mid-fight.',
-  run(ctx) {
-    const fx = fxOf(ctx);
-    const av = ctx.useAvatar(() => new ClothAvatar(ctx.scene, ctx.tint));
-    av.setMastered(true);
-    av.setFacing(ctx.aim);
-    scarf(ctx);
-    const name = label(ctx, ctx.w * 0.5, 14, hex(CLT.clothPale), 13);
-    const effect = label(ctx, ctx.w * 0.5, ctx.h - 16, hex(CLT.clothPale), 11);
-    const blurb: Record<Outfit, string> = {
-      suit: 'take 3 less from every source',
-      coat: '10% less damage from everything',
-      silk: 'every negative status lasts 33% less',
-      hoodie: 'AOE and piercing hits land for 20% less',
-    };
-    let i = 0;
-    const show = (): void => {
-      const o = OUTFITS[i % OUTFITS.length];
-      const from = OUTFIT_COLOR[OUTFITS[(i + OUTFITS.length - 1) % OUTFITS.length]];
-      if (av instanceof ClothAvatar) av.setOutfit(o);
-      const at = ctx.casterAt();
-      fx.shed(at.x, at.y, from, OUTFIT_COLOR[o]);
-      name.setText(`${OUTFIT_EMOJI[o]}  ${OUTFIT_NAME[o]}`);
-      name.setColor(hex(OUTFIT_COLOR[o] === CLT.suit ? CLT.clothPale : OUTFIT_COLOR[o]));
-      effect.setText(blurb[o]);
-      i++;
-    };
-    show();
-    for (let k = 1; k <= 4; k++) ctx.at(k * 2400, show);
-  },
-};
-
-// ══ MASTERY — Bleed Stop ══════════════════════════════════════════════
-
-export const bleedStop: PreviewScript = {
-  duration: 9000,
-  scale: 0.9,
-  caption: 'Mastery — tie off for five seconds. Half the scarf, and no more than 75 gets through however much is thrown.',
-  run(ctx) {
-    const fx = fxOf(ctx);
-    const av = ctx.useAvatar(() => new ClothAvatar(ctx.scene, ctx.tint));
-    av.setMastered(true);
-    av.setFacing(ctx.aim);
-    let tied = false;
-    scarf(ctx, 6, { segments: () => (tied ? 7 : 14) });
-    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
-    const read = label(ctx, ctx.w * 0.5, 12, hex(CLT.clothPale), 12);
-    let budget = 75;
-    let t = 0;
-
-    ctx.at(800, () => {
-      tied = true;
-      budget = 75;
-      av.play('clap', 0, 400);
-      const at = ctx.casterAt();
-      fx.burst(at.x, at.y, 54, CLT.clothPale);
-      float(ctx, at.x, at.y - 44, '🩹 BLEED STOP', hex(CLT.clothPale), 12);
-    });
-    // Four 30s in a row: two land in full, the third is cut to 15, the fourth is refused.
-    for (let i = 0; i < 4; i++) {
-      ctx.at(1500 + i * 800, () => {
-        if (!tied) return;
-        const took = Math.min(30, budget);
-        budget -= took;
-        const at = ctx.casterAt();
-        float(ctx, at.x + 22, at.y - 20, took > 0 ? `-${took}` : 'REFUSED', took > 0 ? '#ffdddd' : hex(CLT.clothPale), 11);
-        fx.lint(at.x, at.y, 3, 12, 260, CLT.clothDeep);
-      });
+    for (let i = scraps.length - 1; i >= 0; i--) {
+      const s = scraps[i];
+      s.x += s.vx * step; s.y += s.vy * step; s.spin += step * 6; s.life -= dt;
+      if (s.life <= 0) { scraps.splice(i, 1); continue; }
+      burnScrap(g, ctx.tint, s.x, s.y, s.spin, 6 * (0.5 + s.life / 2000), Math.min(1, s.life / 500), time, s.seed);
     }
-    ctx.at(5800, () => {
-      tied = false;
-      const at = ctx.casterAt();
-      fx.lint(at.x, at.y, 5, 18, 320, CLT.clothPale);
-      float(ctx, at.x, at.y - 44, `🩹 ${75 - budget} LET THROUGH`, hex(CLT.clothPale), 12);
-    });
+    if (elapsed < foeBurn) {
+      for (let i = 0; i < 3; i++) flameTongue(g, ctx.tint, foe.x + (i - 1) * 9, foe.y - 6 + Math.abs(i - 1) * 4, 5, 0.85, time, i);
+    }
+    if (father && burning) {
+      effigy(back, ctx.tint, home.x, home.y, 54, 1, time, 'back');
+      effigy(g, ctx.tint, home.x, home.y, 54, 1, time, 'front');
+    }
+  });
+  ctx.at(500, () => {
+    burning = true;
+    t.burn = true;
+    t.char = father;
+    if (father) { t.maxReach = 2400; t.av?.setRigScale(1.35); }
+    t.av?.play('raise');
+    t.fx.ignite(home.x, home.y, father ? 120 : 80);
+    tick(ctx, home.x, home.y - 70, father ? '🔥 FATHER OF THE FLAME' : '🔥 BURNING MAN', CLT.ember);
+  });
+  // The scarf whips round so its scraps fan out.
+  ctx.onFrame((_dt, elapsed) => {
+    if (elapsed < 900 || elapsed > 3200) return;
+    const a = (elapsed - 900) / 500;
+    t.reach.x = home.x + Math.cos(a) * 150;
+    t.reach.y = home.y + Math.sin(a) * 90;
+  });
+  ctx.at(3300, () => { t.reach.x = foe.x; t.reach.y = foe.y; });
+  ctx.at(3900, () => {
+    t.av?.play('punch', Math.atan2(foe.y - home.y, foe.x - home.x));
+    t.fx.embers(foe.x, foe.y, 8, 18);
+    foeBurn = 6500;
+    tick(ctx, foe.x, foe.y - 20, father ? `${PUNCH_DAMAGE + CLAW_PUNCH_BONUS} 🔥` : `${SCRAP_DAMAGE} 🔥`, CLT.ember);
+  });
+  ctx.at(6500, () => {
+    burning = false;
+    t.burn = false;
+    t.char = false;
+    t.maxReach = HAND_MAX;
+    t.av?.setRigScale(1);
+    t.fx.embers(home.x, home.y, 10, 26);
+  });
+  label(ctx, ctx.w * 0.5, ctx.h - 10, father
+    ? 'a towering effigy · the char claw reaches anywhere · whoever hurts you burns'
+    : '6s · burning scraps · red-hot needles · bound bodies burn · the cushion spits pins until empty',
+  CLT.ember);
+}
 
-    ctx.onFrame((dt) => {
-      t += dt / 1000;
-      g.clear();
-      if (!tied) { read.setText(''); return; }
-      const at = ctx.casterAt();
-      const spent = 1 - budget / 75;
-      for (let i = 0; i < 2; i++) {
-        const tilt = (i ? -0.32 : 0.28) + Math.sin(t * 2 + i) * 0.04;
-        const cy = at.y + 3 + i * 5;
-        const dx = Math.cos(tilt) * 22;
-        const dy = Math.sin(tilt) * 22;
-        g.lineStyle(6, ctx.tint(0xf2ede4), 0.92);
-        g.lineBetween(at.x - dx, cy - dy, at.x + dx, cy + dy);
-        g.fillStyle(ctx.tint(CLT.clothDeep), 0.35 + spent * 0.5);
-        g.fillCircle(at.x - dx * 0.2, cy - dy * 0.2, 2 + spent * 4);
-      }
-      g.fillStyle(ctx.tint(0xf2ede4), 1);
-      g.fillCircle(at.x + 14, at.y + 4, 4.5);
-      read.setText(`🩹  ${budget} of 75 left`);
-    });
+export const burningMan: PreviewScript = {
+  duration: 7600, scale: 0.9, bodyTexture: '',
+  caption: 'Q — the tailor\'s clothes catch fire and the scarf sheds burning scraps',
+  run(ctx) { fireLoop(ctx, false); },
+};
+
+export const burningManUpgraded: PreviewScript = {
+  duration: 7600, scale: 0.9, bodyTexture: '',
+  caption: 'Q+ Father of the Flame — a burning effigy whose char claw reaches the whole arena',
+  run(ctx) { fireLoop(ctx, true); },
+};
+
+// ── Passives ──────────────────────────────────────────────────────────
+
+export const theScarfHand: PreviewScript = {
+  duration: 7000, scale: 0.9, bodyTexture: '',
+  caption: 'No legs: grip the floor or a wall and drag the mouse — the scarf hauls the body the other way',
+  run(ctx) {
+    const home: Mark = { x: ctx.w * 0.5, y: ctx.h * 0.6 };
+    const t = tailor(ctx, home);
+    const wall: Mark = { x: ctx.w - 16, y: ctx.h * 0.4 };
+    const floor: Mark = { x: ctx.w * 0.25, y: ctx.h * 0.75 };
+    const plan: [number, Mark, number][] = [[400, floor, 2600], [3200, wall, 6400]];
+    for (const [at, grip, until] of plan) {
+      ctx.at(at, () => { t.reach.x = grip.x; t.reach.y = grip.y; });
+      ctx.at(at + 400, () => {
+        t.grip = true;
+        t.fx.grip(grip.x, grip.y, grip === wall);
+        tick(ctx, grip.x - (grip === wall ? 30 : 0), grip.y - 24, grip === wall ? '✊ WALL ×1.35' : '✊ FLOOR', CLT.clothPale);
+      });
+      ctx.onFrame((dt, elapsed) => {
+        if (elapsed < at + 500 || elapsed > until) return;
+        const d = Phaser.Math.Distance.Between(home.x, home.y, grip.x, grip.y);
+        if (d <= 40) return;
+        const step = Math.min(d - 40, 560 * (grip === wall ? 0.6 : 0.45) * (dt / 1000));
+        home.x += ((grip.x - home.x) / d) * step;
+        home.y += ((grip.y - home.y) / d) * step;
+      });
+      ctx.at(until, () => { t.grip = false; });
+    }
+    label(ctx, ctx.w * 0.5, ctx.h - 10, 'reach 250px · ×1 off the floor, ×1.35 off a wall · 560 px/s cap', CLT.clothPale);
   },
 };
 
-/** Exported so the deck's own table can be sanity-checked by the codex validator. */
-export const ARTWORK_COUNT = ARTWORKS.length;
+export const theSmack: PreviewScript = {
+  duration: 5000, scale: 0.9, bodyTexture: '',
+  caption: 'Whip the scarf hand over somebody and it smacks them — no cooldown',
+  run(ctx) {
+    const home: Mark = { x: ctx.w * 0.3, y: ctx.h * 0.55 };
+    const t = tailor(ctx, home);
+    const foe: Mark = { x: ctx.w * 0.58, y: ctx.h * 0.5 };
+    dummy(ctx, foe);
+    ctx.onFrame((_dt, elapsed) => {
+      if (elapsed < 400) return;
+      const a = (elapsed - 400) / 260;
+      t.reach.x = foe.x + Math.cos(a) * 80;
+      t.reach.y = foe.y + Math.sin(a) * 50;
+    });
+    let gate = 0;
+    ctx.onFrame((_dt, elapsed) => {
+      if (elapsed < gate) return;
+      if (Math.hypot(t.handV.x, t.handV.y) < SMACK_SPEED) return;
+      if (Phaser.Math.Distance.Between(t.hand.x, t.hand.y, foe.x, foe.y) > 32) return;
+      gate = elapsed + 520;
+      t.fx.lint(foe.x, foe.y, 6, 16);
+      tick(ctx, foe.x, foe.y - 18, `${SMACK_DAMAGE}`, CLT.clothLit);
+    });
+    label(ctx, ctx.w * 0.5, ctx.h - 10, '14 per pass · hand over 620 px/s · once per body every 0.52s', CLT.clothLit);
+  },
+};

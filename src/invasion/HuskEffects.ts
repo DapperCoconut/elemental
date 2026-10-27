@@ -266,7 +266,7 @@ export class HuskEffectEngine {
     const room = this.world.roomOf(husk);
     const now = this.world.scene.time.now;
 
-    // Harvest husks in the room bite into any corpse that drops near them.
+    // Wood husks in the room root into any corpse that drops near them.
     for (const other of this.world.livingHusks()) {
       const ost = this.states.get(other);
       if (!ost || ost.elementId !== 'gluttony' || other === husk) continue;

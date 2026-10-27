@@ -504,6 +504,15 @@ export class SubterfugeKit {
 
   // ── Public getters (NPC AI / ArenaScene) ─────────────────────────────────
 
+  /** Memory's Rebirth: the struck side loses part of what it has built up. Returns a label, or null. */
+  rebirthDrain(owner: 'player' | 'npc'): string | null {
+    const have = owner === 'player' ? this.money : this.npcMoney;
+    const take = Math.ceil(have * 0.4);
+    if (take <= 0) return null;
+    if (owner === 'player') this.money -= take; else this.npcMoney -= take;
+    return `−$${take}`;
+  }
+
   getNpcMoney(): number { return this.npcMoney; }
   getNpcBullets(): number { return this.npcBullets; }
   getNpcLackeyCount(): number { return this.lackeys.filter(l => l.owner === 'npc').length; }

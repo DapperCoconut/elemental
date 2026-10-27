@@ -591,6 +591,8 @@ export class RadiationKit {
    */
   private irradiate(victim: Fighter, by: Owner, ms = IRRADIATED_MS, quiet = false): void {
     if (!this.alive(victim)) return;
+    // Memory's Rebirth: a sealed source irradiates nobody.
+    if (this.fighter(by).passivesSealed()) return;
     const prev = this.irradiated.get(victim);
     const until = Math.max(prev?.until ?? 0, this.now + ms);
     this.irradiated.set(victim, { until, full: Math.max(ms, prev ? prev.until - this.now : 0), by });
@@ -1294,6 +1296,7 @@ export class RadiationKit {
       // ── Enemies stay out ──
       const hold = BUNKER_R + BUNKER_BODY_R;
       for (const t of this.targetsOf(owner)) {
+        if (t.soulWalking) continue; // Bind's Blackened Eyes walks through.
         const d = Phaser.Math.Distance.Between(bk.x, bk.y, t.x, t.y);
         if (d >= hold) continue;
         const a = d < 0.5 ? Math.random() * TAU : Math.atan2(t.y - bk.y, t.x - bk.x);

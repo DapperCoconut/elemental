@@ -30,7 +30,7 @@ export interface HuskTrait {
   color: number;
 }
 
-interface TraitInfo {
+export interface TraitInfo {
   name: string;
   desc: string;
   /** Damage-type multipliers. */
@@ -94,6 +94,11 @@ const TRAITS: Record<string, TraitInfo> = {
   bind: { name: 'Shackle', desc: 'Chains the nearest tower in reach: stunned 1.5s, every five.', weak: ['metal', 'subterfuge'] },
   gum: { name: 'Gummy', desc: 'Shots stop dead in it — no pierce. Slows hold half as long.', resist: { sharp: 0.8 }, weak: ['fire', 'ice'] },
   gluttony: { name: 'Devour', desc: 'Grows bigger and tougher eating the corpses that fall near it.', weak: ['fire', 'life'] },
+  pressure: { name: 'Boilerplate', desc: 'A riveted shell: sharp hits land ×0.8 and shoves barely move it.', resist: { sharp: 0.8 }, immune: ['knockback'], weak: ['water', 'electricity'] },
+  astra: { name: 'Starlit Shell', desc: 'A cracked shell of night: energy hits land ×0.8.', resist: { energy: 0.8 }, weak: ['shadow', 'gravity'] },
+  string: { name: 'Strung', desc: 'Held up on its strings: shoves never move it.', immune: ['knockback'], weak: ['fire', 'metal'] },
+  memory: { name: 'Static', desc: 'A figure of static: magic hits land ×0.7, and confusion never takes.', resist: { magic: 0.7 }, immune: ['confuse'], weak: ['light', 'sound'] },
+  ink: { name: 'Rubber Hose', desc: 'A rubber-hose cartoon body: slows never take.', immune: ['slow'], weak: ['water', 'paper'] },
   myth: { name: 'Applause', desc: 'A heavy hit rallies nearby husks into a sprint.', weak: ['justice', 'paper'] },
   // ── Bosses and their courts ──
   arbiter: { name: 'Verdict', desc: 'Sentences the deadliest tower to 3s of silence, and calls Bailiffs.', resist: { sharp: 0.85 }, immune: ['knockback', 'sleep', 'confuse'] },
@@ -114,6 +119,9 @@ export function traitFor(v: HuskVariantDef): HuskTrait | null {
 }
 
 export function traitInfo(id: string): TraitInfo | undefined { return TRAITS[id]; }
+
+/** Every family with a road trait, in table order (normal, abstract, corrupt, bosses). */
+export const TRAIT_IDS: string[] = Object.keys(TRAITS);
 
 export interface TraitWorld {
   readonly scene: Phaser.Scene;
@@ -290,7 +298,7 @@ export class HuskRoadTraits {
   /** The husk died. */
   onDeath(h: RoadHusk): void {
     const now = this.world.scene.time.now;
-    // Death and Harvest husks feed on anyone who falls near them.
+    // Death and Wood husks feed on anyone who falls near them.
     for (const o of this.world.husks()) {
       if (o === h || !o.active || o.hp <= 0) continue;
       const id = o.trait?.id;

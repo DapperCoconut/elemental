@@ -1871,6 +1871,7 @@ export class JusticeKit {
         // Its owner flies over their own walls. Nobody else does.
         const ownerSide = this.side(c.owner);
         if (f === this.fighter(c.owner) && ownerSide.form === 'flight') continue;
+        if (f.soulWalking) continue; // Bind's Blackened Eyes walks through.
 
         const d = Phaser.Math.Distance.Between(c.x, c.y, f.x, f.y);
         const ang = Math.atan2(f.y - c.y, f.x - c.x);
@@ -2162,7 +2163,7 @@ export class JusticeKit {
       for (const t of this.targetsOf(p.owner)) {
         const off = t.x - p.x;
         if (Math.abs(off) > band) { p.side.set(t, Math.sign(off) || 1); continue; }
-        if (!solid || t.unstoppable) continue;
+        if (!solid || t.unstoppable || t.soulWalking) continue; // Bind's Blackened Eyes walks through.
         const held = p.side.get(t) ?? (Math.sign(off) || 1);
         t.setPosition(p.x + held * band, t.y);
         this.body(t).setVelocityX(0);
@@ -2744,6 +2745,15 @@ export class JusticeKit {
       if (Math.abs(f.x - p.x) <= PILLAR_HALF_W + 16) { m *= PILLAR_SLOW_MULT; break; }
     }
     return m;
+  }
+
+  /** Memory's Rebirth: the struck side loses part of what it has built up. Returns a label, or null. */
+  rebirthDrain(owner: Owner): string | null {
+    const s = this.side(owner);
+    const take = Math.ceil(s.will * 0.4);
+    if (take <= 0) return null;
+    s.will -= take;
+    return `−${take} WILL`;
   }
 
   getPlayerSpeedMult(): number { return this.speedMultFor(this.api.player, 'player'); }

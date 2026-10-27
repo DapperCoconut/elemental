@@ -44,7 +44,7 @@ const RIDER_FIRST_OFFSET = 26;
 const RIDER_SPACING = 34;
 
 // ── Spikes of Ruin (F) ───────────────────────────────────────────────────────
-const RING_R = 122;
+const RING_R = 160;
 const RING_FUSE_MS = 2000;
 const RING_DAMAGE = 15;
 /**
@@ -641,7 +641,9 @@ export class RuinKit {
       return;
     }
 
-    const abilityId = victim.lastCastAbilityId;
+    // Never the Click: a basic attack is too often "the last thing they did", and locking it
+    // reads as a bug rather than a play. The padlock goes on their last real ability instead.
+    const abilityId = victim.lastLockableAbilityId;
     if (!abilityId) {
       f.resetCooldown('ruin-lockdown');
       this.say(owner, victim.x, victim.y - 46, '🔒 NOTHING TO LOCK', RUI.ash);
@@ -1620,9 +1622,9 @@ export class RuinKit {
 
   private erupt(r: SpikeRing): void {
     const fx = this.fx(r.owner);
-    fx.spikeBurst(r.x, r.y, 16, RING_R, 560, 10, r.seed);
-    fx.ring(r.x, r.y, RING_R * 0.4, RING_R * 1.15, RUI.red, 520);
-    fx.crack(r.x, r.y, RING_R);
+    fx.spikeBurst(r.x, r.y, 26, RING_R, 560, 10, r.seed);
+    fx.ring(r.x, r.y, RING_R * 0.4, RING_R * 1.1, RUI.red, 520, 9, 1);
+    fx.crack(r.x, r.y, RING_R, 620, 4, 1);
     Sfx.playAt('quake', r.x, { volume: 1, rate: 1.15 });
 
     for (const t of this.targetsOf(r.owner)) {
@@ -2126,7 +2128,7 @@ export class RuinKit {
   decayStacks(owner: Owner): number { return this.sides[owner].decay; }
   /** Whether the AI has anything to lock — an untouched target is a wasted twenty-five seconds. */
   canLock(target: Fighter): boolean {
-    return !!target.lastCastAbilityId && target.lockRemaining(target.lastCastAbilityId) <= 0;
+    return !!target.lastLockableAbilityId && target.lockRemaining(target.lastLockableAbilityId) <= 0;
   }
 
   /**

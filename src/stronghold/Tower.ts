@@ -1,42 +1,39 @@
 import Phaser from 'phaser';
-import * as PlayerData from '../data/PlayerData';
-import { ELEMENT_DATA_MAP, findElementDef } from '../data/ElementRoster';
-import { ALL_UPGRADES } from '../data/Upgrades';
-import { perkLoadoutLabel } from '../data/Perks';
-import { getMasteryDef, isMasteryComplete } from '../data/Mastery';
+import { findElementDef } from '../data/ElementRoster';
 import { makeElementAvatar, elementBodyTexture } from '../elements/kits/ElementAvatars';
 import { ArmGesture, BaseAvatar } from '../elements/kits/ElementVisuals';
 import { fillHex, strokeHex, mix } from '../ui';
 import {
-  Rider, TargetMode, TowerAbilityDef, TowerDef, TowerMod, TowerSlot, TOWER_SLOTS, TOWER_SLOT_KEYS,
-  TIER_COOLDOWN_MULT, TIER_COST_MULT, TIER_DAMAGE_MULT, TIER_RANGE_MULT,
+  FxPatch, Rider, TargetMode, TowerAbilityDef, TowerActive, TowerBody, TowerDef, TowerMod, TowerSlot, TowerTraits,
+  TowerUpgrade, pathBlock, PATH_MAX_TIER,
 } from './StrongholdTypes';
 import { TOWER_RADIUS } from './StrongholdMap';
+import { OwnedDeco, collapseDecos, paintBaseDecos, paintLiveDecos } from './TowerDecos';
 
-/** A timed buff a Rally or Overclock put on this tower. */
+/** A timed buff a Rally, Overclock or ability put on this tower. */
 export interface TowerBuff { until: number; fireRateMult: number; damageMult: number; rangeMult?: number }
 
 /** What a husk can do to a tower. */
 export type TowerSabotage = 'stun' | 'slow' | 'blind' | 'silence' | 'confuse';
 
-/** What the panel prints about one slot. */
-export interface SlotInfo {
-  slot: TowerSlot;
-  key: string;
-  name: string;
-  desc: string;
-  unlocked: boolean;
-  unlocksAt: string;
-  upgradeName: string | null;
-  upgradeNote: string | null;
-}
-
 const GESTURE_FOR_SLOT: Record<TowerSlot, ArmGesture> = {
   click: 'punch', e: 'sweep', r: 'slam', f: 'flex', q: 'raise',
 };
 
-/** Generic bonus an equipped perk gives a tower. Flavour comes from the perk's own name. */
-const PERK_BONUS: TowerMod = { damageMult: 1.1, rangeMult: 1.06, cooldownMult: 0.94, note: '' };
+/** The arm move an attack plays when it says nothing itself. */
+function gestureFor(a: TowerAbilityDef): ArmGesture {
+  if (a.gesture) return GESTURE_FOR_SLOT[a.gesture];
+  switch (a.fx.kind) {
+    case 'bolt': case 'chain': case 'execute': return 'punch';
+    case 'line': case 'beam': return 'sweep';
+    case 'splash': case 'nova': case 'trap': return 'slam';
+    case 'rally': case 'overclock': case 'gold': case 'mend': return 'flex';
+    default: return 'raise';
+  }
+}
+
+/** Path accent colours: the plinth trim each path paints once it is past tier 2. */
+export const PATH_TINT = [0xff9a3c, 0x7ad0ff, 0xc08bff];
 
 /** How high a flyer hangs over its shadow. */
 const FLY_LIFT = 22;
@@ -47,11 +44,14 @@ function mergeRider(a: Rider | undefined, b: Rider | undefined): Rider | undefin
   return { ...a, ...b };
 }
 
-/** Fold a modifier onto a resolved ability. Returns a new object; never mutates the table. */
+const AREA_KEYS = ['radius', 'length', 'jumpRange', 'splash', 'attackRange', 'blast', 'width'] as const;
+
+/** Fold a modifier onto an attack. Returns a new object; never mutates the table. */
 export function applyMod(def: TowerAbilityDef, mod: TowerMod): TowerAbilityDef {
-  const fx = { ...def.fx } as TowerAbilityDef['fx'] & Record<string, unknown>;
+  const fx = { ...def.fx, ...(mod.fx ?? {}) } as TowerAbilityDef['fx'] & Record<string, unknown>;
+  if (mod.fx) (fx as { kind: string }).kind = def.fx.kind;
   if (mod.areaMult) {
-    for (const k of ['radius', 'length', 'jumpRange', 'splash', 'attackRange', 'blast', 'width'] as const) {
+    for (const k of AREA_KEYS) {
       if (k === 'width' && fx.kind !== 'line') continue;
       if (typeof fx[k] === 'number') (fx as Record<string, number>)[k] = (fx[k] as number) * mod.areaMult;
     }
@@ -71,20 +71,67 @@ export function applyMod(def: TowerAbilityDef, mod: TowerMod): TowerAbilityDef {
   return {
     ...def,
     fx: fx as TowerAbilityDef['fx'],
-    damage: def.damage * (mod.damageMult ?? 1),
+    damage: (def.damage + (mod.damageAdd ?? 0)) * (mod.damageMult ?? 1),
     cooldown: def.cooldown * (mod.cooldownMult ?? 1),
     range: (def.range ?? 1) * (mod.rangeMult ?? 1),
     rider: mergeRider(def.rider, mod.rider),
+    dtype: mod.dtype ?? def.dtype,
+    charge: mod.charge ?? def.charge,
   };
 }
 
-/** The element's real ability name on this slot (first of its displayKey), or the tower table's. */
-export function towerAbilityName(elementId: string, slot: TowerSlot, def: TowerAbilityDef): string {
-  if (def.name) return def.name;
-  const key = TOWER_SLOT_KEYS[slot];
-  const el = ELEMENT_DATA_MAP[elementId];
-  const found = el?.abilities.find((a) => a.displayKey === key);
-  return found?.name ?? `${key} Strike`;
+/** Patch an fx without a mod (journal previews use it too). */
+export function patchFx(def: TowerAbilityDef, fx: FxPatch): TowerAbilityDef { return applyMod(def, { fx }); }
+
+/** Display name of an attack: its own name, or its id title-cased. */
+export function attackName(id: string, a: TowerAbilityDef): string {
+  if (a.name) return a.name;
+  return id.replace(/(^|-)([a-z])/g, (_m, sep: string, ch: string) => (sep ? ' ' : '') + ch.toUpperCase());
+}
+
+/** The tower as its upgrades have built it. */
+interface Build {
+  attacks: Record<string, TowerAbilityDef>;
+  order: string[];
+  traits: TowerTraits;
+  rangeMult: number;
+  active: TowerActive | null;
+  body: TowerBody;
+  decos: OwnedDeco[];
+}
+
+/** Resolve a def + path tiers into a build. Pure — the journal uses it for previews. */
+export function buildTower(def: TowerDef, tiers: readonly number[]): Build {
+  const attacks: Record<string, TowerAbilityDef> = { ...def.attacks };
+  let order = Object.keys(def.attacks);
+  const traits: TowerTraits = { ...def.traits };
+  let rangeMult = 1;
+  let active: TowerActive | null = null;
+  const body: TowerBody = { ...def.body };
+  const decos: OwnedDeco[] = [];
+  const apply = (u: TowerUpgrade, path: number, tier: number): void => {
+    for (const id of u.remove ?? []) { delete attacks[id]; order = order.filter((o) => o !== id); }
+    for (const [id, a] of Object.entries(u.add ?? {})) {
+      if (!attacks[id]) order.push(id);
+      attacks[id] = a;
+    }
+    for (const [key, m] of Object.entries(u.mods ?? {})) {
+      const ids = key === '*' ? order : [key];
+      for (const id of ids) if (attacks[id]) attacks[id] = applyMod(attacks[id], m);
+    }
+    if (u.range) rangeMult *= u.range;
+    if (u.traits) Object.assign(traits, u.traits);
+    if (u.active) active = u.active;
+    if (u.body) Object.assign(body, u.body);
+    decos.push({ deco: u.deco, path, tier });
+  };
+  // Lower tiers first across all paths, so a tier-4 '*' mod reaches what tier 3 added.
+  for (let tier = 0; tier < PATH_MAX_TIER; tier++) {
+    for (let p = 0; p < 3; p++) {
+      if (tiers[p] > tier) apply(def.paths[p].upgrades[tier], p, tier + 1);
+    }
+  }
+  return { attacks, order, traits, rangeMult, active, body, decos: collapseDecos(decos) };
 }
 
 /** Hull style for naval towers. */
@@ -95,25 +142,27 @@ const NAVAL_STYLE: Record<string, 'ship' | 'sub' | 'lily' | 'raft'> = {
 let NEXT_ID = 1;
 
 /**
- * One placed tower: an element's rig standing on its base (a hex plinth, a hull, a helipad), a
- * tier, the cooldowns of whatever it has unlocked, and whatever the husks are doing to it.
- * Casting itself happens in TowerCombat — the tower only decides *where it is* and hands over
- * fully resolved abilities.
+ * One placed tower: an element's rig standing on its base (a hex plinth, a hull, a helipad),
+ * three path tiers, the cooldowns of whatever its build carries, and whatever the husks are
+ * doing to it. Casting itself happens in TowerCombat — the tower only decides *where it is*
+ * and hands over fully resolved attacks.
  */
 export class Tower {
   readonly id = NEXT_ID++;
-  tier = 0;
+  /** Tiers bought on the top, middle and bottom paths. */
+  readonly tiers: [number, number, number] = [0, 0, 0];
   invested: number;
   kills = 0;
   damageDealt = 0;
+  /** Waves cleared while it stood (Veteran). */
+  wavesSurvived = 0;
   buffs: TowerBuff[] = [];
-  readonly readyAt: Record<TowerSlot, number> = { click: 0, e: 0, r: 0, f: 0, q: 0 };
-  masteryReadyAt = 0;
+  readonly readyAt = new Map<string, number>();
+  readonly lastCastAt = new Map<string, number>();
+  activeReadyAt = 0;
   readonly color: number;
   readonly name: string;
-  readonly masteryOn: boolean;
-  readonly perkName: string | null;
-  private readonly ownedUpgrades: Set<TowerSlot>;
+  private build: Build;
 
   /** Where it was built. Flyers roam around it; everything else stays on it. */
   readonly padX: number;
@@ -129,15 +178,22 @@ export class Tower {
   silenceUntil = 0;
   confuseUntil = 0;
 
-  // Support auras from other towers, rewritten every frame by the scene.
+  // Support auras and discounts from other towers, rewritten every frame by the scene.
   auraFireRate = 1;
   auraDamage = 1;
   auraRange = 1;
   auraDetect = false;
   auraPierce = 0;
+  discountMult = 1;
 
-  /** Death charges (Death's Reap signature). */
+  /** Death charges (Reap). */
   charges = 0;
+  /** Focus: the husk it hit last and how many times in a row. */
+  focusTarget: unknown = null;
+  focusStacks = 0;
+  /** Gold its hits have paid this wave (goldOnHit cap), and the fraction carried over. */
+  hitGoldThisWave = 0;
+  hitGoldAccum = 0;
   /** Where a flyer is heading; written by the scene each frame. */
   private goal: { x: number; y: number } | null = null;
   private flyT = Math.random() * Math.PI * 2;
@@ -159,22 +215,15 @@ export class Tower {
     public readonly def: TowerDef,
     public x: number,
     public y: number,
+    paid: number = def.cost,
   ) {
     this.padX = x;
     this.padY = y;
-    this.invested = def.cost;
+    this.invested = paid;
     const ed = findElementDef(elementId);
     this.color = ed?.color ?? 0xffffff;
     this.name = ed?.name ?? elementId;
-    this.masteryOn = PlayerData.isMasteryEnabled(elementId) && !!def.mastery && !!getMasteryDef(elementId)
-      // Gold and Harvest replaced elements whose retired masteries may have left the flag on, and
-      // Psychic's, Magnet's and Radiation's masteries were redone outright.
-      && ((elementId !== 'fortune' && elementId !== 'gluttony' && elementId !== 'psychic' && elementId !== 'magnet' && elementId !== 'radiation' && elementId !== 'passion' && elementId !== 'sound' && elementId !== 'dream') || isMasteryComplete(elementId));
-    const perkId = PlayerData.getEquippedPerk(elementId);
-    this.perkName = perkLoadoutLabel(perkId);
-    this.ownedUpgrades = new Set(
-      TOWER_SLOTS.filter((s) => PlayerData.isUpgradeActive(elementId, s) && def.upgrades[s]),
-    );
+    this.build = buildTower(def, this.tiers);
     if (def.role === 'sniper' || def.role === 'artillery') this.targetMode = 'strong';
 
     this.plinth = scene.add.graphics().setDepth(2);
@@ -191,26 +240,66 @@ export class Tower {
     this.avatar = makeElementAvatar(elementId, scene, (c) => c);
     if (this.avatar) {
       this.avatar.setRigScale(0.82);
-      this.avatar.setMastered(this.masteryOn);
+      this.avatar.setMastered(false);
       this.avatar.setFacing(this.facing);
     }
     this.paintRangeRing();
   }
 
-  // ── Stats ─────────────────────────────────────────────────────────
+  // ── Build ─────────────────────────────────────────────────────────
+
+  get traits(): TowerTraits { return this.build.traits; }
+  get body(): TowerBody { return this.build.body; }
+  get active(): TowerActive | null { return this.build.active; }
+  /** Attack ids in the order they were gained. */
+  get attackIds(): string[] { return this.build.order; }
+  attackDef(id: string): TowerAbilityDef | undefined { return this.build.attacks[id]; }
+  get totalTier(): number { return this.tiers[0] + this.tiers[1] + this.tiers[2]; }
+  /** "3-0-2", BTD-style. */
+  get tierCode(): string { return this.tiers.join('-'); }
+  get topTier(): number { return Math.max(...this.tiers); }
+
+  /** The upgrade the path would buy next, or null when it is maxed. */
+  nextUpgrade(path: number): TowerUpgrade | null {
+    const t = this.tiers[path];
+    return t >= PATH_MAX_TIER ? null : this.def.paths[path].upgrades[t];
+  }
+  /** Why the path can't be bought right now, or null. */
+  pathBlocked(path: number): string | null { return pathBlock(this.tiers, path); }
+  upgradeCost(path: number): number {
+    const u = this.nextUpgrade(path);
+    return u ? Math.round(u.cost * this.discountMult) : 0;
+  }
+
+  buyPath(path: number, paid: number): TowerUpgrade | null {
+    if (this.pathBlocked(path)) return null;
+    const u = this.nextUpgrade(path);
+    if (!u) return null;
+    this.tiers[path]++;
+    this.invested += paid;
+    this.build = buildTower(this.def, this.tiers);
+    // A rebuilt list may drop attacks; forget their cooldowns.
+    for (const k of [...this.readyAt.keys()]) if (!this.build.attacks[k]) this.readyAt.delete(k);
+    this.paintPlinth();
+    this.paintRangeRing();
+    this.applyRigLook();
+    this.avatar?.play('raise', -Math.PI / 2);
+    return u;
+  }
+
+  /** The rig grows a little with every upgrade, and wears its mastered look at tier 5. */
+  private applyRigLook(): void {
+    const scale = 0.82 + this.totalTier * 0.018;
+    this.avatar?.setRigScale(scale);
+    this.bodyImg?.setScale(scale);
+    this.avatar?.setMastered(this.topTier >= PATH_MAX_TIER);
+  }
 
   get flies(): boolean { const k = this.def.body.kind; return k === 'ace' || k === 'heli' || k === 'drift'; }
-  get tierName(): string { return this.def.tiers[this.tier]; }
-  get isMaxed(): boolean { return this.tier >= 4; }
-  get nextTierCost(): number {
-    return this.isMaxed ? 0 : Math.round(this.def.cost * TIER_COST_MULT[this.tier + 1]);
-  }
   get sellValue(): number { return Math.round(this.invested * 0.7); }
 
   /** Base reach before blinds and rallies — what the placement ghost and panel show. */
-  get baseRange(): number {
-    return this.def.range * TIER_RANGE_MULT[this.tier] * (this.perkName ? PERK_BONUS.rangeMult! : 1);
-  }
+  get baseRange(): number { return this.def.range * this.build.rangeMult; }
 
   get range(): number {
     const time = this.scene.time.now;
@@ -220,10 +309,7 @@ export class Tower {
   }
 
   /** Can it pick hidden husks out? */
-  get detect(): boolean {
-    const t = this.def.traits;
-    return !!t.detect || (t.detectTier !== undefined && this.tier >= t.detectTier) || this.auraDetect;
-  }
+  get detect(): boolean { return !!this.build.traits.detect || this.auraDetect; }
 
   get stunned(): boolean { return this.stunUntil > this.scene.time.now; }
   get silenced(): boolean { return this.silenceUntil > this.scene.time.now; }
@@ -232,7 +318,7 @@ export class Tower {
 
   /** A husk tries to sabotage this tower. Returns false if it shrugs it off. */
   sabotage(kind: TowerSabotage, ms: number): boolean {
-    if (this.def.traits.steadfast) return false;
+    if (this.build.traits.steadfast) return false;
     const until = this.scene.time.now + ms;
     switch (kind) {
       case 'stun': this.stunUntil = Math.max(this.stunUntil, until); break;
@@ -257,81 +343,57 @@ export class Tower {
 
   addBuff(b: TowerBuff): void { this.buffs.push(b); }
 
-  unlockedSlots(): TowerSlot[] {
-    const all = TOWER_SLOTS.slice(0, this.tier + 1);
-    return this.silenced ? all.slice(0, 1) : all;
+  /** Attacks that may fire right now — a silenced tower keeps only its first. */
+  firingIds(): string[] {
+    return this.silenced ? this.build.order.slice(0, 1) : this.build.order;
   }
 
-  /** Everything that scales a cast right now: tier, rally, aura, sabotage, kill ramp. */
+  /** Everything that scales a cast right now: rallies, auras, sabotage, kill ramp, veterancy. */
   private liveMod(time: number): TowerMod {
     const b = this.buffMults(time);
-    const kr = this.def.traits.killRamp;
-    const ramp = kr ? 1 + Math.min(kr.cap, this.kills * kr.per) : 1;
+    const t = this.build.traits;
+    const ramp = t.killRamp ? 1 + Math.min(t.killRamp.cap, this.kills * t.killRamp.per) : 1;
+    const vet = t.veteran ? 1 + Math.min(t.veteran.cap, this.wavesSurvived * t.veteran.per) : 1;
     const slowed = this.slowUntil > time ? 0.65 : 1;
     return {
-      damageMult: TIER_DAMAGE_MULT[this.tier] * b.damage * this.auraDamage * ramp,
-      cooldownMult: TIER_COOLDOWN_MULT[this.tier] / (b.fireRate * this.auraFireRate * slowed),
+      damageMult: b.damage * this.auraDamage * ramp * vet,
+      cooldownMult: 1 / (b.fireRate * this.auraFireRate * slowed),
       pierceAdd: this.auraPierce || undefined,
-      note: '',
     };
   }
 
-  /** The ability on `slot` with tier, upgrade, perk, rallies and auras folded in. */
-  resolve(slot: TowerSlot, time: number): TowerAbilityDef {
-    let a = this.def.abilities[slot];
-    const up = this.ownedUpgrades.has(slot) ? this.def.upgrades[slot] : undefined;
-    if (up) a = applyMod(a, up);
-    if (this.perkName) a = applyMod(a, PERK_BONUS);
-    return applyMod(a, this.liveMod(time));
+  /** The attack with rallies, auras and sabotage folded in. */
+  resolve(id: string, time: number): TowerAbilityDef | null {
+    const a = this.build.attacks[id];
+    if (!a) return null;
+    let out = applyMod(a, this.liveMod(time));
+    if (a.charge) {
+      const since = (time - (this.lastCastAt.get(id) ?? time - 1000)) / 1000;
+      out = { ...out, damage: out.damage * Math.min(a.charge.cap, 1 + a.charge.perSec * since) };
+    }
+    return out;
   }
 
-  /** Resolve someone else's ability as if this tower were casting it (Illusion's mimic). */
+  /** Resolve someone else's attack as if this tower were casting it (Illusion's mimic). */
   resolveForeign(a: TowerAbilityDef, time: number): TowerAbilityDef {
     return applyMod(a, this.liveMod(time));
   }
 
-  resolveMastery(time: number): (TowerAbilityDef & { name: string }) | null {
-    if (!this.masteryOn || !this.def.mastery) return null;
-    const a = applyMod(this.def.mastery, this.liveMod(time));
-    return { ...a, name: this.def.mastery.name };
+  resolveActive(time: number): TowerAbilityDef | null {
+    const c = this.build.active?.cast;
+    return c ? applyMod(c, this.liveMod(time)) : null;
   }
 
-  slotInfo(): SlotInfo[] {
-    return TOWER_SLOTS.map((slot, i) => {
-      const def = this.def.abilities[slot];
-      const up = this.ownedUpgrades.has(slot) ? this.def.upgrades[slot] : undefined;
-      const upDef = up
-        ? ALL_UPGRADES.find((u) => u.elementId === this.elementId)?.upgrades.find((u) => u.slot === slot)
-        : undefined;
-      return {
-        slot,
-        key: TOWER_SLOT_KEYS[slot],
-        name: towerAbilityName(this.elementId, slot, def),
-        desc: def.desc,
-        unlocked: i <= this.tier,
-        unlocksAt: this.def.tiers[i],
-        upgradeName: upDef?.name ?? null,
-        upgradeNote: up?.note ?? null,
-      };
-    });
-  }
-
-  upgrade(): void {
-    if (this.isMaxed) return;
-    this.invested += this.nextTierCost;
-    this.tier++;
-    this.paintPlinth();
-    this.paintRangeRing();
-    this.avatar?.play('raise', -Math.PI / 2);
-  }
+  activeReady(time: number): boolean { return !!this.build.active && time >= this.activeReadyAt; }
 
   // ── Movement ──────────────────────────────────────────────────────
+
 
   /** Where a hover/drift flyer should head. Ignored by ground, naval and ace bodies. */
   setGoal(p: { x: number; y: number } | null): void { this.goal = p; }
 
   private move(delta: number): void {
-    const body = this.def.body;
+    const body = this.body;
     const dt = delta / 1000;
     if (this.stunned) return;
     if (body.kind === 'ace') {
@@ -373,19 +435,19 @@ export class Tower {
     this.bodyImg?.setPosition(this.x, this.y - lift);
     this.avatar?.update(delta, this.x, this.y - lift, 1);
     this.paintOverlay(time, lift);
-    if ((this.flies || this.def.body.kind === 'roam') && this.selected) this.paintRangeRing();
+    if ((this.flies || this.body.kind === 'roam') && this.selected) this.paintRangeRing();
   }
 
   lookAt(x: number, y: number): void {
-    if (this.def.body.kind === 'ace') return; // a plane faces where it flies
+    if (this.body.kind === 'ace') return; // a plane faces where it flies
     this.facing = Math.atan2(y - this.y, x - this.x);
     this.avatar?.setFacing(this.facing);
   }
 
   get facingAngle(): number { return this.facing; }
 
-  gesture(slot: TowerSlot | 'mastery'): void {
-    this.avatar?.play(slot === 'mastery' ? 'clap' : GESTURE_FOR_SLOT[slot], this.facing);
+  gesture(a: TowerAbilityDef | 'active'): void {
+    this.avatar?.play(a === 'active' ? 'clap' : gestureFor(a), this.facing);
   }
 
   setSelected(on: boolean): void {
@@ -396,7 +458,7 @@ export class Tower {
 
   contains(px: number, py: number): boolean {
     if (Math.hypot(px - this.padX, py - this.padY) <= TOWER_RADIUS + 6) return true;
-    if (this.def.body.kind === 'roam') return Math.hypot(px - this.x, py - this.y) <= TOWER_RADIUS + 4;
+    if (this.body.kind === 'roam') return Math.hypot(px - this.x, py - this.y) <= TOWER_RADIUS + 4;
     return this.flies && Math.hypot(px - this.x, py - (this.y - FLY_LIFT)) <= TOWER_RADIUS + 4;
   }
 
@@ -414,16 +476,27 @@ export class Tower {
 
   // ── Paint ─────────────────────────────────────────────────────────
 
+  /** Three little arcs of five pips under the base: the tower's tier code at a glance. */
   private paintPips(g: Phaser.GameObjects.Graphics, cx: number, cy: number, r: number): void {
-    for (let i = 0; i < 4; i++) {
-      const ang = Math.PI / 2 + (i - 1.5) * 0.42;
-      const px = cx + Math.cos(ang) * (r - 2);
-      const py = cy + Math.sin(ang) * (r - 2);
-      const lit = i < this.tier;
-      g.fillStyle(lit ? this.color : 0x0a0a14, lit ? 1 : 0.8);
-      g.fillCircle(px, py, 3.2);
-      if (lit) { g.fillStyle(0xffffff, 0.6); g.fillCircle(px - 0.8, py - 0.8, 1.2); }
+    for (let p = 0; p < 3; p++) {
+      const mid = Math.PI / 2 + (p - 1) * 0.78;
+      for (let i = 0; i < 5; i++) {
+        const ang = mid + (i - 2) * 0.13;
+        const px = cx + Math.cos(ang) * (r + 4);
+        const py = cy + Math.sin(ang) * (r + 4) * 0.85;
+        const lit = i < this.tiers[p];
+        g.fillStyle(lit ? PATH_TINT[p] : 0x0a0a14, lit ? 1 : 0.7);
+        g.fillCircle(px, py, lit ? 2.4 : 1.8);
+        if (lit) { g.fillStyle(0xffffff, 0.55); g.fillCircle(px - 0.6, py - 0.6, 0.9); }
+      }
     }
+  }
+
+  /** The trim colour: the tower's own, or its leading path's once that path is past tier 2. */
+  private trimColor(): number {
+    let best = -1, tier = 2;
+    for (let p = 0; p < 3; p++) if (this.tiers[p] > tier) { tier = this.tiers[p]; best = p; }
+    return best < 0 ? mix(this.color, 0xffffff, 0.25) : mix(PATH_TINT[best], this.color, 0.35);
   }
 
   private paintPlinth(): void {
@@ -431,7 +504,7 @@ export class Tower {
     g.clear();
     const r = TOWER_RADIUS + 4;
     const x = this.padX, y = this.padY;
-    const k = this.def.body.kind;
+    const k = this.body.kind;
     if (k === 'water' || (k === 'amphibious' && NAVAL_STYLE[this.elementId])) {
       const style = NAVAL_STYLE[this.elementId] ?? 'raft';
       // Wake rings under every hull.
@@ -463,6 +536,7 @@ export class Tower {
         g.fillStyle(0x3a2814, 1); g.fillRoundedRect(x - r, y - 4, r * 2, 18, 4);
         g.lineStyle(1, 0x1a1008, 0.9); for (let i = -2; i <= 2; i++) g.lineBetween(x + i * 10, y - 4, x + i * 10, y + 14);
       }
+      paintBaseDecos(g, x, y + 4, r, this.build.decos, this.color);
       this.paintPips(g, x, y + 4, r);
       return;
     }
@@ -474,6 +548,7 @@ export class Tower {
       g.lineStyle(1, this.color, 0.4); g.strokeCircle(x, y + 2, r - 10);
       g.lineStyle(2, mix(this.color, 0xffffff, 0.5), 0.8);
       g.lineBetween(x - 6, y + 6, x, y - 4); g.lineBetween(x + 6, y + 6, x, y - 4);
+      paintBaseDecos(g, x, y + 2, r, this.build.decos, this.color);
       this.paintPips(g, x, y + 2, r);
       return;
     }
@@ -481,8 +556,10 @@ export class Tower {
     g.fillEllipse(x + 2, y + 10, r * 2.2, r * 1.1);
     fillHex(g, x, y + 4, r, mix(0x1a1a28, this.color, 0.25), 1);
     fillHex(g, x, y + 1, r, mix(0x2a2a3c, this.color, 0.35), 1);
-    strokeHex(g, x, y + 1, r, mix(this.color, 0xffffff, 0.25), 0.9, 2);
+    strokeHex(g, x, y + 1, r, this.trimColor(), 0.9, this.topTier >= 3 ? 3 : 2);
+    if (this.topTier >= 5) strokeHex(g, x, y + 1, r + 4, this.trimColor(), 0.45, 1.5);
     strokeHex(g, x, y + 1, r - 5, this.color, 0.35, 1);
+    paintBaseDecos(g, x, y + 1, r, this.build.decos, this.color);
     this.paintPips(g, x, y + 1, r);
   }
 
@@ -490,7 +567,7 @@ export class Tower {
   private paintOverlay(time: number, lift: number): void {
     const g = this.overlay;
     g.clear();
-    const k = this.def.body.kind;
+    const k = this.body.kind;
     if (this.flies) {
       // The shadow stays on the ground; a faint tether ties a flyer to its pad when selected.
       const shadow = this.plinth; void shadow;
@@ -521,8 +598,14 @@ export class Tower {
         g.lineBetween(this.padX, this.padY, this.x, this.y);
       }
     }
+    paintLiveDecos(g, this.x, this.y - lift, time, this.build.decos, this.color);
+    if (this.topTier >= 5) {
+      // A tier-5 tower glows.
+      const p = (time / 1400) % 1;
+      g.lineStyle(2, this.trimColor(), 0.35 * (1 - p)); g.strokeCircle(this.x, this.y - lift - 6, 26 + p * 14);
+    }
     // Sabotage tells, over the head.
-    const hx = this.x, hy = this.y - lift - 34;
+    const hx = this.x, hy = this.y - lift - 52;
     const labels: string[] = [];
     if (this.stunUntil > time) {
       labels.push('STUNNED');
@@ -535,10 +618,10 @@ export class Tower {
     if (this.slowUntil > time) { labels.push('SLOWED'); g.lineStyle(2, 0x88ccff, 0.6); g.strokeCircle(this.x, this.y - lift, 22); }
     if (this.blindUntil > time) { labels.push('BLINDED'); g.fillStyle(0xfff4a8, 0.18); g.fillCircle(this.x, this.y - lift, 26); }
     if (this.confuseUntil > time) labels.push('CONFUSED');
-    if (this.charges > 0 && this.def.traits.reap) {
-      for (let i = 0; i < this.def.traits.reap.need; i++) {
+    if (this.charges > 0 && this.traits.reap) {
+      for (let i = 0; i < this.traits.reap.need; i++) {
         g.fillStyle(i < this.charges ? 0xb8a8ff : 0x222233, 0.9);
-        g.fillCircle(this.padX - 14 + i * (28 / Math.max(1, this.def.traits.reap.need - 1)), this.padY + 22, 2.5);
+        g.fillCircle(this.padX - 14 + i * (28 / Math.max(1, this.traits.reap.need - 1)), this.padY + 22, 2.5);
       }
     }
     this.statusText.setPosition(hx, hy - 8).setText(labels.join(' '));
@@ -547,10 +630,10 @@ export class Tower {
   private paintRangeRing(): void {
     const g = this.rangeRing;
     g.clear();
-    const k = this.def.body.kind;
+    const k = this.body.kind;
     if (k === 'ace' || k === 'heli' || k === 'drift' || k === 'roam') {
       // Where it may roam, then what it can reach from where it is now.
-      const leash = this.def.body.leash ?? 140;
+      const leash = this.body.leash ?? 140;
       g.lineStyle(1, this.color, 0.3);
       if (k === 'ace') g.strokeEllipse(this.padX, this.padY, leash * 2, leash * 0.9);
       else g.strokeCircle(this.padX, this.padY, leash);

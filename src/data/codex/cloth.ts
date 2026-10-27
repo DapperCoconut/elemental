@@ -1,299 +1,226 @@
 import { ElementCodex } from '../AbilityCodex';
 
 /**
- * Cloth — a tailor whose health bar is a scarf, and whose build is a jigsaw.
+ * Cloth — a tailor whose one long arm is their scarf.
  *
- * Verified against `src/elements/cloth.ts`, `kits/ClothKit.ts` and `kits/ClothTapestry.ts`.
- * Cloth has five corrupt shop upgrades, a mastery, and no perks; every figure below is a
- * constant at the top of the kit or a row of the artwork table.
+ * Verified against `src/elements/cloth.ts`, `kits/ClothKit.ts` and the five shop upgrades in
+ * `data/Upgrades.ts`. Cloth has no perks and (since the 2026-10-26 rework) no mastery; every
+ * figure below is a constant at the top of the kit.
  */
 const cloth: ElementCodex = {
   identity:
-    'Cloth has no health bar. It has a scarf — a trail of wool dragging behind wherever the '
-    + 'tailor has just walked — and that scarf is the hitbox, so a shot that misses the body by a '
-    + 'foot still catches the tail. In exchange the scarf shrinks as it is cut down, which makes a '
-    + 'nearly-dead Cloth player genuinely harder to hit than a healthy one. Everything else in the '
-    + 'kit is short-range and fast: a pin that jabs seven times a second, a long pin that reels you '
-    + 'across the arena to whatever it stuck in, and a rope back to a spot you chose earlier. Its '
-    + 'ultimate does not attack at all — it offers three artworks and sews one into a 5×5 loom, so '
-    + 'no two Cloth players finish a match with the same kit, and a few of those artworks hand over '
-    + 'a right-click button the element does not otherwise have.',
+    'A ball of red wool with no legs and one very long arm — the scarf wound round its crown, paid '
+    + 'out to a stitched cloth hand. Every inch the tailor moves is the scarf gripping the floor or a '
+    + 'wall and hauling the body after it, and the same hand is the punch, the pickpocket that catches '
+    + 'shots out of the air, and the only way to use anything else in the kit: needles fall out of the '
+    + 'sky to be thrown, the bola ties people up to be thrown, and the pincushion is punched to make it '
+    + 'fire. Walk into your own cushion and the pins go into you instead — which is how the tailor arms '
+    + 'themself — and Burning Man sets every last thread of it on fire.',
 
   passives: [
     {
       emoji: '🧣',
-      name: 'The Scarf',
+      name: 'The Scarf Hand',
       basics:
-        'Your hitbox is not your body. The tailor keeps a small core about half normal size, and '
-        + 'the real target is a trail of up to 17 knots laid at 13px intervals along the path you '
-        + 'have walked — roughly 220px of wool behind you at full health. Any enemy shot that '
-        + 'passes within 9px of any knot hits you for its full damage and is consumed doing it. '
-        + 'The trail is a function of health: it runs from 17 knots at full down to a floor of 30% '
-        + 'of that, so the less scarf you have left the smaller a target you are. Braid artworks '
-        + 'shorten it further on purpose, and Split cuts it into two shorter strands instead of one '
-        + 'long one.',
+        'You cannot walk; WASD does nothing. Hold Click on the floor or a wall and the hand on the end '
+        + 'of your scarf grips it; drag the mouse and the scarf hauls your body the opposite way, a '
+        + 'pixel for a pixel off the floor and ×1.35 off a wall, capped at 560 px/s. The scarf reaches '
+        + '250px and will not stretch past it, and winding the cursor more than 437px past the grip '
+        + 'tears it loose. The hand springs after the cursor rather than snapping to it, and where it is '
+        + 'drawn is exactly where it grips, grabs and hits.',
       effects: [
-        { tag: 'utility', label: 'The trail', detail: 'Up to 17 knots at 13px spacing — about 220px of wool — sampled off the path you have walked, not off the frame rate.' },
-        { tag: 'utility', label: 'The catch radius', detail: 'Any enemy shot passing within 9px of any knot deals its full damage to you and is destroyed. Both the physics group and the hand-drawn projectile registry are checked.' },
-        { tag: 'utility', label: 'The body', detail: 'The tailor themselves keeps a core at 52% of a normal hitbox — small, but never zero.' },
-        { tag: 'utility', label: 'It shrinks', detail: 'Length scales with health, from 17 knots at full down to a floor of 30%. Nearly dead is measurably harder to hit.' },
-        { tag: 'buff', label: 'What shortens it deliberately', detail: 'Braid I/II/III take 20% / 35% / 50% off. Split cuts it into two strands at 62% length each, thrown 11px to either side.' },
+        { tag: 'movement', label: 'The drag', detail: 'Body velocity = minus the mouse travel per frame: ×1 off the floor, ×1.35 off a wall (within 54px of an edge). Capped at 560 px/s and multiplied by any slows on you.' },
+        { tag: 'movement', label: 'The reach', detail: '20–250px from the body. At full extension the body may swing round the grip but never slide away from it.' },
+        { tag: 'utility', label: 'Slipping', detail: 'Wind the cursor more than 437px (1.75 × reach) past the grip and it tears loose.' },
+        { tag: 'utility', label: 'A full hand cannot grip', detail: 'Carrying a needle, a caught shot or a bound body means you cannot move until you let go.' },
+        { tag: 'utility', label: 'Space still dodges', detail: 'The dodge owns the body for its duration; the drag stands aside for it.' },
       ],
       notes: [
-        'Standing still does not retract the scarf — the kit pays out slack behind the last knot, so an idle tailor still trails a full length rather than a bobble.',
-        'A shot already inside the body core is ArenaScene\'s business rather than the scarf\'s, so nothing is ever counted twice.',
-        'Split is a hedge, not an upgrade: two shorter strands are harder for a single shot to find and much easier for one blast to catch both of.',
-        'Bleed Stop ties it off at half length for 5 seconds — the only way to shrink it on demand.',
+        'The hand springs after its target at a rate of 16/s, so a fast flick of the mouse leaves the scarf trailing — and that hand speed is what every throw and smack reads.',
+        'A bot cannot drag, so its movement lurches: 145% speed for about half a second, then 20% while it throws the scarf out again.',
       ],
     },
     {
-      emoji: '🧵',
-      name: 'The Tapestry',
+      emoji: '🫲',
+      name: 'The Smack',
       basics:
-        'A 5×5 loom — 25 squares, and that is the whole budget for a match. Every artwork Q offers '
-        + 'occupies a different fixed polyomino and none of them rotate, so what you sew early '
-        + 'decides what can still fit later. Tier 1s are dominoes and trominoes, tier 3s and the '
-        + 'one-off passives are tetrominoes, and every right-click artwork is a pentomino — a fifth '
-        + 'of the loom for one button. Seven families (Sharpness, Speedy, Survive, Braid, Thorns, '
-        + 'Quick, Technique) may be drafted repeatedly and stack; everything else is unique and '
-        + 'stops being offered once owned. You may only ever carry one right-click artwork.',
+        'Whip the hand over somebody at 620 px/s or more and it smacks them for 14, once per body every '
+        + '0.52s. It is free — no cooldown — so moving the hand is never wasted. A smack across your own '
+        + 'pincushion counts as a punch and sets it off.',
       effects: [
-        { tag: 'resource', label: 'The loom', detail: '25 squares. Roughly six or seven artworks over a long match, fewer if you take the big ones.' },
-        { tag: 'utility', label: 'The shapes', detail: '37 artworks, 37 distinct fixed polyominoes, and no rotation. Placement is a real constraint rather than a formality.' },
-        { tag: 'buff', label: 'What stacks', detail: 'Sharpness, Speedy, Survive, Braid, Thorns, Quick and Technique come in I/II/III and may repeat. Sharpness and Speedy add within their family (two Sharpness IIs is +60%); Thorns and Technique take the best tier rather than stacking.' },
-        { tag: 'utility', label: 'What does not repeat', detail: 'Sharpened Pins, Echo, Thick Skin, Reach, Split and the eight right-click artworks are offered only while you do not own them.' },
-        { tag: 'utility', label: 'One button, ever', detail: 'The moment any right-click artwork is on the loom, no other right-click artwork is ever offered again.' },
-        { tag: 'utility', label: 'The draft is honest', detail: 'Anything that no longer fits anywhere on the loom is not offered, so a nearly-full loom stops showing you pentominoes.' },
-      ],
-      notes: [
-        'Braid caps at 80% shorter however many copies you sew, and Quick floors at a 30% cooldown, so neither family can be stacked into nonsense.',
-        'Survive is real max HP: it raises the cap and heals you for exactly the amount granted, once per point, so it can never be double-paid.',
-        'The bot drafts too. It has no loom to plan, so it takes the biggest artwork it is offered and sews it at a random legal fit.',
-        'The draft overlay does not stop the arena. You can still walk while it is open, and after nine seconds it picks the first card and the first fit for you.',
+        { tag: 'damage', label: 'The smack', detail: '14 damage to anything within 32px of a hand moving at 620 px/s or faster. Once per body every 0.52s. No cooldown.' },
+        { tag: 'utility', label: 'Your own cushion', detail: 'A smack within 50px of your pincushion fires it exactly as a punch does.' },
+        { tag: 'damage', label: 'Father of the Flame', detail: 'With Q+ up the claw smacks for 24 and sets the target alight (4 a second for 2.5s).', requiresUpgrade: 'q' },
       ],
     },
   ],
 
   abilities: {
-    'cloth-pin': {
+    'cloth-scarf-hand': {
       basics:
-        'A jab with a pin: 7 damage inside 62px and a 1.1 radian arc in front of you, auto-firing '
-        + 'about seven times a second while the button is held. It is one of the lowest damage figures in '
-        + 'the game and it is not what the button is for — every pin that lands counts toward a '
-        + 'streak on that body, and the streak is what Click+ spends. Sharpened Pins adds +1, Reach '
-        + 'doubles the 62px, and Echo makes one press in five throw a second free jab 110ms later.',
-      cast: 'Click, auto-firing while the button is held. 145ms between jabs.',
+        'One click, resolved against whatever the hand is over, in order: a body you have bound is '
+        + 'picked up (within 48px); one of your needles on the floor or in a wall is pulled out (within '
+        + '44px); your pincushion is punched (within 52px) and fires; an enemy shot within 34px is caught '
+        + 'in a fold of wool and becomes a throwable wad worth exactly its own damage; an enemy within 36px '
+        + 'of the hand — or 56px of your body — is punched for 20; and failing all of that the hand grips '
+        + 'the floor or wall. Letting go throws whatever you were holding at the hand\'s own speed. Only the '
+        + 'punch spends the 0.42s cooldown.',
+      cast: 'Click, held. 0.42s cooldown, and only the punch spends it — gripping, grabbing and throwing are the same hand being used.',
       effects: [
-        { tag: 'damage', label: 'The jab', detail: '7 damage to the first body inside 62px within a 1.1 radian arc of your aim.' },
-        { tag: 'utility', label: 'The rate', detail: '145ms between pins — about seven a second, and the fastest attack on the roster.' },
-        { tag: 'resource', label: 'The streak', detail: 'Every landed pin counts toward 10 on that body. Switching victims resets it, and it does not tick while a grapple spin is already running.' },
-        { tag: 'buff', label: 'What the loom adds', detail: 'Sharpened Pins: +1 damage. Reach: 62px becomes 124px. Echo: 20% of presses throw a second free jab 110ms later.' },
+        { tag: 'damage', label: 'The punch', detail: '20 damage to anything within 36px of the hand, or 56px of your body. A miss still spends the 0.42s.' },
+        { tag: 'utility', label: 'Picking up a bound body', detail: 'First priority, within 48px. It rides the hand and its binding does not run down while carried.' },
+        { tag: 'utility', label: 'Pulling a needle', detail: 'Second priority, within 44px — off the floor or out of a wall.' },
+        { tag: 'utility', label: 'Punching the cushion', detail: 'Third priority, within 52px: the pincushion fires its barrage (see Pincushion).' },
+        { tag: 'utility', label: 'Catching a shot', detail: 'Fourth priority, within 34px. The projectile is destroyed and becomes a wad of wool worth exactly the damage it would have done. Thrown, it is spent on its first hit, a wall or the end of its 1.3s flight.' },
+        { tag: 'control', label: 'The throw', detail: 'Let go and it flies at the hand\'s speed ×1.15, between 360 and 980 px/s. A thrown body that reaches a wall within 1.4s takes 30 and is pinned there, unable to move, for 2.5s.' },
+        { tag: 'movement', label: 'Gripping', detail: 'Last priority — the floor or a wall. See The Scarf Hand.' },
       ],
       upgrade: {
         basics:
-          'The tenth pin on the same body stops being a pin. The thread goes taut, drags you onto '
-          + 'them and whips you a full revolution around their body at 44px — about three quarters '
-          + 'of a second parked inside your own reach, with your movement overridden for the whole '
-          + 'circle. It deals nothing on its own; what it buys is the position, which is worth far '
-          + 'more to an element whose reach is 62px. The Combo artwork brings the count down to 6.',
+          'Four clotheslines are strung across the arena for the whole match — two wall to wall at 30% '
+          + 'and 70% of its height, two top to bottom at 30% and 70% of its width — with laundry pegged '
+          + 'along them. Land the hand within 22px of one and it becomes a zipline: 680 px/s along the line '
+          + 'in the direction you reached, the body settling onto it, until a wall stops you or you let go.',
         effects: [
-          { tag: 'movement', label: 'The grapple', detail: 'The 10th pin on one body hauls you onto them and orbits you at 44px for 780ms, position-overridden the whole way.', requiresUpgrade: 'click' },
-          { tag: 'utility', label: 'What it is worth', detail: 'No damage of its own. It parks you at stabbing distance for most of a second, which is roughly five free pins.', requiresUpgrade: 'click' },
-          { tag: 'resource', label: 'The counter', detail: 'Resets on a new victim, and stops counting while a spin is already running so one spin can never chain into another.', requiresUpgrade: 'click' },
-          { tag: 'buff', label: 'Combo', detail: 'The Combo artwork (Q+ only) brings the trigger down from 10 pins to 6.', requiresUpgrade: 'click' },
+          { tag: 'movement', label: 'The ride', detail: '680 px/s along the line, multiplied by any slows on you, until the far wall or you let go. The mouse is ignored for the ride.', requiresUpgrade: 'click' },
+          { tag: 'area', label: 'The lines', detail: '4 lines: horizontal at 30% and 70% of the arena\'s height, vertical at 30% and 70% of its width. The hand must land within 22px of one.', requiresUpgrade: 'click' },
+          { tag: 'utility', label: 'Which way', detail: 'Decided by which side of your body the hand caught the line on, and locked in.', requiresUpgrade: 'click' },
         ],
       },
       notes: [
-        'The last two pins before a spin are announced over the victim\'s head, so the trigger is never a surprise.',
-        'A spin follows a moving target — the orbit is recomputed against wherever they are, so walking away does not shake it.',
-        'Technique\'s crit chance is rolled per hit, which at seven hits a second makes it the most reliable crit source in the kit.',
+        'Online, the opponent\'s scarf hand is drawn reaching for you; its throws, carries and flings are relayed from their machine.',
+        'A bot has no cursor, so its click is the decision made for it: a body it has bound goes into the nearest wall, its cushion is punched when somebody is within 190px of it, and a needle within reach is thrown at 700 px/s.',
       ],
     },
 
-    'cloth-longpin': {
+    'cloth-needle-nexus': {
       basics:
-        'Throws a pin the length of your arm at 700 px/s. It buries itself in the first body it '
-        + 'touches for 15 damage, or in the wall if it reaches one, and stays there for 9 seconds. '
-        + 'Pressing E again with a pin planted is the recall: the thread hauls you to it at 1150 '
-        + 'px/s, anybody you plough through on the way takes 10, and arriving on a pinned body is '
-        + '10 more and a hard shove. A wall pin is a free repositioning tool with no ram on the end '
-        + 'of it. With the Location Pin artwork out, E reels to the marker with nothing thrown.',
-      cast: 'E, aimed. First press throws; the second press with a pin planted is the recall and refunds its cooldown. 7s cooldown.',
+        'Three giant needles drop out of the sky in a fan in front of you, 78–96px out, landing over '
+        + '0.42–0.56s and stabbing anybody within 24px of where they land for 8. They stay stuck in the '
+        + 'floor until the scarf hand pulls one out and throws it: a hit is 26 and spends the needle. A '
+        + 'needle that hits a wall sticks in it to be pulled out and thrown again; one that runs out its '
+        + '1.3s of flight drops to the floor. Six of yours can lie about at once. 7s cooldown.',
+      cast: 'E, aimed at the cursor. 7s cooldown. The three fall at roughly 26° apart.',
       effects: [
-        { tag: 'damage', label: 'The throw', detail: '15 damage to the first body it touches, at 700 px/s with 1.6 seconds of flight.' },
-        { tag: 'summon', label: 'Where it sticks', detail: 'A body or a wall, either will hold it, for 9 seconds. A pin in a body follows that body.' },
-        { tag: 'movement', label: 'The recall', detail: 'The second press hauls you to the pin at 1150 px/s. Your movement is overridden for the trip.' },
-        { tag: 'damage', label: 'On the way', detail: '10 damage to anybody you plough through, once each per trip.' },
-        { tag: 'damage', label: 'The ram', detail: 'Arriving on a pinned body is 10 more and a 620 px/s shove away from you.' },
-        { tag: 'utility', label: 'Location Pin', detail: 'With that artwork\'s marker down, E reels to the marker instead of throwing — no pin needed.' },
+        { tag: 'damage', label: 'Out of the sky', detail: '8 damage to anybody within 24px of a needle as it lands. A shadow on the floor shows where.' },
+        { tag: 'summon', label: 'The needles', detail: '3 per cast, stuck in the floor until picked up. 6 of yours at once; a cast at the cap removes the oldest rather than refusing.' },
+        { tag: 'damage', label: 'A thrown needle', detail: '26 damage to the first body within 20px. Spent on the hit.' },
+        { tag: 'utility', label: 'Walls keep them', detail: 'A needle that reaches a wall sticks in it and can be pulled out and thrown again. One that runs out its 1.3s of flight drops to the floor, also reusable.' },
+        { tag: 'damage', label: 'Red-hot', detail: 'During Burning Man: drops are 12, throws are 39, and a thrown needle sets its target alight (4 a second for 2.5s).' },
       ],
       upgrade: {
         basics:
-          'Reeling onto a pinned enemy wraps them in a cage of wool with 50 health of its own. They '
-          + 'cannot move at all until it is gone, and the only thing that removes it is damage — '
-          + 'anybody\'s, including their own. It is a damage check rather than a stun: a target who '
-          + 'hits hard is out in about a second, and one who cannot hurt it is held until the 6 '
-          + 'second hard ceiling. Grand Hold doubles the health; Slicing Hold puts 5 damage a '
-          + 'second into it.',
+          'Every needle you throw is wrapped in a bundle of cloth with a fuse in the knot. When it hits '
+          + 'somebody, a wall, or the end of its flight, the bundle bursts into a shotgun spray of 9 pins '
+          + 'fanned about 109° along its path (bounced back off a wall), each 6 damage. The bare needle '
+          + 'still sticks in the wall to be thrown again — and is re-wrapped the next time you throw it.',
         effects: [
-          { tag: 'control', label: 'The cage', detail: '50 HP of wool. The victim cannot move for as long as it stands.', requiresUpgrade: 'e' },
-          { tag: 'utility', label: 'How it ends', detail: 'Damage, from any source, cuts the web down point for point. There is no timer to wait out — only a 6 second ceiling so a target that cannot damage it is not held forever.', requiresUpgrade: 'e' },
-          { tag: 'buff', label: 'Grand Hold', detail: 'That artwork (Q+ only) doubles a web to 100 HP.', requiresUpgrade: 'e' },
-          { tag: 'dot', label: 'Slicing Hold', detail: 'That artwork (Q+ only) makes the wool cut: 5 damage a second to whoever is caught.', requiresUpgrade: 'e' },
+          { tag: 'damage', label: 'The spray', detail: '9 pins, 6 damage each, 520 px/s for 0.46s, fanned across about 109°. Each pin hits one body once.', requiresUpgrade: 'e' },
+          { tag: 'utility', label: 'Where it goes off', detail: 'On a hit (along the throw), on a wall (back off it), or where the flight ends.', requiresUpgrade: 'e' },
+          { tag: 'damage', label: 'Hot pins', detail: 'During Burning Man every pin is 9 and ignites what it hits.', requiresUpgrade: 'e' },
         ],
       },
       notes: [
-        'Your own damage counts against the web, so stabbing somebody free is a real risk — the pin is 4 a jab and the cage is 50.',
-        'A pin planted in a wall is worth keeping for the escape rather than spending on damage: the recall is the only long-range movement the element has.',
-        'Ruin\'s spikes and anything else that razes a board will pull a planted pin, an anchor and a location marker off the floor. The scarf is not a structure and survives.',
+        'A needle stuck in a wall is a good reason to fight near one: it is ammunition the floor cannot lose.',
+        'Caught shots never get the E+ wrap — they are the attacker\'s damage, thrown back as-is.',
       ],
     },
 
-    'cloth-safety-line': {
+    'cloth-constraining-cloth': {
       basics:
-        'Drives an anchor into the floor where you stand, live for 20 seconds. Pressing R again '
-        + 'hauls you back to it at 1400 px/s — and so does taking 75 damage with it out, whether '
-        + 'you wanted it to or not. That automatic trigger is the whole ability: it is a bail-out '
-        + 'you have to set before you need it, and if you leave it too long it decides for you. '
-        + 'The line drawn on the floor is the tally, pulling straighter as the 75 fills up. With '
-        + 'Location Pin out, the anchor goes to the marker instead of your feet.',
-      cast: 'R, no aim. First press anchors; the second press with an anchor down is the retreat and refunds its cooldown. 9s cooldown.',
+        'Throw a bola straight down the aim at 600 px/s for up to 1 second. The first body within 26px '
+        + 'takes 10 and is bound in cloth for 5 seconds: slowed to 45% speed, and something your scarf '
+        + 'hand can pick up and throw. Thrown into a wall within 1.4s, a bound body takes 30 and is pinned '
+        + 'there, unable to move, for 2.5 seconds. 9s cooldown.',
+      cast: 'R, aimed at the cursor. 9s cooldown. One projectile.',
       effects: [
-        { tag: 'summon', label: 'The anchor', detail: 'Planted where you stand, live for 20 seconds. One at a time.' },
-        { tag: 'movement', label: 'The recall', detail: '1400 px/s back to the anchor, movement overridden for the trip.' },
-        { tag: 'utility', label: 'The automatic trigger', detail: 'Taking 75 damage since the anchor went down fires it by itself, read off the raw figure before any of your own mitigation.' },
-        { tag: 'utility', label: 'The tell', detail: 'The slack in the drawn line is the tally — it pulls straight and the ring tightens as the 75 fills.' },
-        { tag: 'utility', label: 'Location Pin', detail: 'With that artwork\'s marker down, the anchor is planted at the marker rather than at your feet.' },
+        { tag: 'damage', label: 'The bola', detail: '10 damage to the first body within 26px. 600 px/s, up to 1s of flight.' },
+        { tag: 'control', label: 'Bound', detail: '5 seconds at 45% speed. The binding does not run down while you are carrying them.' },
+        { tag: 'control', label: 'Into a wall', detail: 'A bound body you throw that reaches a wall within 1.4s takes 30 and is pinned there for 2.5s — speed 0.' },
+        { tag: 'dot', label: 'Burning cloth', detail: 'During Burning Man anybody bound in your cloth burns for 10 a second.' },
       ],
       upgrade: {
         basics:
-          'Three things at once. The trip itself becomes untouchable — you cannot be hit while the '
-          + 'line is hauling you in, which closes the one window where the retreat could kill you. '
-          + 'You land with +20% move speed for 5 seconds. And you gain 5 Pinned HP a second for '
-          + 'those same 5 seconds, so the bail-out hands back half a Pin Cushion on the way out.',
+          'The bola becomes a flying Mystical Jacket. Whoever it catches is buckled into it — still bound '
+          + 'for 5 seconds, still slowed, still pick-up-able — and while they wear it the arrow keys drag '
+          + 'them around at 300 px/s. Whenever an arrow is held they go where it points, whatever they '
+          + 'were doing; let go and they move themselves again.',
         effects: [
-          { tag: 'shield', label: 'The trip', detail: 'Invulnerable for as long as the line is pulling you.', requiresUpgrade: 'r' },
-          { tag: 'buff', label: 'The landing', detail: '+20% move speed for 5 seconds.', requiresUpgrade: 'r' },
-          { tag: 'heal', label: 'The pins', detail: '+5 Pinned HP a second for 5 seconds — 25 in total, half a Pin Cushion.', requiresUpgrade: 'r' },
+          { tag: 'control', label: 'Steering', detail: 'Arrow keys drive a jacketed body at 300 px/s, overriding its own movement only while a key is held.', requiresUpgrade: 'r' },
+          { tag: 'control', label: 'Still bound', detail: 'Same 10 damage, same 5 seconds at 45% speed, still throwable into a wall.', requiresUpgrade: 'r' },
         ],
       },
       notes: [
-        'Every retreat counts toward the mastery, however it fired — the recast and the automatic trigger both.',
-        'The 75 is measured off `rawDamageTaken`, so armour that saves your life does not also stop the line noticing you were hit that hard.',
-        'Setting the anchor is free and setting it early is the whole skill. An anchor placed while you are winning is what lets you take a fight you should not.',
+        'A bot with the jacket steers its victim onto its own pincushion, or into its reach when it has none.',
+        'Online, the binding and the steering are both settled by the tailor\'s machine and applied by the victim\'s.',
       ],
     },
 
-    'cloth-pin-cushion': {
+    'cloth-pincushion': {
       basics:
-        'Stab yourself. Up to 50 of your current health is converted into Pinned HP — a pool that '
-        + 'is spent before normal health, burns 25% faster than the damage it soaks (10 through the '
-        + 'pins costs 12.5 of them), and throws 25% of everything it eats straight back at the '
-        + 'nearest enemy. The cooldown is 3.2 seconds, so the only real question is how much of '
-        + 'yourself you want made of needles. It refuses to fire below 7 health rather than being a '
-        + 'suicide button. Thorns raises the reflect to 40 / 60 / 85%, and Thorns III also removes '
-        + 'the 25% vulnerability entirely.',
-      cast: 'F, no aim. Refused below 7 health. 3.2s cooldown.',
+        'Set a tomato pincushion down where your hand is, holding 6 pins, for 20 seconds — one at a '
+        + 'time; another cast replaces it. Punch it (or smack it) and it fires 14 pins in every direction '
+        + 'for 7 each, one pin lighter, at most once every 0.32s. Walk your body into it and three pins go '
+        + 'into you instead, taking one from the cushion: for 12 seconds you are Pinned, and each of the '
+        + 'next 3 hits you take throws 10 pins out of you and stabs whoever is nearest for 12. It is gone '
+        + 'when its last pin is. 10s cooldown.',
+      cast: 'F. 10s cooldown. A player sets it where the hand is; it is clamped inside the arena.',
       effects: [
-        { tag: 'cost', label: 'The conversion', detail: 'Up to 50 of your current health becomes Pinned HP. Never takes you below 1.' },
-        { tag: 'shield', label: 'The pool', detail: 'Spent before normal health, exactly like weak HP — but at 1.25× rate, so it is worse health rather than a shield.' },
-        { tag: 'damage', label: 'The thorns', detail: '25% of every point the pins absorb is dealt to the nearest enemy immediately.' },
-        { tag: 'buff', label: 'Thorns I / II / III', detail: 'Raise the reflect to 40% / 60% / 85%. Thorns III also drops the burn rate back to 1× — the pool stops being worse health at all.' },
-        { tag: 'buff', label: 'Thick Skin', detail: 'That artwork converts 15% of all damage you take into Pinned HP on its own, and stops anything counting as a piercing hit against you.' },
+        { tag: 'summon', label: 'The cushion', detail: '6 pins, 18px across, 20 seconds. One per side.' },
+        { tag: 'damage', label: 'Punched', detail: '14 pins radially, 7 damage each, 520 px/s for 0.46s. Costs 1 pin; at most once every 0.32s.' },
+        { tag: 'buff', label: 'The self-pin', detail: 'Touching it with your body (within 30px — a step onto it, not standing on it) costs 1 pin and Pins you: 3 charges for 12 seconds.' },
+        { tag: 'damage', label: 'Pinned', detail: 'Each hit you take spends a charge: 10 pins out of you in a ring (4.2 each) and 12 damage to whoever is nearest you.' },
+        { tag: 'dot', label: 'Burning', detail: 'Burning Man sets it alight, and it stays alight: every 0.65s it fires 8 red-hot pins and loses one, until it is empty and gone.' },
       ],
       upgrade: {
         basics:
-          'Pin Push. Every single time you take damage while you have Pinned HP, eight pins burst '
-          + 'out of you in a ring at 430 px/s — 2 damage each, in every direction at once, with no '
-          + 'cooldown and no cap on how often it fires. Standing in somebody\'s face and being hurt '
-          + 'stops being purely a cost. Sharpened Pins adds +1 to each of the eight.',
+          'Recycle: cushions are purple and hold 8 pins. Any enemy shot that reaches one (within 28px) stops '
+          + 'dead in it and becomes another pin, up to the full 8.',
         effects: [
-          { tag: 'damage', label: 'The spray', detail: '8 pins in a ring on every hit taken, 2 damage each at 430 px/s with 0.9s of life.', requiresUpgrade: 'f' },
-          { tag: 'utility', label: 'The condition', detail: 'Only while Pinned HP is above zero, and there is no cooldown on it whatsoever.', requiresUpgrade: 'f' },
-          { tag: 'buff', label: 'Sharpened Pins', detail: 'That artwork makes each of the eight deal 3 instead of 2.', requiresUpgrade: 'f' },
+          { tag: 'resource', label: 'Eight pins', detail: 'A full cushion holds 8 instead of 6.', requiresUpgrade: 'f' },
+          { tag: 'shield', label: 'Recycling', detail: 'Enemy projectiles within 28px of the cushion are destroyed and add a pin, while it holds fewer than 8.', requiresUpgrade: 'f' },
         ],
       },
       notes: [
-        'Pinned HP is a damage layer on the Fighter, so shields, weak HP and clotted HP are all spent before it — the pins are the last thing between a hit and your scarf.',
-        'The thorns are re-entrancy-guarded: a reflected hit that somehow came back at you cannot start another reflect.',
-        'Deal damage while any pins are in you and it counts toward the mastery, whatever dealt it.',
+        'The self-pin is a crossing: walk off it and back on to be pinned again, at another pin\'s cost.',
+        'Spikes of Ruin and the like treat the cushion as a structure and can knock it down.',
       ],
     },
 
-    'cloth-tapestry': {
+    'cloth-burning-man': {
       basics:
-        'Offers three artworks out of the deck and sews the one you take into the 5×5 loom. Pick '
-        + 'with 1 / 2 / 3 or by clicking a card, then move the ghost over the loom and click to '
-        + 'place. The arena does not stop while the overlay is open — you can still walk, you '
-        + 'cannot cast, and after nine seconds it takes the first card at the first fit for you. '
-        + 'The deck never offers a piece that no longer fits, never offers a unique you already '
-        + 'own, and never offers a second right-click artwork.',
-      cast: 'Q. Opens the draft; 1/2/3 or click to choose, then click the loom to sew. Ultimate, 21s cooldown.',
+        'Your clothes catch fire for 6 seconds. The scarf sheds a scrap of burning cloth every 0.15s from '
+        + 'somewhere along its length; each scrap hits for 6 and sets its target alight for 4 a second over '
+        + '2.5s. Needles go red-hot — 50% more damage and they ignite. Anybody bound in your cloth burns '
+        + 'for 10 a second. Your pincushion catches, and from then on it spits 8 hot pins every 0.65s until '
+        + 'it is empty and gone. 22s cooldown.',
+      cast: 'Q, ultimate. Instant. 22s cooldown.',
       effects: [
-        { tag: 'utility', label: 'The offer', detail: 'Three artworks, weighted so tier 1s are the common draw and tier 3s and right-click artworks are the prize.' },
-        { tag: 'buff', label: 'The sewing', detail: 'The chosen piece occupies its fixed polyomino on the 5×5 loom. It cannot be moved or removed afterwards.' },
-        { tag: 'cost', label: 'The overlay', detail: 'The arena keeps running. You may move, you may not cast, and after 9 seconds it chooses for you.' },
-        { tag: 'utility', label: 'What is filtered out', detail: 'Anything that no longer fits anywhere, any unique already on the loom, and every right-click artwork once one is sewn.' },
+        { tag: 'damage', label: 'Burning scraps', detail: 'One every 0.15s from along the scarf, drifting for 1s. 6 damage and ignite (4/s for 2.5s) to anyone within 16px.' },
+        { tag: 'buff', label: 'Red-hot needles', detail: '×1.5 damage on drops, throws and E+ pins, and every hit ignites.' },
+        { tag: 'dot', label: 'Burning bonds', detail: 'Anybody bound or jacketed by you burns for 10 a second while it lasts.' },
+        { tag: 'dot', label: 'The cushion catches', detail: 'Burns until empty, firing 8 hot pins every 0.65s and losing one each time — even after Burning Man ends.' },
+        { tag: 'utility', label: 'Duration', detail: '6 seconds.' },
       ],
       upgrade: {
         basics:
-          'Salvage. A couple of the artworks on your loom survive the end of the match and are '
-          + 'already sewn when the next Cloth game starts — the last things you placed, filtered '
-          + 'down at random, so a run gets a head start rather than simply resuming. It also opens '
-          + 'three artworks the deck does not otherwise contain: Combo (the grapple triggers on 6 '
-          + 'pins rather than 10), Grand Hold (cloth webs have double the health) and Slicing Hold '
-          + '(cloth webs deal 5 damage a second).',
+          'Father of the Flame: you become a towering burning effigy, a third larger (hitbox included) and '
+          + 'rooted where you lit it — no dragging, no clotheslines, and nothing can bind or throw you. The '
+          + 'scarf hand is a blackened char claw with no limit to its reach, so it grips, grabs and punches '
+          + 'anywhere in the arena, for 35 on a punch and 24 on a smack, igniting what it hits. You can still '
+          + 'be hurt, but every hit (at most every 0.25s) sets whoever is nearest alight for 8 a second over '
+          + '3s and throws 7 burning embers off you. Everything Burning Man does, it still does.',
         effects: [
-          { tag: 'utility', label: 'The salvage', detail: 'Up to 2 artworks — the last sewn — carry into the next match, each with about a 70% chance of surviving.', requiresUpgrade: 'q' },
-          { tag: 'buff', label: 'Combo', detail: 'A new artwork: the Click+ grapple spin triggers on the 6th pin instead of the 10th.', requiresUpgrade: 'q' },
-          { tag: 'buff', label: 'Grand Hold', detail: 'A new artwork: cloth webs have 100 HP instead of 50.', requiresUpgrade: 'q' },
-          { tag: 'dot', label: 'Slicing Hold', detail: 'A new artwork: cloth webs deal 5 damage a second to whoever is caught.', requiresUpgrade: 'q' },
+          { tag: 'movement', label: 'Endless reach', detail: 'The claw reaches 2400px — the whole arena — and does not slip.', requiresUpgrade: 'q' },
+          { tag: 'damage', label: 'The char claw', detail: 'Punch 35, smack 24, and both ignite (4/s for 2.5s).', requiresUpgrade: 'q' },
+          { tag: 'damage', label: 'Burning wounds', detail: 'Every hit you take (at most every 0.25s) ignites whoever is nearest for 8/s over 3s and throws 7 embers that hit for 6 and ignite.', requiresUpgrade: 'q' },
+          { tag: 'cost', label: 'A bigger target', detail: 'The effigy is 1.35× size — hitbox and all.', requiresUpgrade: 'q' },
+          { tag: 'cost', label: 'Rooted', detail: 'For all 6 seconds you cannot move: grips do not haul, clotheslines cannot be caught, and your speed is 0. Bolas and jackets cannot bind you either.', requiresUpgrade: 'q' },
         ],
       },
       notes: [
-        'The eight right-click artworks are the largest pieces in the deck for a reason: a fifth of the loom is what a whole new button costs.',
-        'A salvaged piece that no longer fits where it sat is re-placed at the first legal spot rather than dropped.',
-        'The bot drafts on the same table. It cannot plan a loom, so it takes the biggest thing it is offered — which makes a Nightmare Cloth bot reliably end up with a right-click ability.',
-      ],
-    },
-  },
-
-  mastery: {
-    'outfit-change': {
-      basics:
-        'Space sheds what you are wearing and leaves you standing in the next thing. Four outfits '
-        + 'in a fixed cycle, 0.9 seconds between changes, and each is a different kind of '
-        + 'resistance: Black Suit takes 3 off every hit flat, Heavy Coat is a flat 10% off '
-        + 'everything, Thin Silks cuts every negative status on you by a third, and Casual Hoodie '
-        + 'takes 20% off anything arriving as an area blast or a piercing shot. You start every '
-        + 'match in the Black Suit.',
-      cast: 'Space. Cycles to the next outfit. 0.9s between changes.',
-      effects: [
-        { tag: 'shield', label: '🤵 Black Suit', detail: '3 flat damage off every hit that reaches you, subtracted per hit rather than from the total. The starting outfit.', requiresMastery: true },
-        { tag: 'shield', label: '🧥 Heavy Coat', detail: '10% less damage from every source, with no conditions.', requiresMastery: true },
-        { tag: 'buff', label: '👘 Thin Silks', detail: 'Every negative status on you runs 33% shorter — stuns, slows, burns, freezes, roots and silences alike.', requiresMastery: true },
-        { tag: 'shield', label: '🧢 Casual Hoodie', detail: '20% less from anything flagged as an area blast or a piercing shot. Nothing at all against an ordinary bullet.', requiresMastery: true },
-      ],
-      notes: [
-        'The Black Suit\'s flat 3 is subtracted per hit, which makes it the best of the four against a swarm and the worst against one enormous blow.',
-        'The outfit is on the character rather than in a buff bar: the panel over the tailor\'s torso changes cut and colour, so both players can see which one is on.',
-        'Swapping costs nothing but the moment it takes. The skill is reading what is about to land and being in the right thing when it does.',
-      ],
-    },
-    'bleed-stop': {
-      basics:
-        'Tie the scarf off for 5 seconds. It is 50% shorter for the duration — half the tail, so half '
-        + 'the trailing hitbox — and you can lose at most 75 health in total while it holds. Every '
-        + 'point past the 75 is simply not received. 20s cooldown.',
-      cast: 'Whichever of E / R / F / Q it is bound over. 20s cooldown.',
-      effects: [
-        { tag: 'shield', label: 'The tourniquet', detail: 'At most 75 damage gets through across the whole 5 seconds; everything after that is refused.', requiresMastery: true },
-        { tag: 'utility', label: 'The short scarf', detail: 'The scarf is half its usual length while it holds, so there is half as much of you to hit.', requiresMastery: true },
-      ],
-      notes: [
-        'The 75 is counted after armour, outfits and every other reduction, so a Heavy Coat or a Black Suit stretches it further.',
-        'It is a total, not a per-hit cap: one big ultimate can spend the whole 75 at once, and after that nothing lands until the knot comes undone.',
-        'The status tray shows how much of the 75 is left.',
+        'When the effigy ends, a grip held further out than an ordinary scarf can reach is let go of.',
+        'Ruin\'s Second Skin puts the fire out early.',
       ],
     },
   },

@@ -1953,6 +1953,7 @@ export class MarrowKit implements SummonPurgeTarget {
       // left to its own sim, which has this same wall on it.
       for (const t of this.targetsOf(w.owner)) {
         if (t === this.api.npc && this.isReplica('npc')) continue;
+        if (t.soulWalking) continue; // Bind's Blackened Eyes walks through.
         const r = 14 * t.sizeMult;
         const dx = t.x - w.x;
         const dy = t.y - w.y;
@@ -2690,6 +2691,15 @@ export class MarrowKit implements SummonPurgeTarget {
   }
 
   // ── Accessors read by ArenaScene / the NPC ─────────────────────────────────
+
+  /** Memory's Rebirth: the struck side loses part of what it has built up. Returns a label, or null. */
+  rebirthDrain(owner: Owner): string | null {
+    const s = this.side(owner);
+    const take = Math.ceil(s.inflammation * 0.4);
+    if (take <= 0) return null;
+    s.inflammation -= take;
+    return `−${take} INFLAMMATION`;
+  }
 
   getPlayerSpeedMult(): number { return this.speedMultFor(this.api.player, 'player'); }
   getNpcSpeedMult(): number { return this.speedMultFor(this.api.npc, 'npc'); }

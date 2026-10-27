@@ -3,8 +3,8 @@ import { Ability, CastContext } from './Ability';
 
 const droneCommand: Ability = {
   id: 'drone-command',
-  name: 'Drone Command',
-  description: 'Hold to spawn drones (first at 0.5s, then 1/s, max 6). Tap to command all to fire lasers (3 dmg each). Click while a barrel is rolling → barrel explodes immediately + ignites puddles.',
+  name: 'Arm Laser',
+  description: 'Hold Click to fire the laser strapped to your hand: rapid hitscan shots out to your cursor, 2 dmg each. It heats up while held and overheats after ~2.4s, locking it for 2.2s. Right-click: hold to build drones (first at 0.5s, then 1/s, max 6), tap to command all to fire lasers (3 dmg each). Right-click while a barrel is rolling → barrel explodes immediately + ignites puddles.',
   displayKey: 'Click',
   cooldown: 1500,
   cast(ctx: CastContext) {

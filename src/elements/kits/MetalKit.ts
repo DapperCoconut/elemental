@@ -429,6 +429,14 @@ export class MetalKit {
   getNpcAggressiveBleedUntil(): number { return this.npcAggressiveBleedUntil; }
   setNpcAggressiveBleedUntil(v: number): void { this.npcAggressiveBleedUntil = v; }
 
+  /** Memory's Rebirth: the struck side loses part of what it has built up. Returns a label, or null. */
+  rebirthDrain(owner: 'player' | 'npc'): string | null {
+    const take = Math.ceil(this.blood[owner] * 0.4);
+    if (take <= 0) return null;
+    this.blood[owner] -= take;
+    return `−${take} BLOOD`;
+  }
+
   getBlood(owner: 'player' | 'npc'): number { return this.blood[owner]; }
   hasFlail(owner: 'player' | 'npc'): boolean { return (owner === 'player' ? this.playerFlail : this.npcFlail) !== null; }
   isFlailSwinging(owner: 'player' | 'npc'): boolean {
@@ -1256,6 +1264,8 @@ export class MetalKit {
   onDamageDealt(owner: 'player' | 'npc', amount: number): void {
     if (amount <= 0) return;
     const { player, npc } = this.arena;
+    // Memory's Rebirth: no blood from hits while the passive is sealed.
+    if ((owner === 'player' ? player : npc).passivesSealed()) return;
     const victim = owner === 'player' ? npc : player;
 
     if (owner === 'player') {

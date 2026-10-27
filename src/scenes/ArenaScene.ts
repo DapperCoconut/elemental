@@ -125,6 +125,11 @@ import { RadiationKit, RadiationArenaApi } from '../elements/kits/RadiationKit';
 import { BindKit, BindArenaApi } from '../elements/kits/BindKit';
 import { GumKit, GumArenaApi } from '../elements/kits/GumKit';
 import { GluttonyKit, GluttonyArenaApi } from '../elements/kits/GluttonyKit';
+import { PressureKit, PressureArenaApi } from '../elements/kits/PressureKit';
+import { AstraKit, AstraArenaApi } from '../elements/kits/AstraKit';
+import { MemoryKit, MemoryArenaApi } from '../elements/kits/MemoryKit';
+import { StringKit, StringArenaApi } from '../elements/kits/StringKit';
+import { InkKit, InkArenaApi, InkHudCard } from '../elements/kits/InkKit';
 import { MagicKit, MagicArenaApi } from '../elements/kits/MagicKit';
 import { TimeKit, TimeArenaApi } from '../elements/kits/TimeKit';
 import { PlasmaKit, PlasmaArenaApi } from '../elements/kits/PlasmaKit';
@@ -357,6 +362,11 @@ const ELEMENT_TEXTURES: Record<string, string> = {
   bind: 'elem-bind',
   gum: 'elem-gum',
   gluttony: 'elem-gluttony',
+  pressure: 'elem-pressure',
+  ink: 'elem-ink',
+  astra: 'elem-astra',
+  memory: 'elem-memory',
+  string: 'elem-string',
   magma: 'elem-magma',
   // Cloth and Marrow paint their own torso in their avatar's `drawBody`, so they take the
   // empty body rather than falling through to the `elem-fire` default underneath everything.
@@ -708,8 +718,22 @@ export class ArenaScene extends Phaser.Scene {
   private illusionKit!: IllusionKit;
   /** Depths (test element) — managed by DepthsKit. The lure, the drowning, the fish and the shark. */
   private depthsKit!: DepthsKit;
-  /** Harvest (element id `gluttony`, test element) — managed by GluttonyKit. Mold, rot, crows and the scythe. */
+  /** Wood (element id `gluttony`, test element) — managed by GluttonyKit. Sap, birches, sprouts and the scythe. */
   private gluttonyKit!: GluttonyKit;
+  /** Pressure (test element) — managed by PressureKit. Held charges, the gauntlet, orbs, vents and the floor. */
+  private pressureKit!: PressureKit;
+  /** Astra (test element) — managed by AstraKit. Level shots, flares, the smite, the warp, the Star Trial. */
+  private astraKit!: AstraKit;
+  /** Memory (test element) — managed by MemoryKit. Guilt, the shards' static, the snatch, Rebirth, the copy, the wounds. */
+  private memoryKit!: MemoryKit;
+  /** String (test element) — managed by StringKit. The strings, the spiders, the hex strand, the puppet, the tomb. */
+  private stringKit!: StringKit;
+  /** Ink (test element) — managed by InkKit. Finger guns, peels, the bounce, the anvil and Foux World. */
+  private inkKit!: InkKit;
+  /** The player's tray cards, for Ink's Fourth Wall (Q+) to throw. Built only when the player is Ink. */
+  private inkHudCards: InkHudCard[] = [];
+  /** The real E/R/F/Q keys while an Ink anvil has shuffled them. Null when they are in place. */
+  private inkKeyBase: Phaser.Input.Keyboard.Key[] | null = null;
   /** Conquest (test element) — managed by ConquestKit. The board, the economy and everything on it. */
   private conquestKit!: ConquestKit;
   /** Passion (test element) — managed by PassionKit. The love bars, the pistol, the rose and the pose. */
@@ -945,7 +969,6 @@ export class ArenaScene extends Phaser.Scene {
   private depthsMasteryOn = false;
   private conquestMasteryOn = false;
   private ruinMasteryOn = false;
-  private clothMasteryOn = false;
   private marrowMasteryOn = false;
   private waxMasteryOn = false;
   private dreamMasteryOn = false;
@@ -1090,6 +1113,7 @@ export class ArenaScene extends Phaser.Scene {
     this.isDodging = false;
     this.echoHypersenseNextDodgeAt = 0;
     this.abilityBars = [];
+    this.inkHudCards = [];
     this.hpBarFill = undefined;
     this.hpBarShield = undefined;
     this.hpBarClotted = undefined;
@@ -1952,18 +1976,24 @@ export class ArenaScene extends Phaser.Scene {
         get qKey() { return arena.keyFor('slime', arena.qKey); },
         get pointerWasDown() { return arena.pointerWasDown; },
         get projectiles() { return arena.projectiles; },
+        get projectileRegistry() { return arena.techProjReg; },
         get elementId() { return arena.liveElementFor('slime'); },
         get npcElementId() { return arena.npcElement.id; },
-        get npcCastId() { return arena.npcCastId; },
+        get bounds() { return arena.physics.world.bounds; },
+        get isOnline() { return arena.isOnline; },
+        get isInvasion() { return arena.isInvasion; },
+        get playerDodging() { return arena.isDodging; },
+        isTargetable: (f) => !arena.isInvasion || !(f instanceof Husk) || arena.invasionKit.isHuskTargetable(f),
         acidColor: (owner, base) => arena.skinsKit.acidColor(owner, base),
-        hasUpgrade: (slot) => arena.hasUpgradeFor('slime', slot),
+        hasUpgrade: (owner, slot) => (owner === 'player' ? arena.hasUpgradeFor('slime', slot) : arena.hasNpcUpgrade(slot)),
         hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
-        showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
+        broadcast: (id) => arena.broadcastMasteryCast(id),
         get masteryActive() { return arena.slimeMasteryOn && arena.playerIs('slime'); },
         get npcMasteryActive() { return arena.npcMasteryOn && arena.npcElement.id === 'slime'; },
         masteryBindFor: (slot) => arena.masteryBindForElement('slime', slot),
+        npcMasteryBindFor: (slot) => arena.npcMasteryBindFor(slot),
         recordMasteryStat: (key, amount) => {
           if (arena.playerIs('slime')) PlayerData.addMasteryStat('slime', key, amount);
         },
@@ -2618,7 +2648,7 @@ export class ArenaScene extends Phaser.Scene {
       this.depthsKit = new DepthsKit(depthsApi);
     }
 
-    // ── Harvest kit (element id `gluttony`, test element) ─────
+    // ── Wood kit (element id `gluttony`, test element) ────────
     if (this.gluttonyKit) {
       this.gluttonyKit.reset();
     } else {
@@ -2634,29 +2664,198 @@ export class ArenaScene extends Phaser.Scene {
         get qKey() { return arena.keyFor('gluttony', arena.qKey); },
         get elementId() { return arena.liveElementFor('gluttony'); },
         get npcElementId() { return arena.npcElement.id; },
-        get width() { return arena.scale.width; },
-        get height() { return arena.scale.height; },
+        get bounds() { return arena.physics.world.bounds; },
         get isOnline() { return arena.isOnline; },
         get isInvasion() { return arena.isInvasion; },
+        get projectiles() { return arena.projectiles; },
+        get projectileRegistry() { return arena.techProjReg; },
         isTargetable: (f) => !arena.isInvasion || !(f instanceof Husk) || arena.invasionKit.isHuskTargetable(f),
         gluttonyColor: (owner, base) => arena.skinsKit.gluttonyColor(owner, base),
-        spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
         setStatusIndicator: (id, status) => arena.statusHudKit.setCustom(id, status),
         broadcast: (id) => arena.broadcastMasteryCast(id),
+        coopTeammates: () => (arena.isInvasion && arena.isOnline ? arena.invasionCoopKit?.teammates() ?? [] : []),
+        sendWoodGift: (slot, sap, heal, brewMs) => arena.invasionCoopKit?.sendWoodGift(slot, sap, heal, brewMs),
         hasUpgrade: (owner, slot) => (owner === 'player' ? arena.hasUpgradeFor('gluttony', slot) : arena.hasNpcUpgrade(slot)),
         get masteryActive() { return arena.gluttonyMasteryOn && arena.playerIs('gluttony'); },
         get npcMasteryActive() { return arena.npcMasteryOn && arena.npcElement.id === 'gluttony'; },
-        masteryBindFor: (slot) => arena.masteryBindForElement('gluttony', slot),
-        npcMasteryBindFor: (slot) => arena.npcMasteryBindFor(slot),
-        recordMasteryStat: (key, amount) => {
-          if (arena.playerIs('gluttony')) PlayerData.addMasteryStat('gluttony', key, amount);
-        },
-        recordMasteryBest: (key, value) => {
-          if (arena.playerIs('gluttony')) PlayerData.recordMasteryBest('gluttony', key, value);
-        },
       };
       this.gluttonyKit = new GluttonyKit(gluttonyApi);
+    }
+
+    // ── Pressure kit (test element) ───────────────────────────
+    if (this.pressureKit) {
+      this.pressureKit.reset();
+    } else {
+      const arena = this;
+      const pressureApi: PressureArenaApi = {
+        get scene(): Phaser.Scene { return arena; },
+        get player() { return arena.player; },
+        get npc() { return arena.npc; },
+        get enemies() { return arena.reachableEnemies; },
+        get eKey() { return arena.keyFor('pressure', arena.eKey); },
+        get rKey() { return arena.keyFor('pressure', arena.rKey); },
+        get fKey() { return arena.keyFor('pressure', arena.fKey); },
+        get qKey() { return arena.keyFor('pressure', arena.qKey); },
+        get elementId() { return arena.liveElementFor('pressure'); },
+        get npcElementId() { return arena.npcElement.id; },
+        get bounds() { return arena.physics.world.bounds; },
+        get isOnline() { return arena.isOnline; },
+        get isInvasion() { return arena.isInvasion; },
+        isTargetable: (f) => !arena.isInvasion || !(f instanceof Husk) || arena.invasionKit.isHuskTargetable(f),
+        pressureColor: (owner, base) => arena.skinsKit.pressureColor(owner, base),
+        buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
+        setStatusIndicator: (id, status) => arena.statusHudKit.setCustom(id, status),
+        broadcast: (id) => arena.broadcastMasteryCast(id),
+        hasUpgrade: (owner, slot) => (owner === 'player' ? arena.hasUpgradeFor('pressure', slot) : arena.hasNpcUpgrade(slot)),
+        // No mastery exists yet; the rig's tell is ready for one.
+        get masteryActive() { return false; },
+        get npcMasteryActive() { return false; },
+      };
+      this.pressureKit = new PressureKit(pressureApi);
+    }
+
+    // ── Astra kit (test element) ──────────────────────────────
+    if (this.astraKit) {
+      this.astraKit.reset();
+    } else {
+      const arena = this;
+      const astraApi: AstraArenaApi = {
+        get scene(): Phaser.Scene { return arena; },
+        get player() { return arena.player; },
+        get npc() { return arena.npc; },
+        get enemies() { return arena.reachableEnemies; },
+        get eKey() { return arena.keyFor('astra', arena.eKey); },
+        get rKey() { return arena.keyFor('astra', arena.rKey); },
+        get fKey() { return arena.keyFor('astra', arena.fKey); },
+        get qKey() { return arena.keyFor('astra', arena.qKey); },
+        get elementId() { return arena.liveElementFor('astra'); },
+        get npcElementId() { return arena.npcElement.id; },
+        get bounds() { return arena.physics.world.bounds; },
+        get isOnline() { return arena.isOnline; },
+        get isInvasion() { return arena.isInvasion; },
+        get worldW() { return arena.scale.width; },
+        get projectiles() { return arena.projectiles; },
+        get projectileRegistry() { return arena.techProjReg; },
+        isTargetable: (f) => !arena.isInvasion || !(f instanceof Husk) || arena.invasionKit.isHuskTargetable(f),
+        purgeSummons: (x, y, r, except) => arena.purgeSummonsInCircle(x, y, r, except),
+        astraColor: (owner, base) => arena.skinsKit.astraColor(owner, base),
+        buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
+        setStatusIndicator: (id, status) => arena.statusHudKit.setCustom(id, status),
+        broadcast: (id) => arena.broadcastMasteryCast(id),
+        hasUpgrade: (owner, slot) => (owner === 'player' ? arena.hasUpgradeFor('astra', slot) : arena.hasNpcUpgrade(slot)),
+        // No mastery exists yet; the rig's tell is ready for one.
+        get masteryActive() { return false; },
+        get npcMasteryActive() { return false; },
+      };
+      this.astraKit = new AstraKit(astraApi);
+    }
+
+    // ── Memory kit (test element) ─────────────────────────────
+    if (this.memoryKit) {
+      this.memoryKit.reset();
+    } else {
+      const arena = this;
+      const memoryApi: MemoryArenaApi = {
+        get scene(): Phaser.Scene { return arena; },
+        get player() { return arena.player; },
+        get npc() { return arena.npc; },
+        get enemies() { return arena.reachableEnemies; },
+        get eKey() { return arena.keyFor('memory', arena.eKey); },
+        get rKey() { return arena.keyFor('memory', arena.rKey); },
+        get fKey() { return arena.keyFor('memory', arena.fKey); },
+        get qKey() { return arena.keyFor('memory', arena.qKey); },
+        get elementId() { return arena.liveElementFor('memory'); },
+        get npcElementId() { return arena.npcElement.id; },
+        get bounds() { return arena.physics.world.bounds; },
+        get isOnline() { return arena.isOnline; },
+        get isInvasion() { return arena.isInvasion; },
+        get worldW() { return arena.scale.width; },
+        isTargetable: (f) => !arena.isInvasion || !(f instanceof Husk) || arena.invasionKit.isHuskTargetable(f),
+        memoryColor: (owner, base) => arena.skinsKit.memoryColor(owner, base),
+        buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
+        buildNpcContext: (x, y) => arena.buildNpcContext(x, y),
+        setStatusIndicator: (id, status) => arena.statusHudKit.setCustom(id, status),
+        broadcast: (id) => arena.broadcastMasteryCast(id),
+        rebirthDrain: (owner) => arena.memoryRebirthDrain(owner),
+        hudRects: () => ({
+          hpGauge: { x: arena.scale.width / 2 - arena.hpBarW / 2, y: arena.hpBarY - arena.hpBarH / 2, w: arena.hpBarW, h: arena.hpBarH },
+          cards: arena.abilityBars.filter((b) => b.fill.visible).map((b) => ({
+            x: b.fill.x, y: b.fill.y - b.fill.height / 2, w: b.maxWidth, h: b.fill.height,
+          })),
+        }),
+      };
+      this.memoryKit = new MemoryKit(memoryApi);
+    }
+
+    // ── String kit (test element) ─────────────────────────────
+    if (this.stringKit) {
+      this.stringKit.reset();
+    } else {
+      const arena = this;
+      const stringApi: StringArenaApi = {
+        get scene(): Phaser.Scene { return arena; },
+        get player() { return arena.player; },
+        get npc() { return arena.npc; },
+        get enemies() { return arena.reachableEnemies; },
+        get projectiles() { return arena.projectiles; },
+        get projectileRegistry() { return arena.techProjReg; },
+        get eKey() { return arena.keyFor('string', arena.eKey); },
+        get rKey() { return arena.keyFor('string', arena.rKey); },
+        get fKey() { return arena.keyFor('string', arena.fKey); },
+        get qKey() { return arena.keyFor('string', arena.qKey); },
+        get upKey() { return arena.keyFor('string', arena.dummyUpKey); },
+        get downKey() { return arena.keyFor('string', arena.dummyDownKey); },
+        get leftKey() { return arena.keyFor('string', arena.dummyLeftKey); },
+        get rightKey() { return arena.keyFor('string', arena.dummyRightKey); },
+        get elementId() { return arena.liveElementFor('string'); },
+        get npcElementId() { return arena.npcElement.id; },
+        get bounds() { return arena.physics.world.bounds; },
+        get isOnline() { return arena.isOnline; },
+        get isInvasion() { return arena.isInvasion; },
+        get worldW() { return arena.scale.width; },
+        isTargetable: (f) => !arena.isInvasion || !(f instanceof Husk) || arena.invasionKit.isHuskTargetable(f),
+        huskShots: () => (arena.isInvasion ? arena.invasionKit.liveShots() : []),
+        stringColor: (owner, base) => arena.skinsKit.stringColor(owner, base),
+        skinId: (owner) => arena.skinsKit.skinId(owner),
+        buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
+        setStatusIndicator: (id, status) => arena.statusHudKit.setCustom(id, status),
+        broadcast: (id) => arena.broadcastMasteryCast(id),
+      };
+      this.stringKit = new StringKit(stringApi);
+    }
+
+    // ── Ink kit (test element) ────────────────────────────────
+    if (this.inkKit) {
+      this.inkKit.reset();
+    } else {
+      const arena = this;
+      const inkApi: InkArenaApi = {
+        get scene(): Phaser.Scene { return arena; },
+        get player() { return arena.player; },
+        get npc() { return arena.npc; },
+        get enemies() { return arena.reachableEnemies; },
+        get eKey() { return arena.keyFor('ink', arena.eKey); },
+        get rKey() { return arena.keyFor('ink', arena.rKey); },
+        get fKey() { return arena.keyFor('ink', arena.fKey); },
+        get qKey() { return arena.keyFor('ink', arena.qKey); },
+        get elementId() { return arena.liveElementFor('ink'); },
+        get npcElementId() { return arena.npcElement.id; },
+        get isOnline() { return arena.isOnline; },
+        get isInvasion() { return arena.isInvasion; },
+        isTargetable: (f) => !arena.isInvasion || !(f instanceof Husk) || arena.invasionKit.isHuskTargetable(f),
+        inkColor: (owner, base) => arena.skinsKit.inkColor(owner, base),
+        buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
+        setStatusIndicator: (id, status) => arena.statusHudKit.setCustom(id, status),
+        broadcast: (id) => arena.broadcastMasteryCast(id),
+        hasUpgrade: (owner, slot) => (owner === 'player' ? arena.hasUpgradeFor('ink', slot) : arena.hasNpcUpgrade(slot)),
+        // No mastery exists yet; the rig's tell is ready for one.
+        get masteryActive() { return false; },
+        get npcMasteryActive() { return false; },
+        setKeyShuffle: (order) => arena.setInkKeyShuffle(order),
+        get hudCards() { return arena.inkHudCards; },
+      };
+      this.inkKit = new InkKit(inkApi);
     }
 
     // ── Devotion kit (id `passion`) ───────────────────────────
@@ -2940,7 +3139,6 @@ export class ArenaScene extends Phaser.Scene {
       const arena = this;
       const clothApi: ClothArenaApi = {
         get scene(): Phaser.Scene { return arena; },
-        get isOnline() { return arena.isOnline && !arena.isInvasion; },
         get player() { return arena.player; },
         get npc() { return arena.npc; },
         get enemies() { return arena.reachableEnemies; },
@@ -2950,10 +3148,16 @@ export class ArenaScene extends Phaser.Scene {
         get rKey() { return arena.keyFor('cloth', arena.rKey); },
         get fKey() { return arena.keyFor('cloth', arena.fKey); },
         get qKey() { return arena.keyFor('cloth', arena.qKey); },
-        get spaceKey() { return arena.keyFor('cloth', arena.spaceKey); },
-        get rightPointerWasDown() { return arena.rightPointerWasDown; },
+        get upKey() { return arena.keyFor('cloth', arena.dummyUpKey); },
+        get downKey() { return arena.keyFor('cloth', arena.dummyDownKey); },
+        get leftKey() { return arena.keyFor('cloth', arena.dummyLeftKey); },
+        get rightKey() { return arena.keyFor('cloth', arena.dummyRightKey); },
         get elementId() { return arena.liveElementFor('cloth'); },
         get npcElementId() { return arena.npcElement.id; },
+        get isDodging() { return arena.isDodging; },
+        get isOnline() { return arena.isOnline; },
+        get isInvasion() { return arena.isInvasion; },
+        isTargetable: (f) => !arena.isInvasion || !(f instanceof Husk) || arena.invasionKit.isHuskTargetable(f),
         get width() { return arena.scale.width; },
         get height() { return arena.scale.height; },
         clothColor: (owner, base) => arena.skinsKit.clothColor(owner, base),
@@ -2962,21 +3166,10 @@ export class ArenaScene extends Phaser.Scene {
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
         setStatusIndicator: (id, status) => arena.statusHudKit.setCustom(id, status),
-        purgeSummons: (x, y, r, except) => arena.purgeSummonsInCircle(x, y, r, except),
+        broadcast: (id) => arena.broadcastMasteryCast(id),
         hasUpgrade: (owner, slot) => (owner === 'player'
           ? arena.hasUpgradeFor('cloth', slot)
           : arena.hasNpcUpgrade(slot)),
-        get masteryActive() { return arena.clothMasteryOn && arena.playerIs('cloth'); },
-        get npcMasteryActive() { return arena.npcMasteryOn && arena.npcElement.id === 'cloth'; },
-        masteryBindFor: (slot) => arena.masteryBindForElement('cloth', slot),
-        npcMasteryBindFor: (slot) => arena.npcMasteryBindFor(slot),
-        addMasteryStat: (key, amount) => {
-          if (arena.playerIs('cloth')) PlayerData.addMasteryStat('cloth', key, amount);
-        },
-        recordMasteryBest: (key, amount) => {
-          if (arena.playerIs('cloth')) PlayerData.recordMasteryBest('cloth', key, amount);
-        },
-        broadcastMasteryCast: (enhId) => arena.broadcastMasteryCast(enhId),
       };
       this.clothKit = new ClothKit(clothApi);
     }
@@ -3224,13 +3417,16 @@ export class ArenaScene extends Phaser.Scene {
         get qKey() { return arena.keyFor('bind', arena.qKey); },
         get elementId() { return arena.liveElementFor('bind'); },
         get npcElementId() { return arena.npcElement.id; },
-        get width() { return arena.scale.width; },
-        get height() { return arena.scale.height; },
+        get bounds() { return arena.physics.world.bounds; },
+        get isOnline() { return arena.isOnline; },
+        get isInvasion() { return arena.isInvasion; },
+        get worldW() { return arena.scale.width; },
+        isTargetable: (f) => !arena.isInvasion || !(f instanceof Husk) || arena.invasionKit.isHuskTargetable(f),
         bindColor: (owner, base) => arena.skinsKit.bindColor(owner, base),
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
-        showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
         setStatusIndicator: (id, status) => arena.statusHudKit.setCustom(id, status),
+        broadcast: (id) => arena.broadcastMasteryCast(id),
         get masteryActive() { return arena.bindMasteryOn && arena.playerIs('bind'); },
         get npcMasteryActive() { return arena.npcMasteryOn && arena.npcElement.id === 'bind'; },
         masteryBindFor: (slot) => arena.masteryBindForElement('bind', slot),
@@ -3238,8 +3434,6 @@ export class ArenaScene extends Phaser.Scene {
         recordMasteryStat: (key, amount) => {
           if (arena.playerIs('bind')) PlayerData.addMasteryStat('bind', key, amount);
         },
-        purgeDebuffs: (f) => arena.purgeDebuffs(f),
-        setAbilityCardLabel: (id, name, description) => arena.setAbilityCardLabel(id, name, description),
         hasUpgrade: (slot) => arena.hasUpgradeFor('bind', slot),
         hasNpcUpgrade: (slot) => arena.hasNpcUpgrade(slot),
       };
@@ -3560,8 +3754,8 @@ export class ArenaScene extends Phaser.Scene {
       };
       this.echoKit = new EchoKit(echoApi);
     }
-    // The kit owns the fog render texture; it only needs to know whether anyone is playing Echo.
-    this.echoKit.reset(this.playerIs('echo') || this.npcElement?.id === 'echo');
+    // The fog is the Echo user's own blindness — only the local player's screen goes dark.
+    this.echoKit.reset(this.playerIs('echo'));
 
     // Subterfuge kit
     if (this.subterfugeKit) {
@@ -3726,6 +3920,9 @@ export class ArenaScene extends Phaser.Scene {
         get sKey() { return arena.sKey; },
         get dKey() { return arena.dKey; },
         get projectiles() { return arena.projectiles; },
+        get enemies() { return arena.reachableEnemies; },
+        get isInvasion() { return arena.isInvasion; },
+        isTargetable: (f) => !arena.isInvasion || !(f instanceof Husk) || arena.invasionKit.isHuskTargetable(f),
         get nukeChanneling() { return arena.nukeChanneling; },
         set nukeChanneling(v: boolean) { arena.nukeChanneling = v; },
         get nukeChannelEnd() { return arena.nukeChannelEnd; },
@@ -4174,9 +4371,11 @@ export class ArenaScene extends Phaser.Scene {
         if ((proj as any).isMagicThornVine && (proj as any).thornVineOwner === 'npc') {
           this.magicKit.onThornVineHit(this.player, 'npc');
         }
-        // Acid Purge ball: apply the stat-strip status on top of the generic damage above
-        if (proj.texture.key === 'proj-purge') {
-          this.slimeKit.onPurgeHit(this.player, proj, this.time.now);
+        // Venom Poison Whip lash: one toxin (two at half coverage) on top of the hit above
+        if (proj.texture.key === 'proj-acid-whip') {
+          this.slimeKit.onWhipHit(this.player, proj);
+          // Corrosive Bite on the opponent's whip: the lash eats max HP too.
+          if (this.npcElement.id === 'slime' && this.hasNpcUpgrade('click')) this.player.reduceMaxHp(proj.damage);
         }
         // Gunpowder Corruption perk: an npc musket ball leaves rot in the player
         if ((proj as any).isMusketShot && this.npcElementId === 'gunpowder') {
@@ -4468,6 +4667,7 @@ export class ArenaScene extends Phaser.Scene {
     this.eKey     = kb.addKey(Phaser.Input.Keyboard.KeyCodes.E);
     this.rKey     = kb.addKey(Phaser.Input.Keyboard.KeyCodes.R);
     this.fKey     = kb.addKey(Phaser.Input.Keyboard.KeyCodes.F);
+    this.inkKeyBase = null;
     this.gKey     = kb.addKey(Phaser.Input.Keyboard.KeyCodes.G);
     this.spaceKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
     // Key objects outlive a scene restart; a City run seals R/F/Q, so every match unseals first.
@@ -4607,6 +4807,7 @@ export class ArenaScene extends Phaser.Scene {
             spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
             endCoopRun: (waves, shards) => arena.endCoopRun(waves, shards),
             get cityLoadout() { return arena.cityRun ? arena.cityLoadout() : null; },
+            onWoodGift: (sap, heal, brewMs) => arena.gluttonyKit.receiveGift(sap, heal, brewMs),
             latchPointer: () => {
               arena.pointerInputLatched = true;
               arena.input.once('pointerup', () => { arena.pointerInputLatched = false; });
@@ -4643,6 +4844,7 @@ export class ArenaScene extends Phaser.Scene {
       });
       this.physics.add.collider(this.player, this.enemyGroup, undefined, (_p, e) => {
         const husk = e as Fighter;
+        if (this.player.soulWalking) return false;
         return !(husk instanceof Husk) || this.invasionKit.isHuskTargetable(husk);
       });
     }
@@ -4924,9 +5126,6 @@ export class ArenaScene extends Phaser.Scene {
 
     // Soul: corpse-queue HUD is built lazily by SoulKit itself.
     // ElectricityKit creates its own HUD in reset() when isPlayerElement=true
-    if (this.playerIs('slime')) {
-      this.slimeKit.startMatch(W, H, true);
-    }
     // Time element: charge bar rendered per-frame above player; no separate HUD text needed
     // Metal: arsenal HUD bar
     if (this.playerIs('metal')) {
@@ -5082,7 +5281,6 @@ export class ArenaScene extends Phaser.Scene {
     this.depthsMasteryOn = this.masteryOnFor('depths');
     this.conquestMasteryOn = this.masteryOnFor('conquest');
     this.ruinMasteryOn = this.masteryOnFor('ruin');
-    this.clothMasteryOn = this.masteryOnFor('cloth');
     this.marrowMasteryOn = this.masteryOnFor('marrow');
     this.waxMasteryOn = this.masteryOnFor('wax');
     // Dream's old Dream Duel mastery may have left the flag on; the sandman's has to be earned.
@@ -5092,7 +5290,8 @@ export class ArenaScene extends Phaser.Scene {
     this.clayMasteryOn = this.masteryOnFor('clay');
     this.gumMasteryOn = this.masteryOnFor('gum');
     // has its own requirements, so it also has to be earned.
-    // The retired chef's mastery may have left `gluttony` switched on in an old save; Harvest's
+    // The retired chef's and Harvest's masteries may have left `gluttony` switched on in an old
+    // save; Wood has none yet, so this stays off until one is written and completed.
     this.gluttonyMasteryOn = this.masteryOnFor('gluttony') && isMasteryComplete('gluttony');
     // Same for Gold: the retired shopkeeper's Battle Pass mastery may have left `fortune` switched on.
     this.fortuneMasteryOn = this.masteryOnFor('fortune') && isMasteryComplete('fortune');
@@ -5173,6 +5372,32 @@ export class ArenaScene extends Phaser.Scene {
    * NPC-side handler so the effect resolves on this (victim) sim. Unimplemented
    * masteries are a harmless no-op.
    */
+  /**
+   * Memory's Rebirth, the victim's half: the side that was struck loses part of whatever its
+   * element has snowballed — weapons, money, kills, crowns, meters, stacks. Always run on the sim
+   * that owns that body (a relayed `memory-reborn` lands here for our own player). Returns short
+   * labels of what was taken, for the floating text.
+   */
+  private memoryRebirthDrain(owner: 'player' | 'npc'): string[] {
+    const out: string[] = [];
+    // MEMORY-DRAINS (one dispatch per element; the kits own the numbers)
+    const is = (id: string): boolean => (owner === 'player' ? this.playerIs(id) : this.npcElement.id === id);
+    const drains: [string, { rebirthDrain(o: 'player' | 'npc'): string | null } | undefined][] = [
+      ['gunpowder', this.gunpowderKit], ['fortune', this.fortuneKit], ['subterfuge', this.subterfugeKit],
+      ['sound', this.soundKit], ['soul', this.soulKit], ['conquest', this.conquestKit],
+      ['metal', this.metalKit], ['electricity', this.electricityKit], ['light', this.lightKit],
+      ['growth', this.growthKit], ['marrow', this.marrowKit], ['justice', this.justiceKit],
+      ['pressure', this.pressureKit], ['astra', this.astraKit], ['bind', this.bindKit],
+      ['gluttony', this.gluttonyKit], ['magnet', this.magnetKit], ['myth', this.mythKit],
+    ];
+    for (const [id, kit] of drains) {
+      if (!kit || !is(id)) continue;
+      const label = kit.rebirthDrain(owner);
+      if (label) out.push(label);
+    }
+    return out;
+  }
+
   replayNpcMastery(enhId: string, tx: number, ty: number): void {
     // Myth: the four shard recasts are presses that never touch a cooldown — and the mastery's
     // wormhole, its catch and the last stand all travel the same way.
@@ -5190,6 +5415,11 @@ export class ArenaScene extends Phaser.Scene {
       if (this.npcElement.id === 'tempest') this.tempestKit.replayNet(enhId, tx, ty);
       return;
     }
+    // Oil: arm-laser shots, drones off the line and drone volleys are presses, not cooldown casts.
+    if (enhId.startsWith('oil-')) {
+      if (this.npcElement.id === 'oil') this.oilKit.replayNet(enhId);
+      return;
+    }
     // Sound: the baton's position, the free detonation and the solo's notes are not cooldown casts.
     if (enhId.startsWith('sound-')) {
       if (this.npcElement.id === 'sound') this.soundKit.replayNet(enhId, tx, ty);
@@ -5200,10 +5430,54 @@ export class ArenaScene extends Phaser.Scene {
       if (this.npcElement.id === 'dream') this.dreamKit.replayNet(enhId);
       return;
     }
-    // Harvest: the arc flip, and the upgrade events only the owner's sim decides (grabs, worms,
-    // the vial drop, a dish cooked) — positions ride in the id.
-    if (enhId.startsWith('harvest-')) {
+    // Wood: the arc flip, the re-carve, the brew's boil and spill, sprout deaths and apples — the
+    // events only the owner's sim decides; an index rides in the id.
+    if (enhId.startsWith('wood-')) {
       if (this.npcElement.id === 'gluttony') this.gluttonyKit.replayNet(enhId);
+      return;
+    }
+    // Venom: surfacing from Snake Burrow is a press, not a cast.
+    if (enhId.startsWith('acid-')) {
+      if (this.npcElement.id === 'slime') this.slimeKit.replayNet(enhId);
+      return;
+    }
+    // Pressure: holds, banks, compressions and the level the next cast goes off at. (Real ability
+    // ids never come through here — OnlineKit replays those as casts.)
+    if (enhId.startsWith('pressure-')) {
+      if (this.npcElement.id === 'pressure') this.pressureKit.replayNet(enhId);
+      return;
+    }
+    // Astra: the Q+ hold and its stars, the trial's result, R+'s second bolt, and the swap, the
+    // theft, the slap and the finale — which land on our own body, so only we may apply them.
+    if (enhId.startsWith('astra-') && !this.npcElement.abilities.some((a) => a.id === enhId)) {
+      if (this.npcElement.id === 'astra') this.astraKit.replayNet(enhId);
+      return;
+    }
+    // String: where a string landed, a snap, the puppet's arrows and the tomb — and `string-yank`,
+    // our own string broken by their body on their machine, which comes from whatever they play.
+    if (enhId.startsWith('string-') && !this.npcElement.abilities.some((a) => a.id === enhId)) {
+      this.stringKit.replayNet(enhId);
+      return;
+    }
+    // Memory: Rebirth's strike, and the snatch and the drain — which land on our own body.
+    if (enhId.startsWith('memory-') && !this.npcElement.abilities.some((a) => a.id === enhId)) {
+      if (this.npcElement.id === 'memory') this.memoryKit.replayNet(enhId);
+      return;
+    }
+    // Bind: the curse, detonations, chains, souls, revenants, cultists, the ritual and the idol.
+    if (enhId.startsWith('bind-') && !this.npcElement.abilities.some((a) => a.id === enhId)) {
+      if (this.npcElement.id === 'bind') this.bindKit.replayNet(enhId);
+      return;
+    }
+    // Cloth: throws, wraps, carries, flings, the jacket's steering, cushion punches and the
+    // self-pin — the owner's sim decides them; coordinates ride in the id, already mirrored.
+    if (enhId.startsWith('cloth-') && !this.npcElement.abilities.some((a) => a.id === enhId)) {
+      if (this.npcElement.id === 'cloth') this.clothKit.replayNet(enhId);
+      return;
+    }
+    // Ink: peels, pops, slams, crushes, the hand and the item-get — the owner's sim names them.
+    if (enhId.startsWith('ink-')) {
+      if (this.npcElement.id === 'ink') this.inkKit.replayNet(enhId);
       return;
     }
     // Wax Mastery: the smoker is held, not cast, and the Honey Shell cracks and sets on the owner's sim.
@@ -5214,11 +5488,6 @@ export class ArenaScene extends Phaser.Scene {
     // Marrow Mastery: Brainstem is taken and let go of off the kit's own clock; the cell rides in the id.
     if (enhId.startsWith('marrow-brainstem')) {
       if (this.npcElement.id === 'marrow') this.marrowKit.replayNet(enhId);
-      return;
-    }
-    // Harvest Mastery: the shotgun is cast off the kit's own clock, aimed at the peer's cursor.
-    if (enhId === 'corrupt-predation') {
-      if (this.npcElement.id === 'gluttony') this.gluttonyKit.replayPredation(tx, ty);
       return;
     }
     // Soul: the beam release is a held press, not a cooldown cast — its charge rides in the id.
@@ -5350,6 +5619,10 @@ export class ArenaScene extends Phaser.Scene {
       case 'weather-cycle':
         if (this.npcElement.id === 'air') this.airKit.doWeatherCycle('npc');
         break;
+      // Air's Gust perk: the second R that teleports onto the glaive.
+      case 'air-gust-recall':
+        if (this.npcElement.id === 'air') this.airKit.doGustRecall('npc');
+        break;
       case 'transmogrify':
         if (this.npcElement.id === 'magic') this.magicKit.doNpcTransmogrify(tx, ty);
         break;
@@ -5385,8 +5658,8 @@ export class ArenaScene extends Phaser.Scene {
       case 'steel-shield':
         if (this.npcElement.id === 'metal') this.metalKit.doNpcSteelShield(tx, ty);
         break;
-      case 'breakdown':
-        if (this.npcElement.id === 'slime') this.slimeKit.doNpcBreakdown(tx, ty);
+      case 'shed-skin':
+        if (this.npcElement.id === 'slime') this.slimeKit.doNpcShed();
         break;
       // Magnet: the presses that never touch a cooldown — holding coins, ripping nails out,
       // riding to a spike, and every key of the mech.
@@ -5456,10 +5729,6 @@ export class ArenaScene extends Phaser.Scene {
         break;
       case 'smoke-break-toss':
         if (this.npcElement.id === 'subterfuge') this.subterfugeKit.doNpcSmokeToss(tx, ty);
-        break;
-      // Cloth Mastery: Bleed Stop runs off the kit's own timer, so it doesn't ride the cast relay.
-      case 'bleed-stop':
-        if (this.npcElement.id === 'cloth') this.clothKit.doNpcBleedStop();
         break;
       default:
         break;
@@ -5597,13 +5866,12 @@ export class ArenaScene extends Phaser.Scene {
       'fortune-midas':         0xffd34d,
       // …and the car is rust, which is the one thing in the element that is not worth anything.
       'drive-by-flex':         0x8c5c31,
-      // Cloth: steel for the two pins, cyan for the safety line, bruised purple for the
-      // cushion, and the loom's brass for the tapestry.
-      'cloth-pin':            0xd8dfe8,
-      'cloth-longpin':        0xe0a33c,
-      'cloth-safety-line':    0x6fd6f0,
-      'cloth-pin-cushion':    0x9b5de5,
-      'cloth-tapestry':       0xd1435c,
+      // Cloth: the scarf's red, needle steel, undyed wool for the bola, the tomato cushion, and fire.
+      'cloth-scarf-hand':     0xd1435c,
+      'cloth-needle-nexus':   0xd8dfe8,
+      'cloth-constraining-cloth': 0xe8ddc4,
+      'cloth-pincushion':     0xd33b2c,
+      'cloth-burning-man':    0xff9130,
       // Marrow: bone for the antibody, then each cell's own hue — violet, green, cyan, magenta.
       'marrow-antibody':       0xf1e7d0,
       'marrow-macrosma':       0x7b6cd9,
@@ -5616,6 +5884,36 @@ export class ArenaScene extends Phaser.Scene {
       'tempest-front':         0x7fb4ff,
       'tempest-updraft':       0x4f6d99,
       'tempest-forecast':      0xfff3a6,
+      // Pressure: steel for the punch, slab for the slam, pain red, steam, and the red-hot boiler.
+      'pressure-punch':        0xc4cad1,
+      'pressure-slam':         0x9a8b78,
+      'pressure-point':        0xe0232f,
+      'pressure-release':      0xeef1f3,
+      'pressure-exceed':       0xff5a36,
+      // Astra: solar gold for the shots and flares, smite violet, wormhole cyan, the star itself.
+      'astra-starstruck':      0xffe27a,
+      'astra-solar-flares':    0xffb52e,
+      'astra-smite':           0xb05cff,
+      'astra-worm-warp':       0x52d8ff,
+      'astra-true-self':       0xfff6d0,
+      // Memory: obsidian for the shards, static grey, Rebirth's white, the grey record, Trauma red.
+      'memory-forget':         0x5d527a,
+      'memory-snatch':         0x8d8a99,
+      'memory-rebirth':        0xf4f2ff,
+      'memory-repression':     0x9a97a6,
+      'memory-trauma':         0xd0213a,
+      // String: cream silk, the spiders' velvet, hex purple, the control bar's wood, silk.
+      'string-snag':           0xf2ece0,
+      'string-spider-dance':   0x463a4e,
+      'string-hexing-strand':  0x9b3dff,
+      'string-marionette':     0xd9b98a,
+      'string-linen-tomb':     0xbdb19c,
+      // Ink — black and white only: ink, paper and the greys between
+      'ink-finger-guns':       0xe8e4da,
+      'ink-banana':            0xbdbab2,
+      'ink-skedaddle':         0x8a8780,
+      'ink-anvil':             0x4a4a4a,
+      'ink-foux-world':        0xffffff,
       // Myth: violet for the whip and the beast, gold for the blade and the oath, void for the guns.
       'myth-whip':             0x7d5cff,
       'myth-truth':            0xffd166,
@@ -5628,12 +5926,12 @@ export class ArenaScene extends Phaser.Scene {
       'myth-rifle':            0xb39dff,
       'myth-rocket':           0xff4a5e,
       'bleed-stop':           0xf2ede4,
-      // Harvest: steel, rot, crow-black, raw meat and the scythe's bruise.
-      'harvest-sickle':        0xc9ced6,
-      'harvest-sow':           0x7a2fb0,
-      'harvest-frenzy':        0x3d3349,
-      'harvest-consume':       0xb0386a,
-      'harvest-reap':          0x4a1766,
+      // Wood: carved wood, tea, birch bark, new leaves and the scythe's amber edge.
+      'wood-carverang':        0xa8743f,
+      'wood-oakbrew':          0xc08a4a,
+      'wood-commensalism':     0xd9d3c3,
+      'wood-digest':           0x9ccf5a,
+      'wood-final-harvest':    0xd98a1c,
       'death-styx':            0x54cbb2,
       'death-disarm':          0xf5e14a,
       'death-riposte':         0xd6dde8,
@@ -5907,6 +6205,9 @@ export class ArenaScene extends Phaser.Scene {
         fill, abilityId: cardId, maxWidth: cardW - 4, lbl, desc, baseFillColor: cardColor,
         ability: lo && !boundEnh ? ab : undefined, face,
       });
+      if (this.elementId === 'ink') {
+        this.inkHudCards.push({ objs: [bg, fill, ...face.objects()], x, y: hudY, w: cardW - 4, h: cardH - 4, key: ab.displayKey, abilityId: cardId, lbl });
+      }
 
       if (this.elementId === 'hunt') {
         this.huntNormalHudCards.push(bg, fill, ...face.objects());
@@ -6088,6 +6389,14 @@ export class ArenaScene extends Phaser.Scene {
       tx = caster.x + Math.cos(caster.facingAngle) * d;
       ty = caster.y + Math.sin(caster.facingAngle) * d;
     }
+    // Memory's Forget: a bot carrying a shard cannot quite see the Memory it is aiming at.
+    if (caster && caster !== this.player && !caster.netGhost && this.playerIs('memory')
+        && caster.memoryShardCount() >= 1 && Math.random() < 0.4) {
+      const d = Phaser.Math.Distance.Between(caster.x, caster.y, tx, ty);
+      const a = Phaser.Math.Angle.Between(caster.x, caster.y, tx, ty)
+        + (Math.random() < 0.5 ? -1 : 1) * Phaser.Math.DegToRad(16 + Math.random() * 16);
+      return { x: caster.x + Math.cos(a) * d, y: caster.y + Math.sin(a) * d };
+    }
     if (!caster || Date.now() >= caster.aimScatterUntil) return { x: tx, y: ty };
     if (Math.random() < 0.34) return { x: tx, y: ty };
     const dist = Phaser.Math.Distance.Between(caster.x, caster.y, tx, ty);
@@ -6200,6 +6509,7 @@ export class ArenaScene extends Phaser.Scene {
       startBullRush: () => { /* earth kit reworked — no longer used via context */ },
       spawnDrone: () => { /* oil kit handles via handleInput */ },
       commandDrones: (_x, _y) => { /* oil kit handles via handleInput */ },
+      oilArmLaser: () => { /* oil kit handles via handleInput */ },
       launchDrone: (_x, _y) => { /* oil kit handles via handleInput */ },
       placeFirewall: (_x, _y) => { /* oil kit handles via handleInput */ },
       startOverdrive: (_x, _y) => { /* oil kit handles via handleInput */ },
@@ -6416,11 +6726,11 @@ export class ArenaScene extends Phaser.Scene {
       fortunePlume: (tx, ty) => this.fortuneKit.doPlume('player', tx, ty),
       fortuneHeart: (tx, ty) => this.fortuneKit.doHeart('player', tx, ty),
       fortuneMidas: (tx, ty) => this.fortuneKit.doMidas('player', tx, ty),
-      clothPin: (tx, ty) => this.clothKit.doPin('player', tx, ty),
-      clothLongpin: (tx, ty) => this.clothKit.doLongpin('player', tx, ty),
-      clothSafetyLine: () => this.clothKit.doSafetyLine('player'),
-      clothPinCushion: () => this.clothKit.doPinCushion('player'),
-      clothTapestry: () => this.clothKit.doTapestry('player'),
+      clothGrab: (tx, ty) => this.clothKit.doGrab('player', tx, ty),
+      clothNeedles: (tx, ty) => this.clothKit.doNeedles('player', tx, ty),
+      clothBola: (tx, ty) => this.clothKit.doBola('player', tx, ty),
+      clothCushion: (tx, ty) => this.clothKit.doCushion('player', tx, ty),
+      clothBurningMan: () => this.clothKit.doBurningMan('player'),
       marrowAntibody: (tx, ty) => this.marrowKit.doAntibody('player', tx, ty),
       marrowMacrosma: () => this.marrowKit.doMacrosma('player'),
       marrowNeutralize: () => this.marrowKit.doNeutralize('player'),
@@ -6454,11 +6764,11 @@ export class ArenaScene extends Phaser.Scene {
       radiationBaton: (tx, ty) => this.radiationKit.doBaton('player', tx, ty),
       soundCast: (id, tx, ty) => this.soundKit.cast('player', id, tx, ty),
       radiationExtermination: () => this.radiationKit.doExtermination('player'),
-      bindSummon: (tx, ty) => this.bindKit.doSummon('player', tx, ty),
-      bindShards: (tx, ty) => this.bindKit.doShards('player', tx, ty),
-      bindIdol: (tx, ty) => this.bindKit.doIdol('player', tx, ty),
-      bindProtection: () => this.bindKit.doProtection('player'),
-      bindTreachery: () => this.bindKit.doTreachery('player'),
+      bindDaggers: (tx, ty) => this.bindKit.doDaggers('player', tx, ty),
+      bindChain: (tx, ty) => this.bindKit.doChain('player', tx, ty),
+      bindEyes: () => this.bindKit.doEyes('player'),
+      bindSiphon: (tx, ty) => this.bindKit.doSiphon('player', tx, ty),
+      bindRitual: () => this.bindKit.doRitual('player'),
       // Slime
       gumGrab: (tx, ty) => this.gumKit.doGrab('player', tx, ty),
       gumSurge: (tx, ty) => this.gumKit.doSurge('player', tx, ty),
@@ -6470,12 +6780,42 @@ export class ArenaScene extends Phaser.Scene {
       quantumArenaSplit: () => this.quantumCoreKit.doArenaSplit('player'),
       quantumEffectSplit: () => this.quantumCoreKit.doEffectSplit('player'),
       quantumParasite: (tx, ty) => this.quantumCoreKit.doParasite('player', tx, ty),
-      // Gluttony
-      harvestSickle: (tx, ty) => this.gluttonyKit.doSickle('player', tx, ty),
-      harvestSow: () => this.gluttonyKit.doSow('player'),
-      harvestFrenzy: (tx, ty) => this.gluttonyKit.doFrenzy('player', tx, ty),
-      harvestConsume: (tx, ty) => this.gluttonyKit.doConsume('player', tx, ty),
-      harvestReap: (tx, ty) => this.gluttonyKit.doReap('player', tx, ty),
+      // Wood (id `gluttony`)
+      woodCarverang: (tx, ty) => this.gluttonyKit.doCarverang('player', tx, ty),
+      woodOakbrew: () => this.gluttonyKit.doOakbrew('player'),
+      woodCommensalism: (tx, ty) => this.gluttonyKit.doCommensalism('player', tx, ty),
+      woodDigest: () => this.gluttonyKit.doDigest('player'),
+      woodFinalHarvest: (tx, ty) => this.gluttonyKit.doFinalHarvest('player', tx, ty),
+      pressurePunch: (tx, ty) => this.pressureKit.doPunch('player', tx, ty),
+      pressureSlam: (tx, ty) => this.pressureKit.doSlam('player', tx, ty),
+      pressurePoint: (tx, ty) => this.pressureKit.doPoint('player', tx, ty),
+      pressureRelease: (tx, ty) => this.pressureKit.doRelease('player', tx, ty),
+      pressureExceed: () => this.pressureKit.doExceed('player'),
+      astraStarstruck: (tx, ty) => this.astraKit.doStarstruck('player', tx, ty),
+      astraSolarFlares: (tx, ty) => this.astraKit.doSolarFlares('player', tx, ty),
+      astraSmite: (tx, ty) => this.astraKit.doSmite('player', tx, ty),
+      astraWormWarp: (tx, ty) => this.astraKit.doWormWarp('player', tx, ty),
+      astraTrueSelf: () => this.astraKit.doTrueSelf('player'),
+      memoryForget: (tx, ty) => this.memoryKit.doForget('player', tx, ty),
+      memorySnatch: (tx, ty) => this.memoryKit.doSnatch('player', tx, ty),
+      memoryRebirth: (tx, ty) => this.memoryKit.doRebirth('player', tx, ty),
+      memoryRepression: (tx, ty) => this.memoryKit.doRepression('player', tx, ty),
+      memoryTrauma: () => this.memoryKit.doTrauma('player'),
+      stringSnag: (tx, ty) => this.stringKit.doSnag('player', tx, ty),
+      stringSpiders: () => this.stringKit.doSpiders('player'),
+      stringHex: (tx, ty) => this.stringKit.doHex('player', tx, ty),
+      stringMarionette: (tx, ty) => this.stringKit.doMarionette('player', tx, ty),
+      stringTomb: (tx, ty) => this.stringKit.doTomb('player', tx, ty),
+      inkFingerGun: (tx, ty) => this.inkKit.doFingerGun('player', tx, ty),
+      inkBanana: (tx, ty) => this.inkKit.doBanana('player', tx, ty),
+      inkSkedaddle: (tx, ty) => this.inkKit.doSkedaddle('player', tx, ty),
+      inkAnvil: (tx, ty) => this.inkKit.doAnvil('player', tx, ty),
+      inkFouxWorld: () => this.inkKit.doFouxWorld('player'),
+      acidWhip: (tx, ty) => this.slimeKit.doWhip('player', tx, ty),
+      acidSpray: (tx, ty) => this.slimeKit.doSpray('player', tx, ty),
+      acidBurrow: () => this.slimeKit.doBurrow('player'),
+      acidBite: (tx, ty) => this.slimeKit.doBite('player', tx, ty),
+      acidApocalypse: () => this.slimeKit.doApocalypse('player'),
       paperStorybook: (tx, ty) => this.paperKit.doStorybook('player', tx, ty),
       paperPlane: (tx, ty) => this.paperKit.doPlane('player', tx, ty),
       paperShuriken: (tx, ty) => this.paperKit.doShuriken('player', tx, ty),
@@ -6578,6 +6918,7 @@ export class ArenaScene extends Phaser.Scene {
       startBullRush: () => { /* earth kit reworked — no longer used via context */ },
       spawnDrone: () => this.oilKit.doNpcSpawnDrone(),
       commandDrones: (x, y) => this.oilKit.doNpcCommandDrones(x, y),
+      oilArmLaser: (x, y) => this.oilKit.doNpcArmLaser(x, y),
       launchDrone: (x, y) => this.oilKit.doNpcLaunchDrone(x, y),
       // The AI never picks these two, but an online opponent can — replay them so the
       // wall and the overdrive rig show up on this sim too.
@@ -6798,11 +7139,11 @@ export class ArenaScene extends Phaser.Scene {
       fortunePlume: (tx, ty) => this.fortuneKit.doPlume('npc', tx, ty),
       fortuneHeart: (tx, ty) => this.fortuneKit.doHeart('npc', tx, ty),
       fortuneMidas: (tx, ty) => this.fortuneKit.doMidas('npc', tx, ty),
-      clothPin: (tx, ty) => this.clothKit.doPin('npc', tx, ty),
-      clothLongpin: (tx, ty) => this.clothKit.doLongpin('npc', tx, ty),
-      clothSafetyLine: () => this.clothKit.doSafetyLine('npc'),
-      clothPinCushion: () => this.clothKit.doPinCushion('npc'),
-      clothTapestry: () => this.clothKit.doTapestry('npc'),
+      clothGrab: (tx, ty) => this.clothKit.doGrab('npc', tx, ty),
+      clothNeedles: (tx, ty) => this.clothKit.doNeedles('npc', tx, ty),
+      clothBola: (tx, ty) => this.clothKit.doBola('npc', tx, ty),
+      clothCushion: (tx, ty) => this.clothKit.doCushion('npc', tx, ty),
+      clothBurningMan: () => this.clothKit.doBurningMan('npc'),
       marrowAntibody: (tx, ty) => this.marrowKit.doAntibody('npc', tx, ty),
       marrowMacrosma: () => this.marrowKit.doMacrosma('npc'),
       marrowNeutralize: () => this.marrowKit.doNeutralize('npc'),
@@ -6836,11 +7177,11 @@ export class ArenaScene extends Phaser.Scene {
       radiationBaton: (tx, ty) => this.radiationKit.doBaton('npc', tx, ty),
       soundCast: (id, tx, ty) => this.soundKit.cast('npc', id, tx, ty),
       radiationExtermination: () => this.radiationKit.doExtermination('npc'),
-      bindSummon: (tx, ty) => this.bindKit.doSummon('npc', tx, ty),
-      bindShards: (tx, ty) => this.bindKit.doShards('npc', tx, ty),
-      bindIdol: (tx, ty) => this.bindKit.doIdol('npc', tx, ty),
-      bindProtection: () => this.bindKit.doProtection('npc'),
-      bindTreachery: () => this.bindKit.doTreachery('npc'),
+      bindDaggers: (tx, ty) => this.bindKit.doDaggers('npc', tx, ty),
+      bindChain: (tx, ty) => this.bindKit.doChain('npc', tx, ty),
+      bindEyes: () => this.bindKit.doEyes('npc'),
+      bindSiphon: (tx, ty) => this.bindKit.doSiphon('npc', tx, ty),
+      bindRitual: () => this.bindKit.doRitual('npc'),
       // Slime
       gumGrab: (tx, ty) => this.gumKit.doGrab('npc', tx, ty),
       gumSurge: (tx, ty) => this.gumKit.doSurge('npc', tx, ty),
@@ -6852,12 +7193,42 @@ export class ArenaScene extends Phaser.Scene {
       quantumArenaSplit: () => this.quantumCoreKit.doArenaSplit('npc'),
       quantumEffectSplit: () => this.quantumCoreKit.doEffectSplit('npc'),
       quantumParasite: (tx, ty) => this.quantumCoreKit.doParasite('npc', tx, ty),
-      // Gluttony
-      harvestSickle: (tx, ty) => this.gluttonyKit.doSickle('npc', tx, ty),
-      harvestSow: () => this.gluttonyKit.doSow('npc'),
-      harvestFrenzy: (tx, ty) => this.gluttonyKit.doFrenzy('npc', tx, ty),
-      harvestConsume: (tx, ty) => this.gluttonyKit.doConsume('npc', tx, ty),
-      harvestReap: (tx, ty) => this.gluttonyKit.doReap('npc', tx, ty),
+      // Wood (id `gluttony`)
+      woodCarverang: (tx, ty) => this.gluttonyKit.doCarverang('npc', tx, ty),
+      woodOakbrew: () => this.gluttonyKit.doOakbrew('npc'),
+      woodCommensalism: (tx, ty) => this.gluttonyKit.doCommensalism('npc', tx, ty),
+      woodDigest: () => this.gluttonyKit.doDigest('npc'),
+      woodFinalHarvest: (tx, ty) => this.gluttonyKit.doFinalHarvest('npc', tx, ty),
+      pressurePunch: (tx, ty) => this.pressureKit.doPunch('npc', tx, ty),
+      pressureSlam: (tx, ty) => this.pressureKit.doSlam('npc', tx, ty),
+      pressurePoint: (tx, ty) => this.pressureKit.doPoint('npc', tx, ty),
+      pressureRelease: (tx, ty) => this.pressureKit.doRelease('npc', tx, ty),
+      pressureExceed: () => this.pressureKit.doExceed('npc'),
+      astraStarstruck: (tx, ty) => this.astraKit.doStarstruck('npc', tx, ty),
+      astraSolarFlares: (tx, ty) => this.astraKit.doSolarFlares('npc', tx, ty),
+      astraSmite: (tx, ty) => this.astraKit.doSmite('npc', tx, ty),
+      astraWormWarp: (tx, ty) => this.astraKit.doWormWarp('npc', tx, ty),
+      astraTrueSelf: () => this.astraKit.doTrueSelf('npc'),
+      memoryForget: (tx, ty) => this.memoryKit.doForget('npc', tx, ty),
+      memorySnatch: (tx, ty) => this.memoryKit.doSnatch('npc', tx, ty),
+      memoryRebirth: (tx, ty) => this.memoryKit.doRebirth('npc', tx, ty),
+      memoryRepression: (tx, ty) => this.memoryKit.doRepression('npc', tx, ty),
+      memoryTrauma: () => this.memoryKit.doTrauma('npc'),
+      stringSnag: (tx, ty) => this.stringKit.doSnag('npc', tx, ty),
+      stringSpiders: () => this.stringKit.doSpiders('npc'),
+      stringHex: (tx, ty) => this.stringKit.doHex('npc', tx, ty),
+      stringMarionette: (tx, ty) => this.stringKit.doMarionette('npc', tx, ty),
+      stringTomb: (tx, ty) => this.stringKit.doTomb('npc', tx, ty),
+      inkFingerGun: (tx, ty) => this.inkKit.doFingerGun('npc', tx, ty),
+      inkBanana: (tx, ty) => this.inkKit.doBanana('npc', tx, ty),
+      inkSkedaddle: (tx, ty) => this.inkKit.doSkedaddle('npc', tx, ty),
+      inkAnvil: (tx, ty) => this.inkKit.doAnvil('npc', tx, ty),
+      inkFouxWorld: () => this.inkKit.doFouxWorld('npc'),
+      acidWhip: (tx, ty) => this.slimeKit.doWhip('npc', tx, ty),
+      acidSpray: (tx, ty) => this.slimeKit.doSpray('npc', tx, ty),
+      acidBurrow: () => this.slimeKit.doBurrow('npc'),
+      acidBite: (tx, ty) => this.slimeKit.doBite('npc', tx, ty),
+      acidApocalypse: () => this.slimeKit.doApocalypse('npc'),
       paperStorybook: (tx, ty) => this.paperKit.doStorybook('npc', tx, ty),
       paperPlane: (tx, ty) => this.paperKit.doPlane('npc', tx, ty),
       paperShuriken: (tx, ty) => this.paperKit.doShuriken('npc', tx, ty),
@@ -6936,6 +7307,7 @@ export class ArenaScene extends Phaser.Scene {
       startBullRush: () => {},
       spawnDrone: () => {},
       commandDrones: () => {},
+      oilArmLaser: () => {},
       launchDrone: () => {},
       placeFirewall: () => {},
       startOverdrive: () => {},
@@ -7132,11 +7504,11 @@ export class ArenaScene extends Phaser.Scene {
       fortunePlume: () => {},
       fortuneHeart: () => {},
       fortuneMidas: () => {},
-      clothPin: () => {},
-      clothLongpin: () => {},
-      clothSafetyLine: () => {},
-      clothPinCushion: () => {},
-      clothTapestry: () => {},
+      clothGrab: () => {},
+      clothNeedles: () => {},
+      clothBola: () => {},
+      clothCushion: () => {},
+      clothBurningMan: () => {},
       marrowAntibody: () => {},
       marrowMacrosma: () => {},
       marrowNeutralize: () => {},
@@ -7169,11 +7541,11 @@ export class ArenaScene extends Phaser.Scene {
       radiationBaton: () => {},
       soundCast: () => {},
       radiationExtermination: () => {},
-      bindSummon: () => {},
-      bindShards: () => {},
-      bindIdol: () => {},
-      bindProtection: () => {},
-      bindTreachery: () => {},
+      bindDaggers: () => {},
+      bindChain: () => {},
+      bindEyes: () => {},
+      bindSiphon: () => {},
+      bindRitual: () => {},
       gumGrab: () => {},
       gumSurge: () => {},
       gumGumball: () => {},
@@ -7184,11 +7556,41 @@ export class ArenaScene extends Phaser.Scene {
       quantumArenaSplit: () => {},
       quantumEffectSplit: () => {},
       quantumParasite: () => {},
-      harvestSickle: () => {},
-      harvestSow: () => {},
-      harvestFrenzy: () => {},
-      harvestConsume: () => {},
-      harvestReap: () => {},
+      woodCarverang: () => {},
+      woodOakbrew: () => {},
+      woodCommensalism: () => {},
+      woodDigest: () => {},
+      woodFinalHarvest: () => {},
+      pressurePunch: () => {},
+      pressureSlam: () => {},
+      pressurePoint: () => {},
+      pressureRelease: () => {},
+      pressureExceed: () => {},
+      astraStarstruck: () => {},
+      astraSolarFlares: () => {},
+      astraSmite: () => {},
+      astraWormWarp: () => {},
+      astraTrueSelf: () => {},
+      memoryForget: () => {},
+      memorySnatch: () => {},
+      memoryRebirth: () => {},
+      memoryRepression: () => {},
+      memoryTrauma: () => {},
+      stringSnag: () => {},
+      stringSpiders: () => {},
+      stringHex: () => {},
+      stringMarionette: () => {},
+      stringTomb: () => {},
+      inkFingerGun: () => {},
+      inkBanana: () => {},
+      inkSkedaddle: () => {},
+      inkAnvil: () => {},
+      inkFouxWorld: () => {},
+      acidWhip: () => {},
+      acidSpray: () => {},
+      acidBurrow: () => {},
+      acidBite: () => {},
+      acidApocalypse: () => {},
       depthsPiranha: () => {},
       depthsLungfish: () => {},
       depthsEutrophication: () => {},
@@ -7316,6 +7718,22 @@ export class ArenaScene extends Phaser.Scene {
    * `JustDown` against the stand-in cannot consume the real key's press either. Not a Quantum
    * fight: always the real key.
    */
+  /**
+   * Ink's anvil shuffles a flattened player's ability keys: `order[i]` is which physical key now
+   * drives the i-th ability (E, R, F, Q). Swapping the key fields themselves reaches every element
+   * and kit at once, since they all read the keys through these fields. Null puts them back.
+   */
+  private setInkKeyShuffle(order: number[] | null): void {
+    if (!order) {
+      if (this.inkKeyBase) [this.eKey, this.rKey, this.fKey, this.qKey] = this.inkKeyBase;
+      this.inkKeyBase = null;
+      return;
+    }
+    const base = this.inkKeyBase ?? [this.eKey, this.rKey, this.fKey, this.qKey];
+    this.inkKeyBase = base;
+    [this.eKey, this.rKey, this.fKey, this.qKey] = [base[order[0]], base[order[1]], base[order[2]], base[order[3]]];
+  }
+
   private keyFor(elementId: string, key: Phaser.Input.Keyboard.Key): Phaser.Input.Keyboard.Key {
     const lo = this.playerLoadout;
     if (!lo) return key;
@@ -7428,6 +7846,8 @@ export class ArenaScene extends Phaser.Scene {
 
     // Death Mastery — Delay The Inevitable: three times as far for the eight seconds.
     const deathDash = this.playerIs('death') ? this.deathKit.getDodgeLengthMult() : 1;
+    // Venom — Serpentine: a serpent's dodge goes three times as far (and the tail drops out for it).
+    const venomDash = this.playerIs('slime') ? 3 : 1;
     // Water — Poseidon: the dodge is a wave you ride, longer and a touch faster.
     const waveRide = this.playerIs('water') && !bedrockLeap && !this.cardPsychoActive ? this.waterKit.startWaveRide() : null;
 
@@ -7440,7 +7860,7 @@ export class ArenaScene extends Phaser.Scene {
       playerBody.reset(Math.max(pad, Math.min(width - pad, mouseX)), Math.max(pad, Math.min(height - pad, mouseY)));
       playerBody.setVelocity(0, 0);
     } else {
-      const len = 520 * this.cardDodgeLengthMult * deathDash * (waveRide?.speedMult ?? 1);
+      const len = 520 * this.cardDodgeLengthMult * deathDash * venomDash * (waveRide?.speedMult ?? 1);
       playerBody.setVelocity(dx * len, dy * len);
     }
 
@@ -9986,6 +10406,8 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   private pushFighterOutOfRect(body: Phaser.Physics.Arcade.Body, bx: number, by: number, bw: number, bh: number): void {
+    // Bind's Blackened Eyes: a body walking as its inner soul goes straight through.
+    if ((body.gameObject as Fighter | undefined)?.soulWalking) return;
     const cx = body.x + body.width / 2;
     const cy = body.y + body.height / 2;
     const dx = cx - bx;
@@ -10142,7 +10564,6 @@ export class ArenaScene extends Phaser.Scene {
       technology: (t, d) => { if (!skip('technology')) this.techKit.update(t, d); },
       subterfuge: (t, d) => { if (!skip('subterfuge')) this.subterfugeKit.update(t, d); },
       electricity: (t, d) => { if (!skip('electricity')) this.electricityKit.update(t, d); },
-      slime: (t, d) => { if (!skip('slime')) this.slimeKit.update(t, d); },
     };
   }
 
@@ -10437,13 +10858,8 @@ export class ArenaScene extends Phaser.Scene {
       this.electricityKit.updateNpc(time, delta);
     }
 
-    // ── Slime per-frame ───────────────────────────────────────────
-    if (this.playerIs('slime')) {
-      this.slimeKit.update(time, delta);
-    } else if (this.npcElement.id === 'slime') {
-      // Online: opponent is acid — advance only their rig and the effects we can see.
-      this.slimeKit.updateNpc(time, delta);
-    }
+    // ── Venom (id `slime`) per-frame: owner-aware, so it runs for either side, or neither. ──
+    this.slimeKit.update(time, delta);
 
     // ── Burning DOT (Flameshredder upgrade / Fire Mastery stoke) ──
     for (const t of this.enemies) {
@@ -10557,7 +10973,7 @@ export class ArenaScene extends Phaser.Scene {
         time, time < this.playerGeyserBuffUntil ? 1.5 : 1,
       );
     } else if (this.elementId === 'slime') {
-      this.playerSpeedMult = this.slimeKit.getBurrowSpeedMult();
+      this.playerSpeedMult = this.slimeKit.getPlayerSpeedMult();
     } else if (this.elementId === 'fate') {
       this.playerSpeedMult = 1;
       // Kit applies Buff/Slots speed mods via applyPlayerSpeedMult
@@ -10724,12 +11140,6 @@ export class ArenaScene extends Phaser.Scene {
       this.playerSpeedMult *= this.depthsKit.getPlayerSpeedMult();
       this.npcSpeedMult *= this.depthsKit.getNpcSpeedMult();
     }
-    // Harvest: the speed Consume copied off a bitten body. Pulled for the same reason Depths is —
-    // GluttonyKit.update() runs after movement has resolved.
-    if (this.playerIs('gluttony') || this.npcElement.id === 'gluttony') {
-      this.playerSpeedMult *= this.gluttonyKit.getPlayerSpeedMult();
-      this.npcSpeedMult *= this.gluttonyKit.getNpcSpeedMult();
-    }
     // Ruin: Unstoppable Decay's 10%-per-stack slow, on whoever the rot is working against.
     // Pulled for the same reason Depths and Magma are — RuinKit.update() runs after the
     // frame's movement has already resolved.
@@ -10750,8 +11160,8 @@ export class ArenaScene extends Phaser.Scene {
       this.playerSpeedMult *= this.illusionKit.getPlayerSpeedMult();
       this.npcSpeedMult *= this.illusionKit.getNpcSpeedMult();
     }
-    // Cloth's fever is a haste on its own host and its NETs are a slow on whoever is standing
-    // in one — both pulled here, after movement has resolved, because the kit's update runs last.
+    // Cloth's bound bodies are slowed and a wall-pinned one cannot move; the bot tailor lurches
+    // on an imaginary scarf — pulled here, after movement has resolved, because the kit runs last.
     if (this.playerIs('cloth') || this.npcElement.id === 'cloth') {
       this.playerSpeedMult *= this.clothKit.getPlayerSpeedMult();
       this.npcSpeedMult *= this.clothKit.getNpcSpeedMult();
@@ -10766,6 +11176,26 @@ export class ArenaScene extends Phaser.Scene {
     if (this.playerIs('tempest') || this.npcElement.id === 'tempest') {
       this.playerSpeedMult *= this.tempestKit.getPlayerSpeedMult();
       this.npcSpeedMult *= this.tempestKit.getNpcSpeedMult();
+    }
+    // Pressure walks slowly while a key is held. Pulled for the same reason.
+    if (this.playerIs('pressure') || this.npcElement.id === 'pressure') {
+      this.playerSpeedMult *= this.pressureKit.getPlayerSpeedMult();
+      this.npcSpeedMult *= this.pressureKit.getNpcSpeedMult();
+    }
+    // Astra is rooted while it holds Q+ and while the giant decides. Pulled for the same reason.
+    if (this.playerIs('astra') || this.npcElement.id === 'astra') {
+      this.playerSpeedMult *= this.astraKit.getPlayerSpeedMult();
+      this.npcSpeedMult *= this.astraKit.getNpcSpeedMult();
+    }
+    // Memory walks slowly while its cane spins up a Snatch.
+    if (this.playerIs('memory') || this.npcElement.id === 'memory') {
+      this.playerSpeedMult *= this.memoryKit.getPlayerSpeedMult();
+      this.npcSpeedMult *= this.memoryKit.getNpcSpeedMult();
+    }
+    // Ink hauls and holds its anvil at a walk. Pulled for the same reason.
+    if (this.playerIs('ink') || this.npcElement.id === 'ink') {
+      this.playerSpeedMult *= this.inkKit.getPlayerSpeedMult();
+      this.npcSpeedMult *= this.inkKit.getNpcSpeedMult();
     }
     // Myth: the flip's 20% and a World Shatter rift's 30%. Pulled for the same reason.
     if (this.playerIs('myth') || this.npcElement.id === 'myth') {
@@ -10864,7 +11294,9 @@ export class ArenaScene extends Phaser.Scene {
     if (time < this.player.effectSplitUntil) this.playerSpeedMult = 1 + (this.playerSpeedMult - 1) * 0.5;
     if (time < this.npc.effectSplitUntil) this.npcSpeedMult = 1 + (this.npcSpeedMult - 1) * 0.5;
 
-    // ── Acid Purge: suppress positive speed multipliers while purged ──
+    // ── Venom: an npc serpent under the acid, or shed down to quicker scales ──
+    this.npcSpeedMult *= this.slimeKit.getNpcSpeedMult();
+    // ── Venom Purge: suppress positive speed multipliers while purged ──
     if (time < this.player.purgedUntil) this.playerSpeedMult = Math.min(this.playerSpeedMult, 1);
     if (time < this.npc.purgedUntil) this.npcSpeedMult = Math.min(this.npcSpeedMult, 1);
     // ── Silence F+ Despress: 10% slower per stack ──
@@ -10873,6 +11305,21 @@ export class ArenaScene extends Phaser.Scene {
     // ── Devotion Q+: the yellow-fire pillars. Online the opponent's copy reaches us in `spd`. ──
     if (!this.isOnline) this.playerSpeedMult *= this.player.devotionSlowMult();
     this.npcSpeedMult *= this.npc.devotionSlowMult();
+    // ── Wood: gummed up in an ent's sap. Online, likewise, through `spd`. ──
+    if (!this.isOnline) this.playerSpeedMult *= this.player.woodSlowMult();
+    this.npcSpeedMult *= this.npc.woodSlowMult();
+    // ── Pressure: punched, vented or steamed. Online, likewise, through `spd`. ──
+    if (!this.isOnline) this.playerSpeedMult *= this.player.pressureSlowMult();
+    this.npcSpeedMult *= this.npc.pressureSlowMult();
+    // ── Astra: smitten. Online, likewise, through `spd`. ──
+    if (!this.isOnline) this.playerSpeedMult *= this.player.astraSlowMult();
+    this.npcSpeedMult *= this.npc.astraSlowMult();
+    // ── Ink: flattened by an anvil. Online, likewise, through `spd`. ──
+    if (!this.isOnline) this.playerSpeedMult *= this.player.inkFlatSlowMult();
+    this.npcSpeedMult *= this.npc.inkFlatSlowMult();
+    // ── String: hexed or snared. Online, likewise, through `spd`. ──
+    if (!this.isOnline) this.playerSpeedMult *= this.player.stringSlowMult();
+    this.npcSpeedMult *= this.npc.stringSlowMult();
     // ── Sound Mastery: Dissonance, two Out of Tune stacks. Online it reaches us in `spd` too. ──
     if (!this.isOnline) this.playerSpeedMult *= this.player.soundDissonanceSlowMult();
     this.npcSpeedMult *= this.npc.soundDissonanceSlowMult();
@@ -10919,9 +11366,10 @@ export class ArenaScene extends Phaser.Scene {
     if (this.playerIs('gravity') && this.gravityKit.drivesPlayerBody()) {
       // Anti-Grav flight, the Moon Rider orbit and the dismount finale all place the
       // body themselves — WASD must not fight them for it.
-    } else if (this.playerIs('gum') && !this.isDodging) {
-      // Slime has no legs. WASD does nothing at all; GumKit sets the velocity from the arm's
-      // grip in its own update, which runs later this frame and therefore wins.
+    } else if ((this.playerIs('gum') || this.elementId === 'cloth') && !this.isDodging) {
+      // Slime has no legs, and Cloth walks on its scarf. WASD does nothing at all; GumKit and
+      // ClothKit set the velocity from the hand's grip in their own update, which runs later
+      // this frame and therefore wins.
       playerBody.setVelocity(0, 0);
     } else if (this.playerIs('rubber') && this.rubberKit.isSlingActive() && !this.isDodging) {
       this.rubberKit.applySlingMovement(mouseX, mouseY);
@@ -11166,6 +11614,16 @@ export class ArenaScene extends Phaser.Scene {
       this.depthsKit.handleInput(time, pointer, mouseX, mouseY);
     } else if (this.elementId === 'gluttony') {
       this.gluttonyKit.handleInput(time, pointer, mouseX, mouseY);
+    } else if (this.elementId === 'pressure') {
+      this.pressureKit.handleInput(time, pointer, mouseX, mouseY);
+    } else if (this.elementId === 'astra') {
+      this.astraKit.handleInput(time, pointer, mouseX, mouseY);
+    } else if (this.elementId === 'memory') {
+      this.memoryKit.handleInput(time, pointer, mouseX, mouseY);
+    } else if (this.elementId === 'string') {
+      this.stringKit.handleInput(time, pointer, mouseX, mouseY);
+    } else if (this.elementId === 'ink') {
+      this.inkKit.handleInput(time, pointer, mouseX, mouseY);
     } else if (this.elementId === 'ruin') {
       this.ruinKit.handleInput(time, pointer, mouseX, mouseY);
     } else if (this.elementId === 'dune' || this.sandKit.ownsPlayerInput()) {
@@ -11432,6 +11890,7 @@ export class ArenaScene extends Phaser.Scene {
       } : {}),
       airTornadoActive: this.airKit.isTornadoActive('npc'),
       airWindDodge: this.airKit.getWindDodge('npc'),
+      npcAirGustRecall: this.airKit.npcGustRecallReady(),
       earthShieldHp: this.earthKit.getNpcShieldHp(),
       npcEarthRocksActive: this.earthKit.getNpcRocksActive(),
       // Biome Builder: the target standing on the bot's own mountain turns a Quake into a rockfall,
@@ -11442,6 +11901,7 @@ export class ArenaScene extends Phaser.Scene {
       npcEarthSpikeReady: this.earthKit.npcSpikeReady(),
       earthBiomePoint: this.earthKit.npcBiomePoint() ?? undefined,
       oilDroneCount: this.oilKit.getNpcDroneCount(),
+      npcOilArmLaserReady: this.oilKit.npcOilArmLaserReady(),
       shadowPlayerSnared: this.shadowKit.isPlayerSnared(time),
       npcShadowGloomCaltropAim: this.shadowKit.npcGloomCaltropAim(),
       npcWaterBubbleSplash: this.waterKit.npcBubbleSplashReady(),
@@ -11583,16 +12043,62 @@ export class ArenaScene extends Phaser.Scene {
       npcDepthsKrakenStun: this.depthsKit.npcKrakenStunTarget() ?? undefined,
       npcDepthsSkeleMeal: this.depthsKit.npcSkeleMeal() ?? undefined,
       npcDepthsCamoed: this.depthsKit.isCamoFull('npc'),
-      // Harvest: the seek point is the middle of its own mold, so a chasing target walks onto it.
-      harvestSeekPoint: this.gluttonyKit.npcSeekPoint(),
-      npcHarvestHeartAim: this.gluttonyKit.npcHeartAim(),
-      npcHarvestTargetOnMold: this.gluttonyKit.npcTargetOnMold(),
-      npcHarvestTargetCorruption: this.gluttonyKit.npcTargetCorruption(),
-      npcHarvestCanExecute: this.gluttonyKit.npcCanExecute(),
-      npcHarvestBiteHeavy: this.gluttonyKit.npcBiteHeavy(),
-      npcHarvestTargetBuffed: this.gluttonyKit.npcTargetBuffed(),
-      npcHarvestMatureMold: this.gluttonyKit.npcMatureMold(),
-      npcHarvestPredationSlot: this.gluttonyKit.npcPredationSlot(),
+      // Wood: the seek point walks the bot to its apples (F+) or onto its sprouts while its
+      // Digest aura can feed them (R+).
+      woodSeekPoint: this.gluttonyKit.npcSeekPoint(),
+      npcWoodRecarve: this.gluttonyKit.npcRecarveReady(),
+      npcWoodCanExecute: this.gluttonyKit.npcCanExecute(),
+      npcWoodExecuteNeedsSap: this.gluttonyKit.npcExecuteNeedsSap(),
+      npcWoodDigestValue: this.gluttonyKit.npcDigestValue(),
+      npcWoodCooking: this.gluttonyKit.npcCooking(),
+      npcWoodTreeAim: this.gluttonyKit.npcTreeAim(),
+      npcWoodPruneAim: this.gluttonyKit.npcPruneAim(),
+      // Pressure: the kit holds the bot's keys for it, so the rotation only needs to know when its
+      // hands are full, and the synergies — a pinned target to wind up on, a vent worth spending,
+      // its own orb to walk into (R+), and when Exceed is worth the crash.
+      npcPressureCharging: this.pressureKit.npcCharging(),
+      npcPressureTargetPinned: this.pressureKit.npcTargetPinned(),
+      npcPressureVentShot: this.pressureKit.npcVentShot(),
+      pressureCompressPoint: this.pressureKit.npcCompressPoint() ?? undefined,
+      npcPressureExceedReady: this.pressureKit.npcExceedReady(),
+      // Astra: busy hands, where to stand (the target's row, a touch below it), and the synergies —
+      // a smite that picks them, flares on a slowed target, a warp worth its swap or its theft.
+      npcAstraBusy: this.astraKit.npcAstraBusy(),
+      astraSeekPoint: this.astraKit.astraSeekPoint() ?? undefined,
+      npcAstraLanedUp: this.astraKit.npcAstraLanedUp(),
+      npcAstraSmiteSafe: this.astraKit.npcAstraSmiteSafe(),
+      npcAstraFlareShot: this.astraKit.npcAstraFlareShot(),
+      npcAstraWarpShot: this.astraKit.npcAstraWarpShot(),
+      npcAstraTrialReady: this.astraKit.npcAstraTrialReady(),
+      npcAstraInTrial: this.astraKit.npcAstraInTrial(),
+      // Memory: busy hands, and the synergies — Snatch on a target sitting on ready abilities,
+      // Trauma's window over a burst (the beam, the copy's replay, a deep Guilt).
+      npcMemoryBusy: this.memoryKit.npcMemoryBusy(),
+      npcMemorySnatchShot: this.memoryKit.npcMemorySnatchShot(),
+      npcMemoryRebirthWorth: this.memoryKit.npcMemoryRebirthWorth(),
+      npcMemoryRepressReady: this.memoryKit.npcMemoryRepressReady(),
+      npcMemoryTraumaReady: this.memoryKit.npcMemoryTraumaReady(),
+      npcMemoryInTrauma: this.memoryKit.npcMemoryInTrauma(),
+      npcStringSpiderReady: this.stringKit.npcStringSpiderReady(),
+      npcStringHexShot: this.stringKit.npcStringHexShot(),
+      npcStringPuppetShot: this.stringKit.npcStringPuppetShot(),
+      npcStringTombReady: this.stringKit.npcStringTombReady(),
+      // Ink: busy hands, a helpless target to wind a long bounce or the anvil on, a peel lane,
+      // where to walk (the hungry anvil, or out through the foam), and when Foux World is worth it.
+      npcInkBusy: this.inkKit.npcBusy(),
+      npcInkTargetHelpless: this.inkKit.npcTargetHelpless(),
+      npcInkPeelLane: this.inkKit.npcPeelLane(),
+      inkSeekPoint: this.inkKit.npcSeekPoint(),
+      npcInkFouxReady: this.inkKit.npcFouxReady(),
+      npcInkGunReady: this.inkKit.npcGunReady(),
+      // Venom: the kit surfaces and sheds for the bot; the rotation reads where acid helps.
+      npcAcidBurrowed: this.slimeKit.npcBurrowed(),
+      npcAcidBurrowReady: this.slimeKit.npcBurrowReady(),
+      acidSeekPoint: this.slimeKit.npcAcidSeekPoint() ?? undefined,
+      npcAcidApocalypseReady: this.slimeKit.npcApocalypseReady(),
+      npcAcidBiteReady: this.slimeKit.npcBiteReady(),
+      npcAcidSprayWorth: this.slimeKit.npcSprayWorth(),
+      npcAcidShedSlot: this.slimeKit.npcShedSlot(),
       // Conquest: the bot has to physically stand on the square it means to build on, so its
       // build queue is a destination before it is ever a cast.
       conquestSeekPoint: this.conquestKit.npcSeekPoint() ?? undefined,
@@ -11681,15 +12187,13 @@ export class ArenaScene extends Phaser.Scene {
       goldSeekPoint: this.fortuneKit.npcSeekPoint(),
       npcGoldRagsSlot: this.fortuneKit.npcRagsSlot(),
 
-      // Cloth: every synergy in the kit is a two-press combo — plant then reel, anchor then
-      // bail, stab nine times then stab the tenth. The kit owns all four of those clocks, so
-      // the AI is handed the state rather than left to re-derive it.
-      npcClothPinPlanted: this.clothKit.hasPlantedPin('npc'),
-      npcClothAnchored: this.clothKit.hasAnchor('npc'),
-      npcClothAnchorPressure: this.clothKit.anchorPressure('npc'),
-      npcClothCombo: this.clothKit.comboProgress('npc'),
-      npcClothPinned: this.clothKit.pinnedOf('npc'),
-      npcClothWebbed: this.clothKit.webbedTarget('npc'),
+      // Cloth: bind then throw, cushion then punch, burn then needle. The kit owns the reach and
+      // the geometry, so the AI is handed each opportunity rather than left to re-derive it.
+      npcClothNeedles: this.clothKit.npcNeedlesReady(),
+      npcClothTargetWrapped: this.clothKit.npcTargetWrapped(),
+      npcClothCushionPunch: this.clothKit.npcCushionPunch(),
+      npcClothHasCushion: this.clothKit.npcHasCushion(),
+      npcClothBurning: this.clothKit.npcBurning(),
 
       // Marrow: every decision the bot makes is about the five sockets and the fever, and it
       // can see both only because the kit publishes them here.
@@ -11759,16 +12263,16 @@ export class ArenaScene extends Phaser.Scene {
       npcRadiationDummySlot: this.radiationKit.npcDummySlot(),
       npcRadiationDummyCoverReady: this.radiationKit.npcDummyCoverReady(),
 
-      // Bind: every decision the bot makes is about a bar it owns and a beam that can cook it.
-      npcBindAnger: this.bindKit.angerOf('npc'),
-      npcBindForsaken: this.bindKit.isForsaken('npc'),
-      npcBindHeat: this.bindKit.heatOf('npc'),
-      npcBindOverheated: this.bindKit.isOverheated('npc'),
-      npcBindIdolFaith: this.bindKit.idolFaith('npc'),
-      npcBindWard: this.bindKit.wardCharges('npc'),
-      npcBindChained: this.bindKit.isChained('npc'),
-      npcBindCult: this.bindKit.cultSize('npc'),
-      npcBindRitualSlot: this.bindKit.npcRitualSlot() ?? undefined,
+      // Bind: souls to walk to and chain, what to drink, and how much the ritual would be paid.
+      npcBindEyesOpen: this.bindKit.npcEyesOpen(),
+      npcBindSiphoning: this.bindKit.npcSiphoning(),
+      npcBindSouls: this.bindKit.npcSoulCount(),
+      npcBindOffering: this.bindKit.npcOffering(),
+      npcBindRevenants: this.bindKit.npcRevenants(),
+      npcBindSeek: this.bindKit.npcSoulSeek() ?? undefined,
+      npcBindChainAim: this.bindKit.npcBindAim() ?? undefined,
+      npcBindSiphonAim: this.bindKit.npcSiphonAim() ?? undefined,
+      npcBindIdolSlot: this.bindKit.npcIdolSlot() ?? undefined,
       // Slime: the bot's whole decision surface is what its one hand is currently able to do.
       npcGumHandless: this.gumKit.isHandless('npc'),
       npcGumBalls: this.gumKit.ballsReady('npc'),
@@ -12092,6 +12596,19 @@ export class ArenaScene extends Phaser.Scene {
     if (this.playerIs('gluttony') || this.npcElement.id === 'gluttony') {
       this.gluttonyKit.update(time, delta);
     }
+    // Unconditional: a grounding, a PainLock or a vent outlives the Pressure fighter that made it,
+    // and the kit early-outs on its own when there is nothing left.
+    this.pressureKit.update(time, delta);
+    // Unconditional, for the same reason: an excited wall, a flung body or the finale outlives the
+    // Astra fighter that made it.
+    this.astraKit.update(time, delta);
+    this.memoryKit.update(time, delta);
+    // Unconditional, for the same reason: strings, spiders, a puppet or a tomb outlive the fighter
+    // that made them for a frame, and the victim's own machine moves its body against the other's.
+    this.stringKit.update(time, delta);
+    // Unconditional, for the same reason: a peel, a flattening or an open Foux World outlives
+    // the Ink fighter that made it.
+    this.inkKit.update(time, delta);
     if (this.playerIs('ruin') || this.npcElement.id === 'ruin') {
       this.ruinKit.update(time, delta);
     }
@@ -12294,8 +12811,8 @@ export class ArenaScene extends Phaser.Scene {
         entry.fill.setSize(entry.maxWidth * this.magicKit.getTransmogrifyCooldownRatio(time), entry.fill.height);
       } else if (entry.abilityId === 'steel-shield') {
         entry.fill.setSize(entry.maxWidth * this.metalKit.getSteelShieldCooldownRatio(time), entry.fill.height);
-      } else if (entry.abilityId === 'breakdown') {
-        entry.fill.setSize(entry.maxWidth * this.slimeKit.getBreakdownCooldownRatio(time), entry.fill.height);
+      } else if (entry.abilityId === 'shed-skin') {
+        entry.fill.setSize(entry.maxWidth * this.slimeKit.getShedRatio(), entry.fill.height);
       } else if ((entry.abilityId === 'growth-virus' || entry.abilityId === 'spore-spray')
           && this.playerIs('growth') && this.growthKit.hasSweating()) {
         entry.fill.setSize(entry.maxWidth * this.growthKit.getChargeBarRatio(entry.abilityId, time), entry.fill.height);
@@ -12336,9 +12853,6 @@ export class ArenaScene extends Phaser.Scene {
       } else if (entry.abilityId === 'rags-to-riches') {
         // Paid for with the whole purse: the bar stops short of full until there are 20 gold.
         entry.fill.setSize(entry.maxWidth * this.fortuneKit.getRagsCooldownRatio(), entry.fill.height);
-      } else if (entry.abilityId === 'corrupt-predation') {
-        // Paid for in Corrupt HP: the bar stops short of full until there are 50 to spend.
-        entry.fill.setSize(entry.maxWidth * this.gluttonyKit.getPredationCooldownRatio(), entry.fill.height);
       } else if (entry.abilityId === 'oobleck') {
         // A slab that is standing counts its own life down — the cooldown is not what you are
         // waiting on while you still have cover — so the kit decides what the bar is showing.
@@ -12371,14 +12885,27 @@ export class ArenaScene extends Phaser.Scene {
       } else if (entry.abilityId.startsWith('fortune-')) {
         // Advance fills with the purse as well as the cooldown, and Midas counts its curse down.
         entry.fill.setSize(entry.maxWidth * this.fortuneKit.getBarRatio(entry.abilityId, time), entry.fill.height);
-      } else if (entry.abilityId === 'bleed-stop') {
-        // The mastery ability keeps its own clock, so its card counts that rather than the
-        // cooldown of whichever base ability it was sewn over.
-        entry.fill.setSize(entry.maxWidth * this.clothKit.getBarRatio(entry.abilityId, time), entry.fill.height);
       } else if (entry.abilityId.startsWith('myth-')) {
         // In Final Destiny the five cards are the five guns, and E's card counts the recast
         // window while a shard could still spend it.
         entry.fill.setSize(entry.maxWidth * this.mythKit.getBarRatio(entry.abilityId, time), entry.fill.height);
+      } else if (entry.abilityId.startsWith('ink-')) {
+        // Skedaddle's run, the anvil's pull and hold, and Click+'s count to the thrown hand.
+        entry.fill.setSize(entry.maxWidth * this.inkKit.getBarRatio(entry.abilityId), entry.fill.height);
+      } else if (entry.abilityId.startsWith('string-')) {
+        // R stays lit while the hex strand is out: the press snaps it.
+        entry.fill.setSize(entry.maxWidth * this.stringKit.getBarRatio(entry.abilityId), entry.fill.height);
+      } else if (entry.abilityId.startsWith('memory-')) {
+        // E fills with the cane's spin, R stays lit while the line sweeps, F with the recording,
+        // and Q counts Trauma's window.
+        entry.fill.setSize(entry.maxWidth * this.memoryKit.getBarRatio(entry.abilityId), entry.fill.height);
+      } else if (entry.abilityId.startsWith('astra-')) {
+        // Q is the trial's clock, then the slap; R+ holds R lit through its recast window.
+        entry.fill.setSize(entry.maxWidth * this.astraKit.getBarRatio(entry.abilityId), entry.fill.height);
+      } else if (entry.abilityId.startsWith('pressure-')) {
+        // A held key shows the pressure it has built, the click the gear (Click+), and Release
+        // its bank — all only once the cooldown underneath is done.
+        entry.fill.setSize(entry.maxWidth * this.pressureKit.getBarRatio(entry.abilityId), entry.fill.height);
       } else if (entry.abilityId.startsWith('tempest-')) {
         // The click is two charges earned by walking, and the Q is a three-second hold — the
         // kit decides what every card is showing.
@@ -12400,9 +12927,8 @@ export class ArenaScene extends Phaser.Scene {
       } else if (entry.abilityId.startsWith('passion-')) {
         // Devotion: a held sermon, two bottles of holy water and the chariot's wind-up.
         entry.fill.setSize(entry.maxWidth * this.passionKit.getBarRatio(entry.abilityId, time), entry.fill.height);
-      } else if (entry.abilityId.startsWith('bind-') || entry.abilityId === 'ritual-sacrifice') {
-        // A slot the god took counts the Pathetic Stab the mastery handed back rather than the
-        // dead ability under it, and Ritual Sacrifice has no cooldown at all to count.
+      } else if (entry.abilityId.startsWith('bind-') || entry.abilityId === 'false-idol') {
+        // False Idol (mastery) is cast off the kit's own timer, not the cooldown map.
         entry.fill.setSize(entry.maxWidth * this.bindKit.getBarRatio(entry.abilityId, time), entry.fill.height);
       } else if (entry.abilityId.startsWith('magma-')) {
         // F's charges, a swollen bloat and Q's pendant-then-ship arc all outlast their own
@@ -12691,9 +13217,9 @@ export class ArenaScene extends Phaser.Scene {
       (proj as any).demonPierceLeft--;
       return;
     }
-    // Acid Purge ball: apply the stat-strip status on top of the generic damage above
-    if (proj.texture.key === 'proj-purge') {
-      this.slimeKit.onPurgeHit(target, proj, this.time.now);
+    // Venom Poison Whip lash: toxin on top of the generic damage above
+    if (proj.texture.key === 'proj-acid-whip') {
+      this.slimeKit.onWhipHit(target, proj);
     }
     // Corrosive Bite: Poison Whip hits also strip max HP equal to the damage dealt
     if (proj.texture.key === 'proj-acid-whip' && this.hasUpgrade('click')) {
@@ -12783,6 +13309,7 @@ export class ArenaScene extends Phaser.Scene {
       this.huntKit, this.justiceKit, this.earthKit, this.fireKit, this.clayKit,
       this.magnetKit, this.slimeKit, this.lightKit, this.silenceKit, this.magicKit,
       this.sandKit, this.gumKit, this.creationKit, this.growthKit, this.illusionKit, this.psychicKit,
+      this.clothKit,
     ];
     const broken: string[] = [];
     for (const kit of kits) broken.push(...(kit?.revertForms(f) ?? []));

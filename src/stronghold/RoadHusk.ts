@@ -66,8 +66,13 @@ export class RoadHusk extends Husk {
   public untargetable = false;
   /** Hidden: towers without detection cannot pick it as a target. */
   public hidden = false;
-  /** Floats over traps, barriers, minions and ground zones. */
-  public airborne = false;
+  /** `airborne` (Fighter's flag, set by the Air/Paper trait) floats it over traps, barriers, minions and ground zones — unless a tower has grounded it. */
+  get aloft(): boolean { return this.airborne && this.groundedUntil <= this.scene.time.now; }
+  /** Grounded: pulled down out of the air until then. */
+  public groundedUntil = 0;
+  /** Brittle: every hit lands `brittleAdd` extra until then. */
+  public brittleAdd = 0;
+  public brittleUntil = 0;
   /** Sharp hits it shrugs off before the shell cracks (Crystal). */
   public shellHits = 0;
   /** A child of a split/echo/rise — never splits again. */
@@ -132,7 +137,7 @@ export class RoadHusk extends Husk {
   place(): void {
     const p = this.road.pointAlong(this.pathDist, this.scratch);
     const h = this.road.headingAlong(this.pathDist);
-    const lift = this.airborne ? -10 : 0;
+    const lift = this.aloft ? -10 : 0;
     const x = p.x - h.y * this.lateral;
     const y = p.y + h.x * this.lateral + lift;
     (this.body as Phaser.Physics.Arcade.Body).reset(x, y);

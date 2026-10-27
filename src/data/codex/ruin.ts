@@ -113,16 +113,16 @@ const ruin: ElementCodex = {
     'ruin-lockdown': {
       basics:
         'Puts a padlock on whichever fighter is nearest the cursor inside 460px, locking their '
-        + 'last-cast ability for 20 seconds however ready its own cooldown reads — so locking the good '
-        + 'one means baiting it out first. Nothing in reach, or a target who has not cast anything yet, '
+        + 'last-cast ability (never their Click) for 20 seconds however ready its own cooldown reads — so locking the good '
+        + 'one means baiting it out first. Nothing in reach, or a target who has not cast anything but Click yet, '
         + 'hands the whole 25-second cooldown straight back. A second padlock on the same body replaces '
         + 'the picture rather than the effect.',
       cast: 'E. Aimed at a fighter rather than a point: the padlock goes on whoever is nearest to the cursor inside 460px. 25s cooldown.',
       effects: [
         { tag: 'control', label: 'The lock', detail: '20 seconds during which that one ability cannot be cast, however ready its own cooldown reads.' },
-        { tag: 'utility', label: 'What gets locked', detail: 'Their last-cast ability, whatever it was. Locking the good one means baiting it out first.' },
+        { tag: 'utility', label: 'What gets locked', detail: 'Their last-cast ability other than Click — basic attacks are never locked. Locking the good one means baiting it out first.' },
         { tag: 'area', label: 'The reach', detail: '460px, measured from you to them — the cursor only chooses between the candidates already inside it.' },
-        { tag: 'utility', label: 'Refunded on a whiff', detail: 'Nothing in reach, or a target who has not cast anything yet, hands the whole 25-second cooldown straight back. A 25-second wall for no effect is not a trade anybody would take.' },
+        { tag: 'utility', label: 'Refunded on a whiff', detail: 'Nothing in reach, or a target who has not cast anything but Click yet, hands the whole 25-second cooldown straight back. A 25-second wall for no effect is not a trade anybody would take.' },
         { tag: 'utility', label: 'One lock drawn per victim', detail: 'A second padlock on the same body replaces the picture rather than the effect.' },
       ],
       upgrade: {
@@ -187,7 +187,7 @@ const ruin: ElementCodex = {
     'ruin-spikes': {
       basics:
         'A ring that tracks you for a 2-second fuse and then erupts for 15 damage to every enemy within '
-        + '122px of wherever you were standing. Every plain buff on a caught fighter is flipped on the '
+        + '160px of wherever you were standing. Every plain buff on a caught fighter is flipped on the '
         + 'spot — a damage boost becomes a cut of the same size, a damage reduction becomes fragility, a '
         + 'cooldown discount becomes a penalty, a speed boost becomes a slow — while crit, dodge, regen, '
         + 'reflect, flat reduction, damage caps, shield charges, shield HP, clotted HP, unstoppable, '
@@ -199,7 +199,7 @@ const ruin: ElementCodex = {
         + 'concrete buffs it found with 🔻 N BUFFS TURNED or 🔻 RUINED. One ring per side. 18s cooldown.',
       cast: 'F. Instant, no aim, one ring per side at a time. The ring tracks you for its whole 2-second fuse. 18s cooldown.',
       effects: [
-        { tag: 'damage', label: 'The eruption', detail: '15 damage to every enemy within 122px of wherever you were standing when the fuse ran out.' },
+        { tag: 'damage', label: 'The eruption', detail: '15 damage to every enemy within 160px of wherever you were standing when the fuse ran out.' },
         { tag: 'debuff', label: 'Buffs turned inside out', detail: 'Every plain buff on a caught fighter is flipped on the spot: a damage boost becomes a cut of the same size, a damage reduction becomes fragility, a cooldown discount becomes a penalty, a speed boost becomes a slow. Crit, dodge, regen, reflect, flat reduction, damage caps, shield charges, shield HP, clotted HP, unstoppable, levitation, self-damage immunity and invincibility are all simply taken away.' },
         { tag: 'debuff', label: 'The window', detail: '8 seconds in which buffs living inside other kits — a stance\'s haste, a form\'s speed — are inverted as well, caught at the two places they are actually felt: the speed aggregate and the mitigation product.' },
         { tag: 'summon', label: 'Razed', detail: 'Every structure, building and summon inside the circle that is not yours stops existing. Not damaged — deleted. It prints 🏚️ N RAZED.' },

@@ -4518,6 +4518,7 @@ export class SilenceKit {
   private keepInMaze(f: Fighter, radius: number): void {
     const maze = this.run?.maze;
     if (!maze) return;
+    if (f.soulWalking) return; // Bind's Blackened Eyes walks through.
     const p = maze.resolve(f.x, f.y, radius);
     const nx = Phaser.Math.Clamp(p.x, 24, this.arena.width - 24);
     const ny = Phaser.Math.Clamp(p.y, 24, this.arena.height - 24);

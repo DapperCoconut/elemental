@@ -165,6 +165,54 @@ const air: ElementCodex = {
   },
 
   perks: {
+    'air-quick': {
+      basics:
+        'Every ability recharges 20% faster. That covers the ability table and the kit\'s own clocks '
+        + 'alike — Spin Dance charges refill in 4.8s instead of 6s, and Weather Cycle comes back in 24s.',
+      cast: 'Passive.',
+      effects: [
+        { tag: 'buff', label: 'Cooldowns', detail: 'Wind Splice, Gale Glaive, Sky Grapple and Wind Breaker recharge in 80% of the time.' },
+        { tag: 'buff', label: 'Spin charges', detail: 'Each Spin Dance charge refills in 4.8s instead of 6s.' },
+        { tag: 'buff', label: 'Weather Cycle', detail: '24s instead of 30s.', requiresMastery: true },
+      ],
+    },
+    'air-gust': {
+      basics:
+        'Throwing Gale Glaive is a turn: a free Spin Dance goes off as the fans leave your hands. While '
+        + 'the glaive is still out — flying, parked or coming home — press R again to teleport to it, '
+        + 'catch it, and Spin Dance again where you land.',
+      cast: 'R throws as normal. R again while the glaive is out recalls you to it.',
+      effects: [
+        { tag: 'damage', label: 'Throw spin', detail: 'A free 20-damage Spin Dance (115px) on every throw. On contact it refunds 2s like any spin.' },
+        { tag: 'control', label: 'Recall', detail: 'Second R teleports you onto the glaive and ends it — the fans come home in your hands.' },
+        { tag: 'damage', label: 'Arrival spin', detail: 'Another free 20-damage Spin Dance where you land.' },
+        { tag: 'cost', label: 'No return pass', detail: 'A recalled glaive skips its 20-damage return leg and the +15% wind dodge a catch on the way home pays.' },
+      ],
+    },
+    'air-vacuum': {
+      basics:
+        'A windy aura 170px across your feet draws every enemy inside it toward you, and while anyone '
+        + 'is caught in it the hits that reach you are 15% softer.',
+      cast: 'Passive.',
+      effects: [
+        { tag: 'control', label: 'Draw', detail: 'Enemies within 170px are pulled toward you at 55 px/s on top of their own movement.' },
+        { tag: 'buff', label: 'Weakened', detail: 'While a foe is in the aura, incoming damage is cut by 15%.' },
+      ],
+      notes: [
+        'Hits carry no record of who threw them, so the cut applies to every hit while a foe is inside — in a duel that is the same thing.',
+        'Tornado captives and thrown foes are left to Wind Breaker; unstoppable foes are not pulled.',
+      ],
+    },
+    'air-blowback': {
+      basics:
+        'The air a dodge displaces keeps going. Every hit your wind dodge saves throws 20% of its '
+        + 'damage at the nearest enemy — but each wind dodge now spends 15% of the pool instead of 10%.',
+      cast: 'Passive.',
+      effects: [
+        { tag: 'damage', label: 'Reflect', detail: '20% of the dodged hit, to the nearest enemy. Sky Grapple\'s untouchable flight reflects too.' },
+        { tag: 'cost', label: 'Thinner pool', detail: 'Each wind dodge costs 15% wind dodge instead of 10%.' },
+      ],
+    },
     hawk: {
       basics:
         'F fires an eagle at the cursor instead of a grapple, and on a hit it drags the enemy to your '

@@ -253,6 +253,16 @@ export class ElectricityKit {
 
   // ── Public accessors ──────────────────────────────────────────────────
 
+  /** Memory's Rebirth: the struck side loses part of what it has built up. Returns a label, or null. */
+  rebirthDrain(owner: 'player' | 'npc'): string | null {
+    // Kinetic Power is only kept for the player's side.
+    if (owner !== 'player') return null;
+    const take = Math.ceil(this.kineticPower * 0.4);
+    if (take <= 0) return null;
+    this.kineticPower -= take;
+    return `−${take} KINETIC`;
+  }
+
   getKineticPower(): number { return this.kineticPower; }
   isOverchargeActive(): boolean { return this.overchargeActive; }
 
@@ -351,6 +361,8 @@ export class ElectricityKit {
   // Called from ArenaScene's player 'damaged' event
   onDamageReceived(amount: number, time: number): void {
     if (amount <= 0) return;
+    // Memory's Rebirth: a sealed battery does not charge.
+    if (this.arena.player.passivesSealed()) return;
     const cap = this.arena.hasUpgrade('r') ? 100 : 50;
     // Ruin's Combo Breaker halves every meter in the game — the charge bar included.
     this.kineticPower = Math.min(cap, this.kineticPower + meterGain(this.arena.player, amount));

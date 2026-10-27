@@ -3433,6 +3433,15 @@ export class ConquestKit implements ConquestMenuHost {
    * Speedy Walls and Force Shield, pulled by ArenaScene rather than pushed onto the fighter —
    * this kit's `update` runs long after the frame's movement has already resolved.
    */
+  /** Memory's Rebirth: the struck side loses part of what it has built up. Returns a label, or null. */
+  rebirthDrain(owner: Owner): string | null {
+    const side = this.side(owner);
+    const take = Math.ceil(side.authority * 0.4);
+    if (take <= 0) return null;
+    side.authority -= take;
+    return `−${take}👑`;
+  }
+
   getPlayerSpeedMult(): number { return this.speedMultFor('player'); }
   getNpcSpeedMult(): number { return this.speedMultFor('npc'); }
 

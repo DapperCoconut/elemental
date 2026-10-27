@@ -934,6 +934,54 @@ export class AirFx extends FxBase {
    * curls orbit one way and a band at the feet fills as the window runs down; playing back, they
    * run the other way, brighter and looser — the same weather, rewound.
    */
+  /**
+   * The Vacuum perk's standing draw: a faint floor disc, a breathing rim, and wind curls born
+   * on the rim that spiral inward and thin out as they reach her — air being drawn in, never
+   * thrown out. `holding` (someone is caught) runs it brighter and faster.
+   */
+  static drawVacuum(
+    g: Phaser.GameObjects.Graphics, tint: AirColorFn,
+    x: number, y: number, radius: number, t: number, holding: boolean,
+  ): void {
+    const k = holding ? 1 : 0.7;
+    const cy = y + 6;
+    g.fillStyle(tint(AIR.steel), 0.05 * k);
+    g.fillEllipse(x, cy, radius * 2, radius * 1.1);
+    g.lineStyle(1.6, tint(AIR.sky), 0.28 * k);
+    g.beginPath();
+    for (let i = 0; i <= 48; i++) {
+      const a = (i / 48) * TAU;
+      const w = Math.sin(a * 5 - t * 3) * 3 + Math.sin(a * 9 + t * 2) * 1.5;
+      const px = x + Math.cos(a) * (radius + w), py = cy + Math.sin(a) * (radius + w) * 0.55;
+      if (i === 0) g.moveTo(px, py); else g.lineTo(px, py);
+    }
+    g.strokePath();
+
+    // Inward spiral: each curl's life runs rim → centre, swinging a quarter turn on the way.
+    const curls = 8;
+    const speed = holding ? 0.8 : 0.55;
+    for (let i = 0; i < curls; i++) {
+      const life = (t * speed + i / curls) % 1;
+      const r = radius * (1 - life * 0.82);
+      const a = (i / curls) * TAU - life * Math.PI * 0.5 + t * 0.4;
+      const px = x + Math.cos(a) * r;
+      const py = cy + Math.sin(a) * r * 0.55;
+      // Pointing at her, bent with the swirl.
+      const heading = Math.atan2(cy - py, x - px) - 0.5;
+      const fade = Math.sin(Math.PI * life);
+      windCurlLayered(g, tint, px, py, heading, 18 + 14 * (1 - life), 3 + 2 * (1 - life), 1.1, 0.5 * k * fade);
+    }
+
+    // Grit riding the draw.
+    for (let i = 0; i < 10; i++) {
+      const life = (t * speed * 1.3 + i * 0.37) % 1;
+      const a = i * 2.1 - life * 1.2;
+      const r = radius * (0.95 - life * 0.85);
+      g.fillStyle(tint(AIR.mist), 0.5 * k * (1 - life));
+      g.fillCircle(x + Math.cos(a) * r, cy + Math.sin(a) * r * 0.55 - 4, 1.4);
+    }
+  }
+
   static drawWeatherRing(
     g: Phaser.GameObjects.Graphics, tint: AirColorFn,
     x: number, y: number, radius: number, t: number, progress: number, replay: boolean, alpha: number,

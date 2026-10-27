@@ -20,6 +20,11 @@ import { FateAvatar } from './FateVisuals';
 import { FireAvatar } from './FireVisuals';
 import { FortuneAvatar } from './FortuneVisuals';
 import { GluttonyAvatar } from './GluttonyVisuals';
+import { PressureAvatar } from './PressureVisuals';
+import { AstraAvatar } from './AstraVisuals';
+import { MemoryAvatar } from './MemoryVisuals';
+import { StringAvatar } from './StringVisuals';
+import { InkAvatar } from './InkVisuals';
 import { GravityAvatar } from './GravityVisuals';
 import { GrowthAvatar } from './GrowthVisuals';
 import { GumAvatar } from './GumVisuals';
@@ -136,6 +141,11 @@ const ELEMENT_AVATARS: Record<string, ElementAvatarFactory> = {
   fortune: (s, t) => new FortuneAvatar(s, t),
   gum: (s, t) => new GumAvatar(s, t),
   gluttony: (s, t) => new GluttonyAvatar(s, t),
+  pressure: (s, t) => new PressureAvatar(s, t),
+  astra: (s, t) => new AstraAvatar(s, t),
+  memory: (s, t) => new MemoryAvatar(s, t),
+  string: (s, t) => new StringAvatar(s, t),
+  ink: (s, t) => new InkAvatar(s, t),
   // Not in AVATAR_CLASSES below on purpose: Quantum's rig is never one of the carried rigs the
   // arena vetoes on a Quantum body — it is the one that draws in their place.
   quantum: (s, t) => new QuantumAvatar(s, t),
@@ -203,6 +213,11 @@ const AVATAR_CLASSES: Record<string, abstract new (...args: never[]) => BaseAvat
   fortune: FortuneAvatar,
   gum: GumAvatar,
   gluttony: GluttonyAvatar,
+  pressure: PressureAvatar,
+  astra: AstraAvatar,
+  memory: MemoryAvatar,
+  string: StringAvatar,
+  ink: InkAvatar,
 };
 
 export function avatarElementId(avatar: BaseAvatar): string | null {

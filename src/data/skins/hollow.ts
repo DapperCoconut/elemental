@@ -52,7 +52,7 @@ const HOLLOW_PALETTE: Record<number, number> = {
 export const HOLLOW_SKIN: SkinDef = {
   id: 'hollow',
   name: 'Hollow',
-  description: 'A small horned knight in a dragging cloak — direct nail stabs, a charm board for a tapestry, and Bleed Stop gives way to the void within.',
+  description: 'A small horned knight in a dragging cloak, reaching out with the scarf as though it were a pale hand.',
   elementId: 'cloth',
   avatar: 'hollow',
   // Cloth is bodyless; the repaint only matters if a sprite ever peeks past the cloak.

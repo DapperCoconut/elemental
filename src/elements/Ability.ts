@@ -74,6 +74,8 @@ export interface CastContext {
   startBullRush: () => void;
   spawnDrone: () => void;
   commandDrones: (x: number, y: number) => void;
+  /** Oil: squeeze the arm laser at a point (bots only — the player's Click is read by OilKit). */
+  oilArmLaser: (x: number, y: number) => void;
   launchDrone: (x: number, y: number) => void;
   placeFirewall: (x: number, y: number) => void;
   startOverdrive: (x: number, y: number) => void;
@@ -323,12 +325,12 @@ export interface CastContext {
   fortunePlume: (tx: number, ty: number) => void;
   fortuneHeart: (tx: number, ty: number) => void;
   fortuneMidas: (tx: number, ty: number) => void;
-  // Cloth (test element: cheat mode only for now)
-  clothPin: (tx: number, ty: number) => void;
-  clothLongpin: (tx: number, ty: number) => void;
-  clothSafetyLine: () => void;
-  clothPinCushion: () => void;
-  clothTapestry: () => void;
+  // Cloth: the scarf hand, needles, the bola, the pincushion and Burning Man
+  clothGrab: (tx: number, ty: number) => void;
+  clothNeedles: (tx: number, ty: number) => void;
+  clothBola: (tx: number, ty: number) => void;
+  clothCushion: (tx: number, ty: number) => void;
+  clothBurningMan: () => void;
 
   // Marrow (test element: cheat mode only for now)
   marrowAntibody: (tx: number, ty: number) => void;
@@ -380,11 +382,11 @@ export interface CastContext {
   radiationBaton: (tx: number, ty: number) => void;
   radiationExtermination: () => void;
   // Bind (test element: cheat mode only for now)
-  bindSummon: (tx: number, ty: number) => void;
-  bindShards: (tx: number, ty: number) => void;
-  bindIdol: (tx: number, ty: number) => void;
-  bindProtection: () => void;
-  bindTreachery: () => void;
+  bindDaggers: (tx: number, ty: number) => void;
+  bindChain: (tx: number, ty: number) => void;
+  bindEyes: () => void;
+  bindSiphon: (tx: number, ty: number) => void;
+  bindRitual: () => void;
   // Slime (test element: cheat mode only for now; id is `gum`, since `slime` is Acid's)
   gumGrab: (tx: number, ty: number) => void;
   gumSurge: (tx: number, ty: number) => void;
@@ -398,12 +400,51 @@ export interface CastContext {
   quantumArenaSplit: () => void;
   quantumEffectSplit: () => void;
   quantumParasite: (tx: number, ty: number) => void;
-  // Harvest (element id `gluttony`, test element: cheat mode only for now).
-  harvestSickle: (tx: number, ty: number) => void;
-  harvestSow: () => void;
-  harvestFrenzy: (tx: number, ty: number) => void;
-  harvestConsume: (tx: number, ty: number) => void;
-  harvestReap: (tx: number, ty: number) => void;
+  // Wood (element id `gluttony`, test element: cheat mode only for now).
+  woodCarverang: (tx: number, ty: number) => void;
+  woodOakbrew: () => void;
+  woodCommensalism: (tx: number, ty: number) => void;
+  woodDigest: () => void;
+  woodFinalHarvest: (tx: number, ty: number) => void;
+  // Pressure (test element: cheat mode only for now). Each one resolves at the pressure the
+  // kit has banked for that key — the hold itself is the kit's.
+  pressurePunch: (tx: number, ty: number) => void;
+  pressureSlam: (tx: number, ty: number) => void;
+  pressurePoint: (tx: number, ty: number) => void;
+  pressureRelease: (tx: number, ty: number) => void;
+  pressureExceed: () => void;
+  // Astra (test element: cheat mode only for now). Star mode, the trial and the Q+ hold are the kit's.
+  astraStarstruck: (tx: number, ty: number) => void;
+  astraSolarFlares: (tx: number, ty: number) => void;
+  astraSmite: (tx: number, ty: number) => void;
+  astraWormWarp: (tx: number, ty: number) => void;
+  astraTrueSelf: () => void;
+  // Memory (test element: cheat mode only for now). The shards, the beam, Rebirth's sweep, the
+  // recording and the wound are all the kit's.
+  memoryForget: (tx: number, ty: number) => void;
+  memorySnatch: (tx: number, ty: number) => void;
+  memoryRebirth: (tx: number, ty: number) => void;
+  memoryRepression: (tx: number, ty: number) => void;
+  memoryTrauma: () => void;
+  // String (test element: cheat mode only for now). The strings, the spiders, the puppet's
+  // steering and the tomb are all the kit's.
+  stringSnag: (tx: number, ty: number) => void;
+  stringSpiders: () => void;
+  stringHex: (tx: number, ty: number) => void;
+  stringMarionette: (tx: number, ty: number) => void;
+  stringTomb: (tx: number, ty: number) => void;
+  // Ink (test element: cheat mode only for now). The kit owns the Skedaddle hold and the anvil.
+  inkFingerGun: (tx: number, ty: number) => void;
+  inkBanana: (tx: number, ty: number) => void;
+  inkSkedaddle: (tx: number, ty: number) => void;
+  inkAnvil: (tx: number, ty: number) => void;
+  inkFouxWorld: () => void;
+  // Venom (element id `slime`). The kit owns the grid, the tail and every toxin tier.
+  acidWhip: (tx: number, ty: number) => void;
+  acidSpray: (tx: number, ty: number) => void;
+  acidBurrow: () => void;
+  acidBite: (tx: number, ty: number) => void;
+  acidApocalypse: () => void;
   hasPerk: (perkId: string) => boolean;
 }
 

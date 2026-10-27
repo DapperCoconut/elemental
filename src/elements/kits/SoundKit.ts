@@ -578,6 +578,19 @@ export class SoundKit {
     return s.solo !== null || s.piano?.phase === 'play';
   }
 
+  /** Memory's Rebirth: the struck side loses part of what it has built up. Returns a label, or null. */
+  rebirthDrain(owner: Owner): string | null {
+    const s = this.sides[owner];
+    const spun = s.spin > 0.02;
+    const practised = s.practice[s.song] > 0;
+    if (!spun && !practised) return null;
+    // The baton slows to half, and the song on loses half the practice it has banked.
+    s.spin *= 0.5;
+    s.combo = 0;
+    s.practice[s.song] = Math.floor(s.practice[s.song] * 0.5);
+    return '−TEMPO −HUM';
+  }
+
   getPlayerSpeedMult(): number { return this.speedMult('player'); }
 
   /** The bot's own speed — pulled by ArenaScene. The peer's replica moves by the network. */

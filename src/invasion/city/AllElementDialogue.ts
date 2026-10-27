@@ -295,8 +295,8 @@ export const DREAM_LINES: Record<string, DreamLines> = {
   },
   slime: {
     intro: [
-      'Mm. Something is hissing near the plinth. Acid, that had better not be my stone you are eating.',
-      'Your pools never fade, and you hit harder standing in them. You like a home. I understand.',
+      'Mm. Something is hissing near the plinth. Venom, that had better not be my stone you are eating.',
+      'Your acid never dries and your poison never fades. You like things permanent. I understand.',
       'Pour the lanes full. Make the husks wade. Just keep them, and you, off my plinth.',
     ],
     milestones: [
@@ -680,11 +680,11 @@ export const DREAM_LINES: Record<string, DreamLines> = {
   cloth: {
     intro: [
       'Mm. Soft. Someone tucked a scarf around my dream. Cloth, you always cover me.',
-      'Your health bar is a scarf, and the scarf is the hitbox. The rest is tetrominoes. Fit them well.',
+      'No legs, just that scarf with a hand on the end. Haul yourself along and throw needles from the sky.',
       'Stitch the gates shut and keep the husks off my plinth. Try not to unravel tonight.',
     ],
     milestones: [
-      'Five waves. You blocked the red lane with an L-piece. It fit perfectly. Satisfying.',
+      'Five waves. You threw a husk into the wall with your scarf. It stayed there. Satisfying.',
       'Ten. Your scarf is a little frayed. It is still the nicest thing in the city.',
       'Fifteen. You have patched every hole the husks made. You sew faster than they tear.',
     ],
@@ -903,19 +903,19 @@ export const DREAM_LINES: Record<string, DreamLines> = {
   },
   gluttony: {
     intro: [
-      'Mm. Rustling straw. A sweet rot. Harvest, standing silent over my field again.',
-      'You sow purple mold, let it rot anyone standing in it, then reap the corrupted with your scythe.',
-      'Sow the lanes and reap the husks. Keep them off my plinth. Keep the mold off it too.',
+      'Mm. Creaking bark. Amber sap. Wood, and every birch in the city turning its eyes to watch.',
+      'You stack sap on your health, step out of the trees, and scythe down whatever you outlast.',
+      'Hold the lanes and harvest the husks. Keep them off my plinth.',
     ],
     milestones: [
-      'Five waves. The red lane is purple. The husks in it are softer. You reaped them.',
-      'Ten. Half the night, and the mold reaches the green gate. The harvest is heavy.',
-      'Fifteen. Your scythe has not stopped swinging. The field is almost clear.',
+      'Five waves. The husks that cut your bark are crawling. The sap holds them.',
+      'Ten. Half the night, and you have stepped out of half the trees in the square.',
+      'Fifteen. Your scythe has not stopped swinging. The grove is almost clear.',
     ],
-    hurt: 'They are at my roots, Harvest. Reap them. Reap them now.',
-    saved: 'Twenty. The city is saved. The night is a long growing season. Keep reaping.',
-    fallen: 'The field went fallow. Nothing left to harvest.',
-    downed: 'Scarecrows do not fall. Pick yourself back up on your pole.',
+    hurt: 'They are at my roots, Wood. Harvest them. Harvest them now.',
+    saved: 'Twenty. The city is saved. The night is a long growing season. Keep standing.',
+    fallen: 'The grove went quiet. Nothing left watching.',
+    downed: 'Felled? Put your roots down and get up.',
   },
 };
 

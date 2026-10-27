@@ -145,11 +145,11 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   'sub-bribe': ['money', 0.85],
   'sub-treachery': 'curse-cast',
 
-  // ── Acid (element id `slime`) ──
+  // ── Venom (element id `slime`) ──
   'poison-whip': 'whip',
   'vile-spray': 'acid-spray',
   'snake-burrow': 'burrow',
-  'purge': ['sizzle', 1.2, 1.1],
+  'festering-bite': ['trap-snap', 1.1, 1.05],
   'acid-apocalypse': ['acid-spray', 0.6, 1.35],
 
   // ── Oil ──
@@ -336,6 +336,46 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   'tempest-updraft': ['gust', 0.7, 0.9],
   'tempest-forecast': ['grapple', 0.8, 1.0],
 
+  // ── Pressure ──
+  // Everything is voiced on the release: a piston, a floor slab, a pulse, a hiss and the boiler.
+  'pressure-punch': ['hit-heavy', 0.75, 0.8],
+  'pressure-slam': ['stone-slam', 0.95, 0.85],
+  'pressure-point': ['curse-cast', 0.75, 0.9],
+  'pressure-release': ['sizzle', 1.0, 0.7],
+  'pressure-exceed': ['beam-charge', 1.0, 0.6],
+
+  // ── Astra ──
+  // A crackle of solar shots, the flare's roar, a thunderclap, the wormhole and the star waking.
+  'astra-starstruck': ['beam-fire', 1.8, 0.4],
+  'astra-solar-flares': ['flame-burst', 1.2, 0.75],
+  'astra-smite': ['zap', 0.7, 0.85],
+  'astra-worm-warp': ['portal', 1.1, 0.7],
+  'astra-true-self': ['holy-chord', 0.8, 0.8],
+
+  // ── Memory ──
+  // A flicked shard, the static beam letting go, a white sweep, a recording and a pulse of dread.
+  'memory-forget': ['ice-shard', 0.7, 0.45],
+  'memory-snatch': ['glitch', 0.8, 0.85],
+  'memory-rebirth': ['light-beam', 1.3, 0.7],
+  'memory-repression': ['glitch', 0.6, 0.75],
+  'memory-trauma': ['dark-drain', 0.8, 0.85],
+
+  // ── String ──
+  // A whipped line, a scuttle, a purple cord, a wooden clack and silk winding tight.
+  'string-snag': ['whip', 1.5, 0.45],
+  'string-spider-dance': ['tentacle', 1.5, 0.7],
+  'string-hexing-strand': ['curse-cast', 1.1, 0.7],
+  'string-marionette': ['clang', 1.4, 0.6],
+  'string-linen-tomb': ['stretch', 0.6, 0.9],
+
+  // ── Ink ──
+  // A cap gun, a slide whistle-ish whoosh, a spring, a strain and the iris pulling back.
+  'ink-finger-guns': ['musket', 2.2, 0.35],
+  'ink-banana': ['slime-splat', 1.4, 0.6],
+  'ink-skedaddle': ['boing', 0.8, 0.8],
+  'ink-anvil': ['stretch', 0.7, 0.7],
+  'ink-foux-world': ['portal', 0.8, 0.8],
+
   // ── Myth ──
   // A whip crack, a blade, an oath, a portal, a reload — and five guns for Final Destiny.
   'myth-whip': ['whip', 1.0, 0.85],
@@ -370,12 +410,11 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   // ── Cloth ──
   // Nothing here is a weapon being swung: four of the five are something wet being released,
   // so the set is a flick, two spawns, a whip and a swarm of fuses being lit.
-  'cloth-pin': ['stab', 0.32, 1.85],
-  'cloth-longpin': ['nail', 0.7, 0.85],
-  'cloth-safety-line': ['nail', 0.6, 1.3],
-  'cloth-pin-cushion': ['stab', 0.7, 0.9],
-  'cloth-tapestry': ['whip', 0.5, 1.4],
-  'bleed-stop': ['whip', 0.65, 1.25],
+  'cloth-scarf-hand': ['whip', 0.4, 1.5],
+  'cloth-needle-nexus': ['nail', 0.7, 0.85],
+  'cloth-constraining-cloth': ['whip', 0.6, 0.9],
+  'cloth-pincushion': ['stab', 0.7, 0.9],
+  'cloth-burning-man': ['flame-burst', 0.7, 1.0],
 
   // ── Psychic ──
   // Nothing in the kit is physical except the whip, so nothing else gets an impact: a
@@ -401,11 +440,11 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   // ── Bind ──
   // Nothing here is cast by the character; it is all asked for, so four of the five are chords
   // and incantations. Only the barrage is allowed to sound like breaking.
-  'bind-summon': ['beam-charge', 0.8, 0.6],
-  'bind-shards': ['crystal-shatter', 0.85, 1.0],
-  'bind-idol': ['holy-chord', 0.7, 0.9],
-  'bind-protection': ['incantation', 0.7, 1.0],
-  'bind-treachery': ['ghost-wail', 0.55, 1.0],
+  'bind-daggers': ['chain', 1.5, 0.45],
+  'bind-chain': ['chain', 0.9, 1.0],
+  'bind-eyes': ['ghost-wail', 1.2, 0.7],
+  'bind-siphon': ['beam-charge', 0.6, 0.7],
+  'bind-ritual': ['judgement', 0.7, 1.0],
 
   // ── Slime (id: gum) ──
   'gum-grab': ['slime-splat', 1.1, 0.7],
@@ -424,16 +463,15 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   'quantum-effect-split': ['stretch', 0.75, 0.9],
   'quantum-parasite': ['beast-transform', 0.6, 1.0],
 
-  // ── Harvest (id `gluttony`) ──
+  // ── Wood (id `gluttony`) ──
   // Silent here: GluttonyKit voices every cast itself, at the moment it actually happens (the
-  // scythe's wind-up and swing are two sounds a third of a second apart).
-  'harvest-sickle': null,
-  'harvest-sow': null,
-  'harvest-frenzy': null,
-  'harvest-consume': null,
-  'harvest-reap': null,
-  // Harvest Mastery: the kit plays the shotgun's own blast.
-  'corrupt-predation': null,
+  // scythe's wind-up and swing are two sounds a third of a second apart; a cooked brew is drunk
+  // on the release, not the press).
+  'wood-carverang': null,
+  'wood-oakbrew': null,
+  'wood-commensalism': null,
+  'wood-digest': null,
+  'wood-final-harvest': null,
 
   // ── Death ──
   // Four of the five deal no damage, so none of them gets an impact sound — they get a drain,
@@ -534,7 +572,7 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   'time-bomb': ['explosion-medium', 0.9, 1.05],
   'tarot-of-fate': 'jackpot',
   'secret-upgrades': 'mutate',
-  'breakdown': 'glitch',
+  'shed-skin': ['acid-spray', 0.8, 1.2],
   'steel-shield': ['shield-up', 0.85, 1.1],
   'transmogrify': ['spellbook', 1.1],
   'mortar-command': 'mortar-launch',
@@ -583,7 +621,7 @@ const ELEMENT_PITCH: Record<string, number> = {
   creation: 1.0, dream: 1.2, justice: 0.95, king: 0.6, chalk: 1.35, illusion: 1.15, conquest: 0.85,
   magma: 0.7, wax: 1.3, clay: 0.88, depths: 0.72, passion: 1.28, ruin: 0.7, dune: 0.76, paper: 1.18,
   death: 0.6, fortune: 1.08, cloth: 1.12, marrow: 0.92, tempest: 1.15, psychic: 1.22, myth: 0.78,
-  radiation: 1.12, bind: 0.66, gum: 0.86, gluttony: 0.82,
+  radiation: 1.12, bind: 0.66, gum: 0.86, gluttony: 0.82, pressure: 0.8, ink: 1.1,
 };
 
 /** Key → generic recipe. Shapes an unlisted ability by how big its slot implies it is. */

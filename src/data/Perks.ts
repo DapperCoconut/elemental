@@ -22,7 +22,7 @@ export interface PerkDef {
  * `element`, no recipe — cheats only for now) and two equip slots instead of one. Everything
  * else keeps its Lab-forged perks and a single slot until its own turn comes.
  */
-const TWO_SLOT_ELEMENTS = new Set(['fire', 'shadow', 'water']);
+const TWO_SLOT_ELEMENTS = new Set(['fire', 'shadow', 'water', 'air']);
 
 /** How many perks this element may equip at once. */
 export function perkSlotsFor(elementId: string): number {
@@ -206,9 +206,50 @@ export const ALL_PERKS: ElementPerks[] = [
       },
     ],
   },
+  // Air joined the per-element overhaul with four perks of its own; Hawk keeps its Lab recipe.
   {
     elementId: 'air',
     perks: [
+      {
+        id: 'air-quick',
+        name: 'Quick',
+        emoji: '⏩',
+        color: 0xaaddff,
+        description: 'Every ability recharges 20% faster — Spin Dance charges and Weather Cycle included.',
+        ingredients: [],
+        tier: 'element',
+        elementId: 'air',
+      },
+      {
+        id: 'air-gust',
+        name: 'Gust',
+        emoji: '🌬️',
+        color: 0xbbe8ff,
+        description: 'Throwing Gale Glaive also throws a free Spin Dance. Press R again while the glaive is still out to teleport to it, catch it, and Spin Dance again.',
+        ingredients: [],
+        tier: 'element',
+        elementId: 'air',
+      },
+      {
+        id: 'air-vacuum',
+        name: 'Vacuum',
+        emoji: '🌀',
+        color: 0x88aacc,
+        description: 'A windy aura around you (170px) steadily pulls enemies in, and enemies inside it deal 15% less damage to you.',
+        ingredients: [],
+        tier: 'element',
+        elementId: 'air',
+      },
+      {
+        id: 'air-blowback',
+        name: 'Blowback',
+        emoji: '💨',
+        color: 0xe4f2ff,
+        description: 'Every hit your wind dodge saves throws 20% of its damage back at the nearest enemy — but each dodge spends 15% wind dodge instead of 10%.',
+        ingredients: [],
+        tier: 'element',
+        elementId: 'air',
+      },
       {
         id: 'hawk',
         name: 'Hawk',

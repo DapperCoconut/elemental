@@ -697,6 +697,9 @@ export class ShadowKit {
     worstEnemy = Math.max(worstEnemy, this.arena.npc.active ? this.arena.npc.hopelessness : 0);
     player.hopelessIncomingMult = 1 - Math.min(HOPELESS_DAMAGE_CAP, worstEnemy * HOPELESS_DAMAGE_PER_POINT);
     this.arena.npc.hopelessIncomingMult = 1 - Math.min(HOPELESS_DAMAGE_CAP, player.hopelessness * HOPELESS_DAMAGE_PER_POINT);
+    // Memory's Rebirth: a sealed shadow's foes are not cowed by their hopelessness.
+    if (player.passivesSealed()) player.hopelessIncomingMult = 1;
+    if (this.arena.npc.passivesSealed()) this.arena.npc.hopelessIncomingMult = 1;
 
     // Tripline / shinobi slows and crippling stacks expire back to normal walk speed. The
     // 1v1 pair reads these through the speed-mult accessors; walkSpeedMult is for husks.

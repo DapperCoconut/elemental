@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { AvatarSpec, ArmHold, ArmPose, BaseAvatar, ColorFn, FxBase, TAU, easeIn, easeOut } from './ElementVisuals';
+import { ACID_CELL, AcidGrid, CellState } from './AcidGrid';
 
 /**
  * Shared drawing kit for everything Acid renders: the dripping avatar (globule ball hands, a
@@ -456,6 +457,79 @@ export class AcidFx extends FxBase {
       }
       g.fillStyle(this.tint(tones.wet), 0.85 * fade);
       g.fillCircle(x, y, 4 * scale * (1 - t * 0.4));
+    });
+  }
+
+  /**
+   * Festering Bite: a snake's head lunging out along `angle` with its jaws gaping, then snapping
+   * shut at `reach`. Two hooked fangs lead each jaw and drip on the close; the bigger the stage,
+   * the wider the gape and the longer the head. Drawn as one short animation over the caster.
+   */
+  bite(x: number, y: number, angle: number, reach: number, stage: number, depth = 8, tones: AcidTones = VILE_TONES): void {
+    const seed = Math.random() * 6;
+    const gape = 0.5 + stage * 0.12;
+    this.anim(depth, 260, (g, t) => {
+      // Lunge out over the first 60%, snap shut at 60–75%, hang and fade after.
+      const out = easeOut(Math.min(1, t / 0.6));
+      const shut = t < 0.6 ? 0 : easeIn(Math.min(1, (t - 0.6) / 0.15));
+      const fade = t < 0.75 ? 1 : 1 - (t - 0.75) / 0.25;
+      const hx = x + Math.cos(angle) * reach * out;
+      const hy = y + Math.sin(angle) * reach * out;
+      const open = gape * (1 - shut);
+      const len = 16 + stage * 5;
+      const nx = Math.cos(angle + Math.PI / 2), ny = Math.sin(angle + Math.PI / 2);
+
+      // The neck: a tapering acid ribbon back to the caster, so the head reads as attached.
+      acidDropLayered(g, this.tint, tones, x, y, angle, reach * out, 5 + stage, 0.8 * fade, { seed, bites: 1, head: 1 });
+
+      for (const side of [-1, 1]) {
+        const ja = angle + side * open;
+        const jx = hx + Math.cos(ja) * len;
+        const jy = hy + Math.sin(ja) * len;
+        // Jaw plate: a wedge from the hinge to the tip, scaled dark-to-bright.
+        g.fillStyle(this.tint(tones.rind), 0.95 * fade);
+        g.fillTriangle(hx - nx * side * 2, hy - ny * side * 2, hx + nx * side * 8, hy + ny * side * 8, jx, jy);
+        g.fillStyle(this.tint(tones.body), 0.95 * fade);
+        g.fillTriangle(hx, hy, hx + nx * side * 6, hy + ny * side * 6, jx, jy);
+        g.lineStyle(1.6, this.tint(tones.hot), 0.85 * fade);
+        g.lineBetween(hx + nx * side * 6, hy + ny * side * 6, jx, jy);
+        // The fang: hooked inward off the jaw tip, white at the point.
+        const fa = ja - side * 1.9;
+        const fx = jx + Math.cos(fa) * (6 + stage * 1.5);
+        const fy = jy + Math.sin(fa) * (6 + stage * 1.5);
+        g.lineStyle(3, this.tint(ACID.glow), fade);
+        g.lineBetween(jx, jy, fx, fy);
+        g.fillStyle(this.tint(ACID.white), fade);
+        g.fillCircle(fx, fy, 1.4);
+        // Venom beading off the fang once the jaws are shut.
+        if (shut > 0.5) {
+          const drip = (t - 0.68) * 40;
+          g.fillStyle(this.tint(tones.hot), 0.9 * fade);
+          g.fillCircle(fx, fy + drip, 2);
+        }
+      }
+      // Eyes on the head, slitted, so the thing biting is plainly a snake.
+      g.fillStyle(this.tint(tones.hot), fade);
+      g.fillCircle(hx - Math.cos(angle) * 6 + nx * 5, hy - Math.sin(angle) * 6 + ny * 5, 2.6);
+      g.fillCircle(hx - Math.cos(angle) * 6 - nx * 5, hy - Math.sin(angle) * 6 - ny * 5, 2.6);
+      g.fillStyle(0x0a0602, fade);
+      g.fillEllipse(hx - Math.cos(angle) * 6 + nx * 5, hy - Math.sin(angle) * 6 + ny * 5, 1, 3.4);
+      g.fillEllipse(hx - Math.cos(angle) * 6 - nx * 5, hy - Math.sin(angle) * 6 - ny * 5, 1, 3.4);
+    });
+  }
+
+  /** Two puncture wounds left on a bitten body, weeping venom for a moment. */
+  punctures(x: number, y: number, angle: number, depth = 9, tones: AcidTones = VILE_TONES): void {
+    const nx = Math.cos(angle + Math.PI / 2), ny = Math.sin(angle + Math.PI / 2);
+    this.anim(depth, 700, (g, t) => {
+      const fade = 1 - t;
+      for (const side of [-1, 1]) {
+        const px = x + nx * side * 6, py = y + ny * side * 6;
+        g.fillStyle(this.tint(tones.rind), 0.9 * fade);
+        g.fillCircle(px, py, 2.6);
+        g.fillStyle(this.tint(tones.hot), 0.9 * fade);
+        g.fillEllipse(px, py + 2 + t * 10, 2, 3 + t * 6);
+      }
     });
   }
 
@@ -1021,4 +1095,271 @@ export class AcidAvatar extends BaseAvatar {
       }
     }
   }
+}
+
+// ── Venom: the floor, the tail, the gauge ────────────────────────────────
+
+/** Small deterministic hash per cell, so a cell's wobble and sheen never crawl between repaints. */
+function cellHash(i: number, k = 0): number {
+  const s = Math.sin(i * 12.9898 + k * 78.233) * 43758.5453;
+  return s - Math.floor(s);
+}
+
+/**
+ * The acid floor, painted from the grid. Repainted only when the grid's `version` moves, so it
+ * is cheap however much of the arena is covered. Interior cells merge into runs of rectangles —
+ * one per contiguous strip — and only the rim cells are rounded off with blobs, which is what
+ * gives the floor an eaten, liquid edge instead of a staircase.
+ */
+export function drawAcidFloor(
+  g: Phaser.GameObjects.Graphics, tint: AcidColorFn, grid: AcidGrid, tones: AcidTones,
+): void {
+  g.clear();
+  if (grid.count === 0) return;
+  const S = ACID_CELL;
+  const { cols, rows, cells, x0, y0 } = grid;
+
+  // Rim shadow: the dark etched lip the acid has eaten into the floor around itself.
+  g.fillStyle(tint(tones.rind), 0.85);
+  for (let i = 0; i < cells.length; i++) {
+    if (cells[i] === 0 || !grid.isEdge(i)) continue;
+    g.fillCircle(grid.centerX(i) + (cellHash(i) - 0.5) * 3, grid.centerY(i) + 2 + (cellHash(i, 1) - 0.5) * 3, S * 0.86);
+  }
+
+  // Body: interior strips as rects, rim cells as blobs. Spent acid first, fresh over it.
+  for (const state of [CellState.Cool, CellState.Hot] as const) {
+    g.fillStyle(tint(state === CellState.Hot ? tones.live : tones.body), 1);
+    for (let r = 0; r < rows; r++) {
+      let run = -1;
+      for (let c = 0; c <= cols; c++) {
+        const i = r * cols + c;
+        const solid = c < cols && cells[i] === state && !grid.isEdge(i);
+        if (solid && run < 0) run = c;
+        if (!solid && run >= 0) {
+          g.fillRect(x0 + run * S - 0.5, y0 + r * S - 0.5, (c - run) * S + 1, S + 1);
+          run = -1;
+        }
+      }
+    }
+    for (let i = 0; i < cells.length; i++) {
+      if (cells[i] !== state || !grid.isEdge(i)) continue;
+      g.fillCircle(grid.centerX(i) + (cellHash(i, 2) - 0.5) * 3, grid.centerY(i) + (cellHash(i, 3) - 0.5) * 3, S * 0.74);
+    }
+  }
+
+  // Sheen and pitting, scattered by hash: a few lit flecks on fresh acid, dark pits on spent.
+  for (let i = 0; i < cells.length; i++) {
+    const st = cells[i];
+    if (st === 0) continue;
+    const h = cellHash(i, 4);
+    if (h > 0.22) continue;
+    const px = grid.centerX(i) + (cellHash(i, 5) - 0.5) * S * 0.6;
+    const py = grid.centerY(i) + (cellHash(i, 6) - 0.5) * S * 0.6;
+    if (st === CellState.Hot) {
+      g.fillStyle(tint(tones.hot), 0.7);
+      g.fillCircle(px, py, 2 + h * 8);
+      g.fillStyle(tint(tones.wet), 0.6);
+      g.fillCircle(px - 1, py - 1, 0.8 + h * 3);
+    } else {
+      g.fillStyle(tint(tones.rind), 0.45);
+      g.fillCircle(px, py, 1.4 + h * 7);
+    }
+  }
+}
+
+/**
+ * The live surface over the floor: bubbles swelling and popping on a rotating handful of acid
+ * cells. Called every frame on its own Graphics, so the static floor never has to be repainted
+ * for the acid to look alive.
+ */
+export function drawAcidBubbles(
+  g: Phaser.GameObjects.Graphics, tint: AcidColorFn, spots: { x: number; y: number; born: number; hot: boolean }[],
+  now: number, tones: AcidTones,
+): void {
+  for (const b of spots) {
+    const p = Phaser.Math.Clamp((now - b.born) / 900, 0, 1);
+    const r = (b.hot ? 3.6 : 2.6) * Math.sin(p * Math.PI);
+    if (r <= 0.3) continue;
+    g.fillStyle(tint(b.hot ? tones.hot : tones.live), 0.8);
+    g.fillCircle(b.x, b.y, r);
+    g.fillStyle(tint(tones.wet), 0.7);
+    g.fillCircle(b.x - r * 0.3, b.y - r * 0.3, r * 0.3);
+  }
+}
+
+export interface TailKnot { x: number; y: number }
+
+/**
+ * The serpent's tail: a scaled ribbon that tapers from the hips to a horned rattle, with a pale
+ * belly line, a diamond scale pattern running down the back, and a wet highlight. `alpha` lets the
+ * kit fade it out while dodging and `ghost` draws the sloughed skin Shed Skin leaves behind.
+ */
+export function drawVenomTail(
+  g: Phaser.GameObjects.Graphics, tint: AcidColorFn, knots: TailKnot[], width: number, t: number,
+  tones: AcidTones, alpha = 1, ghost = false,
+): void {
+  const n = knots.length;
+  if (n < 2 || alpha <= 0.02) return;
+  const half = (i: number): number => width * (1 - (i / (n - 1)) * 0.78) * 0.5;
+  const side = (i: number, s: 1 | -1): { x: number; y: number } => {
+    const a = knots[Math.max(0, i - 1)];
+    const b = knots[Math.min(n - 1, i + 1)];
+    const ang = Math.atan2(b.y - a.y, b.x - a.x) + Math.PI / 2;
+    // A slow travelling undulation, so a standing serpent's tail still breathes.
+    const wob = Math.sin(t * 4 - i * 0.7) * Math.min(1, i / 3) * 1.6;
+    const w = half(i) * s + wob;
+    return { x: knots[i].x + Math.cos(ang) * w, y: knots[i].y + Math.sin(ang) * w };
+  };
+  const outline = (scale: number): Phaser.Math.Vector2[] => {
+    const pts: Phaser.Math.Vector2[] = [];
+    for (let i = 0; i < n; i++) {
+      const p = side(i, 1);
+      pts.push(new Phaser.Math.Vector2(knots[i].x + (p.x - knots[i].x) * scale, knots[i].y + (p.y - knots[i].y) * scale));
+    }
+    for (let i = n - 1; i >= 0; i--) {
+      const p = side(i, -1);
+      pts.push(new Phaser.Math.Vector2(knots[i].x + (p.x - knots[i].x) * scale, knots[i].y + (p.y - knots[i].y) * scale));
+    }
+    return pts;
+  };
+
+  if (ghost) {
+    // A sloughed skin: a pale, papery outline with the scale pattern still pressed into it.
+    g.fillStyle(tint(tones.wet), 0.18 * alpha);
+    g.fillPoints(outline(1), true);
+    g.lineStyle(1.4, tint(tones.wet), 0.55 * alpha);
+    g.strokePoints(outline(1), true);
+    g.lineStyle(1, tint(tones.live), 0.35 * alpha);
+    for (let i = 1; i < n - 1; i += 2) {
+      const l = side(i, 1), r = side(i, -1);
+      g.lineBetween(l.x, l.y, knots[i + 1].x, knots[i + 1].y);
+      g.lineBetween(r.x, r.y, knots[i + 1].x, knots[i + 1].y);
+    }
+    return;
+  }
+
+  // Shadow under the coil, then the scaled body, then the darker back.
+  g.fillStyle(0x000000, 0.22 * alpha);
+  g.fillPoints(outline(1.15).map((p) => new Phaser.Math.Vector2(p.x, p.y + 4)), true);
+  g.fillStyle(tint(tones.rind), alpha);
+  g.fillPoints(outline(1.08), true);
+  g.fillStyle(tint(tones.body), alpha);
+  g.fillPoints(outline(1), true);
+  g.fillStyle(tint(tones.live), 0.55 * alpha);
+  g.fillPoints(outline(0.45), true);
+
+  // Diamond scales down the spine: dark lozenges with a lit core, every other knot.
+  for (let i = 1; i < n - 2; i += 2) {
+    const a = knots[i], b = knots[i + 1];
+    const ang = Math.atan2(b.y - a.y, b.x - a.x);
+    const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+    const hw = half(i) * 0.55;
+    const hl = 6;
+    const ca = Math.cos(ang), sa = Math.sin(ang);
+    g.fillStyle(tint(tones.rind), 0.85 * alpha);
+    g.fillTriangle(mx + ca * hl, my + sa * hl, mx - sa * hw, my + ca * hw, mx + sa * hw, my - ca * hw);
+    g.fillTriangle(mx - ca * hl, my - sa * hl, mx - sa * hw, my + ca * hw, mx + sa * hw, my - ca * hw);
+    g.fillStyle(tint(tones.hot), 0.7 * alpha);
+    g.fillCircle(mx, my, Math.max(1, hw * 0.35));
+  }
+
+  // The wet highlight along one flank.
+  g.lineStyle(1.4, tint(tones.wet), 0.4 * alpha);
+  g.beginPath();
+  for (let i = 0; i < n - 1; i++) {
+    const p = side(i, 1);
+    const q = { x: knots[i].x + (p.x - knots[i].x) * 0.6, y: knots[i].y + (p.y - knots[i].y) * 0.6 };
+    if (i === 0) g.moveTo(q.x, q.y); else g.lineTo(q.x, q.y);
+  }
+  g.strokePath();
+
+  // The rattle: three stacked horn segments at the tip, shivering.
+  const tip = knots[n - 1], pre = knots[n - 2];
+  const ta = Math.atan2(tip.y - pre.y, tip.x - pre.x);
+  const shiver = Math.sin(t * 40) * 1.2;
+  for (let k = 0; k < 3; k++) {
+    const d = 3 + k * 5;
+    const cx = tip.x + Math.cos(ta) * d + Math.cos(ta + Math.PI / 2) * shiver;
+    const cy = tip.y + Math.sin(ta) * d + Math.sin(ta + Math.PI / 2) * shiver;
+    const r = 4.2 - k * 0.9;
+    g.fillStyle(tint(tones.rind), alpha);
+    g.fillEllipse(cx, cy, r * 2.4, r * 2.4);
+    g.fillStyle(tint(ACID.bile), 0.9 * alpha);
+    g.fillEllipse(cx, cy, r * 1.8, r * 1.8);
+  }
+}
+
+/** Toxin tiers in stack order — the gauge marks, the floating callouts and the kit all read this. */
+export const TOXIN_TIERS = [25, 50, 100, 250, 500, 1000];
+
+/**
+ * The toxin tell on a poisoned body: a ring of drips round the feet, one more drip per tier
+ * reached, running faster and brighter as it climbs. Drawn on the kit's overlay every frame.
+ */
+export function drawToxinMark(
+  g: Phaser.GameObjects.Graphics, tint: AcidColorFn, x: number, y: number, stacks: number, t: number,
+  tones: AcidTones, alpha = 1,
+): void {
+  let tier = 0;
+  for (const th of TOXIN_TIERS) if (stacks >= th) tier++;
+  const k = Math.min(1, stacks / 25);
+  if (k <= 0 || alpha <= 0.02) return;
+  g.lineStyle(1.6, tint(tones.live), (0.25 + 0.15 * tier) * alpha * k);
+  g.strokeEllipse(x, y + 14, 34, 12);
+  const drips = 2 + tier * 2;
+  for (let i = 0; i < drips; i++) {
+    const p = (t * (0.6 + tier * 0.25) + i / drips) % 1;
+    const a = (i / drips) * TAU;
+    const dx = x + Math.cos(a) * 14;
+    const dy = y + Math.sin(a) * 6 - 8 + p * 22;
+    g.fillStyle(tint(tier >= 4 ? ACID.sting : tones.hot), (1 - p) * 0.85 * alpha * k);
+    g.fillEllipse(dx, dy, 2.4, 3.6);
+  }
+}
+
+/**
+ * The acidification gauge across the top of the screen: a glass tube filling with acid, ticks at
+ * the four Shed Skin milestones (lit once passed), and a marked 50% line where Poison Whip starts
+ * dealing double toxin. Screen-space; the kit owns the Graphics.
+ */
+export function drawAcidBar(
+  g: Phaser.GameObjects.Graphics, tint: AcidColorFn, x: number, y: number, w: number, h: number,
+  coverage: number, t: number, tones: AcidTones, milestones: number[], reached: number,
+): void {
+  const k = Phaser.Math.Clamp(coverage, 0, 1);
+  // The tube.
+  g.fillStyle(0x0b0f0a, 0.85);
+  g.fillRoundedRect(x - 3, y - 3, w + 6, h + 6, (h + 6) / 2);
+  g.lineStyle(1.5, tint(tones.body), 0.9);
+  g.strokeRoundedRect(x - 3, y - 3, w + 6, h + 6, (h + 6) / 2);
+  // The acid in it, with a wobbling meniscus at the front.
+  if (k > 0.002) {
+    const fw = Math.max(h, w * k);
+    g.fillStyle(tint(tones.body), 1);
+    g.fillRoundedRect(x, y, fw, h, h / 2);
+    g.fillStyle(tint(tones.live), 1);
+    g.fillRoundedRect(x, y, fw, h * 0.55, { tl: h / 2, tr: h / 2, bl: 0, br: 0 });
+    g.fillStyle(tint(tones.hot), 0.9);
+    g.fillCircle(x + fw - h / 2 + Math.sin(t * 6) * 1.2, y + h / 2, h * 0.42);
+    // Bubbles climbing inside the fill.
+    for (let i = 0; i < 5; i++) {
+      const bx = x + ((t * 22 + i * 47) % Math.max(1, fw - 4)) + 2;
+      g.fillStyle(tint(tones.wet), 0.55);
+      g.fillCircle(bx, y + h * (0.3 + 0.4 * ((i * 0.37) % 1)), 1.2);
+    }
+  }
+  // The 50% line: where the whip starts carrying double toxin.
+  const hx = x + w * 0.5;
+  g.lineStyle(2, tint(ACID.sting), k >= 0.5 ? 1 : 0.55);
+  g.lineBetween(hx, y - 5, hx, y + h + 5);
+  // Shed Skin milestones: diamonds, lit once passed.
+  milestones.forEach((m, i) => {
+    const mx = x + w * m;
+    const lit = i < reached;
+    g.fillStyle(lit ? tint(tones.hot) : 0x2a2f28, 1);
+    g.fillTriangle(mx, y - 7, mx - 4, y - 2, mx + 4, y - 2);
+    g.fillTriangle(mx, y + 3, mx - 4, y - 2, mx + 4, y - 2);
+    g.lineStyle(1, tint(lit ? tones.wet : tones.body), 1);
+    g.strokeTriangle(mx, y - 7, mx - 4, y - 2, mx + 4, y - 2);
+  });
 }

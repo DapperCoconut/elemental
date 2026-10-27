@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { Element } from '../elements/Element';
+import { CLICK_ABILITY_IDS, Element } from '../elements/Element';
 import { CastContext } from '../elements/Ability';
 import { HealthBar } from '../combat/HealthBar';
 import { Sfx } from '../audio';
@@ -339,13 +339,23 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
    */
   public psychicIncomingMult = 1;
   /**
-   * Bind (Shards of Oblivion): 1.1^tithes of vulnerability the patron has charged this fighter
-   * for its favours. Its own field for the same reason Justice, Magma and Psychic have
-   * theirs — BindKit rewrites it from scratch every frame, and sharing
-   * `incomingDamageMultiplier` would stomp whatever else wrote armour that tick. Permanent for
-   * the match on purpose: a tithe is not a debuff, it is a price.
+   * Bind: the Brittle curse (and a Permanent Bond handing it to an enemy), less a False Idol's
+   * armour. Its own field for the same reason Justice, Magma and Psychic have theirs — BindKit
+   * rewrites it from scratch every frame, and sharing `incomingDamageMultiplier` would stomp
+   * whatever else wrote armour that tick.
    */
   public bindIncomingMult = 1;
+  /**
+   * Bind: the Sluggish curse and a chain's +20% cooldowns. Its own field for the same reason
+   * `dreamCooldownMult` is one — `cooldownMult` is written wholesale elsewhere. Rewritten every
+   * frame by BindKit and handed back by its reset().
+   */
+  public bindCooldownMult = 1;
+  /**
+   * Bind (Blackened Eyes): walking as the inner soul — nothing solid stops this body. Read by
+   * every push-out-of-an-obstacle site that honours it. Rewritten every frame by BindKit.
+   */
+  public soulWalking = false;
   /**
    * Illusion's damage bonuses, folded into one field and rewritten from scratch by IllusionKit
    * every frame — Justice's arrangement, and for Justice's reason. A Phantom's blast marks a
@@ -393,31 +403,21 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   /** Cloth's Quick artworks, multiplied into every cooldown the tailor pays. */
   public clothCooldownMult = 1;
   /**
-   * Harvest (element id `gluttony`, Reaping Hour): the permanent 15%-a-hit vulnerability the
-   * scythe leaves on everything it cuts, compounded. Its own field for the reason Justice,
-   * Illusion and Cloth have theirs: GluttonyKit rewrites it from scratch every frame off its own
-   * per-body stack count, and sharing `incomingDamageMultiplier` would stomp whatever else wrote
-   * armour that tick.
+   * Wood (element id `gluttony`) Oakbrew: the brew's armour (0.85 while it lasts), on the ent and —
+   * with E+ Brewmaster — on teammates it shared a cup with. Self-granted, so it travels online in
+   * `dm`. GluttonyKit is its one writer and rewrites it every frame.
    */
-  public gluttonyIncomingMult = 1;
+  public woodIncomingMult = 1;
   /**
-   * Harvest F+ Corrupt Cooking: Meat Broth's armour on the scarecrow itself (0.67 while it lasts).
-   * Separate from `gluttonyIncomingMult` because that one is the Reaping Hour vulnerability the
-   * *attacker* writes on its victims; this one is self-granted, so it travels online in `dm`.
+   * Wood: `Date.now()` epoch until which this fighter is gummed up in sap — it chewed into an
+   * ent's Sap HP. Read through `woodSlowMult()` by every mover; mirrored online.
    */
-  public harvestIncomingMult = 1;
+  public woodSlowUntil = 0;
   /**
-   * Harvest R+ Poison Payload: poisoned by a crow's vial until this `Date.now()` time. The kit owns
-   * the ticking; this field is the tray's and the online mirror's view of it.
+   * Wood Final Harvest: 1 once the scythe has Tainted this body (permanent). The kit keeps who
+   * tainted it; this is the tray's and the online mirror's view.
    */
-  public harvestPoisonUntil = 0;
-  /**
-   * Harvest: how far the rot has got into this body, 0–100. Written by GluttonyKit on whoever
-   * stands on the scarecrow's mold, bites into its Corrupt HP, or is bitten while it is half rot;
-   * read back by its lifesteal, the crows and the scythe's execute line. A plain field so the
-   * status tray and the online mirror pick it up — the attacker's sim decides it.
-   */
-  public harvestCorruption = 0;
+  public woodTainted = 0;
   /**
    * Devotion: faith poured into this body by the priest (id `passion`). Nothing lowers it; at the
    * cap (200 in a duel) the body is converted. A plain field so the status tray and the online
@@ -425,11 +425,11 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
    */
   public devotionFaith = 0;
   /**
-   * Harvest: Corrupt HP, a purple layer spent after weak HP and before clotted HP. Whatever it
-   * soaks is reported to {@link onCorruptAbsorb} so the kit can rot whoever did the soaking.
+   * Wood: Sap HP, an amber layer spent after weak HP and before clotted HP. Whatever it soaks is
+   * reported to {@link onSapAbsorb} so the kit can gum up whoever did the soaking.
    */
-  public corruptHp = 0;
-  public onCorruptAbsorb: ((spent: number, opts?: DamageOpts) => void) | null = null;
+  public sapHp = 0;
+  public onSapAbsorb: ((spent: number, opts?: DamageOpts) => void) | null = null;
   /**
    * Sound (the Smooth soul song): 20% damage resistance while it plays. Its own field for the
    * reason Justice, Magma and Illusion have theirs — SoundKit rewrites it from scratch every
@@ -818,6 +818,95 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   /** Invoked with the HP lost whenever a cast backfires, so the kit that applied it can draw the grind. */
   public onCastPunish: ((amount: number) => void) | null = null;
   /**
+   * Pressure R (Pressure Point): PainLock. Until this `Date.now()` timestamp every ability this
+   * fighter uses stuns it for `painLockStunMs` and costs it `painLockDamage` health. Lives here for
+   * the same reason as the wrench above — the cast stamp is the one honest chokepoint — and so it
+   * runs on the victim's own sim online, where its health and its stun belong.
+   */
+  public painLockUntil = 0;
+  public painLockDamage = 0;
+  public painLockStunMs = 0;
+  /** `Date.now()` of the last PainLock jolt, for PressureKit to draw it. */
+  public painLockFiredAt = 0;
+  /**
+   * Pressure: slowed by a punch, a vent or Depressurize's steam until this `Date.now()` timestamp,
+   * to `pressureSlowFactor` of normal speed. Read through `pressureSlowMult()` by every mover.
+   */
+  public pressureSlowUntil = 0;
+  public pressureSlowFactor = 1;
+  /**
+   * Pressure E (Seismic Slam at 100): driven into the floor until this `Date.now()` timestamp.
+   * The body cannot move but may still attack; PressureKit pins it and knocks it loose the moment
+   * anything hits it.
+   */
+  public pressureGroundedUntil = 0;
+  /**
+   * Astra R (Celestial Smite): struck by the purple bolt — heavily slowed until this `Date.now()`
+   * timestamp. Read through `astraSlowMult()` by every mover.
+   */
+  public astraSlowUntil = 0;
+  /**
+   * Ink: slipped on a banana peel. Controls are slippery (the body keeps its momentum and only
+   * slowly turns toward where it is being steered) until this `Date.now()` timestamp.
+   */
+  public inkSlipUntil = 0;
+  /**
+   * Ink F (Ol' 6 Ton): flattened by the anvil until this `Date.now()` timestamp — half speed, and
+   * the ability keys are shuffled. InkKit permutes a local player's keys; a bot's casts are
+   * remapped through `inkSwap` in `NpcOpponent.castAbility`.
+   */
+  public inkFlatUntil = 0;
+  /** A flattened bot's shuffle: the ability it tried → the ability it gets. Null when not flat. */
+  public inkSwap: Record<string, string> | null = null;
+  /**
+   * Memory's passive, Guilt: while a Memory fighter is this one's enemy (`guiltMarked`, kept by
+   * MemoryKit every frame), every hit it takes leaves a stack, and every stack is +1% damage
+   * taken for the rest of the match. Counted on whichever sim a hit lands on — the attacker's
+   * replica and the victim's own body each count the hits they see — so nothing is mirrored.
+   */
+  public guiltMarked = false;
+  public guiltStacks = 0;
+  /**
+   * Memory Click (Forget): the `Date.now()` expiry of every shard latched into this body, oldest
+   * first, at most three. A victim learns about shards laid on a replica through the mirrored
+   * count below (`memoryShardMirror` until `memoryShardMirrorUntil`).
+   */
+  public memoryShards: number[] = [];
+  public memoryShardMirror = 0;
+  public memoryShardMirrorUntil = 0;
+  /**
+   * Memory R (Rebirth): `Date.now()` epoch until which this fighter's passives are switched off.
+   * Read by the kits through `passivesSealed()`.
+   */
+  public passivesSealedUntil = 0;
+  /**
+   * Memory, three shards: a bot whose cooldown bars are lost in static. Until this `Date.now()`
+   * stamp it cannot tell what is ready, and `NpcOpponent.castAbility` refuses everything but its click.
+   */
+  public memoryBlindUntil = 0;
+  /**
+   * String R (Hexing Strand): brushing the purple cord slows until this `Date.now()` stamp, and its
+   * snap snares — a much heavier slow — until the next. Read through `stringSlowMult()` by every mover.
+   */
+  public stringHexUntil = 0;
+  public stringSnareUntil = 0;
+  /** String F (Marionette): a puppet until this `Date.now()` stamp. StringKit does the steering. */
+  public stringPuppetUntil = 0;
+  /**
+   * String Q (Linen Tomb): wrapped in silk in the middle of the arena until this `Date.now()` stamp
+   * (cleared early when the silk is cut through). StringKit pins the body; a bot holds still.
+   */
+  public stringTombedUntil = 0;
+  /**
+   * String Q, the spider's half: while the tomb stands, hits from the one inside it never land.
+   * `stringWardAll` (a duel, or online, where there is only one enemy and a relayed hit carries no
+   * source) blocks every hit that is not self-inflicted; otherwise only those whose source is
+   * `stringWardFrom`. A blocked hit is handed to `onStringWardHit`.
+   */
+  public stringWardFrom: Fighter | null = null;
+  public stringWardAll = false;
+  public onStringWardHit: ((amount: number) => void) | null = null;
+  /**
    * Online play: when true this fighter is a remote-player replica whose HP is
    * network-authoritative. Local damage/heals only play hit feedback and never
    * change vitals — the real numbers arrive via netSyncVitals().
@@ -985,10 +1074,22 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   public slimeConfuseVy = 0;
   public slimeConfuseDirUntil = 0;
 
-  /** Acid Purge (Slime F): timestamp until which positive stat boosts (speed) are suppressed. */
+  /** Venom Purge (Festering Bite, element `slime`): timestamp until which positive speed boosts are suppressed. Its start strips every buff (SlimeKit). */
   public purgedUntil = 0;
-  /** Acid Purge: multiplier applied on top of a fighter's own speed calc — used to cancel a baked-in variant speed bonus (invasion husks). Default 1. */
+  /** Venom Purge: multiplier applied on top of a fighter's own speed calc — used to cancel a baked-in variant speed bonus (invasion husks). Default 1. */
   public purgeSpeedMult = 1;
+  /**
+   * Venom (element id `slime`): toxin stacks. They never fade — 25 starts a burn, 50 makes the
+   * body drip acid as it walks, 100 weakens it, 250 and 500 eat max HP, 1000 kills. SlimeKit owns
+   * every tier; this is only the count, so the status tray and the online mirror can read it.
+   */
+  public toxinStacks = 0;
+  /**
+   * Victim-side stand-in for "my attacker is toxified, so they deal less" — SlimeKit keeps this
+   * in step with the opposing fighter's `toxinStacks` each frame, the `hopelessIncomingMult`
+   * pattern, since `takeDamage` has no attacker reference.
+   */
+  public toxinIncomingMult = 1;
 
   public earthStunnedUntil = 0;
   /** Earth Mastery — Dust Screen: while active, Husk AI wanders/misfires instead of pathfinding normally. */
@@ -1096,6 +1197,62 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   /** Movement factor from Devotion's yellow-fire pillars (Q+), for every mover. */
   devotionSlowMult(): number {
     return Date.now() < this.devotionSlowUntil ? 0.6 : 1;
+  }
+
+  /** Wood: gummed up in sap — 30% slower. */
+  woodSlowMult(): number {
+    return Date.now() < this.woodSlowUntil ? 0.7 : 1;
+  }
+
+  /** Ink: flattened by an anvil — half speed. */
+  inkFlatSlowMult(): number {
+    return Date.now() < this.inkFlatUntil ? 0.5 : 1;
+  }
+
+  /** Pressure: slowed by a punch, a steam vent or Depressurize. */
+  pressureSlowMult(): number {
+    return Date.now() < this.pressureSlowUntil ? Math.min(1, Math.max(0.1, this.pressureSlowFactor)) : 1;
+  }
+
+  /** Astra: struck by Celestial Smite — a heavy slow. */
+  astraSlowMult(): number {
+    return Date.now() < this.astraSlowUntil ? 0.35 : 1;
+  }
+
+  /** String: brushing a Hexing Strand (60% speed), or snared by its snap (30%). */
+  stringSlowMult(): number {
+    const now = Date.now();
+    if (now < this.stringSnareUntil) return 0.3;
+    return now < this.stringHexUntil ? 0.6 : 1;
+  }
+
+  /** Memory: the shards latched into this body right now (a victim's mirrored count included). */
+  memoryShardCount(): number {
+    const now = Date.now();
+    const own = this.memoryShards.filter((t) => t > now).length;
+    return Math.max(own, now < this.memoryShardMirrorUntil ? this.memoryShardMirror : 0);
+  }
+
+  /** Memory's Rebirth: this fighter's passives are off. */
+  passivesSealed(): boolean {
+    return Date.now() < this.passivesSealedUntil;
+  }
+
+  /** Memory's Guilt, as one factor for `takeDamage`. */
+  guiltIncomingMult(): number {
+    return 1 + 0.01 * this.guiltStacks;
+  }
+
+  /**
+   * How long an ability has sat ready, in ms — 0 while it is cooling or locked. An ability never
+   * cast counts from the start of the match, so callers cap it.
+   */
+  readyForMs(abilityId: string): number {
+    const ability = this.element.abilities.find((a) => a.id === abilityId);
+    if (!ability || this.isChargedUltimate(ability)) return 0;
+    if (this.getCooldownRatio(abilityId) < 1) return 0;
+    const stamp = this.cooldowns.get(abilityId) ?? 0;
+    return Math.max(0, Date.now() - stamp - this.storedCooldown(abilityId, ability));
   }
   /**
    * Silence Mastery — Puppetmaster: someone else is steering this body until this
@@ -1257,6 +1414,8 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
    * never touch `castAbility` still count.
    */
   public lastCastAbilityId: string | null = null;
+  /** As `lastCastAbilityId`, but never a Click — Lockdown's padlock skips basic attacks. */
+  public lastLockableAbilityId: string | null = null;
 
   private incomingCritCtx: { chance: number; mult: number } | null = null;
   private cooldowns: Map<string, number> = new Map();
@@ -1353,6 +1512,12 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     if (this.allyDamageBlocked && Fighter.nonAllyDepth === 0) return;
     // Online PvP: only relayed hits change our health — see `netAuthoritativeDamage`.
     if (this.netAuthoritativeDamage && !opts?.netApplied && !opts?.selfInflicted) return;
+    // String's Linen Tomb: the one in the silk cannot reach the spider until it breaks.
+    if ((this.stringWardAll || (this.stringWardFrom && opts?.source === this.stringWardFrom))
+        && !opts?.selfInflicted && amount > 0) {
+      this.onStringWardHit?.(amount);
+      return;
+    }
     // Divine perk Order: self-inflicted costs are refused outright.
     if (opts?.selfInflicted && this.selfDamageImmune) { this.onSelfDamageBlocked?.(amount); return; }
     // Myth's true damage: nothing on this side gets a say except invincibility itself.
@@ -1412,7 +1577,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       // Tallied here: after the crit roll (a crit really is a bigger hit) but before every
       // mitigation multiplier on the line below, which is what "damage aimed at you" means.
       this.rawDamageTaken += amount;
-      let mitigation = trueDamage ? 1 : this.incomingDamageMultiplier * this.gauntletDamageTakenMult * this.bribeIncomingMult * this.smokeIncomingMult * this.cardDamageTakenMult * this.droneArmorMult * this.kineticShieldMult * this.steelShieldMult * this.empoweredIncomingMult * this.potionArmorMult * this.hopelessIncomingMult * this.justiceIncomingMult * this.magmaIncomingMult * this.waxIncomingMult * this.clayIncomingMult * this.conquestIncomingMult * this.passionIncomingMult * this.quantumIncomingMult * this.deathIncomingMult * this.journalIncomingMult * this.paperIncomingMult * this.psychicIncomingMult * this.bindIncomingMult * this.illusionIncomingMult * this.soundIncomingMult * this.artifactIncomingMult * this.clothIncomingMult * this.marrowIncomingMult * this.gluttonyIncomingMult * this.harvestIncomingMult * this.orderIncomingMult * this.wardIncomingMult * this.soulTankIncomingMult * this.bossWardIncomingMult * this.fortuneIncomingMult * this.dreamIncomingMult * this.duneIncomingMult * this.radiationIncomingMult * this.lifeIncomingMult * this.magicIncomingMult * this.mutationIncomingMult * this.mapArmorMult * this.starIncomingMult * this.earthBiomeIncomingMult * this.perkIncomingMult * this.paintIncomingMult * this.netDefenseMult;
+      let mitigation = trueDamage ? 1 : this.incomingDamageMultiplier * this.gauntletDamageTakenMult * this.bribeIncomingMult * this.smokeIncomingMult * this.cardDamageTakenMult * this.droneArmorMult * this.kineticShieldMult * this.steelShieldMult * this.empoweredIncomingMult * this.potionArmorMult * this.hopelessIncomingMult * this.justiceIncomingMult * this.magmaIncomingMult * this.waxIncomingMult * this.clayIncomingMult * this.conquestIncomingMult * this.passionIncomingMult * this.quantumIncomingMult * this.deathIncomingMult * this.journalIncomingMult * this.paperIncomingMult * this.psychicIncomingMult * this.bindIncomingMult * this.illusionIncomingMult * this.soundIncomingMult * this.artifactIncomingMult * this.clothIncomingMult * this.marrowIncomingMult * this.woodIncomingMult * this.orderIncomingMult * this.wardIncomingMult * this.soulTankIncomingMult * this.bossWardIncomingMult * this.fortuneIncomingMult * this.dreamIncomingMult * this.duneIncomingMult * this.radiationIncomingMult * this.lifeIncomingMult * this.magicIncomingMult * this.mutationIncomingMult * this.mapArmorMult * this.starIncomingMult * this.earthBiomeIncomingMult * this.perkIncomingMult * this.paintIncomingMult * this.toxinIncomingMult * this.netDefenseMult;
       // Ruin's spikes turn armour inside out — 25% less damage taken comes back as 25% more.
       // Only a net *buff* is flipped; a fighter already taking extra damage is left alone.
       if (mitigation < 1 && this.scene.time.now < this.buffsInvertedUntil) mitigation = 2 - mitigation;
@@ -1429,6 +1594,8 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       if (opts?.aoe || opts?.pierce) mitigation *= this.clothAoeMult;
       // Myth: pistol vulnerability stacks and the crowd's jeer, both plain amplifiers.
       mitigation *= this.mythIncomingMult();
+      // Memory's Guilt: every hit already taken makes this one 1% worse.
+      mitigation *= this.guiltIncomingMult();
       amount = Math.round(amount * mitigation * (trueDamage ? 1 : this.ruinIncomingMult));
       if (this.darkVulnStacks > 0) amount = Math.round(amount * (1 + 0.25 * this.darkVulnStacks));
       // Fire Mastery — Heatwave: exposed amplifies the next hit, then is consumed.
@@ -1477,6 +1644,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       // Hit feedback only — vitals come from the network. Report the computed
       // amount so the local owner can forward it to the authoritative peer.
       this.onGhostDamage?.(amount, opts);
+      if (amount > 0 && this.guiltMarked && !opts?.selfInflicted) this.guiltStacks++;
       if (amount > 0 && !opts?.selfInflicted) Fighter.creditUltDamage?.(this, amount);
       // Sound is part of that feedback: without this, landing a hit on a remote
       // opponent would be silent, since the ghost never reaches the real-hit path.
@@ -1541,14 +1709,14 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       }
     }
 
-    // Harvest: Corrupt HP soaks like weak HP, and tells the kit who it was soaking.
-    if (!pierce && this.corruptHp > 0) {
-      const absorbed = Math.min(this.corruptHp, amount);
-      this.corruptHp -= absorbed;
+    // Wood: Sap HP soaks like weak HP, and tells the kit who it was soaking.
+    if (!pierce && this.sapHp > 0) {
+      const absorbed = Math.min(this.sapHp, amount);
+      this.sapHp -= absorbed;
       amount -= absorbed;
       if (absorbed > 0) {
         Sfx.playAt('shield-absorb', this.x, { rate: 0.7, volume: 0.8 });
-        this.onCorruptAbsorb?.(absorbed, opts);
+        this.onSapAbsorb?.(absorbed, opts);
       }
       if (amount === 0) {
         this.emit('damaged', 0);
@@ -1606,6 +1774,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     if (!this.immortal) this.hp = Math.max(Math.min(this.minHpFloor, this.hp), this.hp - amount);
     this.emit('damaged', amount);
     if (amount > 0 && !opts?.selfInflicted) Fighter.creditUltDamage?.(this, amount);
+    if (amount > 0 && this.guiltMarked && !opts?.selfInflicted) this.guiltStacks++;
     // A crit already announced itself above with its own, louder sound.
     if (amount > 0 && !isCrit) Sfx.hit(amount, this.x, this.isPlayerFighter);
     if (amount > 0 && this.onDamaged) this.onDamaged(amount);
@@ -1825,7 +1994,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     const ultimateExtra = ability.isUltimate ? this.ultimateCooldownMult : 1;
     return ability.cooldown * (this.cooldownMult || 1) * this.netCooldownMult
       * this.amputationCooldownMult * this.deathDelayCooldownMult * this.dreamCooldownMult
-      * this.justiceCooldownMult * this.perkCooldownMult * this.psychicCooldownMult * this.clothCooldownMult * this.goldCooldownMult * ultimateExtra;
+      * this.justiceCooldownMult * this.perkCooldownMult * this.psychicCooldownMult * this.clothCooldownMult * this.goldCooldownMult * this.bindCooldownMult * ultimateExtra;
   }
 
   /** As {@link effectiveCooldown}, including whatever split was banked when this id was stamped. */
@@ -1916,6 +2085,9 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
    */
   private announceCast(abilityId: string): void {
     this.lastCastAbilityId = abilityId;
+    const isClick = CLICK_ABILITY_IDS.has(abilityId)
+      || this.element.abilities.some((a) => a.id === abilityId && a.displayKey === 'Click');
+    if (!isClick) this.lastLockableAbilityId = abilityId;
     // The one place every ability passes through is also the only honest place to count
     // them, so bond research listens here rather than in each kit. Emitted for both sides;
     // ArenaScene subscribes on the player alone.
@@ -1934,6 +2106,22 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       // still has to land on a co-op player carrying `allyDamageBlocked`.
       Fighter.asNonAllyDamage(() => this.takeDamage(cost));
       this.onCastPunish?.(cost);
+    }
+    // Pressure Point's PainLock: the ability goes off, and then the body seizes up.
+    const wall = Date.now();
+    if (wall < this.painLockUntil && (this.painLockDamage > 0 || this.painLockStunMs > 0)) {
+      const cost = this.painLockDamage;
+      const ms = this.painLockStunMs;
+      if (cost > 0) Fighter.asNonAllyDamage(() => this.takeDamage(cost));
+      if (ms > 0 && !this.unstoppable) {
+        this.applyDisarm(ms);
+        this.stunnedUntil = Math.max(this.stunnedUntil, wall + ms);
+        // The bot's and a husk's movement read the scene-clock stun; the player's is held by the kit.
+        if (!this.isPlayerFighter && this.scene) {
+          this.earthStunnedUntil = Math.max(this.earthStunnedUntil, this.scene.time.now + ms);
+        }
+      }
+      this.painLockFiredAt = wall;
     }
   }
 
@@ -2106,7 +2294,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     super.preUpdate(time, delta);
     // Weak HP decays steadily at 3/s.
     if (this.weakHp > 0) this.weakHp = Math.max(0, this.weakHp - 3 * (delta / 1000));
-    this.healthBar.update(this.x, this.y, this.hp, this.shieldHp, this.chargeRatio, this.clottedHp, this.weakHp, this.chargeColor, this.corruptHp);
+    this.healthBar.update(this.x, this.y, this.hp, this.shieldHp, this.chargeRatio, this.clottedHp, this.weakHp, this.chargeColor, this.sapHp);
   }
 
   destroy(fromScene?: boolean): void {

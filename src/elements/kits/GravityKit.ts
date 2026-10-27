@@ -1161,7 +1161,7 @@ export class GravityKit {
 
   /** Gravity Aura (passive): 20% chance to catch an incoming projectile instead of taking the hit. */
   tryCatchProjectile(proj: Projectile): boolean {
-    if (!this.arena.masteryActive) return false;
+    if (!this.arena.masteryActive || this.arena.player.passivesSealed()) return false;
     if (this.auraOrbs.length >= AURA_MAX_ORBS) return false;
     if (Math.random() >= 0.2) return false;
     const scene = this.arena.scene;

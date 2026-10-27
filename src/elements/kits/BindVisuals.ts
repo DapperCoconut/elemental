@@ -44,7 +44,30 @@ export const BND = {
   wrathDeep: 0x8c1008,
   /** Heat, on the beam and on its bar. */
   heat: 0xffa63d,
+  /** Lost souls: a pale, cold wisp-light — the only thing in the element that is not gold or void. */
+  soul: 0xd6ecff,
+  soulDeep: 0x7fa6d6,
+  /** Choice Souls (R+): the three tempers a soul can die in. */
+  soulKind: 0x6fe39a,
+  soulAngry: 0xff5a4a,
+  soulSad: 0x5aa8ff,
+  /** Revenants and the ritual's runes — the old red that was under the gold all along. */
+  rune: 0xd8202a,
+  runeLit: 0xff6a4e,
 };
+
+/** A lost soul's temper. `plain` without Choice Souls (R+); the other three only with it. */
+export type SoulKind = 'plain' | 'kind' | 'angry' | 'sad';
+
+/** The light a soul gives off, by temper. */
+export function soulColor(kind: SoulKind): number {
+  switch (kind) {
+    case 'kind': return BND.soulKind;
+    case 'angry': return BND.soulAngry;
+    case 'sad': return BND.soulSad;
+    default: return BND.soul;
+  }
+}
 
 /** Deterministic 0–1 noise, so a hex ring keeps its glyphs between frames. */
 export function jitter(seed: number, i: number): number {
@@ -1153,6 +1176,436 @@ export function tithePlaque(
   }
 }
 
+// ── Lost souls ──────────────────────────────────────────────────────────────
+
+/**
+ * A lost soul: a small wisp of something long dead, drifting. A teardrop of cold light with its
+ * tail streaming *behind* the way it is going (`ang`), two hollow eye-holes and a gaping mouth,
+ * and a few flecks shedding off the tail. `essence` 0–1 is how much of it is left — a siphoned
+ * soul shrinks, thins and flickers. `bound` hangs a link of chain off its tail.
+ */
+export function lostSoul(
+  g: Phaser.GameObjects.Graphics,
+  tint: BindColorFn,
+  x: number, y: number, alpha: number,
+  { kind = 'plain' as SoulKind, t = 0, seed = 0, ang = Math.PI / 2, essence = 1, bound = false, scale = 1 } = {},
+): void {
+  const ess = Phaser.Math.Clamp(essence, 0, 1);
+  const S = scale * (0.55 + ess * 0.45);
+  const flick = ess < 0.35 ? 0.55 + 0.45 * Math.abs(Math.sin(t * 23 + seed)) : 1;
+  const a = alpha * flick;
+  const col = soulColor(kind);
+  const bob = Math.sin(t * 2.4 + seed) * 2.2 * S;
+  const cy = y + bob;
+  // Tail direction: the opposite way from the drift, waving.
+  const back = ang + Math.PI;
+  const wave = Math.sin(t * 5 + seed) * 0.35;
+
+  // Halo.
+  g.fillStyle(tint(col), a * 0.16);
+  g.fillCircle(x, cy, 17 * S);
+  g.fillStyle(tint(col), a * 0.1);
+  g.fillCircle(x, cy, 25 * S);
+
+  // Tail: a tapered ribbon of points bending through the wave.
+  const L = 22 * S;
+  const pts: Phaser.Geom.Point[] = [];
+  const N = 8;
+  const side: Phaser.Geom.Point[] = [];
+  for (let i = 0; i <= N; i++) {
+    const u = i / N;
+    const bend = back + wave * u * 1.6 + Math.sin(t * 7 + u * 5 + seed) * 0.12 * u;
+    const px = x + Math.cos(bend) * L * u;
+    const py = cy + Math.sin(bend) * L * u;
+    const w = 7.5 * S * (1 - u) + 0.6;
+    const nx = -Math.sin(bend), ny = Math.cos(bend);
+    pts.push(new Phaser.Geom.Point(px + nx * w, py + ny * w));
+    side.push(new Phaser.Geom.Point(px - nx * w, py - ny * w));
+  }
+  g.fillStyle(tint(BND.soulDeep), a * 0.55);
+  g.fillPoints([...pts, ...side.reverse()], true);
+  // Head.
+  g.fillStyle(tint(BND.soulDeep), a * 0.75);
+  g.fillCircle(x, cy, 8.4 * S);
+  g.fillStyle(tint(col), a * 0.92);
+  g.fillCircle(x, cy, 7.2 * S);
+  g.fillStyle(tint(0xffffff), a * 0.55);
+  g.fillCircle(x - 2.2 * S, cy - 2.6 * S, 2.4 * S);
+  // The face: two hollow sockets and an open, mournful mouth.
+  const look = Math.cos(ang) * 1.2 * S;
+  g.fillStyle(tint(BND.void), a * 0.85);
+  g.fillEllipse(x - 2.6 * S + look, cy - 0.6 * S, 2.2 * S, 3.2 * S);
+  g.fillEllipse(x + 2.6 * S + look, cy - 0.6 * S, 2.2 * S, 3.2 * S);
+  g.fillEllipse(x + look * 0.6, cy + 3.4 * S, 2.4 * S, (2.6 + Math.sin(t * 3 + seed) * 0.8) * S);
+  // Flecks shed off the tail.
+  for (let i = 0; i < 4; i++) {
+    const u = ((t * 0.9 + jitter(seed, i)) % 1);
+    const px = x + Math.cos(back + (jitter(seed, i + 5) - 0.5)) * (L * 0.6 + u * 18 * S);
+    const py = cy + Math.sin(back + (jitter(seed, i + 5) - 0.5)) * (L * 0.6 + u * 18 * S) - u * 6;
+    g.fillStyle(tint(col), a * (1 - u) * 0.7);
+    g.fillCircle(px, py, 1.6 * (1 - u) + 0.4);
+  }
+  if (bound) {
+    // A short leash of two links hanging off the tail root.
+    const lx = x + Math.cos(back) * 9 * S, ly = cy + Math.sin(back) * 9 * S + 3;
+    chainLink(g, tint, lx, ly, back, alpha * 0.85, 0.6 * scale, 0.3);
+    chainLink(g, tint, lx + Math.cos(back) * 6, ly + Math.sin(back) * 6 + 2, back, alpha * 0.7, 0.55 * scale, 0.3);
+  }
+}
+
+/**
+ * A revenant: a soul drained past the point of saying anything and left angry. Bigger than a lost
+ * soul, the same teardrop shape but torn — a ragged flame of a tail, two slit eyes, a pair of
+ * swept-back horns, and an ember core. `charge` 0–1 is the wind-up before a dash (it shakes and
+ * its light whites out), `fury` 0–1 is how far Trial by Faith (F+) has wrung it, and `frozen` is
+ * Bind the Hatred (E+) holding it in place in a coil of chain.
+ */
+export function revenant(
+  g: Phaser.GameObjects.Graphics,
+  tint: BindColorFn,
+  x: number, y: number, alpha: number,
+  { t = 0, seed = 0, ang = 0, charge = 0, fury = 0, frozen = 0, scale = 1 } = {},
+): void {
+  const S = scale * (1 + fury * 0.18);
+  const shake = charge > 0 ? (Math.sin(t * 61 + seed) * 1.6 + Math.sin(t * 47) * 1.2) * charge : 0;
+  const cx = x + shake;
+  const cy = y + Math.sin(t * 3 + seed) * 1.6 + shake * 0.5;
+  const back = ang + Math.PI;
+  const hot = Phaser.Math.Clamp(charge + fury * 0.4, 0, 1);
+
+  g.fillStyle(tint(BND.void), alpha * 0.35);
+  g.fillEllipse(x, y + 22 * S, 30 * S, 8 * S);
+  g.fillStyle(tint(BND.rune), alpha * (0.14 + hot * 0.2));
+  g.fillCircle(cx, cy, 26 * S);
+
+  // Ragged tail: three tongues of flame streaming back.
+  for (let k = 0; k < 3; k++) {
+    const off = (k - 1) * 0.42;
+    const L = (26 + k % 2 * 6) * S;
+    const pts: Phaser.Geom.Point[] = [];
+    for (let i = 0; i <= 6; i++) {
+      const u = i / 6;
+      const bend = back + off * u + Math.sin(t * 9 + u * 6 + k * 2 + seed) * 0.22 * u;
+      const w = 8 * S * (1 - u);
+      const px = cx + Math.cos(bend) * L * u, py = cy + Math.sin(bend) * L * u;
+      pts.push(new Phaser.Geom.Point(px - Math.sin(bend) * w, py + Math.cos(bend) * w));
+    }
+    for (let i = 6; i >= 0; i--) {
+      const u = i / 6;
+      const bend = back + off * u + Math.sin(t * 9 + u * 6 + k * 2 + seed) * 0.22 * u;
+      const w = 8 * S * (1 - u) * 0.3;
+      const px = cx + Math.cos(bend) * L * u, py = cy + Math.sin(bend) * L * u;
+      pts.push(new Phaser.Geom.Point(px + Math.sin(bend) * w, py - Math.cos(bend) * w));
+    }
+    g.fillStyle(tint(k === 1 ? BND.rune : BND.wrathDeep), alpha * 0.8);
+    g.fillPoints(pts, true);
+  }
+  // Horns, swept back off the crown.
+  for (const sgn of [-1, 1]) {
+    const hx = cx + sgn * 6 * S, hy = cy - 7 * S;
+    g.fillStyle(tint(BND.void), alpha * 0.95);
+    g.fillTriangle(hx - 2.4 * S, hy + 2, hx + 2.4 * S, hy + 2, hx + sgn * 6 * S, hy - 9 * S);
+    g.fillStyle(tint(BND.wrathDeep), alpha);
+    g.fillTriangle(hx - 1.2 * S, hy + 1, hx + 1.2 * S, hy + 1, hx + sgn * 5 * S, hy - 7 * S);
+  }
+  // Body.
+  g.fillStyle(tint(BND.wrathDeep), alpha);
+  g.fillCircle(cx, cy, 11 * S);
+  g.fillStyle(tint(BND.rune), alpha);
+  g.fillCircle(cx, cy, 9.4 * S);
+  g.fillStyle(tint(BND.runeLit), alpha * (0.5 + hot * 0.5));
+  g.fillCircle(cx, cy + 2 * S, 4.6 * S * (0.7 + hot * 0.5));
+  if (hot > 0.5) {
+    g.fillStyle(tint(0xffffff), alpha * (hot - 0.5) * 1.6);
+    g.fillCircle(cx, cy + 2 * S, 3 * S);
+  }
+  // Slit eyes, angled down at the centre — the one expression it has left.
+  const lk = Math.cos(ang) * 1.5 * S;
+  g.lineStyle(2.2 * S, tint(BND.void), alpha);
+  g.lineBetween(cx - 6.4 * S + lk, cy - 3.6 * S, cx - 1.6 * S + lk, cy - 1.6 * S);
+  g.lineBetween(cx + 6.4 * S + lk, cy - 3.6 * S, cx + 1.6 * S + lk, cy - 1.6 * S);
+  g.fillStyle(tint(hot > 0.3 ? 0xffffff : BND.goldLit), alpha);
+  g.fillCircle(cx - 3.8 * S + lk, cy - 2.4 * S, 1.1 * S);
+  g.fillCircle(cx + 3.8 * S + lk, cy - 2.4 * S, 1.1 * S);
+  // Jagged mouth.
+  g.lineStyle(1.4 * S, tint(BND.void), alpha * 0.9);
+  g.beginPath();
+  g.moveTo(cx - 4 * S, cy + 4 * S);
+  for (let i = 1; i <= 4; i++) g.lineTo(cx - 4 * S + i * 2 * S, cy + 4 * S + (i % 2 ? 1.6 : 0) * S);
+  g.strokePath();
+  if (frozen > 0.01) {
+    // Bind the Hatred: a coil of chain cinched round it.
+    for (let i = 0; i < 9; i++) {
+      const p = (i / 9) * TAU + t * 0.6;
+      chainLink(g, tint, cx + Math.cos(p) * 14 * S, cy + Math.sin(p) * 9 * S, p + Math.PI / 2,
+        alpha * frozen, 0.75 * S, 1);
+    }
+  }
+}
+
+/** A chain dagger in flight or stuck in a wall, trailing its few links of chain. */
+export function chainDagger(
+  g: Phaser.GameObjects.Graphics,
+  tint: BindColorFn,
+  x: number, y: number, ang: number, alpha: number,
+  { t = 0, seed = 0, stacks = 0, stuck = 0, scale = 1 } = {},
+): void {
+  const c = Math.cos(ang), s = Math.sin(ang);
+  // The leash: four links trailing straight back, swinging a little while it flies, hanging
+  // limp under a stuck one.
+  let px = x - c * 9 * scale, py = y - s * 9 * scale;
+  for (let i = 0; i < 4; i++) {
+    const sway = Math.sin(t * 9 + i * 1.3 + seed) * (stuck ? 0.6 : 1.8) * (i + 1) * 0.5;
+    const nx = px - c * 6.5 * scale - s * sway;
+    const ny = py - s * 6.5 * scale + c * sway + (stuck ? (i + 1) * 1.6 : 0);
+    chainLink(g, tint, nx, ny, Math.atan2(ny - py, nx - px), alpha * (1 - i * 0.12), 0.72 * scale, 0.6);
+    px = nx; py = ny;
+  }
+  if (stacks > 0) {
+    // Inspirit (Click+): the blade is carrying soul-light, more of it per soul it went through.
+    const k = Math.min(1, stacks / 3);
+    g.fillStyle(tint(BND.soul), alpha * (0.18 + k * 0.22));
+    g.fillCircle(x + c * 6 * scale, y + s * 6 * scale, (9 + stacks * 2.2) * scale);
+    for (let i = 0; i < Math.min(5, stacks + 1); i++) {
+      const p = t * 6 + i * (TAU / 5) + seed;
+      g.fillStyle(tint(BND.soul), alpha * 0.8);
+      g.fillCircle(x + c * 6 * scale + Math.cos(p) * 8 * scale, y + s * 6 * scale + Math.sin(p) * 8 * scale, 1.3 * scale);
+    }
+  }
+  ritualDagger(g, tint, x, y, ang, alpha, scale * 1.1);
+  if (stuck > 0) {
+    // Cracks in the wall around the blade.
+    g.lineStyle(1.2, tint(BND.void), alpha * 0.7);
+    for (let i = 0; i < 4; i++) {
+      const a = ang + Math.PI + (jitter(seed, i) - 0.5) * 2.2;
+      const tx = x + c * 17 * scale, ty = y + s * 17 * scale;
+      g.lineBetween(tx, ty, tx + Math.cos(a) * 8, ty + Math.sin(a) * 8);
+    }
+    // A pulse of gold building to the next spray.
+    g.lineStyle(1.6, tint(BND.goldLit), alpha * stuck * 0.8);
+    g.strokeCircle(x, y, 6 + stuck * 7);
+  }
+}
+
+/** One sharp fragment of chain: a snapped half-link with a jagged, gold-lit break. */
+export function chainShard(
+  g: Phaser.GameObjects.Graphics,
+  tint: BindColorFn,
+  x: number, y: number, ang: number, alpha: number, scale = 1, soul = false,
+): void {
+  const c = Math.cos(ang), s = Math.sin(ang);
+  const L = 8 * scale, W = 2.8 * scale;
+  if (soul) {
+    g.fillStyle(tint(BND.soul), alpha * 0.3);
+    g.fillCircle(x, y, 6 * scale);
+  }
+  g.lineStyle(2.6 * scale, tint(BND.void), alpha * 0.6);
+  g.lineBetween(x - c * L, y - s * L, x + c * L * 0.4, y + s * L * 0.4);
+  g.fillStyle(tint(BND.chain), alpha);
+  g.fillTriangle(x + c * L, y + s * L, x - s * W - c * L * 0.4, y + c * W - s * L * 0.4, x + s * W - c * L * 0.4, y - c * W - s * L * 0.4);
+  g.fillStyle(tint(BND.chainLit), alpha);
+  g.fillTriangle(x + c * L, y + s * L, x - c * L * 0.2, y - s * L * 0.2, x + s * W * 0.8 - c * L * 0.4, y - c * W * 0.8 - s * L * 0.4);
+  g.fillStyle(tint(BND.goldLit), alpha * 0.9);
+  g.fillCircle(x + c * L, y + s * L, 1.1 * scale);
+}
+
+/** The inner soul — a tiny bright core a dagger can find. Shown on a body walking soul-only, and on targets an Inspirited dagger is hunting. */
+export function soulCore(
+  g: Phaser.GameObjects.Graphics,
+  tint: BindColorFn,
+  x: number, y: number, r: number, alpha: number, t: number, color = BND.soul,
+): void {
+  const pulse = 0.85 + 0.15 * Math.sin(t * 7);
+  g.fillStyle(tint(color), alpha * 0.18);
+  g.fillCircle(x, y, r * 3.2 * pulse);
+  g.fillStyle(tint(color), alpha * 0.4);
+  g.fillCircle(x, y, r * 1.9 * pulse);
+  g.fillStyle(tint(color), alpha * 0.95);
+  g.fillCircle(x, y, r);
+  g.fillStyle(tint(0xffffff), alpha);
+  g.fillCircle(x - r * 0.25, y - r * 0.25, r * 0.45);
+  // Four thin rays, slowly turning.
+  g.lineStyle(1, tint(color), alpha * 0.6);
+  for (let i = 0; i < 4; i++) {
+    const p = t * 0.8 + (i / 4) * TAU;
+    g.lineBetween(x + Math.cos(p) * r * 1.4, y + Math.sin(p) * r * 1.4, x + Math.cos(p) * r * 3.4, y + Math.sin(p) * r * 3.4);
+  }
+}
+
+/**
+ * Siphon: the life of a soul being pulled out along a line into the caster — two strands
+ * twisting round each other with motes running *toward* the drinker, thicker the longer it runs.
+ */
+export function siphonStream(
+  g: Phaser.GameObjects.Graphics,
+  tint: BindColorFn,
+  x0: number, y0: number, x1: number, y1: number, alpha: number, t: number, power: number, color = BND.soul,
+): void {
+  const len = Math.hypot(x1 - x0, y1 - y0);
+  if (len < 4) return;
+  const nx = -(y1 - y0) / len, ny = (x1 - x0) / len;
+  const N = Math.max(6, Math.round(len / 10));
+  const w = 2 + power * 3;
+  g.lineStyle(w * 3, tint(BND.cosmicDeep), alpha * 0.25);
+  g.lineBetween(x0, y0, x1, y1);
+  for (const ph of [0, Math.PI]) {
+    g.lineStyle(1.6 + power, tint(ph ? BND.soulDeep : color), alpha * 0.85);
+    g.beginPath();
+    for (let i = 0; i <= N; i++) {
+      const u = i / N;
+      const amp = Math.sin(u * Math.PI) * (5 + power * 4);
+      const off = Math.sin(u * 10 - t * 9 + ph) * amp;
+      const px = x0 + (x1 - x0) * u + nx * off, py = y0 + (y1 - y0) * u + ny * off;
+      if (i === 0) g.moveTo(px, py); else g.lineTo(px, py);
+    }
+    g.strokePath();
+  }
+  // Motes flowing from the soul (x0) toward the drinker (x1).
+  for (let i = 0; i < 7; i++) {
+    const u = (t * 0.9 + i / 7) % 1;
+    const px = x0 + (x1 - x0) * u, py = y0 + (y1 - y0) * u;
+    g.fillStyle(tint(color), alpha * Math.sin(u * Math.PI) * 0.9);
+    g.fillCircle(px, py, 1.6 + power * 1.4);
+  }
+}
+
+/**
+ * Ritual: the old red runes the dagger wakes in the floor. Two rings, a seven-pointed star of
+ * chords between them and a glyph at every point. `k` 0–1 is how far it has burned in.
+ */
+export function ritualRunes(
+  g: Phaser.GameObjects.Graphics,
+  tint: BindColorFn,
+  x: number, y: number, r: number, alpha: number, k: number, t: number,
+): void {
+  const e = Phaser.Math.Clamp(k, 0, 1);
+  const ry = 0.55;
+  g.fillStyle(tint(BND.rune), alpha * 0.12 * e);
+  g.fillEllipse(x, y, r * 2.2, r * 2.2 * ry);
+  g.lineStyle(3, tint(BND.wrathDeep), alpha * e);
+  g.strokeEllipse(x, y, r * 2, r * 2 * ry);
+  g.lineStyle(1.6, tint(BND.rune), alpha * e);
+  g.strokeEllipse(x, y, r * 2, r * 2 * ry);
+  g.lineStyle(1.2, tint(BND.runeLit), alpha * e * 0.8);
+  g.strokeEllipse(x, y, r * 1.55, r * 1.55 * ry);
+  const P = 7;
+  const pt = (i: number, rr: number): [number, number] => {
+    const p = (i / P) * TAU + t * 0.25;
+    return [x + Math.cos(p) * rr, y + Math.sin(p) * rr * ry];
+  };
+  g.lineStyle(1.4, tint(BND.rune), alpha * e * 0.9);
+  for (let i = 0; i < P; i++) {
+    const [ax, ay] = pt(i, r * 0.76);
+    const [bx, by] = pt(i + 3, r * 0.76);
+    // Chords draw themselves in one after another.
+    const u = Phaser.Math.Clamp(e * P - i * 0.6, 0, 1);
+    g.lineBetween(ax, ay, ax + (bx - ax) * u, ay + (by - ay) * u);
+  }
+  for (let i = 0; i < P; i++) {
+    const [gx, gy] = pt(i + 0.5, r * 0.89);
+    const s = 4;
+    const flick = 0.6 + 0.4 * Math.sin(t * 9 + i * 2.3);
+    g.lineStyle(1.5, tint(BND.runeLit), alpha * e * flick);
+    // A glyph: a stave with two barbs, varied per point.
+    g.lineBetween(gx, gy - s, gx, gy + s);
+    g.lineBetween(gx, gy - s * (i % 2 ? 0.3 : 1), gx + s * 0.8, gy - s * 0.2);
+    g.lineBetween(gx, gy + s * (i % 3 ? 0.2 : 0.8), gx - s * 0.8, gy + s * 0.6);
+  }
+}
+
+/** A shackle ring closed round a chained body, with the lock hanging off it. */
+export function shackle(
+  g: Phaser.GameObjects.Graphics,
+  tint: BindColorFn,
+  x: number, y: number, r: number, alpha: number, t: number,
+): void {
+  g.lineStyle(4, tint(BND.void), alpha * 0.7);
+  g.strokeEllipse(x, y + 8, r * 2, r * 0.8);
+  g.lineStyle(2.2, tint(BND.chain), alpha);
+  g.strokeEllipse(x, y + 8, r * 2, r * 0.8);
+  g.lineStyle(1, tint(BND.chainLit), alpha * 0.8);
+  g.beginPath();
+  g.arc(x, y + 8, r * 0.98, Math.PI * 1.1, Math.PI * 1.9, false);
+  g.strokePath();
+  // The padlock, swinging.
+  const sw = Math.sin(t * 3) * 2;
+  const lx = x + r * 0.7 + sw, ly = y + 12;
+  g.lineStyle(1.6, tint(BND.chainLit), alpha);
+  g.beginPath();
+  g.arc(lx, ly, 2.6, Math.PI, 0, false);
+  g.strokePath();
+  g.fillStyle(tint(BND.goldDeep), alpha);
+  g.fillRect(lx - 3.4, ly, 6.8, 5.4);
+  g.fillStyle(tint(BND.gold), alpha);
+  g.fillRect(lx - 2.6, ly + 0.8, 5.2, 3.8);
+  g.fillStyle(tint(BND.void), alpha);
+  g.fillCircle(lx, ly + 2.4, 0.9);
+}
+
+/**
+ * The Bound plaque — the passive's curse, carved into a tablet at the top of the screen with
+ * chains hanging off both ends. `strength` 0–1 runs the gauge; `lifted` 1 while the god has
+ * taken it off you, which unlocks the padlock and drops the chains slack.
+ */
+export function boundPlaque(
+  g: Phaser.GameObjects.Graphics,
+  tint: BindColorFn,
+  cx: number, cy: number, w: number, h: number, strength: number, lifted: number, t: number,
+): void {
+  relicPlate(g, tint, cx, cy, w, h, 0.96, {
+    cut: 7, rim: lifted ? BND.goldLit : BND.chainLit, glow: lifted ? 0.8 : 0.25, glowCol: lifted ? BND.gold : BND.rune,
+  });
+  // The gauge: an inset trough along the bottom edge of the tablet.
+  const gw = w - 40, gy = cy + h / 2 - 7;
+  g.fillStyle(tint(BND.void), 0.95);
+  g.fillRect(cx - gw / 2, gy - 2.5, gw, 5);
+  const fill = Phaser.Math.Clamp(strength, 0, 1) * (1 - lifted);
+  g.fillStyle(tint(BND.rune), 0.95);
+  g.fillRect(cx - gw / 2, gy - 2, gw * fill, 4);
+  g.fillStyle(tint(BND.runeLit), 0.6);
+  g.fillRect(cx - gw / 2, gy - 2, gw * fill, 1.4);
+  // Chains off both ends, taut while bound, slack and swinging once lifted.
+  for (const sgn of [-1, 1]) {
+    const ex = cx + sgn * (w / 2 - 3);
+    for (let k = 0; k < 3; k++) {
+      const swing = lifted ? Math.sin(t * 2 + k + sgn) * (k + 1) * 2 : 0;
+      chainLink(g, tint, ex + sgn * (6 + k * 8) + swing * 0.3, cy + (lifted ? k * 5 + 2 : 0) + swing * 0.2,
+        lifted ? Math.PI / 2 : 0, 0.9, 0.85, lifted ? 0 : 1);
+    }
+  }
+  // Padlock on the left of the text.
+  const lx = cx - w / 2 + 16, ly = cy - 3;
+  const open = lifted ? 3.5 : 0;
+  g.lineStyle(1.8, tint(BND.chainLit), 0.95);
+  g.beginPath();
+  g.arc(lx, ly - 3 - open, 3.4, Math.PI, 0, false);
+  g.strokePath();
+  g.fillStyle(tint(BND.goldDeep), 1);
+  g.fillRect(lx - 4.6, ly - 3, 9.2, 7.6);
+  g.fillStyle(tint(lifted ? BND.goldLit : BND.gold), 1);
+  g.fillRect(lx - 3.6, ly - 2, 7.2, 5.6);
+  g.fillStyle(tint(BND.void), 1);
+  g.fillCircle(lx, ly + 0.6, 1.1);
+}
+
+/** False Idol's favour meter, worn by the idol as a ring of beads lighting one after another. */
+export function favourBeads(
+  g: Phaser.GameObjects.Graphics,
+  tint: BindColorFn,
+  x: number, y: number, r: number, favour: number, alpha: number, t: number, angry: boolean,
+): void {
+  const N = 10;
+  for (let i = 0; i < N; i++) {
+    const p = -Math.PI / 2 + (i / N) * TAU;
+    const lit = favour * N > i;
+    const bx = x + Math.cos(p) * r, by = y + Math.sin(p) * r * 0.45;
+    g.fillStyle(tint(BND.void), alpha * 0.8);
+    g.fillCircle(bx, by, 3.2);
+    g.fillStyle(tint(angry ? BND.wrath : lit ? BND.goldLit : BND.goldDeep), alpha * (lit ? 0.85 + 0.15 * Math.sin(t * 5 + i) : 0.6));
+    g.fillCircle(bx, by, 2.3);
+  }
+}
+
 // ── Fx ────────────────────────────────────────────────────────────────────
 
 /** Bind's one-shot effects. Everything sustained is painted per-frame by the kit instead. */
@@ -1427,6 +1880,152 @@ export class BindFx extends FxBase {
       }
       patronEye(g, this.tint, x, y - 30, 13 * (1 + e * 0.5), 1, (1 - t) * 0.9,
         { wrath: 1, drift: Math.sin(t * 22), t: t * 6, brow: false });
+    });
+  }
+
+  /** A chain dagger going in: a gold puncture and the links whipping forward after it. */
+  daggerHit(x: number, y: number, ang: number, soul: boolean, depth = 17): void {
+    this.flashIn(x, y, 10, BND.goldLit, soul ? BND.soul : BND.gold, depth);
+    this.anim(depth, 320, (g, t) => {
+      const e = easeOut(t);
+      ritualDagger(g, this.tint, x - Math.cos(ang) * (8 - e * 6), y - Math.sin(ang) * (8 - e * 6), ang, (1 - t) * 0.95, 1.1);
+      g.lineStyle(2 * (1 - t) + 0.4, this.tint(soul ? BND.soul : BND.gold), (1 - t) * 0.8);
+      g.strokeCircle(x, y, 5 + e * 16);
+    });
+  }
+
+  /** An Inspirited dagger finding the soul: a white-blue star bursting out of the body's core. */
+  coreHit(x: number, y: number, depth = 18): void {
+    this.flashIn(x, y, 16, 0xffffff, BND.soul, depth);
+    this.anim(depth, 520, (g, t) => {
+      const e = easeOut(t);
+      for (let i = 0; i < 8; i++) {
+        const p = (i / 8) * TAU;
+        const r0 = 6 + e * 10, r1 = 12 + e * 34;
+        g.lineStyle(2.4 * (1 - t) + 0.4, this.tint(i % 2 ? BND.soul : 0xffffff), (1 - t) * 0.9);
+        g.lineBetween(x + Math.cos(p) * r0, y + Math.sin(p) * r0, x + Math.cos(p) * r1, y + Math.sin(p) * r1);
+      }
+      g.lineStyle(1.6 * (1 - t) + 0.3, this.tint(BND.soul), (1 - t) * 0.8);
+      g.strokeCircle(x, y, 8 + e * 26);
+    });
+  }
+
+  /** A dagger detonating: the blade blowing apart into a fan of chain shrapnel. */
+  daggerBurst(x: number, y: number, ang: number, depth = 17): void {
+    const seed = Math.random() * 999;
+    this.flashIn(x, y, 12, BND.goldLit, BND.chain, depth);
+    this.anim(depth, 420, (g, t) => {
+      const e = easeOut(t);
+      g.lineStyle(2.4 * (1 - t) + 0.4, this.tint(BND.chainLit), (1 - t) * 0.8);
+      g.strokeCircle(x, y, 6 + e * 22);
+      for (let i = 0; i < 6; i++) {
+        const a = ang + (jitter(seed, i) - 0.5) * 1.6;
+        const d = e * (12 + jitter(seed, 10 + i) * 18);
+        chainLink(g, this.tint, x + Math.cos(a) * d, y + Math.sin(a) * d, a, (1 - t) * 0.9, 0.7, 1);
+      }
+    });
+  }
+
+  /** A soul taken on the chain: a link snapping shut round it and a flash of its own light. */
+  soulBound(x: number, y: number, color: number, depth = 17): void {
+    this.anim(depth, 520, (g, t) => {
+      const e = easeOut(t);
+      g.lineStyle(2.4 * (1 - t) + 0.5, this.tint(color), (1 - t) * 0.9);
+      g.strokeCircle(x, y, 22 - e * 14);
+      for (let i = 0; i < 6; i++) {
+        const p = (i / 6) * TAU + e * 2;
+        chainLink(g, this.tint, x + Math.cos(p) * (24 - e * 12), y + Math.sin(p) * (24 - e * 12), p + Math.PI / 2, (1 - t), 0.7, 1);
+      }
+    });
+  }
+
+  /** A soul drained dry: it pops into cold sparks — and if something comes back, it is red. */
+  soulPop(x: number, y: number, color: number, depth = 17): void {
+    const seed = Math.random() * 999;
+    this.anim(depth, 600, (g, t) => {
+      const e = easeOut(t);
+      g.lineStyle(2 * (1 - t) + 0.4, this.tint(color), (1 - t) * 0.85);
+      g.strokeCircle(x, y, 4 + e * 26);
+      for (let i = 0; i < 10; i++) {
+        const a = jitter(seed, i) * TAU;
+        const d = e * (8 + jitter(seed, 10 + i) * 26);
+        g.fillStyle(this.tint(i % 2 ? color : 0xffffff), (1 - t) * 0.8);
+        g.fillCircle(x + Math.cos(a) * d, y + Math.sin(a) * d - e * 8, 2 * (1 - t) + 0.4);
+      }
+    });
+  }
+
+  /** A revenant tearing itself out of what was left: a red column and a ring of embers. */
+  revenantRise(x: number, y: number, depth = 17): void {
+    this.flashIn(x, y, 18, BND.runeLit, BND.rune, depth);
+    this.anim(depth, 700, (g, t) => {
+      const e = easeOut(t);
+      g.fillStyle(this.tint(BND.rune), (1 - t) * 0.4);
+      g.fillRect(x - 10 * (1 - t), y - 120 * e, 20 * (1 - t), 120 * e);
+      g.lineStyle(3 * (1 - t) + 0.5, this.tint(BND.rune), (1 - t) * 0.85);
+      g.strokeEllipse(x, y + 16, 60 * e, 20 * e);
+      revenant(g, this.tint, x, y + (1 - e) * 20, Math.min(1, t * 2), { t: t * 4, scale: 0.4 + e * 0.6 });
+    });
+  }
+
+  /** The red streak a revenant's dash leaves on the floor. */
+  revenantStreak(x0: number, y0: number, x1: number, y1: number, depth = 15): void {
+    this.anim(depth, 420, (g, t) => {
+      g.lineStyle(40 * (1 - t) + 1, this.tint(BND.wrathDeep), (1 - t) * 0.45);
+      g.lineBetween(x0, y0, x1, y1);
+      g.lineStyle(9 * (1 - t) + 0.5, this.tint(BND.rune), (1 - t) * 0.85);
+      g.lineBetween(x0, y0, x1, y1);
+      g.lineStyle(1.2, this.tint(BND.runeLit), (1 - t));
+      g.lineBetween(x0, y0, x1, y1);
+    });
+  }
+
+  /** Blackened Eyes opening: a ring of darkness leaving the body and a wide eye blinking open. */
+  eyesOpen(x: number, y: number, depth = 17): void {
+    this.anim(depth, 700, (g, t) => {
+      const e = easeOut(t);
+      g.lineStyle(10 * (1 - t) + 1, this.tint(BND.void), (1 - t) * 0.7);
+      g.strokeCircle(x, y, 20 + e * 160);
+      g.lineStyle(2 * (1 - t) + 0.4, this.tint(BND.soul), (1 - t) * 0.8);
+      g.strokeCircle(x, y, 14 + e * 140);
+      patronEye(g, this.tint, x, y - 40 - e * 10, 16, Math.min(1, t * 3), (1 - t) * 0.9, { t: t * 4, brow: false });
+    });
+  }
+
+  /** Ritual: the dagger driven straight down into the floor, and the runes flaring off it. */
+  ritualDrive(x: number, y: number, r: number, depth = 15): void {
+    this.anim(depth, 1400, (g, t) => {
+      const k = Math.min(1, t * 5);
+      ritualRunes(g, this.tint, x, y + 12, r, (1 - easeIn(t)) * 0.95, Math.min(1, t * 2.4), t * 6);
+      ritualDagger(g, this.tint, x, y - 30 + k * 34, Math.PI / 2, 1 - easeIn(t), 1.6);
+      if (t > 0.18) {
+        const u = (t - 0.18) / 0.82;
+        g.lineStyle(4 * (1 - u) + 0.5, this.tint(BND.runeLit), (1 - u) * 0.8);
+        g.strokeEllipse(x, y + 12, r * 2 * easeOut(u) * 1.3, r * 1.1 * easeOut(u) * 1.3);
+      }
+    });
+  }
+
+  /** A soul pulled into the ritual: streaks from where it was into the dagger. */
+  soulOffered(x0: number, y0: number, x1: number, y1: number, color: number, depth = 17): void {
+    this.anim(depth, 520, (g, t) => {
+      const e = easeIn(t);
+      const px = x0 + (x1 - x0) * e, py = y0 + (y1 - y0) * e;
+      g.lineStyle(3 * (1 - t) + 0.5, this.tint(color), (1 - t) * 0.8);
+      g.lineBetween(x0 + (x1 - x0) * Math.max(0, e - 0.3), y0 + (y1 - y0) * Math.max(0, e - 0.3), px, py);
+      lostSoul(g, this.tint, px, py, 1 - t, { t: t * 4, essence: 1 - e * 0.7, ang: Math.atan2(y1 - y0, x1 - x0) });
+    });
+  }
+
+  /** False Idol losing patience: a thin red laser from its eye to the one it was waiting for. */
+  idolZap(x0: number, y0: number, x1: number, y1: number, depth = 17): void {
+    this.anim(depth, 260, (g, t) => {
+      g.lineStyle(8 * (1 - t) + 1, this.tint(BND.wrathDeep), (1 - t) * 0.4);
+      g.lineBetween(x0, y0, x1, y1);
+      g.lineStyle(2.6 * (1 - t) + 0.5, this.tint(BND.wrath), (1 - t) * 0.95);
+      g.lineBetween(x0, y0, x1, y1);
+      g.fillStyle(this.tint(BND.wrath), (1 - t) * 0.6);
+      g.fillCircle(x1, y1, 10 * (1 - t) + 2);
     });
   }
 

@@ -2502,7 +2502,8 @@ export class PaperKit implements SummonPurgeTarget {
       f.journalIncomingMult = 1;
       if (!this.alive(f)) this.touched.delete(f);
     }
-    if (!playerIs) { this.bonuses = NO_JOURNAL_BONUSES; this.bonusesFor = ''; return; }
+    // Memory's Rebirth: a sealed journal reads blank.
+    if (!playerIs || this.api.player.passivesSealed()) { this.bonuses = NO_JOURNAL_BONUSES; this.bonusesFor = ''; return; }
 
     if (this.bonusesFor !== this.api.npcElementId) {
       this.bonusesFor = this.api.npcElementId;

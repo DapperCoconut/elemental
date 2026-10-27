@@ -523,7 +523,7 @@ export class OnlineLobbyScene extends Phaser.Scene {
     if (this.mySel.elementId !== elementId) this.mySel.bond = null;
     this.mySel.elementId = elementId;
     this.mySel.upgrades = PlayerData.getActiveUpgrades(elementId);
-    // Gold and Harvest replaced elements whose retired masteries may have left the flag on in an
+    // Gold and Wood replaced elements whose retired masteries may have left the flag on in an
     // old save, and Psychic's mastery was redone; the arena gates those three on the new mastery
     // being finished, so the lobby does too.
     this.mySel.masteryOn = PlayerData.isMasteryEnabled(elementId)

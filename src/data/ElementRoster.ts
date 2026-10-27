@@ -65,6 +65,11 @@ import { radiationElement } from '../elements/radiation';
 import { bindElement } from '../elements/bind';
 import { gumElement } from '../elements/gum';
 import { gluttonyElement } from '../elements/gluttony';
+import { pressureElement } from '../elements/pressure';
+import { astraElement } from '../elements/astra';
+import { memoryElement } from '../elements/memory';
+import { stringElement } from '../elements/string';
+import { inkElement } from '../elements/ink';
 
 /**
  * Ability data for every element that has a definition file. Keyed by element id — the
@@ -117,6 +122,11 @@ export const ELEMENT_DATA_MAP: Record<string, Element> = {
   bind: bindElement,
   gum: gumElement,
   gluttony: gluttonyElement,
+  pressure: pressureElement,
+  astra: astraElement,
+  memory: memoryElement,
+  string: stringElement,
+  ink: inkElement,
 };
 
 export interface ElementDef {
@@ -159,7 +169,7 @@ export const ABSTRACT_ELEMENT_UNLOCK_MAP: Record<string, string> = {
 
 export const ABSTRACT_ELEMENTS: ElementDef[] = [
   { id: 'electricity', name: 'Electricity', emoji: '⚡', color: 0xffee00, available: true },
-  { id: 'slime', name: 'Acid', emoji: '🟢', color: 0x66cc44, available: true },
+  { id: 'slime', name: 'Venom', emoji: '🐍', color: 0x66cc44, available: true },
   { id: 'fate', name: 'Fate', emoji: '🃏', color: 0x88eecc, available: true },
   { id: 'sound', name: 'Sound', emoji: '🔊', color: 0xff66cc, available: true },
   { id: 'light', name: 'Light', emoji: '✨', color: 0xfff4a8, available: true },
@@ -252,7 +262,7 @@ export const VAULT_ELEMENTS: ElementDef[] = [
   { id: 'fortune', name: 'Gold', emoji: '🪙', color: 0xd8a531, available: true },
   // Slime keeps the id `gum` — `slime` still belongs to Acid, which kept the old name's slot.
   { id: 'gum', name: 'Slime', emoji: '🫠', color: 0x46b93f, available: true },
-  { id: 'gluttony', name: 'Harvest', emoji: '🌾', color: 0x6a2c91, available: true },
+  { id: 'gluttony', name: 'Wood', emoji: '🌳', color: 0xd9d3c3, available: true },
 ];
 
 /**
@@ -293,6 +303,16 @@ export const TEST_ELEMENTS: ElementDef[] = [
   { id: 'tempest', name: 'Tempest', emoji: '🌪️', color: 0x7fb4ff, available: true },
   // The ultimate element. Its obtainment is undecided, so it waits here with the others.
   { id: 'myth', name: 'Myth', emoji: '🌠', color: 0x7d5cff, available: true },
+  // A steam robot with a giant gauntlet; every key is held to build pressure.
+  { id: 'pressure', name: 'Pressure', emoji: '🔩', color: 0xc7462e, available: true },
+  // A black-and-white rubber-hose cartoon: finger guns, banana peels and a six-ton anvil.
+  { id: 'ink', name: 'Ink', emoji: '🖋️', color: 0x1a1a1a, available: true },
+  // A cracked shell of deep space with a dwarf star inside; locked aim until it passes its Star Trial.
+  { id: 'astra', name: 'Astra', emoji: '🌟', color: 0x6a4cff, available: true },
+  // A gentleman in a top hat with a cane, and a face of static. Every hit makes them guiltier.
+  { id: 'memory', name: 'Memory', emoji: '🎩', color: 0x4a4458, available: true },
+  // A big velvet spider: taut hooked strings, spiders walking them, a puppet and a silk tomb.
+  { id: 'string', name: 'String', emoji: '🕸️', color: 0xd9c8a6, available: true },
 ];
 
 /** Abstract combined elements — created by fusing two abstract elements in a Lvl 1+ Lab. */

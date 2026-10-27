@@ -833,7 +833,8 @@ export class CrystalKit {
       }
 
       // Resonance passive: getting hit by one of your own (already-bounced) shards → 3x speed for 0.2s
-      if (this.arena.masteryActive) {
+      // (not while Memory's Rebirth has the passive sealed).
+      if (this.arena.masteryActive && !this.arena.player.passivesSealed()) {
         const RESONANCE_R = 20;
         for (const go of allActiveProj) {
           const proj = go as Projectile;

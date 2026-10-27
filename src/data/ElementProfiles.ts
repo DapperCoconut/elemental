@@ -115,11 +115,11 @@ export const ELEMENT_PROFILES: Record<string, ElementProfile> = {
     blurb: 'Hurt yourself to charge kinetic power, then spend the whole bar in one discharge.',
     complexity: 3,
   },
-  // `slime` is Acid — the id kept the old name when the element was reworked.
+  // `slime` is Venom (it was Acid) — the id kept the old name through both reworks.
   slime: {
-    archetype: 'Zoner',
-    blurb: 'Permanent acid pools that never fade, and every ability hits harder while you stand in one.',
-    complexity: 3,
+    archetype: 'Poisoner',
+    blurb: 'A serpent whose toxin never fades. Paint the floor with acid, stack the venom, and let 1000 do the rest.',
+    complexity: 4,
   },
   fate: {
     archetype: 'Gambler',
@@ -246,7 +246,7 @@ export const ELEMENT_PROFILES: Record<string, ElementProfile> = {
   },
   cloth: {
     archetype: 'Tailor',
-    blurb: 'Your health bar is a scarf, and the scarf is the hitbox. Build the rest of your kit out of tetrominoes.',
+    blurb: 'No legs — a scarf with a hand on the end hauls you around, throws needles, punches pincushions and sets it all on fire.',
     complexity: 5,
   },
   magma: {
@@ -275,8 +275,8 @@ export const ELEMENT_PROFILES: Record<string, ElementProfile> = {
     complexity: 4,
   },
   bind: {
-    archetype: 'Supplicant',
-    blurb: 'Summon, sacrifice, and pray. The idols take your faith and hand back somebody else’s power.',
+    archetype: 'Soul Binder',
+    blurb: 'Born cursed. Chain the lost souls only you can see, drink them dry, and pay the god in what is left.',
     complexity: 4,
   },
   // `dune` is Sand; `sand` above is Time.
@@ -320,9 +320,34 @@ export const ELEMENT_PROFILES: Record<string, ElementProfile> = {
     complexity: 3,
   },
   gluttony: {
-    archetype: 'Reaper',
-    blurb: 'Sow a spreading purple mold, rot whoever stands in it, and reap the corrupted with a scythe.',
+    archetype: 'Juggernaut',
+    blurb: 'Stack sap on top of your health, step between the watching birches, and scythe down anyone you outlast.',
     complexity: 4,
+  },
+  ink: {
+    archetype: 'Trickster',
+    blurb: 'Spam finger guns, leave banana peels everywhere, and drop a six-ton anvil on whoever slips.',
+    complexity: 3,
+  },
+  pressure: {
+    archetype: 'Charger',
+    blurb: 'Hold every key to build pressure, let go to spend it. Slam them into the floor, then wind up the punch they cannot walk away from.',
+    complexity: 3,
+  },
+  memory: {
+    archetype: 'Haunter',
+    blurb: 'Every hit makes them guiltier. Latch shards to fill their screen with static, snatch back their idle cooldowns, and make them relive the worst three seconds of the match.',
+    complexity: 4,
+  },
+  string: {
+    archetype: 'Weaver',
+    blurb: 'Hook them and the walls with strings that bite back when they snap. Set spiders walking the web, steer them with the arrow keys, then wrap them in silk in the middle of the arena.',
+    complexity: 4,
+  },
+  astra: {
+    archetype: 'Ascendant',
+    blurb: 'Fire level, flare in a plus and an X, smite whoever stands highest — then survive the Star Trial and aim everything.',
+    complexity: 5,
   },
 };
 

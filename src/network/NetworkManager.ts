@@ -4,7 +4,7 @@ import type { NetStatusEntry } from './NetStatusSync';
 import type { NetConquestSnap } from '../elements/kits/ConquestKit';
 
 /** Bump when the wire protocol or gameplay sync changes incompatibly. */
-export const NET_PROTOCOL_VERSION = 51;
+export const NET_PROTOCOL_VERSION = 58;
 
 /** A co-op room holds the host plus up to three guests. PvP still needs exactly two. */
 export const MAX_PLAYERS = 4;
@@ -238,7 +238,12 @@ export type NetMsg =
   // dm/fr/dc: the sender's own damage reduction, cap and flat soak, applied by the peer's
   // sim when it resolves a hit on their replica of us (see Fighter.netDefenseMult).
   // room: the mansion room this player is standing in (invasion co-op only).
-  | { t: 'state'; x: number; y: number; vx: number; vy: number; hp: number; maxHp: number; shieldHp: number; shieldCharges: number; downed?: boolean; inv?: boolean; fa?: number; st?: number; dm?: number; fr?: number; dc?: number; room?: number }
+  // sap: Wood's Sap HP — the owner's sim decides it; the replica shows it and the peer's
+  // Final Harvest counts it.
+  | { t: 'state'; x: number; y: number; vx: number; vy: number; hp: number; maxHp: number; shieldHp: number; shieldCharges: number; downed?: boolean; inv?: boolean; fa?: number; st?: number; dm?: number; fr?: number; dc?: number; room?: number; sap?: number }
+  // Co-op, point to point (`sendTo`): a Wood teammate's Oakbrew / Digest landing on us. Health
+  // and Sap HP are ours to change, so the giver's sim sends what it gave and we apply it.
+  | { t: 'woodGift'; sap: number; heal: number; brewMs: number }
   | { t: 'cast'; id: string; tx: number; ty: number }
   // ── Room plumbing (NetworkManager-internal; never reaches a handler) ──
   // Host → guest: the slots now in the room, and which one is yours.

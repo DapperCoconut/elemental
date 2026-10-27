@@ -2287,6 +2287,16 @@ export class MagnetKit {
    * Rooted while gathering or piloting; stopped while stunned; held back on the other side's
    * maglev ground. Pulled by ArenaScene. Online the slow is worked out here, on the victim's sim.
    */
+  /** Memory's Rebirth: the struck side loses part of what it has built up. Returns a label, or null. */
+  rebirthDrain(owner: Owner): string | null {
+    const orbit = this.orbitOf(owner);
+    const take = Math.ceil(orbit.length * 0.4);
+    if (take <= 0) return null;
+    const lost = new Set(orbit.slice(-take));
+    this.scraps = this.scraps.filter((s) => !lost.has(s));
+    return `−${take} SCRAP`;
+  }
+
   getPlayerSpeedMult(): number {
     const p = this.arena.player;
     if (p && this.stunned(p)) return 0;

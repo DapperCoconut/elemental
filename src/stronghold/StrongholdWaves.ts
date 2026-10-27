@@ -3,6 +3,7 @@ import {
   BASIC_HUSK, ELEMENTAL_HUSK_VARIANTS, HuskVariantDef, TIER_MIN_WAVE, isBossWave, rollBossVariant, rollLightningVariant,
 } from '../invasion/HuskVariants';
 import type { StrongholdMapDef } from './StrongholdMap';
+import { applyBuild, buildFor } from './HuskBuilds';
 
 /**
  * Wave composition for Stronghold. Husks are the invasion's — same variant table, same tiers,
@@ -62,6 +63,8 @@ export function getStrongholdDifficulty(id: string | undefined): StrongholdDiffi
 const BASE_HP = 24;
 const BASE_SPEED = 84;
 const MAX_SPEED = 200;
+/** Every gold source scaled up with the five-tier paths, so a tier-5 is in reach mid-run. */
+const GOLD_TUNE = 1.4;
 
 export interface WaveSpawn {
   variant: HuskVariantDef;
@@ -147,12 +150,12 @@ function familyVariant(family: string, wave: number, rand: () => number): HuskVa
 export function planWave(wave: number, diff: StrongholdDifficultyDef, map: StrongholdMapDef, rand: () => number): WavePlan {
   const boss = isBossWave(wave);
   const tracks = map.tracks.length;
-  // Two roads means each takes a share; the total grows a little to keep both busy.
-  const count = Math.min(52, Math.round((7 + wave * 2 + (boss ? -4 : 0)) * (tracks > 1 ? 1.25 : 1)));
+  // Two roads means each takes a share; the budget grows a little to keep both busy.
+  const budget = Math.min(56, Math.round((7 + wave * 2 + (boss ? -4 : 0)) * (tracks > 1 ? 1.25 : 1)));
   const gap = Math.max(300, (900 - wave * 22) / (tracks > 1 ? 1.4 : 1));
   const spawns: WaveSpawn[] = [];
   const hpScale = waveHpScale(wave) * diff.hpMult * map.hpMult * HP_SCALE;
-  const goldMult = diff.goldMult * map.goldMult;
+  const goldMult = diff.goldMult * map.goldMult * GOLD_TUNE;
 
   let theme: WaveTheme | null = null;
   if (!boss && wave >= 3 && wave % diff.themeEvery === 0) {
@@ -161,27 +164,46 @@ export function planWave(wave: number, diff: StrongholdDifficultyDef, map: Stron
     if (pick) theme = { family: pick.family, title: pick.title, hint: pick.hint };
   }
 
-  const make = (variant: HuskVariantDef, at: number, track: number): WaveSpawn => ({
-    variant,
-    at,
-    hp: Math.max(6, Math.round(BASE_HP * variant.hpMult * hpScale)),
-    speed: Math.min(MAX_SPEED, BASE_SPEED * variant.speedMult * diff.speedMult * (1 + wave * 0.012)),
-    bounty: bountyFor(variant, goldMult),
-    breach: breachFor(variant),
-    track,
-  });
+  const make = (raw: HuskVariantDef, at: number, track: number): WaveSpawn => {
+    const b = buildFor(raw);
+    const variant = applyBuild(raw);
+    return {
+      variant,
+      at,
+      hp: Math.max(4, Math.round(BASE_HP * variant.hpMult * hpScale)),
+      speed: Math.min(MAX_SPEED, BASE_SPEED * variant.speedMult * diff.speedMult * (1 + wave * 0.012)),
+      bounty: Math.max(1, Math.round(bountyFor(raw, goldMult) * b.bounty)),
+      breach: breachFor(raw),
+      track,
+    };
+  };
 
-  for (let i = 0; i < count; i++) {
+  // Clumps: one family at a time, a breather between them, roads taking turns.
+  let used = 0;
+  let t = 400;
+  let clumpNo = 0;
+  while (used < budget) {
     let v: HuskVariantDef | null = null;
     // A themed wave is two-thirds its family, the rest the usual mix.
     if (theme && rand() < 0.66) v = familyVariant(theme.family, wave, rand);
     if (!v) v = rollLightningVariant(wave, diff.huskPool, rand) ?? BASIC_HUSK;
-    const track = tracks > 1 ? i % tracks : 0;
-    spawns.push(make(v, i * gap + rand() * 120, track));
+    const b = buildFor(v);
+    // Early waves keep the clumps small so wave 1 is not eleven swarmers at once.
+    const cap = Math.max(b.clump[0] === 1 ? 1 : 2, Math.round(b.clump[1] * Math.min(1, 0.35 + wave * 0.07)));
+    const lo = Math.min(b.clump[0], cap);
+    let n = lo + Math.floor(rand() * (cap - lo + 1));
+    n = Math.max(1, Math.min(n, Math.ceil((budget - used) / b.weight)));
+    const track = tracks > 1 ? clumpNo % tracks : 0;
+    // Fast families march in a tight string, slow ones spread out.
+    const inner = gap * 0.32 / Math.max(0.6, b.speed);
+    for (let i = 0; i < n; i++) spawns.push(make(v, t + i * inner + rand() * 40, track));
+    used += n * b.weight;
+    t += n * inner + gap * (1.3 + rand() * 0.6);
+    clumpNo++;
   }
   if (boss) {
     const bv = rollBossVariant(rand, wave);
-    spawns.push(make(bv, count * gap * 0.5, Math.floor(rand() * tracks)));
+    spawns.push(make(bv, t * 0.5, Math.floor(rand() * tracks)));
   }
   spawns.sort((a, b) => a.at - b.at);
 

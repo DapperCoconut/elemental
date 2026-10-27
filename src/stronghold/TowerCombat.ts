@@ -3,7 +3,7 @@ import { Projectile } from '../combat/Projectile';
 import { Sfx } from '../audio';
 import { mix } from '../ui';
 import {
-  DamageType, MinionLook, Rider, SentryLook, TowerAbilityDef, TowerSlot, TrapLook, ZoneShape, damageTypeOf,
+  DamageType, MinionLook, Rider, SentryLook, TowerAbilityDef, TrapLook, ZoneShape, damageTypeOf,
 } from './StrongholdTypes';
 import { Tower } from './Tower';
 import { RoadHusk } from './RoadHusk';
@@ -21,6 +21,10 @@ export interface TowerCombatApi {
   addGold(amount: number, x: number, y: number): void;
   /** Take a husk off the road as if killed (conversions). Pays its bounty. */
   claimHusk(h: RoadHusk): void;
+  /** Give lives back to the keep. Returns how many it actually restored. */
+  mendKeep(amount: number): number;
+  /** Throw a husk back to its breach. */
+  banish(h: RoadHusk): void;
 }
 
 /** A tower's shot. Carries everything the hit needs so the overlap handler stays dumb. */
@@ -61,6 +65,8 @@ interface Sentry { x: number; y: number; until: number; born: number; attackMs: 
 interface Fence { track: number; pathDist: number; x: number; y: number; nx: number; ny: number; until: number; born: number; damage: number; rider?: Rider; color: number; width: number; tower: Tower; struck: Set<RoadHusk> }
 
 const STATUS_TEXT_GAP_MS = 1800;
+/** Effects that are aimed at a husk and do nothing without one. */
+const NEEDS_TARGET = new Set(['bolt', 'line', 'beam', 'chain', 'barrier', 'execute', 'convert', 'fence', 'splash', 'zone', 'trap', 'summon']);
 const MAX_TRAPS = 70;
 const MAX_MINIONS = 30;
 
@@ -84,6 +90,8 @@ export class TowerCombat {
   private sentries: Sentry[] = [];
   private fences: Fence[] = [];
   private pending: Array<{ at: number; fn: () => void }> = [];
+  /** A map-wide ability's screen tint. */
+  private fieldFlash: { color: number; born: number; until: number } | null = null;
   private gfx: Phaser.GameObjects.Graphics;
   private groundGfx: Phaser.GameObjects.Graphics;
   private auraGfx: Phaser.GameObjects.Graphics;
@@ -99,7 +107,7 @@ export class TowerCombat {
     for (const s of this.summons) s.label.destroy();
     for (const b of this.barriers) b.label.destroy();
     this.zones = []; this.beams = []; this.flashes = []; this.summons = []; this.barriers = [];
-    this.telegraphs = []; this.pending = []; this.traps = []; this.minions = []; this.sentries = []; this.fences = [];
+    this.telegraphs = []; this.pending = []; this.fieldFlash = null; this.traps = []; this.minions = []; this.sentries = []; this.fences = [];
     this.gfx.clear(); this.auraGfx.clear(); this.groundGfx.clear();
   }
 
@@ -117,7 +125,7 @@ export class TowerCombat {
 
   /** The barrier (if any) standing within `ahead` px in front of a husk. Airborne husks float over. */
   barrierAhead(h: RoadHusk, ahead = 26): Barrier | null {
-    if (h.airborne) return null;
+    if (h.aloft) return null;
     if (h.trait?.id === 'rubber') {
       // Elastic husks spring clean over whatever is in front of them.
       for (const b of this.barriers) {
@@ -149,11 +157,17 @@ export class TowerCombat {
    * Cast a resolved ability. `aim` overrides where ground effects land (a mortar's reticle).
    * Echo towers get their cast repeated by the scene through `castEcho`.
    */
-  cast(tower: Tower, slot: TowerSlot | 'mastery', a: TowerAbilityDef, target: RoadHusk, time: number, aim?: Aim): void {
+  cast(tower: Tower, a: TowerAbilityDef, maybeTarget: RoadHusk | null, time: number, aim?: Aim, isActive = false): void {
     const fx = a.fx;
-    const at: Aim = aim ?? { x: target.x, y: target.y };
-    tower.lookAt(at.x, at.y);
-    tower.gesture(slot);
+    // Kinds that only make sense against a husk wait for one; the rest work off the tower.
+    if (!maybeTarget && !aim && NEEDS_TARGET.has(fx.kind)) return;
+    const target = maybeTarget as RoadHusk;
+    const at: Aim = aim ?? (maybeTarget ? { x: maybeTarget.x, y: maybeTarget.y } : { x: tower.x, y: tower.y });
+    // Auras tick every few hundred ms; they must not spin the rig or wave its arms each time.
+    if (fx.kind !== 'aura') {
+      tower.lookAt(at.x, at.y);
+      tower.gesture(isActive ? 'active' : a);
+    }
     const range = tower.range * (a.range ?? 1);
     const dtype = damageTypeOf(a);
     const reap = this.consumeReap(tower);
@@ -163,9 +177,19 @@ export class TowerCombat {
       case 'bolt': {
         const count = fx.count ?? 1;
         const spread = fx.spread ?? 0;
-        const lead = aim ?? this.leadPoint(target, fx.speed, ox, oy);
+        const lead = aim ?? (maybeTarget ? this.leadPoint(target, fx.speed, ox, oy) : at);
         const baseAng = Math.atan2(lead.y - oy, lead.x - ox);
         const volleys = fx.broadside ? [baseAng, baseAng + Math.PI] : [baseAng];
+        const salvo = Math.max(1, fx.salvo ?? 1);
+        for (let k = 1; k < salvo; k++) {
+          // A burst: the same volley again, each a beat behind, re-aimed at whoever is still standing.
+          this.pending.push({ at: time + k * 90, fn: () => {
+            if (!this.api.towers().includes(tower)) return;
+            const tgt = maybeTarget && maybeTarget.active && maybeTarget.hp > 0 ? maybeTarget : null;
+            if (!tgt && !aim) return;
+            this.cast(tower, { ...a, fx: { ...fx, salvo: 1 } }, tgt, this.api.scene.time.now, aim);
+          } });
+        }
         for (const base of volleys) {
           for (let i = 0; i < count; i++) {
             const off = count === 1 ? 0 : (i / (count - 1) - 0.5) * spread;
@@ -189,7 +213,7 @@ export class TowerCombat {
               shot.launch(0, fx.speed);
             } else {
               shot.startX = ox; shot.startY = oy;
-              if (fx.homing) shot.homing = target;
+              if (fx.homing && maybeTarget) shot.homing = target;
               shot.launch(Math.cos(ang) * fx.speed, Math.sin(ang) * fx.speed);
             }
           }
@@ -241,7 +265,7 @@ export class TowerCombat {
       }
       case 'chain': {
         const visited = new Set<RoadHusk>();
-        let cur: RoadHusk | null = target;
+        let cur: RoadHusk | null = maybeTarget;
         const pts: number[] = [ox, oy];
         let d = dmg;
         for (let i = 0; i <= fx.jumps && cur; i++) {
@@ -388,7 +412,7 @@ export class TowerCombat {
         for (const t of this.api.towers()) {
           if (t === tower || Math.hypot(t.x - tower.x, t.y - tower.y) > range) continue;
           if (t.buffs.some((b) => b.until > time && b.fireRateMult >= fx.fireRateMult)) continue;
-          if (!best || t.damageDealt + t.tier * 500 > best.damageDealt + best.tier * 500) best = t;
+          if (!best || t.damageDealt + t.totalTier * 300 > best.damageDealt + best.totalTier * 300) best = t;
         }
         if (best) {
           best.addBuff({ until: time + fx.ms, fireRateMult: fx.fireRateMult, damageMult: fx.damageMult });
@@ -399,12 +423,27 @@ export class TowerCombat {
         }
         break;
       }
+      case 'field': {
+        // Map-wide: everything walking, hidden or not, takes it.
+        const link = a.rider?.link ? this.nextLinkId++ : 0;
+        for (const h of this.api.husks().slice()) this.hitHusk(h, dmg, a.rider, tower, true, false, dtype, link);
+        this.fieldFlash = { color: fx.color, born: time, until: time + 700 };
+        Sfx.play('explosion-large', { volume: 0.4 });
+        break;
+      }
+      case 'mend': {
+        const got = this.api.mendKeep(fx.amount);
+        this.api.floatText(tower.x, tower.y - 50, got > 0 ? `+${got} ❤ KEEP MENDED` : 'KEEP AT FULL', '#88ff99', 12);
+        this.flashes.push({ kind: 'ring', pts: [tower.x, tower.y], radius: 40, color: fx.color, width: 3, until: time + 600, born: time });
+        Sfx.playAt('status-buff', tower.x, { volume: 0.5 });
+        break;
+      }
     }
   }
 
   /** A Death tower spends its charges on the next cast. */
   private consumeReap(t: Tower): number {
-    const r = t.def.traits.reap;
+    const r = t.traits.reap;
     if (!r || t.charges < r.need) return 1;
     t.charges = 0;
     this.api.floatText(t.x, t.y - 50, 'REAPED', '#b8a8ff', 12);
@@ -437,19 +476,26 @@ export class TowerCombat {
     if (h.weakenUntil > time) dmg *= h.weakenMult;
     if (!pierce) dmg *= traits.resistFor(h, dtype, tower?.elementId ?? null, time);
     if (tower) {
-      const tt = tower.def.traits;
+      const tt = tower.traits;
       if (tt.antiAir && h.airborne) dmg *= tt.antiAir;
       if (tt.bossBane && h.variant.isBoss) dmg *= tt.bossBane;
       if (tt.bane && h.variant.elementId && tt.bane.elements.includes(h.variant.elementId)) dmg *= tt.bane.mult;
       if (tt.shatter && (h.frozenUntil > time || h.encasedUntil > time || h.frostStacks >= 4)) dmg *= tt.shatter;
       if (tt.vsHidden && h.hidden) dmg *= tt.vsHidden;
       if (tt.vsCategory && h.variant.category && tt.vsCategory.cats.includes(h.variant.category)) dmg *= tt.vsCategory.mult;
+      if (tt.bully && (h.slowUntil > time || h.stunnedUntil > time || h.frozenUntil > time || h.sleepUntil > time || h.encasedUntil > time || h.frostStacks >= 3)) dmg *= tt.bully;
+      if (pop && tt.focus) {
+        if (tower.focusTarget === h) tower.focusStacks = Math.min(tower.focusStacks + 1, Math.round(tt.focus.cap / tt.focus.per));
+        else { tower.focusTarget = h; tower.focusStacks = 0; }
+        dmg *= 1 + tower.focusStacks * tt.focus.per;
+      }
       if (pop && tt.crit && Math.random() < tt.crit.chance) {
         dmg *= tt.crit.mult;
         this.api.floatText(h.x + 14, h.y - 40, 'CRIT', '#ffe066', 11);
       }
     }
     if (pop && h.exposedUntil > time) { dmg *= 1.5; h.exposedUntil = 0; }
+    if (pop && h.brittleUntil > time) dmg += h.brittleAdd;
     const before = h.hp + h.shieldHp;
     if (dmg > 0) {
       h.lastDamageOwner = 'player';
@@ -465,8 +511,37 @@ export class TowerCombat {
         }
       }
     }
-    if (rider && h.active && h.hp > 0) this.applyRider(h, rider, time, linkId);
-    if (tower && h.hp <= 0) tower.kills++;
+    if (tower && pop && dmg > 0) {
+      const gh = tower.traits.goldOnHit;
+      if (gh && tower.hitGoldThisWave < gh.cap) {
+        tower.hitGoldAccum += gh.perHit;
+        const whole = Math.floor(tower.hitGoldAccum);
+        if (whole >= 1) {
+          tower.hitGoldAccum -= whole;
+          const pay = Math.min(whole, gh.cap - tower.hitGoldThisWave);
+          tower.hitGoldThisWave += pay;
+          this.api.addGold(pay, h.x, h.y - 30);
+        }
+      }
+    }
+    if (rider && h.active && h.hp > 0) this.applyRider(h, rider, time, linkId, tower);
+    if (tower && h.hp <= 0) {
+      tower.kills++;
+      const sh = tower.traits.shrapnel;
+      if (sh && !shared) this.shrapnel(h, sh.count, h.maxHp * sh.frac + 4, tower, time);
+    }
+  }
+
+  /** A kill bursts into shards that hit the husks nearest it. */
+  private shrapnel(h: RoadHusk, count: number, damage: number, tower: Tower, time: number): void {
+    const near = this.api.husks()
+      .filter((o) => o !== h && o.active && o.hp > 0 && Math.hypot(o.x - h.x, o.y - h.y) < 110)
+      .sort((a, b) => Math.hypot(a.x - h.x, a.y - h.y) - Math.hypot(b.x - h.x, b.y - h.y))
+      .slice(0, count);
+    for (const o of near) {
+      this.flashes.push({ kind: 'line', pts: [h.x, h.y, o.x, o.y], color: tower.color, width: 1.5, until: time + 160, born: time });
+      this.hitHusk(o, damage, undefined, tower, false, false, 'sharp', 0, true);
+    }
   }
 
   private aoe(x: number, y: number, radius: number, damage: number, rider: Rider | undefined, tower: Tower, dtype: DamageType): void {
@@ -477,7 +552,7 @@ export class TowerCombat {
     Sfx.playAt(radius >= 140 ? 'explosion-large' : radius >= 80 ? 'explosion-medium' : 'explosion-small', x, { volume: 0.45 });
   }
 
-  applyRider(h: RoadHusk, r: Rider, time: number, linkId = 0): void {
+  applyRider(h: RoadHusk, r: Rider, time: number, linkId = 0, tower: Tower | null = null): void {
     if (r.chance !== undefined && Math.random() >= r.chance) return;
     const tr = this.api.traits;
     const pop = (key: string, text: string, color: string): void => {
@@ -559,6 +634,23 @@ export class TowerCombat {
         this.burst(h.x, h.y, 44, 0xc4392c, 'crater');
         this.hitHusk(h, h.maxHp * 0.12 + 10, undefined, null, true, true, 'blast');
       } else pop('ruin', `RUIN ×${h.ruinStacks}`, '#ff8a6a');
+    }
+    if (r.pct && h.hp > 0) {
+      const cut = h.hp * r.pct * (boss ? 0.25 : 1);
+      if (cut >= 1) this.hitHusk(h, cut, undefined, tower, false, true, 'magic');
+    }
+    if (r.ground && h.aloft) { h.groundedUntil = time + r.ground; pop('ground', 'GROUNDED', '#c8b48a'); }
+    if (r.unmask && h.hidden) { h.hidden = false; h.setAlpha(1); pop('unmask', 'UNMASKED', '#ffffff'); }
+    if (r.brittle) {
+      h.brittleAdd = Math.max(h.brittleUntil > time ? h.brittleAdd : 0, r.brittle.add);
+      h.brittleUntil = Math.max(h.brittleUntil, time + r.brittle.ms);
+      pop('brittle', 'BRITTLE', '#e8d8b0');
+    }
+    if (r.banish && !boss && !h.isChild && h.active && h.hp > 0 && Math.random() < r.banish) {
+      this.ring(h.x, h.y, 28, 0xb8a8ff, 400);
+      this.api.floatText(h.x, h.y - 44, 'BANISHED', '#b8a8ff', 12);
+      this.api.banish(h);
+      return;
     }
     if (r.knockback && !tr.immune(h, 'knockback', time)) {
       const kb = boss ? r.knockback * 0.3 : r.knockback;
@@ -643,7 +735,7 @@ export class TowerCombat {
   onHuskDeath(h: RoadHusk): void {
     const time = this.api.scene.time.now;
     const towers = this.api.towers();
-    if (h.burningUntil > time && towers.some((t) => t.def.traits.wildfire && Math.hypot(t.x - h.x, t.y - h.y) <= t.range + 60)) {
+    if (h.burningUntil > time && towers.some((t) => t.traits.wildfire && Math.hypot(t.x - h.x, t.y - h.y) <= t.range + 60)) {
       for (const o of this.api.husks()) {
         if (o === h || Math.hypot(o.x - h.x, o.y - h.y) > 75) continue;
         this.applyRider(o, { burn: 3000 }, time);
@@ -660,10 +752,10 @@ export class TowerCombat {
     for (const t of towers) {
       const d = Math.hypot(t.x - h.x, t.y - h.y);
       if (d > t.range + 30) continue;
-      const tt = t.def.traits;
+      const tt = t.traits;
       if (tt.reap && t.charges < tt.reap.need) t.charges++;
       if (tt.raiseDead && !h.variant.isBoss && !h.isChild && Math.random() < tt.raiseDead.chance) {
-        this.spawnMinion(h.trackIndex, h.pathDist, tt.raiseDead.hits + t.tier, 64, 12000, 10 + t.tier * 8 + h.maxHp * 0.25, undefined, 0xccaaff, 'ghost', h.sizeMult, t, time);
+        this.spawnMinion(h.trackIndex, h.pathDist, tt.raiseDead.hits + t.totalTier, 64, 12000, 10 + t.totalTier * 4 + h.maxHp * 0.25, undefined, 0xccaaff, 'ghost', h.sizeMult, t, time);
         this.api.floatText(h.x, h.y - 40, 'RISEN', '#ccaaff', 11);
       }
     }
@@ -735,7 +827,7 @@ export class TowerCombat {
       while (z.accum >= 250) {
         z.accum -= 250;
         for (const h of husks) {
-          if (h.airborne || Math.hypot(h.x - z.x, h.y - z.y) > z.radius + 16 * h.sizeMult) continue;
+          if (h.aloft || Math.hypot(h.x - z.x, h.y - z.y) > z.radius + 16 * h.sizeMult) continue;
           this.hitHusk(h, z.dps * 0.25, z.rider, z.tower, false, false, z.dtype);
           if (z.pull > 0 && !this.api.traits.immune(h, 'knockback', time) && h.active) {
             h.pathDist = Math.max(0, h.pathDist - z.pull * 0.25 * (h.variant.isBoss ? 0.3 : 1));
@@ -764,7 +856,7 @@ export class TowerCombat {
       if (time < s.nextAt) continue;
       let best: RoadHusk | null = null, bestD = s.range;
       for (const h of husks) {
-        if (h.airborne || h.untargetable) continue;
+        if (h.aloft || h.untargetable) continue;
         const d = Math.hypot(h.x - s.x, h.y - s.y);
         if (d <= bestD) { bestD = d; best = h; }
       }
@@ -782,7 +874,7 @@ export class TowerCombat {
     for (const t of this.traps) {
       if (time < t.born || t.hits <= 0) continue;
       for (const h of husks) {
-        if (h.airborne || h.untargetable || Math.hypot(h.x - t.x, h.y - t.y) > 16 + 14 * h.sizeMult) continue;
+        if (h.aloft || h.untargetable || Math.hypot(h.x - t.x, h.y - t.y) > 16 + 14 * h.sizeMult) continue;
         if (t.blast > 0) {
           for (const o of husks) if (Math.hypot(o.x - t.x, o.y - t.y) <= t.blast + 16 * o.sizeMult) this.hitHusk(o, t.damage, t.rider, t.tower, true, false, 'blast');
           this.burst(t.x, t.y, t.blast, t.color, 'burst');
@@ -806,7 +898,7 @@ export class TowerCombat {
       m.x = p.x - hd.y * m.lateral; m.y = p.y + hd.x * m.lateral;
       for (const h of husks) {
         if (m.hits <= 0) break;
-        if (h.airborne || h.untargetable || m.struck.has(h)) continue;
+        if (h.aloft || h.untargetable || m.struck.has(h)) continue;
         if (Math.hypot(h.x - m.x, h.y - m.y) > 20 + 14 * h.sizeMult) continue;
         m.struck.add(h);
         m.hits--;
@@ -888,13 +980,21 @@ export class TowerCombat {
     ag.clear();
     const gg = this.groundGfx;
     gg.clear();
+    if (this.fieldFlash) {
+      const f = this.fieldFlash;
+      if (time >= f.until) this.fieldFlash = null;
+      else {
+        const life = (f.until - time) / (f.until - f.born);
+        ag.fillStyle(f.color, 0.22 * life); ag.fillRect(0, 56, 960, 492);
+      }
+    }
 
     // Permanent auras (heat haze, orbiting rocks, frost rings) around the towers that have one.
     for (const t of this.api.towers()) {
-      for (const slot of t.unlockedSlots()) {
-        const fx = t.def.abilities[slot].fx;
-        if (fx.kind !== 'aura') continue;
-        this.drawAura(ag, g, t, fx.radius * (t.def.abilities[slot].range ?? 1), fx.color, fx.look ?? 'pulse', time);
+      for (const id of t.attackIds) {
+        const a = t.attackDef(id);
+        if (!a || a.fx.kind !== 'aura') continue;
+        this.drawAura(ag, g, t, a.fx.radius * (a.range ?? 1), a.fx.color, a.fx.look ?? 'pulse', time);
       }
     }
 
@@ -992,7 +1092,7 @@ export class TowerCombat {
   private drawAura(ag: Phaser.GameObjects.Graphics, g: Phaser.GameObjects.Graphics, t: Tower, r: number, color: number, look: string, time: number): void {
     const x = t.x, y = t.y;
     if (look === 'orbit') {
-      const n = 4 + t.tier;
+      const n = 4 + Math.min(6, t.totalTier);
       for (let i = 0; i < n; i++) {
         const a = time / 520 + (i / n) * Math.PI * 2;
         const rx = x + Math.cos(a) * r * 0.85, ry = y + Math.sin(a) * r * 0.55;
@@ -1299,6 +1399,25 @@ export class TowerCombat {
         const fin = pt(0, 0);
         g.fillStyle(mix(c, 0x000000, 0.5), 1); g.fillTriangle(fin.x - 5, fin.y, fin.x + 5, fin.y, fin.x - 2, fin.y - 12 * s);
         g.fillStyle(0xffffff, 1); const e = pt(12, -2); g.fillCircle(e.x, e.y, 1.4 * s);
+        break;
+      }
+      case 'spider': {
+        // Eight legs stepping in two sets, a fat abdomen with a pale hourglass, red eyes forward.
+        const step = Math.sin(time / 60 + m.phase) * 2.2 * s;
+        g.lineStyle(1.6 * s, 0x1f1822, 1);
+        for (const sd of [-1, 1]) {
+          for (let i = 0; i < 4; i++) {
+            const lx = x + (i - 1.5) * 3.2 * s;
+            const st = (i % 2 ? step : -step) * sd;
+            g.lineBetween(lx, y - 6 * s, lx + st, y - 6 * s + sd * 6 * s);
+            g.lineBetween(lx + st, y - 6 * s + sd * 6 * s, lx + st * 1.4 + (i - 1.5) * 2 * s, y - 6 * s + sd * 10 * s);
+          }
+        }
+        g.fillStyle(0x1f1822, 1); g.fillEllipse(x - face * 4 * s, y - 6 * s, 11 * s, 10 * s);
+        g.fillStyle(0xeadfc8, 1); g.fillTriangle(x - face * 6 * s, y - 6 * s, x - face * 4 * s, y - 8 * s, x - face * 4 * s, y - 4 * s);
+        g.fillTriangle(x - face * 2 * s, y - 6 * s, x - face * 4 * s, y - 8 * s, x - face * 4 * s, y - 4 * s);
+        g.fillStyle(0x1f1822, 1); g.fillCircle(x + face * 3 * s, y - 6 * s, 4 * s);
+        g.fillStyle(0xff3348, 1); g.fillCircle(x + face * 5 * s, y - 7 * s, 1 * s); g.fillCircle(x + face * 5 * s, y - 5 * s, 1 * s);
         break;
       }
       case 'crow': {

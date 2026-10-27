@@ -781,6 +781,8 @@ export function getMasteryBinds(elementId: string): Record<string, string> {
   for (const s of Object.keys(binds)) if (binds[s] === 'winds-of-change') binds[s] = 'weather-cycle';
   // Psychic's mastery was redone: an old Utter Focus bind reads as its replacement, Pre-move.
   for (const s of Object.keys(binds)) if (binds[s] === 'utter-focus') binds[s] = 'pre-move';
+  // Bind's mastery was redone: an old Ritual Sacrifice bind reads as its replacement, False Idol.
+  for (const s of Object.keys(binds)) if (binds[s] === 'ritual-sacrifice') binds[s] = 'false-idol';
   return binds;
 }
 

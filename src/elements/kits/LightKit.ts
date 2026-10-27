@@ -356,6 +356,14 @@ export class LightKit {
     return this.airGfx;
   }
 
+  /** Memory's Rebirth: the struck side loses part of what it has built up. Returns a label, or null. */
+  rebirthDrain(owner: 'player' | 'npc'): string | null {
+    const speed = owner === 'player' ? this.carSpeed : this.npcCarSpeed;
+    if (speed <= 1) return null;
+    if (owner === 'player') this.carSpeed *= 0.5; else this.npcCarSpeed *= 0.5;
+    return '−50% SPEED';
+  }
+
   reset(): void {
     // Visuals — every GameObject dies with the old scene run, so rebuild lazily in update().
     if (this.playerAvatar) { this.playerAvatar.destroy(); this.playerAvatar = null; }

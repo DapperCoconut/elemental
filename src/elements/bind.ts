@@ -2,72 +2,60 @@ import { Element } from './Element';
 import { Ability, CastContext } from './Ability';
 
 /**
- * Bind — a test element, reachable only from a cheat-mode save for now.
+ * Bind — something in chains, born under a curse, that makes its living off the dead.
  *
- * Something wrapped in chains and padlocks that wants one thing and has no way to get it. So it
- * asked. The thing that answered is a very old eye that hangs over the top of the arena in a hole
- * in the sky, and it is happy to help — it will burn, shatter and swipe on your behalf all day —
- * on the condition that you never once waste its time.
- *
- * The patron has an **anger** bar and it is the whole element. Overheat its beam and it takes
- * twenty. Leave the idol you summoned without faith and it takes five a second. Hide behind its
- * protection and half of everything it eats for you goes straight in. Anger falls at two a second
- * and nothing else lowers it, so the bar is a running account of how much of the god's patience
- * you have spent. Fill it and the god turns around: every attack in this kit keeps firing for five
- * seconds, at you.
- *
- * Nothing here is free and nothing here is symmetrical. The barrage costs a permanent debuff every
- * time it is thrown. The idol pays out beautifully and then starts billing. And the ultimate opens
- * the sky for fifteen seconds in exchange for one of your other four abilities, for the rest of the
- * match — the god will grant freedom, but it always takes a limb for it.
+ * Every arena a Bind fights in is full of lost souls: small wisps of long-dead elements wandering
+ * where nobody can see them. Blackened Eyes shows them, the chain takes them, Siphon drinks them —
+ * and a soul drunk dry comes back as a revenant that wants you dead. The ancient god no longer
+ * hangs over the arena all match; it only comes when the Ritual pays it in souls.
  *
  * Every `cast` below is a one-line delegate; the whole simulation lives in BindKit.
  */
 
-const summon: Ability = {
-  id: 'bind-summon',
-  name: 'Summon',
-  description: 'Hold to have the eye burn a beam down onto your cursor. The heat bar over your head climbs while it fires and the beam ticks faster the higher it gets — but let it top out and the patron takes 20 anger, and you get nothing back until every scrap of heat has bled off.',
+const daggers: Ability = {
+  id: 'bind-daggers',
+  name: 'Chainbound Daggers',
+  description: 'Throw a dagger with a short chain trailing behind it, for 11 damage. Daggers that reach a wall stick there for 5 seconds and spit chain fragments at the enemy. Right click detonates every dagger you have out — flying or stuck — into a shotgun spray of sharp chain fragments.',
   displayKey: 'Click',
-  cooldown: 260,
-  cast(ctx: CastContext) { ctx.bindSummon(ctx.targetX, ctx.targetY); },
+  cooldown: 380,
+  cast(ctx: CastContext) { ctx.bindDaggers(ctx.targetX, ctx.targetY); },
 };
 
-const shards: Ability = {
-  id: 'bind-shards',
-  name: 'Shards of Oblivion',
-  description: 'Twenty-five golden shards, each with a purple eye set in it, thrown down at your cursor to burst for 10 damage apiece. The god charges for the favour: every cast permanently costs you 10% speed, 10% more damage taken, or 10% of the damage you deal — and it picks, not you.',
+const chain: Ability = {
+  id: 'bind-chain',
+  name: 'Bind',
+  description: 'Throw a chain at whatever is in reach nearest your cursor. An enemy is chained to you for 5 seconds — it cannot get far from you, and its cooldowns are 20% longer; recast to anchor the chain where you stand. A lost soul is bound to you and follows you around, visible to everyone.',
   displayKey: 'E',
-  cooldown: 6500,
-  cast(ctx: CastContext) { ctx.bindShards(ctx.targetX, ctx.targetY); },
+  cooldown: 2333,
+  cast(ctx: CastContext) { ctx.bindChain(ctx.targetX, ctx.targetY); },
 };
 
-const idol: Ability = {
-  id: 'bind-idol',
-  name: 'Summon Idol',
-  description: 'Plant an idol with a ring of ground around it. It runs on faith: standing in the ring feeds it one a second, stepping out burns one a second, it holds ten, and every second it has any it throws a volley of oblivion shards. Starve it and it stops asking politely — an empty idol feeds the patron 5 anger a second until you come back or it crumbles.',
+const eyes: Ability = {
+  id: 'bind-eyes',
+  name: 'Blackened Eyes',
+  description: 'For 8 seconds the whole screen turns inverted and you can see the lost souls — small wisps of long-dead elements wandering the arena. Your hitbox shrinks to your small inner soul, and you walk straight through anything solid.',
   displayKey: 'R',
-  cooldown: 20000,
-  cast(ctx: CastContext) { ctx.bindIdol(ctx.targetX, ctx.targetY); },
-};
-
-const protection: Ability = {
-  id: 'bind-protection',
-  name: "Prophet's Protection",
-  description: 'Ancient hexes close around you and eat the next 3 instances of damage whole, however large. Nothing is destroyed, only moved: half of everything they swallow is handed to the patron as anger.',
-  displayKey: 'F',
   cooldown: 16000,
-  cast(ctx: CastContext) { ctx.bindProtection(); },
+  cast(ctx: CastContext) { ctx.bindEyes(); },
 };
 
-const treachery: Ability = {
-  id: 'bind-treachery',
-  name: 'God of Treachery',
-  description: 'The eye opens all the way for 15 seconds — shard volleys, claw swipes, lasers out of every eye it has and slow beams of dark light dropped across whole stretches of the arena. You do none of it: four chains come out of the corners of the arena and hold you in the middle of it, and you cannot cast a thing until they let go. The price is paid on the press — choose one of your other four abilities and it is dead for the rest of the match — and the moment the sky closes the patron\'s anger is at the top of the bar.',
+const siphon: Ability = {
+  id: 'bind-siphon',
+  name: 'Siphon',
+  description: 'Drain the lost soul nearest your cursor. The longer you drink, the more damage you deal — the buff lingers for 3 seconds after you stop (press F again). Every second also wears your curse down for good. Drain a soul dry and it comes back as a revenant: an angry red soul that keeps its distance, winds up, and dashes at you. Keep walking and it just misses — and anyone it runs through takes far worse. Up to 3 revenants.',
+  displayKey: 'F',
+  cooldown: 2500,
+  cast(ctx: CastContext) { ctx.bindSiphon(ctx.targetX, ctx.targetY); },
+};
+
+const ritual: Ability = {
+  id: 'bind-ritual',
+  name: 'Ritual',
+  description: 'Stab a dagger into the floor, wake the old red runes and offer every soul on your chain at once. The ancient god comes, unbound and almighty, and rains judgement on the enemy. 1–2 souls: it stays 5 seconds and takes one of your abilities, permanently. 3–4 souls: 8 seconds, and your curse is lifted while it stays. 5–6 souls: 12 seconds, your curse is lifted for 15, and you are given the old prophet\'s protection. Needs at least one soul.',
   displayKey: 'Q',
   isUltimate: true,
   cooldown: 60000,
-  cast(ctx: CastContext) { ctx.bindTreachery(); },
+  cast(ctx: CastContext) { ctx.bindRitual(); },
 };
 
 export const bindElement: Element = {
@@ -75,5 +63,5 @@ export const bindElement: Element = {
   name: 'Bind',
   color: 0xe0b743,
   emoji: '⛓️',
-  abilities: [summon, shards, idol, protection, treachery],
+  abilities: [daggers, chain, eyes, siphon, ritual],
 };

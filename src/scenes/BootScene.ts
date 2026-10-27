@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { shellBreakPoly } from '../elements/kits/AstraVisuals';
 import { HUSK_VARIANTS, CORRUPT_KIN, huskTextureKey } from '../invasion/HuskVariants';
 
 /** Scale a colour's channels toward black by `factor` (0–1). */
@@ -1888,6 +1889,18 @@ export class BootScene extends Phaser.Scene {
           gfx.fillEllipse(mx - 2, my - 1, 2.4, 1.6);
           gfx.fillEllipse(mx + 2, my - 1, 2.4, 1.6);
           break;
+        case 'spool':
+          // A cotton reel: two flanges and a wound middle, with a loose end.
+          gfx.fillStyle(mc, 1);
+          gfx.fillRect(mx - 4, my - 4.5, 8, 1.8);
+          gfx.fillRect(mx - 4, my + 2.7, 8, 1.8);
+          gfx.fillStyle(md, 1);
+          gfx.fillRect(mx - 2.6, my - 2.7, 5.2, 5.4);
+          gfx.lineStyle(1, mc, 1);
+          gfx.lineBetween(mx - 2.6, my - 1, mx + 2.6, my - 1.8);
+          gfx.lineBetween(mx - 2.6, my + 1, mx + 2.6, my + 0.2);
+          gfx.lineBetween(mx + 2.6, my, mx + 5.5, my + 3);
+          break;
         case 'scribble':
           gfx.lineStyle(1.4, mc, 1);
           gfx.lineBetween(mx - 4, my - 3, mx + 4, my - 2);
@@ -2867,10 +2880,69 @@ export class BootScene extends Phaser.Scene {
     gfx.generateTexture('elem-gum', 48, 48);
     gfx.clear();
 
-    // Harvest (id `gluttony`) — a plain orb of dark burlap (HAR.sack): the scarecrow's sack head.
-    // The knot, the grin and the scythe are the rig's, not printed on the body.
-    bakeOrb(gfx, { rim: 0x0c0806, shell: 0x1a140f, body: 0x2a2119, mid: 0x372b20, core: 0x46382a, light: 0x6a5741, glint: 0xb8a58a });
+    // Wood (id `gluttony`) — a plain orb of birch bark (WOOD.birch): pale, papery, cool-white.
+    // The black bark marks, the eye scars, the twig crown and the scythe are the rig's.
+    bakeOrb(gfx, { rim: 0x5c574d, shell: 0x8f897a, body: 0xb5ae9d, mid: 0xcdc6b4, core: 0xddd7c7, light: 0xefeadc, glint: 0xffffff });
     gfx.generateTexture('elem-gluttony', 48, 48);
+    gfx.clear();
+
+    // Pressure — a riveted steel boiler-shell (PRESSURE.steel), darker at the rim, a hot glint.
+    // The seam, the grille, the stacks and the gauntlet are the rig's.
+    bakeOrb(gfx, { rim: 0x2a2e34, shell: 0x4f555d, body: 0x6d747d, mid: 0x858c95, core: 0x9aa1aa, light: 0xc4cad1, glint: 0xffe8c8 });
+    gfx.fillStyle(0xa9b0b8, 1);
+    for (const [rx, ry] of [[14, 14], [34, 14], [10, 26], [38, 26]]) gfx.fillCircle(rx, ry, 1.4);
+    gfx.generateTexture('elem-pressure', 48, 48);
+    gfx.clear();
+
+    // Ink — a glossy rubber-hose ink-black (INK.ink), a white rim of paper round it and a hard
+    // white glint. The grin, the pie-cut eyes, the gloves and the hat are the rig's.
+    bakeOrb(gfx, { rim: 0xf5f2e9, shell: 0x050505, body: 0x111111, mid: 0x181818, core: 0x202020, light: 0x3c3c3c, glint: 0xffffff });
+    gfx.generateTexture('elem-ink', 48, 48);
+    gfx.clear();
+
+    // Astra — a shell of deep space (ASTRA.shell): midnight violet to a nebula-lit cap, freckled
+    // with far stars. The cracks, the dwarf star and the prominence are the rig's.
+    bakeOrb(gfx, { rim: 0x07061a, shell: 0x14123a, body: 0x1d1a4c, mid: 0x262260, core: 0x302a75, light: 0x4a40a8, glint: 0xe8e0ff });
+    gfx.fillStyle(0xcfd6ff, 0.9);
+    for (const [sx, sy, sr] of [[15, 20, 0.9], [31, 15, 1.1], [35, 30, 0.8], [19, 33, 0.7], [26, 24, 0.6], [12, 27, 0.6]]) gfx.fillCircle(sx, sy, sr);
+    gfx.generateTexture('elem-astra', 48, 48);
+    {
+      // A whole chunk of the shell is broken clean away — erase it, so the rig's star shows
+      // through a real gap in the silhouette rather than a painted-on patch.
+      const tex = this.textures.get('elem-astra') as Phaser.Textures.CanvasTexture;
+      const ctx = tex.getContext();
+      const k = tex.width / 48;
+      const hole = shellBreakPoly(24 * k, 24 * k, 99, k);
+      ctx.save();
+      ctx.globalCompositeOperation = 'destination-out';
+      ctx.beginPath();
+      hole.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+      tex.refresh();
+    }
+    gfx.clear();
+
+    // Memory — a dark coat (MEMORY.coat): near-black slate to a dim violet-grey cap, with a faint
+    // pinstripe. The static face, the lapels, the hat and the cane are the rig's.
+    bakeOrb(gfx, { rim: 0x0d0b12, shell: 0x16131d, body: 0x1e1b26, mid: 0x26222f, core: 0x2e2a39, light: 0x4a4458, glint: 0xc9c6d6 });
+    gfx.lineStyle(1, 0x3a3548, 0.55);
+    for (const px of [16, 21, 27, 32]) gfx.lineBetween(px, 12, px, 40);
+    gfx.generateTexture('elem-memory', 48, 48);
+    gfx.clear();
+
+    // String — a spider's head-and-thorax (STRING.spider): velvet black with a violet sheen, a
+    // fan of fine hairs and a pale groove down the middle. Legs, abdomen, eyes and fangs are the rig's.
+    bakeOrb(gfx, { rim: 0x0e0a10, shell: 0x1a1320, body: 0x231a26, mid: 0x2b2030, core: 0x34283a, light: 0x5a4a64, glint: 0xc9b8d6 });
+    gfx.lineStyle(1, 0x6a5874, 0.5);
+    for (let i = 0; i < 9; i++) {
+      const a = Math.PI * 1.1 + i * 0.1 * Math.PI;
+      gfx.lineBetween(24 + Math.cos(a) * 12, 26 + Math.sin(a) * 12, 24 + Math.cos(a) * 18, 26 + Math.sin(a) * 18);
+    }
+    gfx.lineStyle(1.4, 0xeadfc8, 0.35);
+    gfx.lineBetween(24, 10, 24, 22);
+    gfx.generateTexture('elem-string', 48, 48);
     gfx.clear();
 
     // A deliberately empty 48×48 body, for the elements whose avatar paints its own torso.

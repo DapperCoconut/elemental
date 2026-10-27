@@ -55,7 +55,7 @@ const MOVEMENT_PROFILES: Record<string, MovementProfile> = {
   gravity:     { archetype: 'zoner',      range: [240, 400], retreatHp: 0.30 },
   creation:    { archetype: 'summoner',   range: [220, 380], retreatHp: 0.30 },
   electricity: { archetype: 'skirmisher', range: [100, 220], retreatHp: 0.20 },
-  slime:       { archetype: 'skirmisher', range: [140, 280], retreatHp: 0.28 },
+  slime:       { archetype: 'skirmisher', range: [100, 240], retreatHp: 0.25 },
   fate:        { archetype: 'zoner',      range: [240, 400], retreatHp: 0.32 },
   sound:       { archetype: 'skirmisher', range: [70, 150],  retreatHp: 0.25 },
   light:       { archetype: 'skirmisher', range: [160, 320], retreatHp: 0.25 },
@@ -93,6 +93,11 @@ const MOVEMENT_PROFILES: Record<string, MovementProfile> = {
   bind:        { archetype: 'summoner',   range: [220, 380], retreatHp: 0.30 },
   gum:         { archetype: 'brawler',    range: [50, 150],  retreatHp: 0.15 },
   gluttony:    { archetype: 'brawler',    range: [90, 240],  retreatHp: 0.2 },
+  pressure:    { archetype: 'brawler',    range: [70, 200],  retreatHp: 0.18 },
+  ink:         { archetype: 'skirmisher', range: [150, 320], retreatHp: 0.25 },
+  astra:       { archetype: 'zoner',      range: [200, 340], retreatHp: 0.25 },
+  memory:      { archetype: 'zoner',      range: [220, 380], retreatHp: 0.3 },
+  string:      { archetype: 'zoner',      range: [200, 360], retreatHp: 0.3 },
 };
 
 /**
@@ -202,6 +207,8 @@ export interface NpcAiState {
   earthBiomePoint?: { x: number; y: number };
   npcEarthRocksActive?: boolean;
   oilDroneCount?: number;
+  /** Oil: the arm laser is cool enough to squeeze (the kit rests it near overheat). */
+  npcOilArmLaserReady?: boolean;
   shadowPlayerSnared?: boolean;
   /**
    * Grim Gloom synergy: while the bot's own gloom is up, where to throw caltrops so the player
@@ -224,6 +231,8 @@ export interface NpcAiState {
   npcIceBombAim?: { x: number; y: number } | null;
   /** Air: the slot Weather Cycle is bound over, so the bot leaves that base ability alone. */
   npcAirWeatherSlot?: 'r' | 'f' | 'q';
+  /** Air (Gust perk): the glaive is on the target — recalling now lands the arrival spin. */
+  npcAirGustRecall?: boolean;
   /** Crystal: the slot Crystal Shredder is bound over, so the bot leaves that base ability alone. */
   npcCrystalShredderSlot?: 'r' | 'f' | 'q';
   npcGrowthDna?: number;
@@ -504,25 +513,107 @@ export interface NpcAiState {
   /** Camo Fade has finished: the line is reaching the two fish only a hidden angler can land. */
   npcDepthsCamoed?: boolean;
 
-  // Harvest (element id `gluttony`)
-  /** The middle of the bot's own mold, while the target is close but off it — lure them onto the rot. */
-  harvestSeekPoint?: { x: number; y: number };
-  /** One of the bot's own corrupt hearts within sickle reach: aim the loop's far side through it. */
-  npcHarvestHeartAim?: { x: number; y: number };
-  /** The target is standing on the bot's rotting mold. */
-  npcHarvestTargetOnMold?: boolean;
-  /** Corruption on the target, 0–100 — the crows and the scythe both scale off it. */
-  npcHarvestTargetCorruption?: number;
-  /** Reaping Hour would put the target under its execute line. */
-  npcHarvestCanExecute?: boolean;
-  /** The bot's Corrupt HP is at least its health: Consume floods the target with corruption. */
-  npcHarvestBiteHeavy?: boolean;
-  /** The target carries something Consume can steal. */
-  npcHarvestTargetBuffed?: boolean;
-  /** Mature cells of the bot's own mold — sow again when this is thin. */
-  npcHarvestMatureMold?: number;
-  /** Harvest Mastery: which of R/F/Q Corrupt Predation was bound over. The kit fires it; the rotation leaves that key alone. */
-  npcHarvestPredationSlot?: 'r' | 'f' | 'q';
+  // Wood (element id `gluttony`)
+  /** An apple of the bot's own on a tree (F+), or its sprouts while its Digest aura runs (R+). */
+  woodSeekPoint?: { x: number; y: number };
+  /** One of the bot's carverangs is coming home: a throw now re-carves it back out. */
+  npcWoodRecarve?: boolean;
+  /** Final Harvest would kill: the bot out-healths the target by 60% after the swing. */
+  npcWoodCanExecute?: boolean;
+  /** The execute is a brew's worth of sap away. */
+  npcWoodExecuteNeedsSap?: boolean;
+  /** Damage the bot took in the last 5 seconds — what Digest would turn around. */
+  npcWoodDigestValue?: number;
+  /** E+ Brewmaster: the bot's brew is on the boil. */
+  npcWoodCooking?: boolean;
+  /** A tree for Commensalism: away from the target when hurt, toward it when it is far off. */
+  npcWoodTreeAim?: { x: number; y: number };
+  /** Q+ Prune: a fat sprout of the bot's in reach of the scythe. */
+  npcWoodPruneAim?: { x: number; y: number };
+
+  // Pressure
+  /** The kit is holding one of the bot's keys and will let go itself — hands full. */
+  npcPressureCharging?: boolean;
+  /** The target is grounded or stunned long enough to wind a punch up on. */
+  npcPressureTargetPinned?: boolean;
+  /** Release has enough banked, the target is in the jet, and the bank is not worth more kept. */
+  npcPressureVentShot?: boolean;
+  /** R+ Compression Charge: the bot's own pain orb, worth walking into. */
+  pressureCompressPoint?: { x: number; y: number };
+  /** Exceed is worth its crash right now. */
+  npcPressureExceedReady?: boolean;
+
+  // Astra
+  /** Holding Q+ or watching the finale — the kit has the bot's hands. */
+  npcAstraBusy?: boolean;
+  /** Where to stand: on the target's row, a touch below it. Absent in star mode. */
+  astraSeekPoint?: { x: number; y: number };
+  /** The level click would land (or the bot is the star and aims). */
+  npcAstraLanedUp?: boolean;
+  /** The smite would pick the target, not the bot. */
+  npcAstraSmiteSafe?: boolean;
+  /** The flares would land: the target is on an arm, or slowed by a smite and cannot step off. */
+  npcAstraFlareShot?: boolean;
+  /** Worm Warp is worth it: a theft in star mode, F+'s theft, or a swap that fixes the smite. */
+  npcAstraWarpShot?: boolean;
+  /** True Self is worth starting now. */
+  npcAstraTrialReady?: boolean;
+  /** In the Star Trial — only damage keeps it alive. */
+  npcAstraInTrial?: boolean;
+
+  // Memory
+  /** Spinning the cane up for a Snatch, or sweeping Rebirth's line — the kit has the bot's hands. */
+  npcMemoryBusy?: boolean;
+  /** Snatch is worth the wind-up: two or more of the target's abilities sit ready, or it is held still. */
+  npcMemorySnatchShot?: boolean;
+  /** Practice has a target (while it strips kits: the target's passives are not already sealed). */
+  npcMemoryRebirthWorth?: boolean;
+  /** The target is close and fighting — the recording will have casts to replay. */
+  npcMemoryRepressReady?: boolean;
+  /** Trauma's window would cover a burst: the beam about to go, the copy's replay, deep Guilt. */
+  npcMemoryTraumaReady?: boolean;
+  /** Inside Trauma's window — spend everything. */
+  npcMemoryInTrauma?: boolean;
+
+  // String
+  /** Spider Dance has somewhere to walk: two strands, a string tied to the target, or the tomb's guy-lines. */
+  npcStringSpiderReady?: boolean;
+  /** No hex strand out and the target in reach. (The kit snaps it itself once the target is caught.) */
+  npcStringHexShot?: boolean;
+  /** Marionette in reach, with spiders or strings on the field to walk the puppet into. */
+  npcStringPuppetShot?: boolean;
+  /** Linen Tomb: Spider Dance is ready to follow it up the guy-lines, or the target is low. */
+  npcStringTombReady?: boolean;
+
+  // Ink
+  /** Running on the spot, bouncing, hauling or holding the anvil — the kit has the bot's hands. */
+  npcInkBusy?: boolean;
+  /** The target is slipping or flattened: it cannot get out of a long Skedaddle or the anvil. */
+  npcInkTargetHelpless?: boolean;
+  /** The bot is running from the target: a peel dropped now lands in their path. */
+  npcInkPeelLane?: boolean;
+  /** Where to walk: the hungry anvil with five peels out (F+), or out through the foam in Foux World. */
+  inkSeekPoint?: { x: number; y: number };
+  /** Foux World is worth casting. */
+  npcInkFouxReady?: boolean;
+  /** Finger Guns have no cooldown; the kit says when the bot's next "click" is due. */
+  npcInkGunReady?: boolean;
+
+  // Venom (id `slime`)
+  /** Under the acid: the kit surfaces the bot itself when it reaches its target. */
+  npcAcidBurrowed?: boolean;
+  /** On its own acid, with a reason to go under (R+ ambush, or hurt). */
+  npcAcidBurrowReady?: boolean;
+  /** Burrow is wanted but the bot is off its acid: the nearest cell of its own. */
+  acidSeekPoint?: { x: number; y: number };
+  /** The target is standing on the bot's acid — Acid Apocalypse lands on them. */
+  npcAcidApocalypseReady?: boolean;
+  /** The target is inside Festering Bite's (coverage-scaled) reach. */
+  npcAcidBiteReady?: boolean;
+  /** Vile Spray is worth a cast: the target is off the bot's acid, or a coverage milestone is near. */
+  npcAcidSprayWorth?: boolean;
+  /** Venom Mastery: the slot Shed Skin was bound over (the kit casts it). */
+  npcAcidShedSlot?: string;
 
   // Ruin
   /** A spike ring is already counting down; a second F would only replace it with itself. */
@@ -619,18 +710,16 @@ export interface NpcAiState {
   npcMagnetMagLevSlot?: 'r' | 'f' | 'q';
 
   // Cloth
-  /** A long pin is in a body or a wall: E is now the reel-in, not a throw. */
-  npcClothPinPlanted?: boolean;
-  /** A safety anchor is down: R is now the bail-out, not a placement. */
-  npcClothAnchored?: boolean;
-  /** 0–1 of the 75 damage that fires the safety line by itself. */
-  npcClothAnchorPressure?: number;
-  /** 0–1 toward the grapple spin. Near 1, staying in click range is worth more than anything. */
-  npcClothCombo?: number;
-  /** Pinned HP in the pool right now — the thorns only pay while there is some. */
-  npcClothPinned?: number;
-  /** Something is webbed: it cannot move, so this is the free-damage window. */
-  npcClothWebbed?: boolean;
+  /** Needles lying within the scarf's reach — Click throws one. */
+  npcClothNeedles?: number;
+  /** Somebody the bot has bound is within reach — Click throws them into the nearest wall. */
+  npcClothTargetWrapped?: boolean;
+  /** The bot's cushion has pins, is in reach, and somebody is standing near it — Click punches it. */
+  npcClothCushionPunch?: boolean;
+  /** A pincushion is already out; another F would only replace it. */
+  npcClothHasCushion?: boolean;
+  /** Burning Man is up: needles go red-hot, bound bodies burn, a fresh cushion catches. */
+  npcClothBurning?: boolean;
 
   // Marrow
   /** Occupied sockets on the bone bar, 0–5. A sixth cell is refused outright. */
@@ -782,28 +871,23 @@ export interface NpcAiState {
   npcRadiationDummyCoverReady?: boolean;
 
   // Bind
-  /** 0–100 of the patron's patience. Above 70 the bot stops spending anything at all. */
-  npcBindAnger?: number;
-  /** The god has turned: every ability is refused for five seconds, so it just moves. */
-  npcBindForsaken?: boolean;
-  /** 0–1 beam heat. The bot lets go before it tops out rather than eating 20 anger. */
-  npcBindHeat?: number;
-  npcBindOverheated?: boolean;
-  /** Faith left in its idol, or -1 with none standing — the difference between a turret and a bill. */
-  npcBindIdolFaith?: number;
-  npcBindWard?: number;
-  /** Chained to the middle of the arena with the sky open — the hands are the god's, not its. */
-  npcBindChained?: boolean;
-  /** Converts standing, or -1 with no cult unlocked. Below the cap, R buys a body, not an idol. */
-  npcBindCult?: number;
-  /**
-   * Bind Mastery: the slot Ritual Sacrifice took, or undefined. The dagger itself is cast by the
-   * kit off a private timer — an enhancement id is not in `element.abilities`, so there is nothing
-   * here for `castAbility` to find — and all this routine owes it is not casting the base ability
-   * out of a slot that no longer holds one. (Pathetic Stab needs no such guard: the slot the
-   * ultimate takes is locked for the bot exactly as it always was, and the kit plays the lunge.)
-   */
-  npcBindRitualSlot?: string;
+  /** Blackened Eyes is open: wild souls can be seen, so they can be chained and drunk. */
+  npcBindEyesOpen?: boolean;
+  /** A siphon is running — the kit lets go of it, the rotation leaves F alone. */
+  npcBindSiphoning?: boolean;
+  /** Souls on its chain. */
+  npcBindSouls?: number;
+  /** What the Ritual would be paid with right now (souls, plus revenants with Wrathful God). */
+  npcBindOffering?: number;
+  npcBindRevenants?: number;
+  /** A wild soul worth walking to while the eyes are open. */
+  npcBindSeek?: { x: number; y: number };
+  /** Kit-chosen E target: a soul in reach, a revenant lined up through the foe (E+), a cultist to feed, or the foe. */
+  npcBindChainAim?: { x: number; y: number };
+  /** Kit-chosen F target: a revenant to bring to faith (F+), a wild soul, or a spare bound one. */
+  npcBindSiphonAim?: { x: number; y: number };
+  /** Bind Mastery: the slot False Idol took. The kit plants the idol; the rotation leaves that key alone. */
+  npcBindIdolSlot?: string;
 
   // Slime (id: gum)
   /** Solidify threw its hand away — nothing it presses will answer until it grows back. */
@@ -996,6 +1080,13 @@ export class NpcOpponent extends Fighter {
    * cooldown stamp and no second announce, because the bot only paid once.
    */
   override castAbility(abilityId: string, ctx: CastContext): boolean {
+    // Ink's anvil flattened us: the keys are shuffled, so the press lands on another ability.
+    // A replica's casts are the remote player's own, already shuffled on their machine.
+    if (this.inkSwap && !this.netGhost && Date.now() < this.inkFlatUntil) abilityId = this.inkSwap[abilityId] ?? abilityId;
+    // Memory's third shard: the bars are static, and a bot that cannot read them does not know
+    // what is ready. Only the click — which it never needs a bar for — still goes.
+    if (!this.netGhost && Date.now() < this.memoryBlindUntil
+        && this.element.abilities.some((a) => a.id === abilityId && a.displayKey !== 'Click')) return false;
     const fired = super.castAbility(abilityId, ctx);
     if (!fired || !this.trueNightmare) return fired;
     if (Math.random() >= TRUE_NIGHTMARE_DOUBLE_CHANCE) return fired;
@@ -1146,7 +1237,8 @@ export class NpcOpponent extends Fighter {
         // sidestep into a committed dash — it clears the lane instead of drifting
         // out of it, and then holds that heading for the length of the dash.
         if (this.trueNightmare && time >= this.nextTrueDodgeAt) {
-          const dash = this.speed * TRUE_DODGE_SPEED_MULT;
+          // Venom's Serpentine: a serpent's dodge carries three times as far.
+          const dash = this.speed * TRUE_DODGE_SPEED_MULT * (this.element.id === 'slime' ? 3 : 1);
           // Away from the arena wall it is nearest, so a dash never pins it flat.
           const wb = this.scene.physics.world.bounds;
           const side = (this.y - wb.centerY) * (vx / speed) - (this.x - wb.centerX) * (vy / speed) > 0 ? -1 : 1;
@@ -1158,7 +1250,7 @@ export class NpcOpponent extends Fighter {
           dodging = true;
           break;
         }
-        const dodgeSpeed = this.speed * (this.difficulty.level >= 5 ? 1.3 : 1.05);
+        const dodgeSpeed = this.speed * (this.difficulty.level >= 5 ? 1.3 : 1.05) * (this.element.id === 'slime' ? 3 : 1);
         body.setVelocity(-vy / speed * dodgeSpeed, vx / speed * dodgeSpeed);
         dodging = true;
         break;
@@ -1166,6 +1258,13 @@ export class NpcOpponent extends Fighter {
     }
     // The bot's Space, as far as anything reading presses is concerned (Psychic's Pre-move).
     if (dodging) this.dodgingAt = Date.now();
+
+    // String's Linen Tomb: every attempt to move tears at it, so a bot inside it holds still and
+    // spends itself on cutting the silk.
+    if (Date.now() < this.stringTombedUntil) {
+      body.setVelocity(0, 0);
+      dodging = true;
+    }
 
     // ── Movement (skipped if dodge triggered) ────────────────────
     const arch = ARCHETYPE_DEFAULTS[prof.archetype];
@@ -1304,11 +1403,71 @@ export class NpcOpponent extends Fighter {
       }
     }
 
-    // ── Harvest: backing onto its own mold ───────────────────────
-    // Same shape as the Depths seek above: the bot walks into the middle of its rot so whoever is
-    // chasing it has to stand on the mold to keep swinging.
-    if (aiState.harvestSeekPoint) {
-      const seek = aiState.harvestSeekPoint;
+    // ── Wood: walking to an apple, or onto its sprouts under the aura ──
+    // Same shape as the Depths seek above: the kit only publishes a point while it is worth more
+    // than strafing.
+    if (aiState.woodSeekPoint) {
+      const seek = aiState.woodSeekPoint;
+      const d = Phaser.Math.Distance.Between(this.x, this.y, seek.x, seek.y);
+      if (d > 6) {
+        const a = Phaser.Math.Angle.Between(this.x, this.y, seek.x, seek.y);
+        body.setVelocity(Math.cos(a) * this.speed, Math.sin(a) * this.speed);
+      } else {
+        body.setVelocity(0, 0);
+      }
+    }
+
+    // ── Venom: walking onto its own acid to go under (Snake Burrow needs acid underfoot) ──
+    if (aiState.acidSeekPoint) {
+      const seek = aiState.acidSeekPoint;
+      const d = Phaser.Math.Distance.Between(this.x, this.y, seek.x, seek.y);
+      if (d > 6) {
+        const a = Phaser.Math.Angle.Between(this.x, this.y, seek.x, seek.y);
+        body.setVelocity(Math.cos(a) * this.speed, Math.sin(a) * this.speed);
+      } else {
+        body.setVelocity(0, 0);
+      }
+    }
+
+    // ── Pressure: walking into its own pain orb (R+ Compression Charge) ──
+    if (aiState.pressureCompressPoint) {
+      const seek = aiState.pressureCompressPoint;
+      const d = Phaser.Math.Distance.Between(this.x, this.y, seek.x, seek.y);
+      if (d > 6) {
+        const a = Phaser.Math.Angle.Between(this.x, this.y, seek.x, seek.y);
+        body.setVelocity(Math.cos(a) * this.speed, Math.sin(a) * this.speed);
+      } else {
+        body.setVelocity(0, 0);
+      }
+    }
+
+    // ── Bind: to a wild soul while the eyes are open ──
+    if (aiState.npcBindSeek) {
+      const seek = aiState.npcBindSeek;
+      const d = Phaser.Math.Distance.Between(this.x, this.y, seek.x, seek.y);
+      if (d > 6) {
+        const a = Phaser.Math.Angle.Between(this.x, this.y, seek.x, seek.y);
+        body.setVelocity(Math.cos(a) * this.speed, Math.sin(a) * this.speed);
+      } else {
+        body.setVelocity(0, 0);
+      }
+    }
+
+    // ── Astra: onto the target's row, a touch below it ──
+    if (aiState.astraSeekPoint) {
+      const seek = aiState.astraSeekPoint;
+      const d = Phaser.Math.Distance.Between(this.x, this.y, seek.x, seek.y);
+      if (d > 6) {
+        const a = Phaser.Math.Angle.Between(this.x, this.y, seek.x, seek.y);
+        body.setVelocity(Math.cos(a) * this.speed, Math.sin(a) * this.speed);
+      } else {
+        body.setVelocity(0, 0);
+      }
+    }
+
+    // ── Ink: to the hungry anvil (F+), or out of the set through the foam ──
+    if (aiState.inkSeekPoint) {
+      const seek = aiState.inkSeekPoint;
       const d = Phaser.Math.Distance.Between(this.x, this.y, seek.x, seek.y);
       if (d > 6) {
         const a = Phaser.Math.Angle.Between(this.x, this.y, seek.x, seek.y);
@@ -1654,20 +1813,300 @@ export class NpcOpponent extends Fighter {
     if (this.element.id === 'gluttony') {
       return this.doGluttonyAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
     }
+    if (this.element.id === 'pressure') {
+      return this.doPressureAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
+    }
+    if (this.element.id === 'astra') {
+      return this.doAstraAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
+    }
+    if (this.element.id === 'ink') {
+      return this.doInkAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
+    }
+    if (this.element.id === 'memory') {
+      return this.doMemoryAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
+    }
+    if (this.element.id === 'string') {
+      return this.doStringAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
+    }
     return null;
   }
 
   /**
-   * Harvest (element id `gluttony`). The kit's synergies are checked first, in the order they pay:
+   * String. The kit owns the geometry — where the strands lie, where the puppet is walked, and the
+   * moment the hex strand has someone in it (it snaps that itself) — so the bot only decides when.
+   * Synergies first:
    *
-   * - **Reaping Hour executes** — the kit says when the swing would put the target under the line.
-   * - **Sickle → heart**: a heart of its own in reach is 75 Corrupt HP, worth more than any poke.
-   * - **Corrupt HP → heavy bite**: with as much rot as health, Consume floods the target.
-   * - **Consume steals**: a shielded or buffed target is bitten for what it carries.
-   * - **Mold → crows**: the frenzy waits for a corrupted target (or one standing in the rot).
+   * - **Tomb, then spiders**: Q when Spider Dance is ready, so E follows it and the spiders walk
+   *   the tomb's four guy-lines straight into the cocoon.
+   * - **Spiders on a web**: E only once there are strands to walk — two of them, or one tied to
+   *   the target (the spiders walk down it into them).
+   * - **Puppet into the web**: F only when there are spiders or strings to walk the puppet into;
+   *   the kit then steers them onto the spiders, or leans them through a string until it snaps.
+   * - **Hex then snap**: R ties the purple strand on the target; the kit snaps it once they are in it.
    *
-   * Then the rotation: re-sow when its mold is thin, bite up close, scythe a corrupted target at
-   * range, and keep the sickle in the air.
+   * Then the rotation: strings at the target, to tie them up and fence them in.
+   */
+  private doStringAbilities(
+    target: Fighter,
+    buildContext: (tX: number, tY: number) => CastContext,
+    time: number,
+    dist: number,
+    hpRatio: number,
+    aimX: number,
+    aimY: number,
+    aiState: NpcAiState,
+  ): string | null {
+    void target;
+    void time;
+    void hpRatio;
+    const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+
+    if (aiState.npcStringTombReady && !skipSpecials) {
+      if (this.castAbility('string-linen-tomb', buildContext(aimX, aimY))) return 'string-linen-tomb';
+    }
+    if (aiState.npcStringSpiderReady && !skipSpecials) {
+      if (this.castAbility('string-spider-dance', buildContext(aimX, aimY))) return 'string-spider-dance';
+    }
+    if (aiState.npcStringPuppetShot && !skipSpecials) {
+      if (this.castAbility('string-marionette', buildContext(aimX, aimY))) return 'string-marionette';
+    }
+    if (aiState.npcStringHexShot && !skipSpecials) {
+      if (this.castAbility('string-hexing-strand', buildContext(aimX, aimY))) return 'string-hexing-strand';
+    }
+
+    // ── Rotation ──
+    if (dist < 700) {
+      if (this.castAbility('string-snag', buildContext(aimX, aimY))) return 'string-snag';
+    }
+    return null;
+  }
+
+  /**
+   * Memory. The kit owns the geometry — the Snatch's release aim, Rebirth's pivot and the moment
+   * its line lies across the target — so the bot only decides when. Synergies first:
+   *
+   * - **Trauma over a burst**: Q opens its window when the Snatch beam is about to go, when the
+   *   static copy still has casts to replay, or when Guilt has stacked deep — every hit in the
+   *   window is a wound the target relives every second.
+   * - **Snatch on idle bars**: E only when the target is sitting on two or more ready abilities
+   *   (that is the time it steals), or is stunned and cannot walk out of the wind-up.
+   * - **Repression before Trauma**: F while the target is close and fighting, so the replay has
+   *   casts in it — and then the Trauma reader times the window over the replay.
+   * - **Practice early and often**: R whenever there is a target — every use adds damage for good.
+   *
+   * Then the rotation: shards, to keep three latched (the target goes blind on its own bars).
+   */
+  private doMemoryAbilities(
+    target: Fighter,
+    buildContext: (tX: number, tY: number) => CastContext,
+    time: number,
+    dist: number,
+    hpRatio: number,
+    aimX: number,
+    aimY: number,
+    aiState: NpcAiState,
+  ): string | null {
+    void target;
+    void time;
+    void hpRatio;
+    const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+    const trauma = !!aiState.npcMemoryInTrauma;
+
+    if (aiState.npcMemoryTraumaReady) {
+      if (this.castAbility('memory-trauma', buildContext(aimX, aimY))) return 'memory-trauma';
+    }
+    if (aiState.npcMemoryBusy) return null;
+    if ((trauma || !skipSpecials) && aiState.npcMemorySnatchShot) {
+      if (this.castAbility('memory-snatch', buildContext(aimX, aimY))) return 'memory-snatch';
+    }
+    if (!skipSpecials && aiState.npcMemoryRepressReady) {
+      if (this.castAbility('memory-repression', buildContext(aimX, aimY))) return 'memory-repression';
+    }
+    if ((trauma || !skipSpecials) && aiState.npcMemoryRebirthWorth && dist < 600) {
+      if (this.castAbility('memory-rebirth', buildContext(aimX, aimY))) return 'memory-rebirth';
+    }
+
+    // ── Rotation ──
+    if (dist < 600) {
+      if (this.castAbility('memory-forget', buildContext(aimX, aimY))) return 'memory-forget';
+    }
+    return null;
+  }
+
+  /**
+   * Ink. Skedaddle's run and the anvil are holds the kit drives — it lets the run go when the bot
+   * has run for as long as it planned, and drops the anvil itself (at once on a helpless target,
+   * never to the crush). Synergies first:
+   *
+   * - **Peel → slipping target → anvil / long Skedaddle**: a slipping or flattened target cannot
+   *   step out of a 3s haul or a long bounce, so both are started on one (`npcInkTargetHelpless`);
+   *   the kit plans the long run and drops the anvil on them.
+   * - **Peel lane**: running from the target, the peel behind lands in their path.
+   * - **Peels → Doombringer** (F+): the kit walks the bot to its hungry anvil with five peels out.
+   * - **Foux World → the foam**: the kit walks the bot out through the far wall, so following hurts.
+   *
+   * Then the rotation: peels up close, the anvil at mid range, the bounce, and finger guns always.
+   */
+  private doInkAbilities(
+    target: Fighter,
+    buildContext: (tX: number, tY: number) => CastContext,
+    time: number,
+    dist: number,
+    hpRatio: number,
+    aimX: number,
+    aimY: number,
+    aiState: NpcAiState,
+  ): string | null {
+    void target;
+    void time;
+    void hpRatio;
+    if (aiState.npcInkBusy) return null;
+    const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+
+    if (aiState.npcInkTargetHelpless && dist < 360) {
+      if (this.castAbility('ink-anvil', buildContext(aimX, aimY))) return 'ink-anvil';
+      if (this.castAbility('ink-skedaddle', buildContext(aimX, aimY))) return 'ink-skedaddle';
+    }
+    if (aiState.npcInkPeelLane) {
+      if (this.castAbility('ink-banana', buildContext(aimX, aimY))) return 'ink-banana';
+    }
+    if (!skipSpecials && aiState.npcInkFouxReady) {
+      if (this.castAbility('ink-foux-world', buildContext(aimX, aimY))) return 'ink-foux-world';
+    }
+
+    // ── Rotation ──
+    if (!skipSpecials && dist < 150) {
+      if (this.castAbility('ink-banana', buildContext(aimX, aimY))) return 'ink-banana';
+    }
+    if (!skipSpecials && dist > 140 && dist < 330 && Math.random() < 0.02) {
+      if (this.castAbility('ink-anvil', buildContext(aimX, aimY))) return 'ink-anvil';
+    }
+    if (!skipSpecials && dist < 420 && Math.random() < 0.012) {
+      if (this.castAbility('ink-skedaddle', buildContext(aimX, aimY))) return 'ink-skedaddle';
+    }
+    if (dist < 520 && aiState.npcInkGunReady) {
+      if (this.castAbility('ink-finger-guns', buildContext(aimX, aimY))) return 'ink-finger-guns';
+    }
+    return null;
+  }
+
+  /**
+   * Astra. Everything it has is locked to a direction until it becomes the star, so the kit does
+   * the geometry and the bot plays to it. Synergies first:
+   *
+   * - **Smite → Flares**: a smitten target crawls, and cannot step off the plus, the X or (E+)
+   *   the ring — the flares go the moment the kit says they will land.
+   * - **Smite's aim**: only cast while the target is the highest body on the screen; the seek
+   *   keeps the bot a touch below its row, and (R+) the kit fires the second bolt itself once the
+   *   target is the lowest.
+   * - **Warp → Smite**: swapping with a target below the bot puts the bot underneath them.
+   * - **Star mode → Warp**: steal when two or more of their abilities are ready (F+: any time).
+   * - **Trial → damage**: in the trial nothing else matters; the kit lets go of its Q+ hold and
+   *   fires the slap itself (to finish, or before the star sets).
+   *
+   * Then the rotation: level shots whenever the row lines up.
+   */
+  private doAstraAbilities(
+    target: Fighter,
+    buildContext: (tX: number, tY: number) => CastContext,
+    time: number,
+    dist: number,
+    hpRatio: number,
+    aimX: number,
+    aimY: number,
+    aiState: NpcAiState,
+  ): string | null {
+    void target;
+    void time;
+    void hpRatio;
+    if (aiState.npcAstraBusy) return null;
+    const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+    const trial = !!aiState.npcAstraInTrial;
+
+    if (aiState.npcAstraFlareShot) {
+      if (this.castAbility('astra-solar-flares', buildContext(aimX, aimY))) return 'astra-solar-flares';
+    }
+    if ((trial || !skipSpecials) && aiState.npcAstraSmiteSafe) {
+      if (this.castAbility('astra-smite', buildContext(aimX, aimY))) return 'astra-smite';
+    }
+    if (!skipSpecials && aiState.npcAstraWarpShot) {
+      if (this.castAbility('astra-worm-warp', buildContext(aimX, aimY))) return 'astra-worm-warp';
+    }
+    if (!skipSpecials && aiState.npcAstraTrialReady) {
+      if (this.castAbility('astra-true-self', buildContext(aimX, aimY))) return 'astra-true-self';
+    }
+
+    // ── Rotation ──
+    if (aiState.npcAstraLanedUp && dist < 700) {
+      if (this.castAbility('astra-starstruck', buildContext(aimX, aimY))) return 'astra-starstruck';
+    }
+    return null;
+  }
+
+  /**
+   * Pressure. Every key is a hold, and the kit holds it: `castAbility` starts the charge, the kit
+   * plans the pressure (it knows the breakpoints and the synergies) and lets go when the target is
+   * in reach. While it does, the bot's hands are full (`npcPressureCharging`). Synergies first:
+   *
+   * - **Slam 100 / punch 100 / vent blast → a pinned target**: wind a punch up on it — the kit
+   *   plans as much pressure as the pin leaves time for, or (E+) a quick 30+ to Shell-Shock it.
+   * - **Release bank**: vent it only when it is not worth more kept (a full bank speeds every
+   *   key; F+ turns 75+ into damage), unless it finishes them or peels them off.
+   * - **Pressure Point → Compression** (R+): walk into its own orb (the seek above).
+   * - **Exceed → everything at 100**: the kit plans full charges while it runs.
+   *
+   * Then the rotation: slam up close, the orb at range, punches in between.
+   */
+  private doPressureAbilities(
+    target: Fighter,
+    buildContext: (tX: number, tY: number) => CastContext,
+    time: number,
+    dist: number,
+    hpRatio: number,
+    aimX: number,
+    aimY: number,
+    aiState: NpcAiState,
+  ): string | null {
+    void target;
+    void time;
+    void hpRatio;
+    if (aiState.npcPressureCharging) return null;
+    const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+
+    if (aiState.npcPressureTargetPinned && dist < 300) {
+      if (this.castAbility('pressure-punch', buildContext(aimX, aimY))) return 'pressure-punch';
+    }
+    if (aiState.npcPressureVentShot) {
+      if (this.castAbility('pressure-release', buildContext(aimX, aimY))) return 'pressure-release';
+    }
+    if (!skipSpecials && aiState.npcPressureExceedReady) {
+      if (this.castAbility('pressure-exceed', buildContext(aimX, aimY))) return 'pressure-exceed';
+    }
+
+    // ── Rotation ──
+    if (!skipSpecials && dist < 170) {
+      if (this.castAbility('pressure-slam', buildContext(aimX, aimY))) return 'pressure-slam';
+    }
+    if (!skipSpecials && dist > 130 && dist < 460) {
+      if (this.castAbility('pressure-point', buildContext(aimX, aimY))) return 'pressure-point';
+    }
+    if (dist < 300) {
+      if (this.castAbility('pressure-punch', buildContext(aimX, aimY))) return 'pressure-punch';
+    }
+    return null;
+  }
+
+  /**
+   * Wood (element id `gluttony`). The kit's synergies are checked first, in the order they pay:
+   *
+   * - **Sap → Final Harvest executes** — the kit says when the swing would kill outright.
+   * - **Oakbrew → execute**: a brew's worth of sap short of the line, drink first.
+   * - **Carverang → re-carve**: a throw while one of its own is coming home sends that one out again.
+   * - **Final Harvest → Prune** (Q+): a fat sprout in reach is sap and a higher overflow.
+   * - **Damage → Digest**: once enough has landed in the last 5 seconds, turn it around.
+   * - **Commensalism → escape / close in**: the kit picks the tree.
+   *
+   * Then the rotation: brew when trading, scythe up close to Taint, keep a carverang in the air.
    */
   private doGluttonyAbilities(
     target: Fighter,
@@ -1682,39 +2121,38 @@ export class NpcOpponent extends Fighter {
     void target;
     void time;
     const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
-    const corruption = aiState.npcHarvestTargetCorruption ?? 0;
-    // Mastery: the key Corrupt Predation was bound over is the kit's now.
-    const bound = aiState.npcHarvestPredationSlot;
-    const frenzy = bound !== 'r';
-    const consume = bound !== 'f';
-    const reap = bound !== 'q';
+    const cooking = !!aiState.npcWoodCooking;
 
-    if (reap && aiState.npcHarvestCanExecute && dist < 175) {
-      if (this.castAbility('harvest-reap', buildContext(aimX, aimY))) return 'harvest-reap';
+    if (aiState.npcWoodCanExecute) {
+      if (this.castAbility('wood-final-harvest', buildContext(aimX, aimY))) return 'wood-final-harvest';
     }
-    const heart = aiState.npcHarvestHeartAim;
-    if (heart) {
-      if (this.castAbility('harvest-sickle', buildContext(heart.x, heart.y))) return 'harvest-sickle';
+    if (!cooking && aiState.npcWoodExecuteNeedsSap) {
+      if (this.castAbility('wood-oakbrew', buildContext(aimX, aimY))) return 'wood-oakbrew';
     }
-    if (consume && !skipSpecials && dist < 100 && (aiState.npcHarvestBiteHeavy || aiState.npcHarvestTargetBuffed)) {
-      if (this.castAbility('harvest-consume', buildContext(aimX, aimY))) return 'harvest-consume';
+    if (aiState.npcWoodRecarve) {
+      if (this.castAbility('wood-carverang', buildContext(aimX, aimY))) return 'wood-carverang';
     }
-    if (frenzy && !skipSpecials && dist < 480 && (corruption >= 40 || aiState.npcHarvestTargetOnMold)) {
-      if (this.castAbility('harvest-frenzy', buildContext(aimX, aimY))) return 'harvest-frenzy';
+    const prune = aiState.npcWoodPruneAim;
+    if (prune && !skipSpecials && hpRatio > 0.35) {
+      if (this.castAbility('wood-final-harvest', buildContext(prune.x, prune.y))) return 'wood-final-harvest';
+    }
+    if (!skipSpecials && (aiState.npcWoodDigestValue ?? 0) >= 40) {
+      if (this.castAbility('wood-digest', buildContext(aimX, aimY))) return 'wood-digest';
+    }
+    const tree = aiState.npcWoodTreeAim;
+    if (tree && !skipSpecials) {
+      if (this.castAbility('wood-commensalism', buildContext(tree.x, tree.y))) return 'wood-commensalism';
     }
 
     // ── Rotation ──
-    if (!skipSpecials && (aiState.npcHarvestMatureMold ?? 0) < 30 && dist < 300) {
-      if (this.castAbility('harvest-sow', buildContext(aimX, aimY))) return 'harvest-sow';
+    if (!cooking && !skipSpecials && dist < 260) {
+      if (this.castAbility('wood-oakbrew', buildContext(aimX, aimY))) return 'wood-oakbrew';
     }
-    if (consume && !skipSpecials && dist < 90 && (hpRatio < 0.6 || Math.random() < 0.5)) {
-      if (this.castAbility('harvest-consume', buildContext(aimX, aimY))) return 'harvest-consume';
-    }
-    if (reap && !skipSpecials && dist < 165 && corruption >= 55) {
-      if (this.castAbility('harvest-reap', buildContext(aimX, aimY))) return 'harvest-reap';
+    if (!skipSpecials && dist < 170) {
+      if (this.castAbility('wood-final-harvest', buildContext(aimX, aimY))) return 'wood-final-harvest';
     }
     if (dist < 460) {
-      if (this.castAbility('harvest-sickle', buildContext(aimX, aimY))) return 'harvest-sickle';
+      if (this.castAbility('wood-carverang', buildContext(aimX, aimY))) return 'wood-carverang';
     }
     return null;
   }
@@ -1895,18 +2333,16 @@ export class NpcOpponent extends Fighter {
   }
 
   /**
-   * Bind. The bot is managing somebody else's temper, so every branch here is really a question
-   * about the anger bar rather than about the fight.
+   * Bind — a curse to shed, souls to gather and a god to pay.
    *
-   * Once the patron has turned there is nothing to press at all — the kit refuses every cast for
-   * those five seconds — so the bot spends them moving. Below that, it treats 70 anger as a hard
-   * ceiling: no barrage, no idol and no beam past two-thirds heat, because every one of those is
-   * a bill and the punishment costs far more than any of them buys. The beam is released at 0.72
-   * heat rather than run to the top, which is exactly the decision a good player makes with it.
-   *
-   * With Bind Mastery's Ritual Sacrifice bound, that ceiling moves: the bot has a way to buy the
-   * bar back down at 25 health a stab, so it is allowed to run to 82 instead of 70. The dagger and
-   * the Pathetic Stab are both played by the kit, not from here — see `npcBindRitualSlot`.
+   * Synergies, all kit-planned: Blackened Eyes (R) shows the wild souls, the kit publishes the
+   * nearest one to walk to (`npcBindSeek`) and E aims at it once it is in reach
+   * (`npcBindChainAim`); a chain of souls is the Ritual's price, so Q waits for three (the
+   * curse lifts) unless the bot is losing. Siphon (F) drinks what the kit picks — with Trial by
+   * Faith a revenant first, to make a cultist of it — and the kit lets go before a bound soul
+   * turns. With Bind the Hatred, E holds a revenant that is lined up to run back *through* the
+   * foe. The kit also handles the right click (detonating daggers by a foe or a wall full of
+   * them), the anchor recast and the mastery idol.
    */
   private doBindAbilities(
     target: Fighter,
@@ -1920,53 +2356,39 @@ export class NpcOpponent extends Fighter {
   ): string | null {
     void target;
     void time;
-    // Forsaken: the god is busy with its own summoner and answers nothing. Chained is the same
-    // silence from the other direction — the sky is open and the bot's hands are not its own.
-    if (aiState.npcBindForsaken || aiState.npcBindChained) return null;
     const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
-    const anger = aiState.npcBindAnger ?? 0;
-    const heat = aiState.npcBindHeat ?? 0;
-    // Bind Mastery: with the dagger available the bot can *afford* a high bar, because it can pay
-    // one down at 15 a stab. Its ceiling on spending goes up accordingly — 70 is where a bot with
-    // no way out of the bill has to stop, not where the bar becomes dangerous.
-    const ritual = aiState.npcBindRitualSlot;
-    const calm = anger < (ritual ? 82 : 70);
+    const idol = aiState.npcBindIdolSlot;
+    const souls = aiState.npcBindSouls ?? 0;
+    const offering = aiState.npcBindOffering ?? 0;
 
-    // The ultimate is free of anger entirely — it is paid for in abilities — so it goes first.
-    if (!skipSpecials && dist < 620) {
-      if (this.castAbility('bind-treachery', buildContext(aimX, aimY))) return 'bind-treachery';
+    // The Ritual: three souls lifts the curse, five brings the god for good. Paid early only to
+    // save itself — one or two souls costs an ability for the rest of the match.
+    if (!skipSpecials && idol !== 'q' && dist < 620 && (offering >= 3 || (offering >= 1 && hpRatio < 0.3))) {
+      if (this.castAbility('bind-ritual', buildContext(aimX, aimY))) return 'bind-ritual';
     }
 
-    // The ward is worth its anger only when there is something left to protect.
-    if (!skipSpecials && ritual !== 'f' && hpRatio < 0.55 && (aiState.npcBindWard ?? 0) === 0 && anger < 85) {
-      if (this.castAbility('bind-protection', buildContext(aimX, aimY))) return 'bind-protection';
+    // The chain, aimed wherever the kit says is worth it.
+    const chainAim = aiState.npcBindChainAim;
+    if (!skipSpecials && chainAim) {
+      if (this.castAbility('bind-chain', buildContext(chainAim.x, chainAim.y))) return 'bind-chain';
     }
 
-    // An idol is a turret while it is standing on top of you and a bill the moment it is not,
-    // so the bot only ever plants one at its own feet — and only while it can afford to be wrong.
-    if (!skipSpecials && ritual !== 'r' && calm && (aiState.npcBindIdolFaith ?? -1) < 0 && dist < 420) {
-      if (this.castAbility('bind-idol', buildContext(this.x, this.y))) return 'bind-idol';
+    // Eyes open to go looking, while there is room on the chain.
+    if (!skipSpecials && idol !== 'r' && !aiState.npcBindEyesOpen && souls < 6) {
+      if (this.castAbility('bind-eyes', buildContext(aimX, aimY))) return 'bind-eyes';
     }
 
-    // With the cult unlocked the same key stops asking that question: an idol already standing
-    // means the press buys a permanent body to stand in front of it instead, and three of those
-    // is the difference between an idol that bills and one that pays for itself.
-    const cult = aiState.npcBindCult ?? -1;
-    if (!skipSpecials && ritual !== 'r' && cult >= 0 && cult < 3 && (aiState.npcBindIdolFaith ?? -1) >= 0) {
-      if (this.castAbility('bind-idol', buildContext(this.x, this.y))) return 'bind-idol';
+    const siphonAim = aiState.npcBindSiphonAim;
+    if (!skipSpecials && idol !== 'f' && !aiState.npcBindSiphoning && siphonAim) {
+      if (this.castAbility('bind-siphon', buildContext(siphonAim.x, siphonAim.y))) return 'bind-siphon';
     }
 
-    if (!skipSpecials && ritual !== 'e' && calm && dist < 560) {
-      if (this.castAbility('bind-shards', buildContext(aimX, aimY))) return 'bind-shards';
-    }
-
-    // The beam, released well before the top of the bar. Overheating costs 20 anger, and 20
-    // anger is a quarter of the way to being attacked by its own god.
-    if (!aiState.npcBindOverheated && heat < 0.72 && (calm || heat < 0.4)) {
-      if (this.castAbility('bind-summon', buildContext(aimX, aimY))) return 'bind-summon';
+    if (dist < 620) {
+      if (this.castAbility('bind-daggers', buildContext(aimX, aimY))) return 'bind-daggers';
     }
     return null;
   }
+
 
   /**
    * Psychic — a chess player. The kit owns the board: it works out which piece can move
@@ -2117,15 +2539,15 @@ export class NpcOpponent extends Fighter {
   /**
    * Cloth.
    *
-   * The element is four two-press combos stacked on each other, and a bot that treats the five
-   * keys as five independent buttons plays none of them. Every branch below is therefore a
-   * *second* press: reel the pin it already threw, bail out on the anchor it already set, stay
-   * glued while the pin counter is nearly full, and keep swinging while somebody is webbed.
-   * The kit publishes all four of those states on `aiState` — the AI never re-derives geometry
-   * the kit already owns.
+   * The bot cannot drag a scarf, so its Click is the hand's decision made for it — and the kit's
+   * synergies all run through that one button. In priority order: a body it has bound goes into
+   * a wall (R → Click), its cushion goes off while somebody is standing by it (F → Click), and a
+   * needle in reach is thrown (E → Click). The kit publishes each as an opportunity; this only
+   * has to press the key.
    *
-   * The one genuinely independent decision is Pin Cushion: pins are only worth having while
-   * something is close enough to be hurt by the thorns coming back off them.
+   * Burning Man is the multiplier on all three, so while it burns the bot drops fresh needles,
+   * throws the bola and plants a cushion that will catch fire. With R+ the kit itself steers a
+   * jacketed victim onto the bot's cushion.
    */
   private doClothAbilities(
     target: Fighter,
@@ -2140,62 +2562,40 @@ export class NpcOpponent extends Fighter {
     void target;
     void time;
     const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+    const burning = !!aiState.npcClothBurning;
 
-    // ── Combo: the reel home ──
-    // A planted pin is worth far more as a recall than as the 15 it already dealt: arriving on a
-    // pinned body is another 10, a long knockback, and — with E+ — a web. Taken first, and taken
-    // whether or not this tick would have skipped a special.
-    if (aiState.npcClothPinPlanted && dist > 90) {
-      if (this.castAbility('cloth-longpin', buildContext(aimX, aimY))) return 'cloth-longpin';
+    // ── Combo: bound → into the wall ──
+    if (aiState.npcClothTargetWrapped) {
+      if (this.castAbility('cloth-scarf-hand', buildContext(aimX, aimY))) return 'cloth-scarf-hand';
+    }
+    // ── Combo: somebody by the cushion → punch it ──
+    if (aiState.npcClothCushionPunch) {
+      if (this.castAbility('cloth-scarf-hand', buildContext(aimX, aimY))) return 'cloth-scarf-hand';
     }
 
-    // ── Combo: bail before the line bails for you ──
-    // The anchor fires itself at 75 damage. Going early is the difference between choosing to
-    // leave and being dragged off mid-fight, so the bot spends it once it is hurt or once the
-    // tally is nearly full.
-    if (aiState.npcClothAnchored && ((aiState.npcClothAnchorPressure ?? 0) > 0.7 || hpRatio < 0.4)) {
-      if (this.castAbility('cloth-safety-line', buildContext(aimX, aimY))) return 'cloth-safety-line';
+    // ── Q ── once there is something on the field for the fire to multiply, or when hurt.
+    if (!skipSpecials && (aiState.npcClothHasCushion || (aiState.npcClothNeedles ?? 0) >= 2 || hpRatio < 0.5)) {
+      if (this.castAbility('cloth-burning-man', buildContext(aimX, aimY))) return 'cloth-burning-man';
     }
 
-    // ── Combo: finish the pin count ──
-    // Nearly at the grapple spin. Nothing else is worth a press — the spin parks it inside its
-    // own reach for most of a second, which is more stabs than any other button buys.
-    const combo = aiState.npcClothCombo ?? 0;
-    if (combo > 0.5 && dist < 96) {
-      if (this.castAbility('cloth-pin', buildContext(aimX, aimY))) return 'cloth-pin';
+    // ── R ── bind them: every other combo is better against a body that cannot leave.
+    if (!skipSpecials && dist < 420) {
+      if (this.castAbility('cloth-constraining-cloth', buildContext(aimX, aimY))) return 'cloth-constraining-cloth';
     }
 
-    // ── Combo: a webbed target cannot leave ──
-    // Free damage window. Stab, and keep stabbing.
-    if (aiState.npcClothWebbed && dist < 110) {
-      if (this.castAbility('cloth-pin', buildContext(aimX, aimY))) return 'cloth-pin';
+    // ── F ── a cushion between it and the target, so the chase walks it through its own pins.
+    if (!aiState.npcClothHasCushion && dist < 260 && (hpRatio > 0.3 || burning)) {
+      if (this.castAbility('cloth-pincushion', buildContext(aimX, aimY))) return 'cloth-pincushion';
     }
 
-    // ── R ── set the anchor while it is safe to, so it exists when it is not.
-    if (!aiState.npcClothAnchored && !skipSpecials && hpRatio > 0.5) {
-      if (this.castAbility('cloth-safety-line', buildContext(aimX, aimY))) return 'cloth-safety-line';
+    // ── E ── ammunition; red-hot while it burns.
+    if ((aiState.npcClothNeedles ?? 0) < 2 && (!skipSpecials || burning)) {
+      if (this.castAbility('cloth-needle-nexus', buildContext(aimX, aimY))) return 'cloth-needle-nexus';
     }
 
-    // ── F ── pins are a liability at range and an engine in melee, because the thorns only
-    // pay while somebody is close enough to catch them.
-    if ((aiState.npcClothPinned ?? 0) < 30 && dist < 220 && hpRatio > 0.35) {
-      if (this.castAbility('cloth-pin-cushion', buildContext(aimX, aimY))) return 'cloth-pin-cushion';
-    }
-
-    // ── Q ── the loom only pays off over a whole match, so it is spent the moment it is up.
-    if (!skipSpecials) {
-      if (this.castAbility('cloth-tapestry', buildContext(aimX, aimY))) return 'cloth-tapestry';
-    }
-
-    // ── E ── the throw. Worth it at any range: a wall pin is a free repositioning tool and a
-    // body pin is 15 plus the combo above.
-    if (!aiState.npcClothPinPlanted && dist > 120 && !skipSpecials) {
-      if (this.castAbility('cloth-longpin', buildContext(aimX, aimY))) return 'cloth-longpin';
-    }
-
-    // ── Click ── the default, and the whole reason to be in somebody's face.
-    if (dist < 110) {
-      if (this.castAbility('cloth-pin', buildContext(aimX, aimY))) return 'cloth-pin';
+    // ── Click ── a needle at range, the punch up close.
+    if ((aiState.npcClothNeedles ?? 0) > 0 || dist < 120) {
+      if (this.castAbility('cloth-scarf-hand', buildContext(aimX, aimY))) return 'cloth-scarf-hand';
     }
     return null;
   }
@@ -2710,8 +3110,8 @@ export class NpcOpponent extends Fighter {
     }
 
     // The ring is worn rather than thrown, so it only ever pays when the target is already
-    // close enough that walking out of 122px in two seconds is a real decision.
-    if (skin !== 'f' && !skipSpecials && !aiState.npcRuinRingUp && dist < 170) {
+    // close enough that walking out of 160px in two seconds is a real decision.
+    if (skin !== 'f' && !skipSpecials && !aiState.npcRuinRingUp && dist < 210) {
       if (this.castAbility('ruin-spikes', buildContext(aimX, aimY))) return 'ruin-spikes';
     }
 
@@ -3431,6 +3831,15 @@ export class NpcOpponent extends Fighter {
   /** Justice: the AI is not allowed to flicker between stances. */
   private justiceNextStanceAt = 0;
 
+  /**
+   * Venom. The kit computes every opportunity (acid underfoot, the bite's coverage-scaled reach,
+   * the target standing on the bot's acid) and also does the two things a bot has no key for:
+   * surfacing at its target and shedding at a milestone. The synergies, first:
+   * - acid under the target → Acid Apocalypse rains on them;
+   * - target in reach → Festering Bite (stage 3 + F+ melts; the purge strips shields before the bite lands);
+   * - R+ Rattling Strike → tunnel up under the target (the kit surfaces it, ×1.5 toxin);
+   * - the target off the bot's acid → spray it under them (3 toxin a second while they stand in it).
+   */
   private doSlimeAbilities(
     target: Fighter,
     buildContext: (tX: number, tY: number) => CastContext,
@@ -3441,47 +3850,26 @@ export class NpcOpponent extends Fighter {
     aimY: number,
     aiState: NpcAiState,
   ): string | null {
-    void target; void aiState;
-    const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+    // Under the acid the kit has the bot's hands; it surfaces when it arrives.
+    if (aiState.npcAcidBurrowed) return null;
+    const skip = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+    const bound = aiState.npcAcidShedSlot;
+    const tx = target.x, ty = target.y;
 
-    // Purge: a slow debuff ball, thrown occasionally at mid-range
-    if (!skipSpecials && dist < 420 && (this.aiState === 'attack' || this.aiState === 'chase')) {
-      if (this.castAbility('purge', buildContext(aimX, aimY))) {
-        const ctx = buildContext(aimX, aimY);
-        const dx = aimX - this.x;
-        const dy = aimY - this.y;
-        const len = Math.sqrt(dx * dx + dy * dy) || 1;
-        const speed = 220;
-        const proj = new Projectile(ctx.scene, this.x + (dx / len) * 32, this.y + (dy / len) * 32, 'proj-purge', 15, false);
-        (proj as unknown as { purgeDurationMs: number }).purgeDurationMs = 3000;
-        ctx.projectiles.add(proj);
-        proj.launch((dx / len) * speed, (dy / len) * speed);
-        return 'purge';
-      }
+    if (!skip && bound !== 'f' && aiState.npcAcidBiteReady) {
+      if (this.castAbility('festering-bite', buildContext(tx, ty))) return 'festering-bite';
     }
-
-    // Default: a short barrage of acid whip lashes toward the player
-    if (this.aiState === 'attack' || this.aiState === 'chase') {
-      if (this.castAbility('poison-whip', buildContext(aimX, aimY))) {
-        const ctx = buildContext(aimX, aimY);
-        const dx = aimX - this.x;
-        const dy = aimY - this.y;
-        const baseAngle = Math.atan2(dy, dx);
-        const speed = 550;
-        const count = dist < 200 ? 8 : 5;
-        for (let i = 0; i < count; i++) {
-          ctx.scene.time.delayedCall(i * 25, () => {
-            if (!this.active || this.hp <= 0) return;
-            const jitter = Phaser.Math.DegToRad(Phaser.Math.FloatBetween(-6, 6));
-            const ang = baseAngle + jitter;
-            const proj = new Projectile(ctx.scene, this.x + Math.cos(ang) * 32, this.y + Math.sin(ang) * 32, 'proj-acid-whip', 1, false);
-            ctx.projectiles.add(proj);
-            proj.launch(Math.cos(ang) * speed, Math.sin(ang) * speed);
-            proj.setRotation(ang);
-          });
-        }
-        return 'poison-whip';
-      }
+    if (!skip && bound !== 'q' && aiState.npcAcidApocalypseReady) {
+      if (this.castAbility('acid-apocalypse', buildContext(tx, ty))) return 'acid-apocalypse';
+    }
+    if (!skip && bound !== 'r' && aiState.npcAcidBurrowReady) {
+      if (this.castAbility('snake-burrow', buildContext(tx, ty))) return 'snake-burrow';
+    }
+    if (!skip && bound !== 'e' && aiState.npcAcidSprayWorth && dist < 340) {
+      if (this.castAbility('vile-spray', buildContext(tx, ty))) return 'vile-spray';
+    }
+    if (dist < 520) {
+      if (this.castAbility('poison-whip', buildContext(aimX, aimY))) return 'poison-whip';
     }
     return null;
   }
@@ -3800,6 +4188,10 @@ export class NpcOpponent extends Fighter {
     // Already the weather — nothing else can be cast until the funnel opens.
     if (aiState.airTornadoActive) return null;
 
+    // Gust synergy first: the kit says the parked glaive is on the target, so the teleport's
+    // arrival spin connects. No cooldown of its own — AirKit resolves it from the returned id.
+    if (aiState.npcAirGustRecall) return 'air-gust-recall';
+
     const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
     // Mastery: the key Weather Cycle was bound over is the kit's now (it fires from AirKit).
     const weather = aiState.npcAirWeatherSlot;
@@ -3977,6 +4369,9 @@ export class NpcOpponent extends Fighter {
     if (droneCount > 0 && dist < 400) {
       if (this.castAbility('drone-command', buildContext(sharpX, sharpY))) return 'drone-command';
     }
+
+    // Between volleys: the arm laser, rested before it cooks off. The kit owns rate, heat and lockout.
+    if (dist < 520 && aiState.npcOilArmLaserReady) buildContext(sharpX, sharpY).oilArmLaser(sharpX, sharpY);
 
     return null;
   }

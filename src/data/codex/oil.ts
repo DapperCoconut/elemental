@@ -63,30 +63,38 @@ const oil: ElementCodex = {
   abilities: {
     'drone-command': {
       basics:
-        'One key doing three jobs. Hold it to build drones — the first 0.5s in, then one a second to '
-        + 'the cap — or release inside 300ms to fire a volley: 3 damage per drone within 40px of the '
-        + 'cursor, so a full six is 18 on one point, at the cost of one shot from every drone whether or '
-        + 'not it hit. Beams destroy enemy projectiles within 14px of their path, set your own puddles '
-        + 'alight within 20px, and strip the coat off an Oily enemy within 40px to Burn them for 5 '
-        + 'seconds. Volleys are 1 second apart. A tap while a barrel is rolling detonates the barrel '
-        + 'instead — a bigger blast than a natural one, with an oil pillar, a 220ms shake, and both '
-        + 'scatter puddles lit as they land.',
-      cast: 'Click. Held past 300ms it builds; released under 300ms it is a volley. A tap while a barrel is rolling detonates the barrel instead.',
+        'Two buttons. Hold Click to fire the laser gun strapped to your right hand: a hitscan shot every '
+        + '110ms for 2 damage, out to your cursor (560px at most) or the first enemy across the line. Every shot adds heat, and '
+        + 'about 2.4s of held fire tops the gauge out — the gun overheats and locks for 2.2s while it vents. '
+        + 'Let go early and it cools (from 0.22s after the last shot). Right-click runs the drones: hold it '
+        + 'to build them — the first 0.5s in, then one a second to the cap — or release inside 300ms to fire '
+        + 'a volley: 3 damage per drone within 40px of the cursor, so a full six is 18 on one point, at the '
+        + 'cost of one shot from every drone whether or not it hit. Drone beams destroy enemy projectiles '
+        + 'within 14px of their path, set your own puddles alight within 20px, and strip the coat off an '
+        + 'Oily enemy within 40px to Burn them for 5 seconds. Volleys are 1 second apart. A right-click tap '
+        + 'while a barrel is rolling detonates the barrel instead — a bigger blast than a natural one, with '
+        + 'an oil pillar, a 220ms shake, and both scatter puddles lit as they land.',
+      cast: 'Hold Click to fire the arm laser. Right-click held past 300ms builds drones; released under 300ms it is a volley — or detonates a rolling barrel.',
       effects: [
-        { tag: 'summon', label: 'Building', detail: 'First drone 0.5s into the hold, then one every 1s, to the cap of 6.' },
-        { tag: 'damage', label: 'The volley', detail: '3 damage per drone within 40px of the cursor. All six firing at once is 18 on a single point — the kit\'s main damage.' },
+        { tag: 'damage', label: 'Arm laser', detail: '2 damage per hitscan shot, one every 110ms (≈18 per second held). Stops at the cursor (560px at most), the first enemy, or the wall.' },
+        { tag: 'resource', label: 'Heat', detail: '+4.6% per shot; full after 22 shots. Cools 50% a second once the trigger has been off 0.22s.' },
+        { tag: 'cost', label: 'Overheat', detail: 'At full heat the gun locks for 2.2s while the gauge drains.' },
+        { tag: 'summon', label: 'Building (RMB)', detail: 'First drone 0.5s into the hold, then one every 1s, to the cap of 6.' },
+        { tag: 'damage', label: 'The volley (RMB)', detail: '3 damage per drone within 40px of the cursor. All six firing at once is 18 on a single point.' },
         { tag: 'resource', label: 'Volley cost', detail: '1 shot from every drone, spent whether or not the beam hit anything. A 3-shot fleet is three volleys.' },
-        { tag: 'utility', label: 'Point defence', detail: 'Enemy projectiles within 14px of any beam\'s path are destroyed outright.' },
-        { tag: 'dot', label: 'Ignition', detail: 'A beam landing within 20px of one of your own puddles sets it alight. A beam landing within 40px of an Oily enemy strips the coat and Burns them for 5s.' },
+        { tag: 'utility', label: 'Point defence', detail: 'Enemy projectiles within 14px of any drone beam\'s path are destroyed outright.' },
+        { tag: 'dot', label: 'Ignition', detail: 'A drone beam landing within 20px of one of your own puddles sets it alight. One landing within 40px of an Oily enemy strips the coat and Burns them for 5s.' },
         { tag: 'utility', label: 'Volley cadence', detail: '1s between volleys, enforced only when you actually had drones to fire.' },
-        { tag: 'utility', label: 'Barrel detonator', detail: 'A tap with a barrel in play blows the barrel instead: a bigger blast than a natural one, with an oil pillar, a 220ms shake, and both scatter puddles lit on arrival.' },
+        { tag: 'utility', label: 'Barrel detonator', detail: 'A right-click tap with a barrel in play blows the barrel instead: a bigger blast than a natural one, with an oil pillar, a 220ms shake, and both scatter puddles lit on arrival.' },
       ],
       upgrade: {
         basics:
-          'A drone that reaches 0 shots is no longer discarded: it flies to the cursor over 0.4s and '
-          + 'detonates for 5 damage in a 60px radius. Orbiting drones also deal 5 melee damage to anything '
-          + 'that touches them, once a second each.',
+          'The arm laser cooks off with a bang: when it overheats it explodes round you for 16 damage in '
+          + 'a 110px radius. A drone that reaches 0 shots is no longer discarded: it flies to the cursor over '
+          + '0.4s and detonates for 5 damage in a 60px radius. Orbiting drones also deal 5 melee damage to '
+          + 'anything that touches them, once a second each.',
         effects: [
+          { tag: 'damage', label: 'Overheat blast', detail: '16 damage to every enemy within 110px of you when the arm laser overheats. The lockout still applies.', requiresUpgrade: 'click' },
           { tag: 'damage', label: 'Spent-drone bomb', detail: 'A drone that hits 0 shots flies to the cursor over 0.4s and detonates for 5 damage in a 60px radius rather than being discarded.', requiresUpgrade: 'click' },
           { tag: 'damage', label: 'Contact damage', detail: 'Orbiting drones deal 5 melee damage to an enemy that touches them, on a 1s cooldown per drone.', requiresUpgrade: 'click' },
         ],
@@ -94,6 +102,7 @@ const oil: ElementCodex = {
       notes: [
         'Volleys also service a discharged Shield Generator: aim a volley within 60px of it and it recharges.',
         'Because a volley costs a shot from every drone regardless of hits, a six-drone fleet fired at nothing is a third of your ammunition gone.',
+        'The laser and the drones are separate buttons: you can build drones on RMB, then hose with the laser between volleys.',
       ],
     },
 
@@ -102,14 +111,14 @@ const oil: ElementCodex = {
         'Rolls a barrel from you toward the cursor at 300 px/s, leaving a 30px puddle every 80px of '
         + 'travel. It detonates for 20 damage in a 50px radius with a 150ms shake and two more puddles '
         + 'scattered within 25px — set off by touching an enemy, reaching a wall, or being hit by an '
-        + 'enemy projectile, so you do not choose the moment unless you click it. 3s cooldown, and '
+        + 'enemy projectile, so you do not choose the moment unless you right-click it. 3s cooldown, and '
         + 'casting again while one is rolling blows the old one first.',
       cast: 'E, aimed at the cursor. Casting again while one is rolling detonates the old barrel first.',
       effects: [
         { tag: 'damage', label: 'Detonation', detail: '20 damage in a 50px radius, plus a 150ms camera shake.' },
         { tag: 'summon', label: 'The spill', detail: 'One 30px puddle every 80px of travel, plus 2 more scattered within 25px of the blast.' },
         { tag: 'movement', label: 'Travel', detail: '300 px/s in a straight line from the caster toward the cursor.' },
-        { tag: 'cost', label: 'What sets it off', detail: 'Touching an enemy (within 30px), reaching a wall, or being hit by an enemy projectile (within 30px). You do not choose the moment unless you click it.' },
+        { tag: 'cost', label: 'What sets it off', detail: 'Touching an enemy (within 30px), reaching a wall, or being hit by an enemy projectile (within 30px). You do not choose the moment unless you right-click it.' },
         { tag: 'utility', label: 'Availability', detail: '3s cooldown.' },
       ],
       upgrade: {

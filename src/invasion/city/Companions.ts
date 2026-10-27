@@ -30,13 +30,13 @@ const STYLE_OF: Record<string, CompanionStyle> = {
   // Melee bruisers and blades.
   earth: 'cleave', metal: 'cleave', hunt: 'cleave', ruin: 'cleave', death: 'cleave',
   cloth: 'cleave', conquest: 'cleave', subterfuge: 'cleave', shadow: 'cleave', justice: 'cleave',
-  rubber: 'cleave', marrow: 'cleave', clay: 'cleave', bind: 'cleave', silence: 'cleave',
+  rubber: 'cleave', marrow: 'cleave', clay: 'cleave', bind: 'cleave', silence: 'cleave', pressure: 'cleave',
   // Pulses around the body.
   gravity: 'nova', radiation: 'nova', soul: 'nova', psychic: 'nova', dream: 'nova',
   echo: 'nova', sound: 'nova', magnet: 'nova', myth: 'nova', tempest: 'nova', glass: 'nova',
   // Arcing throws that burst where they land.
   gunpowder: 'lob', magma: 'lob', oil: 'lob', slime: 'lob', gum: 'lob', depths: 'lob',
-  fortune: 'lob', chalk: 'lob', gluttony: 'lob', paper: 'lob', wax: 'lob', dune: 'lob',
+  fortune: 'lob', chalk: 'lob', gluttony: 'lob', paper: 'lob', wax: 'lob', dune: 'lob', ink: 'lob',
   // Menders.
   life: 'mend', growth: 'mend', passion: 'mend', creation: 'mend', crystal: 'mend', water: 'mend',
 };

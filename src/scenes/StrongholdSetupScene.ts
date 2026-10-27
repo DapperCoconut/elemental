@@ -96,6 +96,11 @@ export class StrongholdSetupScene extends Phaser.Scene {
       label: 'HOLD THE ROAD', iconArt: 'castle', accent: C.verdant, variant: 'solid', fontSize: 15, cut: 10,
       onClick: () => this.start(),
     });
+    addButton(this, {
+      x: width - 300, y: height - 46, w: 140, h: 40,
+      label: 'JOURNAL', iconArt: 'book', accent: C.gold, variant: 'ghost', fontSize: 12, cut: 8,
+      onClick: () => this.openJournal(),
+    });
     this.add.text(24, height - 92, 'YOUR TOWERS', {
       fontSize: '10px', fontFamily: FONT_DISPLAY, color: T.faint, letterSpacing: 3,
     }).setOrigin(0, 0.5).setDepth(DEPTH.content);
@@ -108,6 +113,7 @@ export class StrongholdSetupScene extends Phaser.Scene {
     this.renderLoadout();
 
     this.input.keyboard?.on('keydown-ESC', () => this.scene.start('TitleScene'));
+    this.input.keyboard?.on('keydown-J', () => this.openJournal());
     this.input.keyboard?.on('keydown-ENTER', () => this.start());
   }
 
@@ -248,7 +254,7 @@ export class StrongholdSetupScene extends Phaser.Scene {
     out.push(addWell(this, wellX, wellY, 58, 78, accent, DEPTH.panel + 1, 6));
     const portrait = new ElementPortrait(this, {
       x: wellX, y: wellY, w: 56, h: 76, elementId: el.id,
-      mastered: PlayerData.isMasteryEnabled(el.id), depth: DEPTH.panel + 2, scale: 0.5, muted: full,
+      mastered: false, depth: DEPTH.panel + 2, scale: 0.5, muted: full,
     });
     this.portraits.push(portrait);
 
@@ -281,11 +287,19 @@ export class StrongholdSetupScene extends Phaser.Scene {
     }).setOrigin(0.5).setDepth(DEPTH.content));
 
     const zone = this.add.zone(x, y, CARD_W, CARD_H).setInteractive({ useHandCursor: !full });
-    zone.on('pointerover', () => { if (!picked && !full) plate.paint('hover'); portrait.poke(); this.showHint(`${el.name.toUpperCase()} — ${def.blurb}`); });
+    zone.on('pointerover', () => { if (!picked && !full) plate.paint('hover'); portrait.poke(); this.showHint(`${el.name.toUpperCase()} — ${def.blurb}  ·  Paths: ${def.paths.map((p) => p.name).join(' / ')}  ·  right-click for its journal page`); });
     zone.on('pointerout', () => plate.paint(picked ? 'active' : 'idle'));
-    zone.on('pointerdown', () => this.toggle(el.id));
+    zone.on('pointerdown', (p: Phaser.Input.Pointer) => { if (p.rightButtonDown()) { this.openJournal(el.id); return; } this.toggle(el.id); });
     out.push(zone);
     return out;
+  }
+
+  /** Every tower's paths and every husk family, over this screen. */
+  private openJournal(focus?: string): void {
+    if (this.scene.isActive('StrongholdJournalScene')) return;
+    Sfx.click();
+    this.scene.launch('StrongholdJournalScene', { loadout: this.picks, focus: focus ?? this.picks[0], caller: 'StrongholdSetupScene' });
+    this.scene.bringToTop('StrongholdJournalScene');
   }
 
   private showHint(text: string): void {

@@ -9,7 +9,7 @@
  * decides which of them each world gets.
  *
  * Id traps, as everywhere: `sand` is **Time**, `dune` is Sand; `slime` is **Acid**, `gum`
- * is Slime; `gluttony` is Harvest; `passion` is Devotion; `fortune` is Gold.
+ * is Slime; `gluttony` is Wood; `passion` is Devotion; `fortune` is Gold.
  */
 
 export type RoofStyle =

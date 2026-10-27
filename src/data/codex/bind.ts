@@ -1,7 +1,7 @@
 import { ElementCodex } from '../AbilityCodex';
 
 /**
- * Bind — the element where every ability is a favour, and the favours are itemised.
+ * Bind — something in chains, born under a curse, that makes its living off the dead.
  *
  * Verified against `src/elements/bind.ts`, `kits/BindKit.ts`, the five shop upgrades in
  * `data/Upgrades.ts` and the two mastery enhancements in `data/Mastery.ts`. Bind has no perks;
@@ -9,343 +9,295 @@ import { ElementCodex } from '../AbilityCodex';
  */
 const bind: ElementCodex = {
   identity:
-    'Something in chains that asked for help, and got an answer. The eye hanging in the hole in '
-    + 'the top of the sky does all the fighting — it burns, it shatters, it swipes — and it keeps '
-    + 'an account. Overheat its beam, starve the idol you raised, hide behind its hexes, and the '
-    + 'anger bar under the eye climbs. Fill it and the eye turns around and spends five seconds '
-    + 'using this exact same kit on you. Nothing else in the game asks you to manage somebody '
-    + 'else\'s mood, and nothing else charges you a permanent debuff for pressing E or an entire '
-    + 'ability slot for pressing Q. Bind is not a damage element; it is a bookkeeping element '
-    + 'with a very large weapon attached, and the skill is knowing how much worse you can afford '
-    + 'to make the next minute.',
+    'Something in chains, born under a curse, that makes its living off the dead. Every arena a '
+    + 'Bind fights in fills up with lost souls nobody can see. Blackened Eyes shows them, the chain '
+    + 'takes them, Siphon drinks them for damage and wears the curse off a little more each second '
+    + '— and a soul drunk dry comes back as a revenant that wants you dead and will kill anybody '
+    + 'standing in its way. The ancient god does not hang over the arena any more; it only comes '
+    + 'when the Ritual pays it in souls, and the more you pay the longer it stays and the less it '
+    + 'takes. The skill is in the bookkeeping: which soul to drink, which to keep on the chain for '
+    + 'the god, and where to stand so the thing you made angry runs through somebody else.',
 
   passives: [
     {
-      emoji: '👁️',
-      name: 'The Patron',
+      emoji: '⛓️',
+      name: 'Bound',
       basics:
-        'A 0–100 anger bar marked in quarters, drawn once per arena for whichever side is playing Bind. '
-        + 'Overheating the beam is a flat 20, a starved idol is 5 every second, every hit the ward eats '
-        + 'hands over half the raw figure, winding up Eviscerate is 4 a second and holding Over-rage is 7 '
-        + 'a second. It empties at 2 a second and nothing else in the element lowers it faster — there is '
-        + 'no dump, no cleanse and no way to trade damage for patience. Each convert takes 12% off anger '
-        + 'as it is gained, 36% at three, applied to the bill and never to the bar, so a debt already run '
-        + 'up stays run up. The eye\'s lid opens from about a quarter to nearly two-thirds as the bar '
-        + 'climbs, and the bar goes gold, then orange past 70, then a strobing red the frame it turns.',
+        'Every match starts with one curse, rolled at random and printed on a plaque at the top of '
+        + 'the screen: Shackled (−25% move speed), Brittle (+25% damage taken), Feeble (−25% damage '
+        + 'dealt) or Sluggish (+25% cooldowns). Every second you spend siphoning takes 3% of its '
+        + 'strength off for good — a whole 6-second soul is about 18%, and 33 seconds of drinking '
+        + 'clears it completely. Nothing else wears it down. A Ritual of 3 or more souls lifts it '
+        + 'outright while the god stays; the plaque unlocks and reads LIFTED.',
       effects: [
-        { tag: 'resource', label: 'The bar', detail: '0 to 100 anger, marked in quarters. It is drawn once per arena: yours if you are the Bind player, the bot\'s if it is, never both.' },
-        { tag: 'resource', label: 'What fills it', detail: 'Overheating the beam is a flat 20. A starved idol is 5 every second. Every hit the ward eats hands over half of the raw figure. Winding up Eviscerate is 4 a second and holding Over-rage is 7 a second.' },
-        { tag: 'resource', label: 'What empties it', detail: '2 a second, always, and nothing else in the element lowers it faster. There is no dump, no cleanse and no way to trade damage for patience.' },
-        { tag: 'buff', label: 'The cult discount', detail: 'Each convert takes 12% off anger as it is gained — 36% at three. It is applied to the bill, never to the bar, so a debt already run up stays run up.' },
-        { tag: 'utility', label: 'The tell', detail: 'The eye\'s lid opens from about a quarter to nearly two-thirds as the bar climbs, and the bar itself goes gold, then orange past 70, then a strobing red the frame it turns.' },
+        { tag: 'cost', label: 'The four curses', detail: 'Shackled ×0.75 move speed, Brittle ×1.25 damage taken, Feeble ×0.75 damage dealt, Sluggish ×1.25 cooldowns. One of the four, rolled at random at the start of every match.' },
+        { tag: 'resource', label: 'Wearing it down', detail: '3% of its strength off per second of siphoning, permanently. One full soul (6s) is about 18%; 33 seconds of siphoning in total clears it.' },
+        { tag: 'buff', label: 'Lifted', detail: 'A Ritual of 3–4 souls lifts the curse for the god\'s 8 seconds; 5 or more lifts it for 15.' },
+        { tag: 'utility', label: 'The plaque', detail: 'Printed at the top of the screen with its current figure — "BOUND · SHACKLED · 19% slower movement" — and a gauge that empties as you drink. An enemy Bind\'s curse is printed under yours.' },
       ],
       notes: [
-        'The single fastest way to top the bar out is the ward. A 300-point ultimate eaten by one hex is 150 anger in one frame — half the bar and a bit, from one blocked hit.',
-        'Anger does not accumulate at all during the five seconds the patron is turned; the bar is zeroed the frame it turns and is not touched again until it calms.',
+        'The curse is the reason to siphon early even when there is nothing to fight: every second of drinking is a permanent stat back.',
+        'Sluggish also stretches the Ritual\'s cooldown, and Feeble shrinks the damage the god does on your behalf — the curse applies to everything you deal, not only your own hands.',
       ],
     },
     {
-      emoji: '⛓️',
-      name: 'The Turning',
+      emoji: '👻',
+      name: 'Lost Souls',
       basics:
-        'At 100 anger the god turns on you for 5 seconds. It throws a 7-shard volley every 1.2s at 10 '
-        + 'each in a 67px scatter, a 24-damage claw swipe in a 96px circle every 2.1s, three 8-damage '
-        + 'lasers every 0.62s, and a 38-damage dark blast in a 122px circle every 3 seconds after a 0.9s '
-        + 'warning ring. All five of your abilities refuse for the whole window — they are the eye\'s '
-        + 'abilities and it is busy — though the cooldown of anything you press is handed straight back, '
-        + 'so being ignored does not also cost you the button. It goes through the normal damage path '
-        + 'rather than the self-damage one, so shields, absorbers and a standing Prophet\'s Protection are '
-        + 'all allowed to answer it, and a ward held in reserve is the real counterplay. The bar is set '
-        + 'to 0 the instant it turns, so surviving the five seconds hands you a completely clean sheet.',
+        'Small wisps of long-dead elements wander every arena a Bind fights in — one more every 3.5 '
+        + 'seconds up to 6 wild at once, drifting at 34 px/s and turning off the walls. They are '
+        + 'invisible to everyone until Blackened Eyes opens yours, and only a soul you can see can '
+        + 'be bound or drunk. A soul on your chain follows you in a slow ring, visible to everyone, '
+        + 'up to 6 of them, and stays visible after the eyes close. A soul flickers as it runs low.',
       effects: [
-        { tag: 'damage', label: 'What it throws at you', detail: 'A 7-shard volley every 1.2s at 10 each in a 67px scatter, a 24-damage claw swipe in a 96px circle every 2.1s, three 8-damage lasers every 0.62s, and a 38-damage dark blast in a 122px circle every 3s after a 0.9s warning ring.' },
-        { tag: 'cost', label: 'Nothing answers', detail: 'All five abilities refuse for the whole 5 seconds — the abilities are the eye\'s, and it is busy. The cooldown of anything you press is handed straight back, so being ignored does not also cost you the button.' },
-        { tag: 'utility', label: 'It goes through the normal damage path', detail: 'This is somebody else\'s weapon pointed at you, not self-damage, so shields, absorbers and a standing Prophet\'s Protection are all allowed to answer it. A ward held in reserve is the real counterplay.' },
-        { tag: 'resource', label: 'The reset', detail: 'The bar is set to 0 the instant it turns, so surviving the five seconds hands you a completely clean sheet.' },
+        { tag: 'summon', label: 'Wild souls', detail: 'One every 3.5s, up to 6 wild at once, drifting at 34 px/s. Invisible until Blackened Eyes (R).' },
+        { tag: 'summon', label: 'Bound souls', detail: 'Up to 6 on your chain, circling you about 38px out. Anyone can see them. They are what the Ritual (Q) is paid with.' },
+        { tag: 'resource', label: 'Essence', detail: 'A full soul holds 6 seconds of siphoning. It shrinks and flickers as it empties.' },
       ],
       notes: [
-        'The ultimate ends by topping the bar out on purpose, so every God of Treachery is fifteen seconds of open sky followed immediately by five seconds of it aimed at you. That is not a bug in the ultimate — it is the price on the receipt.',
-        'The awakened god and the turned god are literally the same routine with one flag flipped, which is why the punishment is always exactly the thing you just watched it do for you.',
+        'A soul being siphoned is drawn for everyone, eyes or not — drinking one in front of an opponent tells them exactly where it is.',
+      ],
+    },
+    {
+      emoji: '👹',
+      name: 'Revenants',
+      basics:
+        'A soul drained dry comes back as a revenant: an angry red soul that keeps about 170px away '
+        + 'from you, circling at 150 px/s. Every 3.2 seconds it stops, winds up for 0.9s with a '
+        + 'burning line drawn between you, and dashes at where you are at 720 px/s, overshooting by '
+        + '90px. If you are still there it hits you for 12. Anyone else it runs through on the way '
+        + 'takes 30. Up to 3 at once; a soul drained while three are already out simply vanishes. '
+        + 'They never die on their own — only the Ritual (with Q+) or Trial by Faith (F+) removes one.',
+      effects: [
+        { tag: 'damage', label: 'Ran through', detail: '30 to every enemy within 26px of the dash line, once each per dash.' },
+        { tag: 'cost', label: 'At you', detail: '12 to you if the dash catches you. It aims where you stood when the 0.9s wind-up ended, so walking sideways makes it miss.' },
+        { tag: 'summon', label: 'The stalk', detail: 'Keeps about 170px off you at 150 px/s. Dashes every 3.2s: 0.9s wind-up, 720 px/s, 90px overshoot.' },
+        { tag: 'utility', label: 'The cap', detail: 'Up to 3 revenants. Draining a soul while 3 are out makes no new one.' },
+      ],
+      notes: [
+        'The whole trick is geometry: keep the enemy between you and your revenants. A revenant 170px behind them dashing at you passes straight through them for 30.',
+        'A revenant always comes from the side away from you, so backing into a wall leaves nowhere for the enemy to stand that is out of its line.',
       ],
     },
   ],
 
   abilities: {
-    'bind-summon': {
+    'bind-daggers': {
       basics:
-        'A held beam from the eye at the top of the arena down to your clamped cursor, burning '
-        + 'everything within 26px of the whole line rather than only the body at the aim point, for 7 '
-        + 'damage a tick. Ticks come every 460ms cold, ramping smoothly to every 120ms at full heat — '
-        + 'roughly 15 damage a second cold and 58 hot. Heat takes 3.2 seconds of continuous fire to fill '
-        + 'and 4.5 seconds of not firing to bleed off, and it only rises while the beam is actually '
-        + 'firing. Topping it out costs 20 anger, prints 🔥 OVERHEATED and cuts the beam, and Click is '
-        + 'refused for the entire 4.5 seconds it takes heat to reach zero — not until it drops below a '
-        + 'line, until there is none left. It says ✦ COOL the frame the last of it goes.',
-      cast: 'Click, held. Each cast keeps the beam alive for 420ms and the ability re-casts on a 260ms cooldown, so a held button is one continuous beam and a bot spamming it produces the identical one.',
+        'Throws a dagger at 640 px/s with a short chain trailing behind it, for 11 damage to the '
+        + 'first enemy it touches. A dagger that reaches a wall sticks there for 5 seconds and, every '
+        + '1.5 seconds, spits 3 chain fragments at the nearest enemy within 540px for 4 each. Right '
+        + 'click detonates every dagger you have out — in flight or in a wall — into a shotgun of 7 '
+        + 'fragments for 5 each in a ±19° cone: a flying one carries on along its path, a stuck one '
+        + 'fires back out at the nearest enemy. Up to 6 stuck at once; a seventh pushes the oldest out.',
+      cast: 'Click, held to keep throwing. 0.38s cooldown. Right click detonates (no cooldown, but at most once every 0.3s).',
       effects: [
-        { tag: 'damage', label: 'The burn', detail: '7 per tick to everything within 26px of the beam line — a segment running from the eye at the top of the arena down to the clamped cursor position, so a body standing anywhere under it is hit, not only the body at the aim point.' },
-        { tag: 'damage', label: 'Tick rate', detail: 'Every 460ms cold, ramping smoothly to every 120ms at full heat. That is roughly 15 damage a second cold and 58 a second hot.' },
-        { tag: 'resource', label: 'Heat', detail: '3.2 seconds of continuous fire from empty to full, and 4.5 seconds of not firing to bleed it all off again. It only rises while the beam is actually firing.' },
-        { tag: 'cost', label: 'Overheating', detail: 'Topping the bar out is 20 anger, prints 🔥 OVERHEATED, and cuts the beam. Click is refused for the entire 4.5 seconds it takes the heat to reach zero — not until it drops below a line, until there is none left.' },
-        { tag: 'utility', label: 'The cool', detail: 'It says ✦ COOL the frame the last of the heat goes, which is the signal to start again.' },
+        { tag: 'damage', label: 'The dagger', detail: '11 damage to the first enemy it touches. 640 px/s, flies to the wall.' },
+        { tag: 'damage', label: 'Stuck in a wall', detail: 'Stays 5s. Every 1.5s (first after 0.9s) it spits 3 fragments at the nearest enemy within 540px, 4 damage each.' },
+        { tag: 'damage', label: 'Detonate (right click)', detail: 'Every dagger out bursts into 7 fragments, 5 damage each, in a ±19° cone. Fragments fly at 820 px/s for about 0.42s — roughly 345px.' },
+        { tag: 'area', label: 'Aim of a stuck burst', detail: 'A stuck dagger fires its 7 at the nearest enemy within 540px, or straight back out of the wall if there is none.' },
+        { tag: 'utility', label: 'Wall limit', detail: 'Up to 6 stuck daggers at once; the seventh pushes the oldest out.' },
       ],
       upgrade: {
         basics:
-          'Heat is pinned at maximum and the beam holds its 120ms tick — 58 damage a second — for as long '
-          + 'as you hold the button. It costs 2 HP a second, taken as self-damage in whole-point bites so '
-          + 'it lands as a stream of small hits, and 7 anger a second, flat: unlike everything else in the '
-          + 'kit that rate scales with nothing, and it will happily walk the bar to 100 and turn the god. '
-          + 'The one-off 20 for topping heat out is still paid the first time it reaches full — Over-rage '
-          + 'removes the stop, not the fine.',
+          'Inspirit: a dagger that passes within 18px of a lost soul — seen or not — takes a little '
+          + 'of it along, +30% damage for every soul it goes through, stacking. A soul-lit dagger also '
+          + 'finds the enemy\'s soul: while one is in flight a tiny glowing point is drawn at the '
+          + 'centre of every enemy, and a dagger that passes within 9px of it deals 50% more again '
+          + 'for every soul it carries and prints SOUL STRUCK. Its fragments, flying or sprayed from '
+          + 'a wall, carry +15% per soul.',
         effects: [
-          { tag: 'buff', label: 'It never stops', detail: 'Heat is pinned at maximum and the beam keeps its 120ms tick — 58 damage a second — for as long as the button is held.', requiresUpgrade: 'click' },
-          { tag: 'cost', label: 'Blood', detail: '2 HP a second, taken from you as self-damage in whole-point bites so it lands as a stream of small hits rather than a per-frame trickle.', requiresUpgrade: 'click' },
-          { tag: 'cost', label: 'Patience', detail: '7 anger a second, flat, for as long as it is held — unlike everything else in the kit this rate does not scale with anything, and it will happily walk the bar to 100 and turn the god.', requiresUpgrade: 'click' },
-          { tag: 'utility', label: 'No overheat charge', detail: 'The one-off 20 for topping the bar out is still paid the first time heat reaches full. Over-rage removes the stop, not the fine.', requiresUpgrade: 'click' },
+          { tag: 'damage', label: 'Through a soul', detail: '+30% damage per soul passed through, stacking: 14 after one, 18 after two, 21 after three.', requiresUpgrade: 'click' },
+          { tag: 'damage', label: 'Soul struck', detail: 'Inside 9px of the enemy\'s centre: ×(1 + 0.5 per soul) on top — 21 with one soul, 35 with two, 52 with three.', requiresUpgrade: 'click' },
+          { tag: 'damage', label: 'Lit fragments', detail: 'A soul-lit dagger\'s fragments deal +15% per soul it carries.', requiresUpgrade: 'click' },
         ],
       },
       notes: [
-        'Because the beam is a segment from the top of the screen, standing directly under your own aim point is not safe from an opponent\'s beam and moving sideways is worth more than moving back.',
-        'Nine seconds of Over-rage is 18 HP and 63 anger. It is a burst tool, not a stance — and with three converts the anger half of that bill drops to about 40.',
-        'The beam is refused outright while the patron is turned or while the chains are on, and both refunds hand the 260ms straight back.',
+        'The souls a dagger can pass through include wild ones you cannot currently see. Blackened Eyes is what tells you where to throw.',
+        'Your own bound souls circle you about 38px out — a dagger thrown through your own ring picks them up on the way out.',
+        'Cultists (F+) throw the same dagger for 7. Theirs never stick and are never detonated.',
       ],
     },
 
-    'bind-shards': {
+    'bind-chain': {
       basics:
-        'Calls 25 shards down from the eye at 10 damage each, bursting in a 34px radius where they '
-        + 'land, scattered across a 96px-radius disc around the cursor weighted evenly by area — so a '
-        + 'body standing in the middle realistically catches five or six of them, 50 to 60 damage rather '
-        + 'than 250. They fall at 720 px/s, fanned across 150px of the eye\'s width and staggered 26ms '
-        + 'apart so the barrage takes about 0.62s to launch, and a shard whose 2.6 seconds runs out '
-        + 'bursts wherever it happens to be. Every cast permanently applies one of three tithes, chosen '
-        + 'at random by the god and never by you: ×0.9 move speed, ×1.1 damage taken, or ×0.9 damage '
-        + 'dealt. They stack multiplicatively — four speed tithes is ×0.66 — and nothing in the game '
-        + 'removes one. The tithe is rolled when the barrage is thrown rather than when it lands, so a '
-        + 'barrage that hits nothing costs exactly as much as one that kills. 6.5s cooldown.',
-      cast: 'E, aimed at the cursor. 6.5s cooldown. The shards leave the eye fanned across 150px of its width, staggered 26ms apart, so the full barrage takes about 0.62s to launch and each shard lives at most 2.6s.',
+        'Throws a chain at whatever in reach is nearest your cursor. An enemy within 150px is chained '
+        + 'to you for 5 seconds: it cannot get more than 150px from you, so walking away drags it '
+        + 'along, and its cooldowns run 20% longer while it is chained. Press E again while the chain '
+        + 'is on to anchor it to the floor where you stand, and walk off. A lost soul within 130px that '
+        + 'you can see is bound to you instead and follows you, visible to everyone, up to 6. With a '
+        + 'soul on your chain, a cultist (F+) or a False Idol (mastery) within 150px can be fed it. '
+        + 'With nothing in reach the cast is refused and costs nothing.',
+      cast: 'E, aimed at the cursor. 2.3s cooldown. Recast while the chain holds to anchor it.',
       effects: [
-        { tag: 'damage', label: 'The barrage', detail: '25 shards at 10 damage each, bursting in a 34px radius where they land.' },
-        { tag: 'area', label: 'The footprint', detail: 'Landing points are scattered across a 96px-radius disc around the cursor, weighted evenly by area. A body standing in the middle of it realistically catches five or six of them — 50 to 60 damage, not 250.' },
-        { tag: 'utility', label: 'Speed', detail: '720 px/s down from the eye. A shard whose 2.6 seconds runs out bursts wherever it happens to be.' },
-        { tag: 'cost', label: 'The tithe', detail: 'Every cast permanently applies one of three, chosen at random by the god and never by you: ×0.9 move speed, ×1.1 damage taken, or ×0.9 damage dealt. They stack multiplicatively with themselves — four speed tithes is ×0.66 — and nothing in the game removes one.' },
-        { tag: 'cost', label: 'Charged on the ask', detail: 'The tithe is rolled when the barrage is thrown, not when it lands, so a barrage that hits nothing at all costs exactly as much as one that kills.' },
+        { tag: 'control', label: 'Chained', detail: 'For 5s the enemy cannot get more than 150px from you — or from the anchor. Only the outward part of their movement is stopped; they can still circle.' },
+        { tag: 'debuff', label: 'Weighed down', detail: '×1.2 cooldowns on the chained enemy while the chain holds.' },
+        { tag: 'utility', label: 'Anchor', detail: 'Recast E to pin the chain to the floor where you stand. The enemy stays tied to that spot for the rest of the 5 seconds.' },
+        { tag: 'summon', label: 'Bind a soul', detail: 'A visible lost soul within 130px is bound to you instead. Up to 6. Bound souls are the Ritual\'s payment.' },
+        { tag: 'utility', label: 'What it picks', detail: 'Every candidate in reach — enemy within 150px, soul within 130px, cultist or idol within 150px — and takes the one nearest the cursor.' },
       ],
       upgrade: {
         basics:
-          'E becomes a wind-up: the 96px scatter closes to 18px over a 1.5-second hold, and at 18px every '
-          + 'shard is inside every other shard\'s 34px blast, so a full charge is the entire 250 damage on '
-          + 'one target. The hold costs 4 anger a second, billed as it accrues rather than on release, so a '
-          + 'charge you abandon halfway still cost 3. It fires on the release and lands where you finished '
-          + 'aiming rather than where you started, and the wind-up only begins once the cooldown is already '
-          + 'up. The floor reticle is drawn at the exact radius the shards will scatter across; a partial '
-          + 'charge announces ⛓ EVISCERATE with its percentage and a full one just says ⛓ EVISCERATE.',
+          'Bind the Hatred: revenants within 170px can be chained too. A bound revenant is held '
+          + 'still in its chains for 5 seconds — then it dashes at you straight away, 20% faster and '
+          + 'for 60% more: 48 to anyone in the line, 19 to you if it reaches you. Chain it with the '
+          + 'enemy between you and it.',
         effects: [
-          { tag: 'buff', label: 'The squeeze', detail: 'The 96px scatter closes to 18px over a 1.5s hold. At 18px every shard is inside every other shard\'s 34px blast, so a full charge is the entire 250 damage on one target.', requiresUpgrade: 'e' },
-          { tag: 'cost', label: 'Winding up costs anger', detail: '4 a second for the whole hold, billed as it accrues rather than on release — a charge you abandon halfway still cost 3.', requiresUpgrade: 'e' },
-          { tag: 'utility', label: 'It fires on the release', detail: 'The barrage lands where you finished aiming, not where you started, and the wind-up only begins once the cooldown is already up.', requiresUpgrade: 'e' },
-          { tag: 'utility', label: 'The readout', detail: 'The floor reticle is the real one — it is drawn at the exact radius the shards will scatter across. A partial charge announces ⛓ EVISCERATE with its percentage; a full one just says ⛓ EVISCERATE.', requiresUpgrade: 'e' },
+          { tag: 'control', label: 'Held', detail: 'A revenant within 170px is frozen in chains for 5s.', requiresUpgrade: 'e' },
+          { tag: 'damage', label: 'Released', detail: 'It then dashes at you at once: ×1.2 speed and ×1.6 damage — 48 to enemies in the line, 19 to you.', requiresUpgrade: 'e' },
         ],
       },
       notes: [
-        'Eviscerate does not change the damage, the count or the cooldown. It changes one number — the scatter radius — and that number is worth about 200 damage.',
-        'The wind-up is cancelled with no cast at all if the patron turns or the chains go on mid-hold; the anger already spent on it is not refunded.',
-        'Three tithes of the same kind is a real possibility and a real problem: the roll is a flat one-in-three each time with no memory of what it took last.',
+        'The chain stops the victim at 150px after it has moved, every frame, so a chained enemy cannot dash or knock itself out of reach — it is put straight back on the circle.',
+        'Anchoring and then walking 150px away is the cleanest way to line an enemy up for a revenant: they cannot leave the circle, and you know exactly where the dash will come from.',
+        'A cultist\'s chain (F+) is a separate, shorter tether: 2 seconds, 140px, anchored where the cultist stood.',
       ],
     },
 
-    'bind-idol': {
+    'bind-eyes': {
       basics:
-        'Plants an idol at the cursor, clamped 40px inside the walls, holding up to 10 faith. It ticks '
-        + 'once a second: +1 while you stand within 118px, −1 while you do not. On every tick where it '
-        + 'has at least 1 whole faith it throws 5 shards at 6 damage each into a 58px scatter around a '
-        + 'live target — 30 damage a second while it is fed. The 118px ring is drawn on the floor under '
-        + 'everything and visibly starves as the faith drops. A tick at exactly 0 faith charges the '
-        + 'patron 5 anger, and keeps charging every second until you come back; 6 seconds of continuous '
-        + 'empty and the idol shatters itself. Left alone from full that is 10 seconds of drain and 6 '
-        + 'more of billing — 30 anger, and then no idol. 20s cooldown, and a second cast moves it, which '
-        + 'is the only way to abandon one without paying.',
-      cast: 'R, planted at the cursor and clamped 40px inside the arena walls. 20s cooldown. A second cast moves it, which is the only way to abandon one without paying.',
+        'For 8 seconds the whole screen turns inverted and you can see the lost souls wandering the '
+        + 'arena — and only a soul you can see can be bound or siphoned. Your body becomes only its '
+        + 'small inner soul: your hitbox shrinks to 35% of its size and you walk straight through '
+        + 'anything solid. The bright core drawn at your centre is all that can be hit.',
+      cast: 'R. 16s cooldown. Instant.',
       effects: [
-        { tag: 'summon', label: 'The idol', detail: 'Holds up to 10 faith. It ticks once a second: +1 while you stand within 118px of it, −1 while you do not.' },
-        { tag: 'damage', label: 'The volleys', detail: 'Every tick on which it has at least 1 whole faith, it throws 5 shards at 6 damage each into a 58px scatter around a live target — 30 damage a second while it is fed.' },
-        { tag: 'area', label: 'The ring', detail: '118px radius, drawn on the floor under everything, and it visibly starves — the ring reads emptier as the faith drops.' },
-        { tag: 'cost', label: 'Starvation', detail: 'A tick where faith is exactly 0 charges the patron 5 anger. It keeps charging every second until you come back.' },
-        { tag: 'cost', label: 'Crumbling', detail: '6 seconds of continuous empty and the idol shatters itself. Left alone from full that is 10 seconds of drain and then 6 more of billing — 30 anger, and then no idol.' },
+        { tag: 'utility', label: 'Sight', detail: 'Wild lost souls are drawn for you for 8s, and can be bound (E) and siphoned (F).' },
+        { tag: 'shield', label: 'Inner soul', detail: 'Hitbox ×0.35 for 8s — most shots that would have clipped you miss.' },
+        { tag: 'movement', label: 'Soul-walk', detail: 'For the same 8s you pass through walls, pillars and anything else solid.' },
+        { tag: 'utility', label: 'Inverted', detail: 'Your screen inverts its colours for the 8 seconds. Only yours — the opponent\'s does not.' },
       ],
       upgrade: {
         basics:
-          'Up to 3 permanent converts. Nothing in the game damages, dispels or times one out, and the '
-          + 'only thing that ever removes one is the ultimate. Each convert inside the ring feeds exactly a '
-          + 'third of a faith per tick, so three cancel the −1 drain outright and the idol never needs you '
-          + 'again, two leave it bleeding a third a second and one two thirds. Each also takes 12% off all '
-          + 'anger gained — 36% at three, applied to the gain and never to the bar — and gives +10% move '
-          + 'speed, up to +30%, multiplied against the speed tithes rather than added to them. They move at '
-          + '190 px/s, milling within about 52px of their post so three never stack into one shape, and '
-          + 'they arrive at the idol rather than at you.',
+          'Choice Souls: lost souls come in three tempers, and Blackened Eyes shows you which. Green '
+          + 'kind souls heal you 4 HP a second while you siphon them. Red angry souls build the damage '
+          + 'buff faster and higher: +16% a second up to +80%, against the usual +10% up to +50%. '
+          + 'Blue sad souls give +5% move speed a second as well, up to +30%.',
         effects: [
-          { tag: 'summon', label: 'The converts', detail: 'Up to 3, permanent. Nothing in the game damages, dispels or times one out — the only thing that ever removes one is the ultimate.', requiresUpgrade: 'r' },
-          { tag: 'resource', label: 'Faith share', detail: 'Each convert inside the ring feeds exactly ⅓ of a faith per tick. Three of them cancel the −1 drain outright and the idol never needs you again; two leave it bleeding ⅓ a second; one leaves it bleeding ⅔.', requiresUpgrade: 'r' },
-          { tag: 'buff', label: 'The discount', detail: '−12% on all anger gained per convert, so 36% at three. Applied to the gain, never to the bar.', requiresUpgrade: 'r' },
-          { tag: 'buff', label: 'The pace', detail: '+10% move speed per convert, up to +30%, multiplied against the speed tithes rather than added to them.', requiresUpgrade: 'r' },
-          { tag: 'utility', label: 'How they move', detail: '190 px/s, milling within about 52px of their post so three of them never stack into one shape. They arrive at the idol, not at you.', requiresUpgrade: 'r' },
+          { tag: 'heal', label: 'Kind (green)', detail: '4 HP a second while siphoning it.', requiresUpgrade: 'r' },
+          { tag: 'buff', label: 'Angry (red)', detail: 'Damage buff builds at +16%/s to +80%, instead of +10%/s to +50%.', requiresUpgrade: 'r' },
+          { tag: 'buff', label: 'Sad (blue)', detail: '+5% move speed per second of siphoning, up to +30%, lingering with the damage buff.', requiresUpgrade: 'r' },
         ],
       },
       notes: [
-        'The idol neither fires nor bills while its faith is a fraction between 0 and 1 — which is exactly the band one or two converts hold it in. That gap is the "drains slower" the cult is really buying.',
-        'With no idol standing, R plants one even with the upgrade owned. The cultist branch needs something to worship first.',
-        'A volley while the patron is turned is aimed at you, like everything else it throws.',
+        'Souls you have already bound stay visible after the eyes close, and can still be siphoned. Binding a few during the 8 seconds is how you keep drinking afterwards.',
+        'The shrunken hitbox makes Blackened Eyes a strong dodge in its own right, quite apart from the souls.',
       ],
     },
 
-    'bind-protection': {
+    'bind-siphon': {
       basics:
-        'Three hexes, each intercepting one full instance of damage before any shield charge, shield '
-        + 'pool or clotted HP gets a look at it, nullifying the whole instance however large it was. Half '
-        + 'of the raw amount absorbed goes on the anger bar, so eating three 60-damage hits is 90 anger '
-        + 'and eating one 300-damage ultimate is 150 in a single frame. It prints ✦ WARDED with the '
-        + 'charges left on every block and ✦ WARD SPENT when the last hex goes, and whatever absorber you '
-        + 'were already wearing is stored and handed back when the ward ends, so nothing else on your '
-        + 'body is deleted by casting it. A second cast replaces the standing ward outright rather than '
-        + 'stacking. 16s cooldown.',
-      cast: 'F. 16s cooldown. A second cast replaces the standing ward outright rather than stacking — three charges is the ability, not a ceiling.',
+        'Drains the lost soul nearest your cursor, within 340px. The longer you drink the more '
+        + 'damage you deal: +10% a second, up to +50%, and the buff lingers for 3 seconds after you '
+        + 'stop (press F again to let go; it also breaks past 420px). Every second also takes 3% '
+        + 'off your curse, for good. A full soul holds 6 seconds. Drain it dry and it comes back as '
+        + 'a revenant — up to 3.',
+      cast: 'F to start, F again to stop. 2.5s cooldown. Refused with no visible soul in range — nothing is spent.',
       effects: [
-        { tag: 'shield', label: 'The hexes', detail: '3 charges. Each intercepts one full instance of damage before any shield charge, shield pool or clotted HP gets a look at it, and the whole instance is nullified however large it was.' },
-        { tag: 'cost', label: 'The share', detail: '50% of the raw amount absorbed goes on the anger bar. Eating three 60-damage hits is 90 anger; eating one 300-damage ultimate is 150 in a single frame.' },
-        { tag: 'utility', label: 'The readout', detail: 'It prints ✦ WARDED with the charges left on every block, and ✦ WARD SPENT when the last hex goes.' },
-        { tag: 'utility', label: 'It gives the old absorber back', detail: 'Whatever absorber you were already wearing is stored and handed back when the ward ends, so nothing else on your body is deleted by casting it.' },
+        { tag: 'buff', label: 'The drink', detail: '+10% damage dealt per second of siphoning, up to +50%. Lingers 3s after you stop.' },
+        { tag: 'resource', label: 'The cure', detail: '−3% curse strength per second, permanently.' },
+        { tag: 'area', label: 'Reach', detail: 'Picks the visible soul nearest the cursor within 340px of you. The stream breaks if it gets more than 420px away.' },
+        { tag: 'summon', label: 'Overdrained', detail: 'A soul holds 6s. Drained dry it becomes a revenant (up to 3) — see Revenants.' },
       ],
       upgrade: {
         basics:
-          'Each hex still standing is worth +15% move speed and +15% damage dealt: +45%/+45% on a fresh '
-          + 'ward, +30% at two, +15% at one, nothing once it is spent. The damage half rides the same '
-          + 'outgoing multiplier the ×0.9 damage tithes eat out of, written once per frame, so a vessel '
-          + 'carrying two damage tithes lands on exactly the figure both agreed to — ×0.81 × 1.45. The '
-          + 'speed stacks multiplicatively too, so three converts and a fresh ward is ×1.3 × ×1.45 on top '
-          + 'of whatever the speed tithes have taken.',
+          'Trial by Faith: revenants within 340px can be siphoned. It makes them angrier as you '
+          + 'drink — over 4 seconds they stalk 40% faster, wind up 40% quicker, dash 30% faster, '
+          + 'recharge in half the time and hit twice as hard — and a fully siphoned one kneels as a '
+          + 'cultist. A cultist walks to about 170px short of the enemy, throws a 7-damage dagger every '
+          + '1.1s within 480px, and every 4.5s chains an enemy within 200px for 2 seconds. It loses '
+          + 'faith as it goes and fades after 12 seconds; bind a soul to it (E) for 6 more, up to 18 '
+          + 'left. Up to 3 cultists. Drinking a revenant counts as an angry soul for the buff.',
         effects: [
-          { tag: 'buff', label: 'The rungs', detail: '+15% move speed and +15% damage dealt per hex still standing: +45%/+45% on a fresh ward, +30% at two, +15% at one, nothing once it is spent.', requiresUpgrade: 'f' },
-          { tag: 'utility', label: 'It shares a writer with the tithe', detail: 'The damage half rides the same outgoing multiplier the ⅹ0.9 damage tithes eat out of, written once per frame, so a vessel carrying two damage tithes lands on exactly the figure both agreed to (×0.81 × 1.45).', requiresUpgrade: 'f' },
-          { tag: 'utility', label: 'Speed stacks multiplicatively', detail: 'With three converts and a fresh ward that is ×1.3 × ×1.45 on top of whatever the speed tithes have taken.', requiresUpgrade: 'f' },
+          { tag: 'summon', label: 'Cultist', detail: 'Up to 3. 12s of faith; walks at 120 px/s to about 170px short of the enemy.', requiresUpgrade: 'f' },
+          { tag: 'damage', label: 'Its daggers', detail: '7 damage, one every 1.1s at an enemy within 480px.', requiresUpgrade: 'f' },
+          { tag: 'control', label: 'Its chain', detail: 'Every 4.5s, an enemy within 200px is chained to the cultist\'s spot for 2s, 140px of chain.', requiresUpgrade: 'f' },
+          { tag: 'resource', label: 'Feeding', detail: 'Bind a soul to a cultist (E, within 150px): +6s of faith, never more than 18s left.', requiresUpgrade: 'f' },
+          { tag: 'cost', label: 'The trial', detail: '4 seconds of siphoning to convert one. Meanwhile it gets worse: up to ×2 dash damage (24 to you, 60 to enemies), quicker wind-ups and shorter gaps.', requiresUpgrade: 'f' },
         ],
       },
       notes: [
-        'The ward is the fastest route to a turned god in the entire element. Against a big single hit it is spectacular defence and half a bar of anger at the same time.',
-        'It is also the only thing in the kit that answers the turned god, because the patron\'s own attacks go through the ordinary damage path. Keeping F in reserve for the five seconds after the ultimate is the intended play.',
-        'Chosen Vessel is at its strongest the moment before it does anything: a full ward that has blocked nothing is the biggest buff in the element, and using it as armour is what turns it off.',
+        'The siphon only draws from a soul you can see. A bound soul is always visible to you, so a chain of six is six drinks waiting.',
+        'Letting go at 5 seconds keeps the soul alive (and the revenant unborn) with almost all of the buff already earned.',
+        'A siphoned soul is drawn for everyone. So is the stream.',
       ],
     },
 
-    'bind-treachery': {
+    'bind-ritual': {
       basics:
-        'Fifteen seconds of open sky. You are dragged to the centre of the arena over about 130ms and '
-        + 'pinned there with velocity zeroed every frame, unable to cast anything — all four other slots '
-        + 'are dead and every keypress is drained rather than queued, so the whole fifteen seconds does '
-        + 'not come out at once when the chains fall off. Meanwhile the eye works: a 7-shard volley at 10 '
-        + 'each in a 67px scatter every 1.2s, a 24-damage claw swipe within 96px every 2.1s, three '
-        + '8-damage lasers every 0.62s, and every 3 seconds a marked circle that lands a 122px, 38-damage '
-        + 'blast 0.9s later with a camera shake. It costs a limb: one of Click, E, R or F is locked for '
-        + 'the rest of the match — nominally 15 minutes, longer than any match — and you choose which by '
-        + 'pressing it, while a bot picks at random. And the frame the sky closes, the anger bar is taken '
-        + 'straight to the top and the patron turns, so every ultimate is 15 seconds of open sky followed '
-        + 'immediately by 5 of it aimed at you. The prompt stalls 0.8s before it will accept an answer '
-        + 'and Click needs a full release and press after that, so holding the beam through it cannot '
-        + 'cost you the beam. 60s cooldown.',
-      cast: 'Q, ultimate. Instant. 60s cooldown. A banner comes up asking which of your other four slots the god may have — it stalls for 0.8s before it will accept an answer, and Click needs a full release and press after that, so holding the beam through the prompt cannot cost you the beam.',
+        'Stabs a dagger into the floor, wakes the old red runes and offers every soul on your chain '
+        + 'at once. The ancient god comes, unbound and almighty, and works on the enemy: a 7-shard '
+        + 'volley at 10 each every 1.2s, a 24-damage swipe within 96px every 2.1s, three 8-damage '
+        + 'lasers every 0.62s, and every 3 seconds a marked circle that takes a 38-damage, 122px '
+        + 'blast 0.9s later. How long it stays and what it costs is set by how many souls you paid. '
+        + '1–2 souls: 5 seconds, and it takes one of Click, E, R or F for the rest of the match — '
+        + 'you choose which by pressing it. 3–4: 8 seconds, and your curse is lifted while it stays. '
+        + '5–6: 12 seconds, curse lifted for 15, and three hexes of the old prophet\'s protection.',
+      cast: 'Q, ultimate. Paid for in charge. Refused with no souls on your chain — nothing is spent.',
       effects: [
-        { tag: 'damage', label: 'Shard volleys', detail: '7 shards at 10 damage each in a 67px scatter, every 1.2s — about 12 volleys across the ultimate.' },
-        { tag: 'damage', label: 'Claw swipes', detail: '24 damage to everything within 96px of the swipe, every 2.1s, at a random angle across a target.' },
-        { tag: 'damage', label: 'Laser spray', detail: 'Every 0.62s, three lines from three of the eye\'s pupils, each dealing 8 to anything within 20px of it. Roughly 24 volleys of three lines across the fifteen seconds.' },
-        { tag: 'damage', label: 'Dark light', detail: 'Every 3s a circle is marked on the floor and 0.9s later a 122px blast lands in it for 38 damage, with a camera shake.' },
-        { tag: 'control', label: 'The chains', detail: 'You are dragged to the centre of the arena over about 130ms and pinned there with velocity zeroed every frame, for the full 15 seconds.' },
-        { tag: 'cost', label: 'You cannot cast', detail: 'All four other slots are dead for the duration and every keypress is drained rather than queued, so the whole fifteen seconds does not come out at once when the chains fall off.' },
-        { tag: 'cost', label: 'A limb', detail: 'One of Click, E, R or F is locked for the rest of the match — 15 minutes, which is longer than any match. You choose which by pressing it. A bot picks at random from what it has left.' },
-        { tag: 'cost', label: 'The closing bill', detail: 'The frame the sky closes, the anger bar is taken straight to the top and the patron turns — so every ultimate is 15 seconds of open sky followed immediately by 5 seconds of it aimed at you.' },
+        { tag: 'damage', label: 'Shard volleys', detail: '7 shards at 10 each into a 68px scatter round an enemy, every 1.2s. Each bursts in 34px.' },
+        { tag: 'damage', label: 'Swipe', detail: '24 to every enemy within 96px of the swipe, every 2.1s.' },
+        { tag: 'damage', label: 'Lasers', detail: 'Three lines every 0.62s, 8 each to anything within 20px.' },
+        { tag: 'damage', label: 'Dark blast', detail: 'Every 3s a circle is marked; 0.9s later 38 damage in 122px.' },
+        { tag: 'cost', label: '1–2 souls', detail: '5 seconds of the god — and one of Click, E, R or F is locked for the rest of the match. The prompt waits 0.8s before it takes an answer. A bot loses one at random.' },
+        { tag: 'buff', label: '3–4 souls', detail: '8 seconds of the god, and your curse is lifted for the same 8.' },
+        { tag: 'shield', label: '5–6 souls', detail: '12 seconds of the god, the curse lifted for 15, and 3 hexes that each swallow one whole hit, however big.' },
       ],
       upgrade: {
         basics:
-          'Your converts wake up and fight for the duration. Each throws 3 shards at 9 damage every '
-          + '1.6–2.2s into a 130px scatter — deliberately wider than your own barrage, because they are '
-          + 'converts and not marksmen — and every 2.9–3.8s one runs at 780 px/s straight through a target '
-          + 'for 18 damage, overshooting 120px past it, with the run swept rather than sampled so it cannot '
-          + 'skip a body and each body hit once per charge. An awakened convert homes on your mouse rather '
-          + 'than the faith ring and moves at 1.5× its hooded pace. Every convert that woke up stabs itself '
-          + 'the frame the ultimate ends; a cult that was never awakened, because you had no Q+, just keeps '
-          + 'standing in the ring.',
+          'Wrathful God: revenants can be offered too — they count as souls and are gone for good. '
+          + 'But the god does not like being handed hatred: when its time on the enemy is up it turns '
+          + 'on you, with the same four attacks, for 3 seconds per revenant offered. Six souls and '
+          + 'three revenants is nine — the 12-second god, and then 9 seconds of it on you.',
         effects: [
-          { tag: 'damage', label: 'Their volleys', detail: 'Each awakened convert throws 3 shards at 9 damage every 1.6–2.2s, into a 130px scatter — deliberately wider than your own barrage, because they are converts and not marksmen.', requiresUpgrade: 'q' },
-          { tag: 'damage', label: 'Their charge', detail: 'Every 2.9–3.8s one runs at 780 px/s straight through a target for 18 damage, overshooting 120px past it. The run is swept rather than sampled, so it cannot skip a body at that speed, and each body is hit once per charge.', requiresUpgrade: 'q' },
-          { tag: 'movement', label: 'They follow the cursor', detail: 'An awakened convert homes on your mouse rather than the faith ring, and moves at 1.5× its hooded pace.', requiresUpgrade: 'q' },
-          { tag: 'cost', label: 'They all die', detail: 'Every convert that woke up stabs itself the frame the ultimate ends. A cult that was never awakened — because you had no Q+ — just keeps standing in the ring.', requiresUpgrade: 'q' },
+          { tag: 'resource', label: 'Hatred as payment', detail: 'Every revenant counts as one soul toward the 1–2 / 3–4 / 5+ tiers, and is removed.', requiresUpgrade: 'q' },
+          { tag: 'cost', label: 'The wrath', detail: '3 seconds of the god turned on you per revenant offered, starting the moment it leaves the enemy. Volleys, swipes, lasers and blasts, all aimed at you.', requiresUpgrade: 'q' },
         ],
       },
       notes: [
-        'The god\'s attacks during the ultimate and the god\'s attacks during the wrath are the same code with one flag flipped, so the fifteen seconds are a preview of the five that follow.',
-        'A second ultimate costs a second slot. There are four to give, and once all four are gone the ultimate is genuinely free — a 60s cooldown makes that a five-ultimate match, which is unlikely but not impossible.',
-        'Awakening is a hard choice against Cult of the Broken God: the converts are permanent and unkillable right up until you press Q, at which point every one of them is spent.',
-        'A starving idol topping the bar out mid-ultimate ends the ultimate early — the patron turning cancels everything it was doing on your behalf, including this, and the converts still pay for having been woken.',
+        'The tiers are the whole decision. One soul is a 5-second god for a limb; three is 8 seconds and a clean slate. Holding Q until the chain is full is almost always right.',
+        'Once all four limbs are gone a 1–2 soul ritual takes nothing more.',
+        'The protection\'s hexes go before any other shield. A hex spent on a 4-damage fragment is spent.',
+        'Q+ is how a revenant problem goes away. Three revenants on the field for nine seconds of wrath is a trade worth making only with a shield or a lot of health.',
       ],
     },
   },
 
   mastery: {
-    'vessel-of-the-broken-god': {
+    'permanent-bond': {
       basics:
-        'God of Treachery lights a 20-second window — the ultimate\'s own 15 plus the 5 of wrath that '
-        + 'closing the sky always causes — and the first 15 are spent chained to the middle of the floor, '
-        + 'so the tail is the half worth owning. While it runs you move 35% faster, take ×0.6 damage, and '
-        + 'have every discrete debuff on you stripped off every 0.25 seconds: burns, molten, scorch, oil '
-        + 'fire, poison, bleeds, sickness, freeze, chicken, disarm, silence, chains, skewer, wrench, '
-        + 'confusion, disorientation, hallucination, migraine, lag, panic, drink, unsteady aim, high '
-        + 'gravity, inverted controls, exposed, marked, purge, heal block, torture link, oil, frost and '
-        + 'void stacks including permafrost and permavoid, dark vulnerability and hopelessness. Every '
-        + 'Shards of Oblivion cast also throws 3 extra shards from your own body, 10 damage each in a '
-        + '34px blast, into a 42px scatter around the cursor. And the slot the ultimate takes is no '
-        + 'longer dead: it becomes Pathetic Stab, a 118px lunge at your cursor for 15 melee damage inside '
-        + '30px, swept along the run so it cannot skip a body, on a 1.8s cooldown.',
+        'Whatever you lose of your curse, your enemy gains in its place. Every bit Siphon wears '
+        + 'off you lands on them, for good — siphon a third of your Shackled away and they are '
+        + 'moving about 8% slower for the rest of the match. And while the Ritual lifts your curse '
+        + 'completely, they carry the whole 25% of it for exactly as long.',
       effects: [
-        { tag: 'damage', label: 'The vessel\'s own shards', detail: '3 extra oblivion shards on every Shards of Oblivion (E) cast, 10 damage each in a 34px blast, thrown from your body rather than from the eye into a 42px scatter around the cursor.' },
-        { tag: 'buff', label: 'Enraged — speed', detail: '+35% move speed for the whole window, pulled through the same multiplier the tithe and the cult are.' },
-        { tag: 'shield', label: 'Enraged — armour', detail: '×0.6 damage taken — 40% less — on the same rewritten-every-frame field the tithe\'s vulnerability uses, so four debts and a red eye multiply out honestly.' },
-        { tag: 'buff', label: 'Enraged — scoured clean', detail: 'Every discrete debuff on you is stripped off every 0.25s: burns, molten, scorch, oil fire, poison, bleeds, sickness, freeze, chicken, disarm, silence, chains, skewer, wrench, confusion, disorientation, hallucination, migraine, lag, panic, drink, unsteady aim, high gravity, inverted controls, exposed, marked, purge, heal block, torture link, oil, frost and void stacks (including permafrost and permavoid), dark vulnerability and hopelessness.' },
-        { tag: 'utility', label: 'The window', detail: '20 seconds, lit by God of Treachery (Q): the ultimate\'s own 15 plus the 5 of wrath that closing the sky always causes. The first 15 are spent chained to the middle of the floor, so the tail is the half worth owning.' },
-        { tag: 'damage', label: 'Pathetic Stab', detail: 'The slot the ultimate takes is no longer locked out — it becomes a 118px lunge at your cursor for 15 melee damage inside 30px, swept along the run so it cannot skip a body, on a 1.8 second cooldown.' },
+        { tag: 'debuff', label: 'Handed on', detail: 'Every enemy carries the same curse at (1 − your strength) × 25%. Fully siphoned off you, it is the full 25% on them, permanently.' },
+        { tag: 'debuff', label: 'While lifted', detail: 'For the Ritual\'s 8 or 15 seconds of lifted curse, they carry all 25% of it.' },
       ],
       notes: [
-        'The enrage is the answer to the ultimate\'s guaranteed punishment rather than a reward on top of it. Five seconds of your own god using this kit on you, at 40% off and with nothing able to stick, is the difference between an ultimate you can afford and one you press when you are already winning.',
-        'A slow whose source is still standing on the field survives the scouring. Movement, cooldown and damage multipliers are co-owned by whichever kit is applying them and rewritten every frame, so the cleanse deliberately does not touch them — everything with its own expiry comes off, and a puddle you are standing in does not.',
-        'Pathetic Stab is not a replacement for the ability that was taken and is not meant to read as one. It is 15 damage; the four abilities it can replace are worth 250, a permanent turret, three charges of total immunity and a beam.',
-        'A second ultimate costs a second slot and hands back a second stab. Both keys route to the same lunge and share its cooldown, so two stab slots are two ways to press one ability.',
-        'The lunge writes your position directly rather than pushing on the velocity, for the same reason the corner chains do — it runs after the arena has already applied that frame\'s movement keys, so it wins instead of arguing with them.',
-        'It will not fire while the patron has turned, or while the chains have you. A vessel is still a vessel.',
+        'It doubles the value of siphoning: every second of drinking is +3% back for you and −3% of the curse on them.',
+        'Brittle handed over is +25% damage taken on the enemy — on top of the siphon\'s own damage buff, that is a large swing.',
       ],
     },
-    'ritual-sacrifice': {
+    'false-idol': {
       basics:
-        'A bindable stab that takes 15 straight off the anger bar per press — against the bar\'s own 2 a '
-        + 'second decay, one stab is worth 7.5 seconds of waiting — for 25 self-inflicted damage, taken '
-        + 'through the self-damage path, so it bypasses invincibility and will not feed anything that '
-        + 'pays out on damage an opponent dealt you. It is refused at 25 health or less, because the god '
-        + 'does not accept an offering that finishes the job for it, and refused on a bar below 1 anger, '
-        + 'because there has to be something there to spend; both refusals are rate-limited to one pop-up '
-        + 'every 0.7s. It is also refused while the corner chains have you, for the 15 seconds of an open '
-        + 'sky, though a turned patron needs no refusal since turning emptied the bar on the way round. '
-        + 'No cooldown whatsoever — press it as many times in a row as you can afford. Cannot be bound '
-        + 'over Q.',
-      cast: 'The bound key, tapped. No cooldown whatsoever — press it as many times in a row as you can afford. Cannot be bound over Q.',
+        'Plants an idol at your cursor with a 110px ring of ground around it. Standing in the ring '
+        + 'builds its favour over 8 seconds — up to +35% damage, +20% move speed and −25% damage '
+        + 'taken, scaled by the favour and only while you stay in it. Out of it the favour drains '
+        + 'over 12 seconds. Leave the idol alone for more than 4 seconds and it loses patience: a '
+        + 'laser at you every 1.2 seconds for 8, until you come back. Bind (E) a soul to it from '
+        + 'within 150px and the soul stands in the ring in your place — the favour keeps growing and '
+        + 'the idol stays calm — but it drains the soul over 15 seconds.',
+      cast: 'The bound key. 18s cooldown. A new idol replaces the old one, and a soul standing at the old one comes back to you.',
       effects: [
-        { tag: 'resource', label: 'Anger removed', detail: '15 straight off the bar, per stab. The bar\'s own decay is 2 a second and nothing else in the element touches it, so one stab is worth 7.5 seconds of waiting.' },
-        { tag: 'cost', label: 'What it costs', detail: '25 self-inflicted damage, taken through the self-damage path — it bypasses invincibility and it will not feed anything that pays out on damage an opponent dealt you.' },
-        { tag: 'cost', label: 'The health floor', detail: 'Refused at 25 health or less. The god does not accept an offering that finishes the job for it.' },
-        { tag: 'utility', label: 'The calm refusal', detail: 'Refused on a bar below 1 anger — there has to be something there to spend. Both refusals are rate-limited to one pop-up every 0.7s so a held key does not spam the screen.' },
-        { tag: 'utility', label: 'Where it will not fire', detail: 'Refused while the corner chains have you, for the 15 seconds of an open sky. A turned patron needs no refusal: turning emptied the bar on the way round.' },
+        { tag: 'buff', label: 'Favour', detail: 'Fills over 8s in the ring: up to +35% damage, +20% move speed and ×0.75 damage taken while you stand in it. Drains over 12s out of it.' },
+        { tag: 'area', label: 'The ring', detail: '110px round the idol\'s foot.' },
+        { tag: 'damage', label: 'Impatience', detail: 'More than 4s with nobody in the ring: an 8-damage laser at you every 1.2s.' },
+        { tag: 'summon', label: 'A soul in your place', detail: 'Bind (E) a bound soul to the idol from within 150px. It keeps favour growing and the lasers off for 15s, then is gone.' },
       ],
       notes: [
-        'This is the only anger dump in the element, which is what makes it the strongest of the two enhancements on paper and the more boring of the two to own. Every price the kit charges becomes payable: an overheated beam is 20 anger and two stabs, a starving idol is 5 a second and one, a ward that ate a 200-damage ultimate is 100 anger and seven.',
-        'At 400 max health, dumping a full bar from 100 to 0 is seven stabs — 175 health, or 44% of you. That is the trade the ability is: it does not remove the bookkeeping, it re-denominates it in HP.',
-        'Binding it costs you whichever base ability it lands on, and the three legal slots are the barrage, the idol and the ward. Over F it is at its most honest — the ward is the biggest single source of anger in the kit, so giving it up removes most of what the dagger exists to pay off.',
-        'It is barred from Q by `excludeSlots`, and not for balance: the ultimate is what lights the enrage and what creates the Pathetic Stab slot, so binding over it would delete two thirds of the passive as well.',
-        'Bots with the mastery on play it at 60 anger or more, once every 0.9s, and only while they are more than 90 health clear of the floor it refuses at.',
+        'The buffs only count while you are in the ring yourself; a soul keeps the favour up for when you come back, it does not carry the buffs to you.',
+        'Plant it on the spot you want to fight over. An idol behind you is 8 damage every 1.2 seconds for the privilege.',
       ],
     },
   },

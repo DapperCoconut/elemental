@@ -2,12 +2,18 @@ import Phaser from 'phaser';
 import { Fighter } from '../../entities/Fighter';
 import { CastContext } from '../Ability';
 import { Projectile } from '../../combat/Projectile';
+import type { ProjectileRegistry } from '../../combat/ProjectileRegistry';
+import { stripBuffs } from '../../combat/StatusEffects';
+import { AcidGrid, CellState } from './AcidGrid';
 import {
-  ACID, AcidAura, AcidAvatar, AcidColorFn, AcidFx, ArmGesture,
-  NPC_TONES, STING_TONES, VILE_TONES,
+  ACID, AcidAura, AcidAvatar, AcidColorFn, AcidFx, AcidTones, NPC_TONES, STING_TONES, TOXIN_TIERS, TailKnot,
+  VILE_TONES, drawAcidBar, drawAcidBubbles, drawAcidFloor, drawToxinMark, drawVenomTail,
 } from './AcidVisuals';
 
-/** Distance from a point to a line segment — the arc's hit lane is a capsule around one. */
+type Owner = 'player' | 'npc';
+const BOTH: Owner[] = ['player', 'npc'];
+
+/** Distance from a point to a line segment — the tail and the electrolysis lane are capsules. */
 function distToSegment(px: number, py: number, x1: number, y1: number, x2: number, y2: number): number {
   const dx = x2 - x1, dy = y2 - y1;
   const lenSq = dx * dx + dy * dy;
@@ -19,45 +25,29 @@ function distToSegment(px: number, py: number, x1: number, y1: number, x2: numbe
 // ── Interfaces ────────────────────────────────────────────────────────────
 
 /**
- * Acid's world objects carry no sprites. Pools creep, bubble and eat outward at their rims, and
- * a tweened Arc can do none of that — every one of them is repainted from scratch each frame in
- * `drawWorld`.
+ * One Vile Spray splash (or a bud off one). The acid itself lives in the grid; a splat is only
+ * remembered so Spray Spread has something to bud from and Electrolysis has terminals to arc
+ * between.
  */
-interface AcidPool {
+interface Splat {
   x: number;
   y: number;
   radius: number;
-  /** Radius at creation — Acid Flood (Q+) grows `radius` but caps relative to this. */
-  baseRadius: number;
-  state: 'hot' | 'cool';
-  nextTickAt: number;
-  /** Spray Spread (E+): next time this pool rolls its 20% chance to bud off a smaller pool. */
-  nextSpreadCheckAt: number;
-  /** Fixes this pool's lobe pattern so its edge churns without crawling across the floor. */
-  seed: number;
+  nextSpreadAt: number;
 }
 
-/**
- * Murk (divine perk): the acid toad that squats on the surface while its summoner is under it.
- * Pure data — the hop is drawn from the clock across `hopStart → hopEnd` rather than tweened,
- * so the arc, the squash on landing and the puddle it drops all stay in step.
- */
+/** Murk (divine perk): the acid toad that squats on the surface while its summoner is under it. */
 interface MurkToad {
   x: number; y: number;
   fromX: number; fromY: number;
   toX: number; toY: number;
   hopStart: number;
   hopEnd: number;
-  /** Set when the hop lands; the toad sits still until this, then picks a new spot. */
   restUntil: number;
   facing: number;
 }
 
-/**
- * Electrolysis (perk): one discharge between two pools. Held as data and repainted from the
- * clock like everything else acid puts on the floor — the bolt has to re-jag every frame or it
- * reads as a drawn line rather than a current.
- */
+/** Electrolysis (perk): one discharge between two splats, repainted from the clock. */
 interface ElectroArc {
   x1: number; y1: number;
   x2: number; y2: number;
@@ -66,35 +56,19 @@ interface ElectroArc {
   seed: number;
 }
 
-const ELECTRO_INTERVAL_MS = 1400;
-const ELECTRO_MAX_SPAN = 220;
-const ELECTRO_LANE_HALF_W = 20;
-const ELECTRO_DAMAGE = 12;
-const ELECTRO_SURGE_CHANCE = 0.2;
-const ELECTRO_SURGE_MULT = 3;
-const ELECTRO_ARC_MS = 260;
-/** The jolt: a hard, short slow rather than a stun, so it never fully takes control away. */
-const ELECTRO_JOLT_MS = 450;
-const ELECTRO_JOLT_SPEED_MULT = 0.45;
-
-const TOAD_HOP_MS = 480;
-const TOAD_REST_MS = 340;
-const TOAD_HOP_DIST = 130;
-const TOAD_PUDDLE_RADIUS = 26;
-const TOAD_HOP_HEIGHT = 34;
-
 interface HuskLikeVariant {
   hpMult?: number;
   speedMult?: number;
 }
 
-/** Rattling Strike (R+): a target dripping small acid puddles for a few seconds after being hit by the un-burrow AOE. */
+/** Rattling Strike (R+): a target dripping acid for a few seconds after a surfacing blast. */
 interface DrippingStatus {
+  owner: Owner;
   until: number;
   nextDripAt: number;
 }
 
-/** Meltdown (F+): a generic buff Fighter field that can be snapshotted off a melting target and re-granted to the acid user. */
+/** Meltdown (F+): a generic buff Fighter field that can be snapshotted off a melting target. */
 interface BuffFieldDef {
   key: 'walkSpeedMult' | 'outgoingDamageMult' | 'critChance' | 'dodgeChance' | 'cooldownMult' | 'regenPerSecond';
   neutral: number;
@@ -118,10 +92,11 @@ interface BuffSnapshotEntry {
 }
 
 interface MeltStatus {
+  owner: Owner;
   until: number;
   nextDripAt: number;
   buffs: BuffSnapshotEntry[];
-  /** The melting target's element color — melt puddles are dyed to match ("skin color"). */
+  /** The melting target's element colour — melt puddles are dyed to match. */
   color: number;
 }
 
@@ -130,22 +105,87 @@ interface MeltPuddle {
   y: number;
   radius: number;
   buffs: BuffSnapshotEntry[];
-  /** The melting target's element colour — melt puddles are dyed to match ("skin color"). */
   color: number;
   seed: number;
 }
 
-/** Acid Mastery — Acid Walker: a short-lived acid puddle left in the player's tracks. */
+/** Venom Mastery — Acid Walker: a short-lived acid print left in the walker's tracks. */
 interface AcidFootprint {
+  owner: Owner;
   x: number;
   y: number;
   radius: number;
   damage: number;
   expiresAt: number;
   nextTickAt: number;
-  /** Boosted prints (dropped just after surfacing) are bigger and read hotter. */
   boosted: boolean;
   seed: number;
+}
+
+/** Shed Skin: the sloughed skin left lying where the serpent was, fading out. */
+interface ShedHusk {
+  owner: Owner;
+  knots: TailKnot[];
+  width: number;
+  bornAt: number;
+}
+
+interface Bubble { x: number; y: number; born: number; hot: boolean }
+
+/** Per-body toxin bookkeeping. Stacks live on the Fighter; the clocks for them live here. */
+interface ToxinState {
+  dotAt: number;
+  tierSeen: number;
+  maxHpCut: number;
+  dripX: number;
+  dripY: number;
+  killAt: number;
+}
+
+interface Side {
+  grid: AcidGrid | null;
+  /** The grid version the floor Graphics last painted, so it only repaints on a change. */
+  paintedVersion: number;
+  splats: Splat[];
+  burrowed: boolean;
+  burrowedAt: number;
+  rainUntil: number;
+  rainTickAt: number;
+  rainDropAccum: number;
+  aimX: number;
+  aimY: number;
+  /** The tail, sampled from where the serpent has been. */
+  tail: TailKnot[];
+  lastSampleX: number;
+  lastSampleY: number;
+  /** Shed Skin: the tail's remaining length and the speed bonus banked this match. */
+  tailMult: number;
+  shedSpeed: number;
+  /** How many of the four coverage milestones this side has reached, and how many it has spent. */
+  shedReached: number;
+  shedUsed: number;
+  /** When each body standing on this side's acid next takes its 1 damage + 3 toxin. */
+  standAt: Map<Fighter, number>;
+  /** Fractional damage owed for fresh cells walked over, per body. */
+  hotOwed: Map<Fighter, number>;
+  bubbles: Bubble[];
+  bubbleAccum: number;
+  // Acid Walker
+  wasInAcid: boolean;
+  footprintTrailUntil: number;
+  lastPrintX: number;
+  lastPrintY: number;
+  lastUnburrowAt: number;
+}
+
+function makeSide(): Side {
+  return {
+    grid: null, paintedVersion: -1, splats: [], burrowed: false, burrowedAt: 0,
+    rainUntil: 0, rainTickAt: 0, rainDropAccum: 0, aimX: 0, aimY: 0,
+    tail: [], lastSampleX: 0, lastSampleY: 0, tailMult: 1, shedSpeed: 0, shedReached: 0, shedUsed: 0,
+    standAt: new Map(), hotOwed: new Map(), bubbles: [], bubbleAccum: 0,
+    wasInAcid: false, footprintTrailUntil: 0, lastPrintX: 0, lastPrintY: 0, lastUnburrowAt: -FOOTPRINT_BOOST_MS,
+  };
 }
 
 // ── SlimeArenaApi ─────────────────────────────────────────────────────────
@@ -153,75 +193,100 @@ interface AcidFootprint {
 export interface SlimeArenaApi {
   readonly player: Fighter;
   readonly npc: Fighter;
+  /** The player's enemies: `[npc]` in a duel, the husks in an Invasion. */
   readonly enemies: readonly Fighter[];
   readonly scene: Phaser.Scene;
   readonly projectiles: Phaser.Physics.Arcade.Group;
+  /** Hand-drawn kit projectiles — the tail has to catch these too. */
+  readonly projectileRegistry: ProjectileRegistry;
   readonly elementId: string;
   readonly npcElementId: string;
-  /** The ability the opponent cast this frame, or null — drives their rig's gestures. */
-  readonly npcCastId: string | null;
-  /** Skins: maps an acid visual color through the owner's skin. */
-  acidColor(owner: 'player' | 'npc', base: number): number;
+  /** The arena's walls — the acid grid covers exactly this. */
+  readonly bounds: Phaser.Geom.Rectangle;
+  readonly isOnline: boolean;
+  /** Invasion: the npc slot is a placeholder or a co-op *ally*, never an enemy. */
+  readonly isInvasion: boolean;
+  /** The player's Space dodge is in progress — the tail drops out of the hitbox for it. */
+  readonly playerDodging: boolean;
+  isTargetable(f: Fighter): boolean;
+  /** Skins: maps an acid visual colour through the owner's skin. */
+  acidColor(owner: Owner, base: number): number;
   readonly eKey: Phaser.Input.Keyboard.Key;
   readonly fKey: Phaser.Input.Keyboard.Key;
   readonly rKey: Phaser.Input.Keyboard.Key;
   readonly qKey: Phaser.Input.Keyboard.Key;
   readonly pointerWasDown: boolean;
-  hasUpgrade(slot: string): boolean;
-  hasPerk(owner: 'player' | 'npc', perkId: string): boolean;
+  /** The player's shop upgrade, or the opponent's (online handshake / Hard+ bot loadout). */
+  hasUpgrade(owner: Owner, slot: string): boolean;
+  hasPerk(owner: Owner, perkId: string): boolean;
   spawnHitFlash(x: number, y: number, color: number): void;
-  showFloatingText(x: number, y: number, text: string, color: string): void;
   buildPlayerContext(x: number, y: number): CastContext;
-  /** True only when the player is acid (slime) AND Acid Mastery is switched on. */
+  /** Online: relay something only the owner's sim decides as a pseudo-cast. */
+  broadcast(id: string): void;
+  /** True only when the player is Venom AND Venom Mastery is switched on. */
   get masteryActive(): boolean;
-  /** True only when the online opponent is acid AND has Acid Mastery on. Drives npc-side Breakdown. */
+  /** True only when the opponent is Venom AND has Venom Mastery on (online, or a Nightmare bot). */
   get npcMasteryActive(): boolean;
   masteryBindFor(slot: string): string | null;
+  npcMasteryBindFor(slot: string): string | null;
   recordMasteryStat(key: string, amount: number): void;
   recordMasteryBest(key: string, value: number): void;
 }
 
 // ── Tunables ──────────────────────────────────────────────────────────────
 
+// Passive — Serpentine: the tail.
+const TAIL_SEGMENTS = 14;
+const TAIL_SPACING = 13;
+const TAIL_WIDTH = 15;
+const TAIL_HIT_R = 9;
+/** A shot this close to the body is the body's business (ArenaScene's overlap), not the tail's. */
+const TAIL_BODY_SKIP = 24;
+/** Bot / replica dodge read: a body moving this fast is mid-dash. */
+const DASH_SPEED_READ = 900;
+
+// Click — Poison Whip
 const WHIP_COUNT_BASE = 15;
 const WHIP_COUNT_ENHANCED = 20;
 const WHIP_DAMAGE = 1;
 const WHIP_SPEED = 650;
 const WHIP_STAGGER_MS = 25;
 const WHIP_SPREAD_DEG = 5;
+/** At this much coverage every lash lands two toxin instead of one. */
+const WHIP_DOUBLE_AT = 0.5;
 
-const POOL_RADIUS = 56;
-const POOL_DISTANCES = [110, 180, 250];
-const POOL_HOT_DAMAGE = 5;
-const POOL_COOL_TICK_DAMAGE = 2;
-const POOL_COOL_TICK_MS = 2000;
-const POOL_HOT_COLOR = ACID.hot;
-const POOL_COOL_COLOR = ACID.cool;
+// E — Vile Spray and the floor
+const SPLAT_RADIUS = 58;
+const SPLAT_DISTANCES = [110, 180, 250];
+/** Fresh acid: damage per hot cell a body walks over. A body crossing a full splash takes ~4. */
+const HOT_DAMAGE_PER_CELL = 0.3;
+/** Standing on acid: this much damage and toxin, once a second. */
+const STAND_TICK_MS = 1000;
+const STAND_DAMAGE = 1;
+const STAND_TOXIN = 3;
+const MAX_SPLATS = 60;
 
 /** Gap between droplet puffs shed out of the back of a live acid shot. */
 const TRAIL_INTERVAL_MS = 45;
 
-/** NPC casts mirrored onto the opponent's rig. */
-const NPC_GESTURES: Record<string, ArmGesture> = {
-  'poison-whip': 'punch',
-  'vile-spray': 'sweep',
-  'snake-burrow': 'flex',
-  'purge': 'punch',
-  'acid-apocalypse': 'raise',
-  'breakdown': 'flex',
-};
-
 const BURROW_SPEED_MULT = 1.25;
+/** Bot: surface when this close to the target (R+), or this long after going under. */
+const NPC_SURFACE_RANGE = 80;
+const NPC_SURFACE_RANGE_PLAIN = 120;
+const NPC_BURROW_MAX_MS = 3500;
 
-const PURGE_BASE_SPEED = 220;
-const PURGE_STAGES = [
-  { maxCoverage: 0.24, damage: 15, purgeMs: 3000, sizeSpeedMult: 1 },
-  { maxCoverage: 0.50, damage: 30, purgeMs: 8000, sizeSpeedMult: 1.25 },
-  { maxCoverage: Infinity, damage: 45, purgeMs: 15000, sizeSpeedMult: 1.5 },
+// F — Festering Bite
+const BITE_STAGES = [
+  { maxCoverage: 0.24, damage: 15, purgeMs: 3000, reach: 70 },
+  { maxCoverage: 0.50, damage: 30, purgeMs: 8000, reach: 85 },
+  { maxCoverage: Infinity, damage: 45, purgeMs: 15000, reach: 100 },
 ];
-/** Purge is "fully charged" (Meltdown trigger) once acid coverage pushes it to this stage. */
-const PURGE_MELT_STAGE = 3;
+const BITE_HALF_ANGLE = Phaser.Math.DegToRad(55);
+const BITE_TOXIN = 12;
+/** Meltdown (F+) needs a stage-3 bite. */
+const BITE_MELT_STAGE = 3;
 
+// Q — Acid Apocalypse
 const RAIN_DURATION_MS = 8000;
 const RAIN_TICK_MS = 500;
 const RAIN_TICK_DAMAGE = 6;
@@ -234,14 +299,15 @@ const SPREAD_RADIUS_MULT = 0.55;
 const SPREAD_MIN_RADIUS = 18;
 const SPREAD_OFFSET_MIN = 20;
 const SPREAD_OFFSET_MAX = 50;
-const MAX_ACID_POOLS = 60;
 
 // Rattling Strike (R+)
 const RATTLING_RADIUS = 90;
 const RATTLING_DAMAGE = 20;
 const RATTLING_DRIP_MS = 5000;
 const RATTLING_DRIP_INTERVAL_MS = 1000;
-const RATTLING_DRIP_POOL_RADIUS = 22;
+const RATTLING_DRIP_RADIUS = 22;
+/** R+: every toxin stack on a body caught by the surfacing is multiplied by this. */
+const RATTLING_TOXIN_MULT = 1.5;
 
 // Meltdown (F+)
 const MELT_DURATION_MS = 3000;
@@ -252,202 +318,683 @@ const MELT_MIN_SIZE_MULT = 0.3;
 const MELT_PUDDLE_RADIUS = 24;
 const MELT_BUFF_GRANT_MS = 8000;
 
-// Acid Flood (Q+)
-const FLOOD_GROWTH_PER_SEC = 6;
-const FLOOD_MAX_RADIUS_MULT = 2.2;
+// Acid Flood (Q+): each rain beat, every clean cell touching acid has this chance to fill.
+const FLOOD_CREEP_CHANCE = 0.15;
 
-// ── Mastery: Acid Walker passive + Breakdown bindable ─────────────────────────
-const FOOTPRINT_TRAIL_MS = 5000;      // window after leaving acid during which footprints drop
-const FOOTPRINT_LIFETIME_MS = 3000;   // each footprint lasts ~3s
+// Toxin tiers.
+const TOXIN_DOT_MS = 1000;
+const TOXIN_DRIP_SPACING = 30;
+const TOXIN_DRIP_RADIUS = 12;
+const TOXIN_KILL_RETRY_MS = 600;
+
+// Electrolysis (perk)
+const ELECTRO_INTERVAL_MS = 1400;
+const ELECTRO_MAX_SPAN = 220;
+const ELECTRO_LANE_HALF_W = 20;
+const ELECTRO_DAMAGE = 12;
+const ELECTRO_SURGE_CHANCE = 0.2;
+const ELECTRO_SURGE_MULT = 3;
+const ELECTRO_ARC_MS = 260;
+const ELECTRO_JOLT_MS = 450;
+const ELECTRO_JOLT_SPEED_MULT = 0.45;
+
+// Murk (divine perk)
+const TOAD_HOP_MS = 480;
+const TOAD_REST_MS = 340;
+const TOAD_HOP_DIST = 130;
+const TOAD_PUDDLE_RADIUS = 26;
+const TOAD_HOP_HEIGHT = 34;
+
+// Mastery — Acid Walker
+const FOOTPRINT_TRAIL_MS = 5000;
+const FOOTPRINT_LIFETIME_MS = 3000;
 const FOOTPRINT_TICK_MS = 500;
-const FOOTPRINT_SPACING = 34;         // min distance walked before dropping the next print
+const FOOTPRINT_SPACING = 34;
 const FOOTPRINT_RADIUS = 15;
 const FOOTPRINT_DAMAGE = 2;
-const FOOTPRINT_BOOST_MS = 3000;      // footprints boosted if dropped within this of an un-burrow
+const FOOTPRINT_BOOST_MS = 3000;
 const FOOTPRINT_BOOST_RADIUS = 26;
 const FOOTPRINT_BOOST_DAMAGE = 4;
-const BREAKDOWN_DURATION_MS = 3000;
-const BREAKDOWN_COOLDOWN_MS = 12000;
-const BREAKDOWN_LASH_COUNT = 200;
-const BREAKDOWN_LEAK_COUNT = 12;
-const BREAKDOWN_LEAK_RADIUS = 20;
-const BREAKDOWN_MIN_COVERAGE = 0.5;   // needs the screen at least half covered in acid
+
+// Mastery — Shed Skin
+/** The acidification milestones that each hand over one shed. */
+export const SHED_MILESTONES = [0.2, 0.4, 0.6, 0.8];
+const SHED_TAIL_MULT = 0.67;
+const SHED_SPEED_BONUS = 0.15;
+const SHED_LASH_COUNT = 48;
+const SHED_BARRAGE_MS = 600;
+const SHED_POOL_RADIUS = 48;
+const SHED_SPLATS = 6;
+const SHED_HUSK_MS = 3000;
+/** Bot: shed when the target is this close, so the barrage actually lands. */
+const NPC_SHED_RANGE = 220;
 
 // ── SlimeKit ──────────────────────────────────────────────────────────────
 
+/**
+ * Venom (element id `slime`) — the serpent.
+ *
+ * - **Serpentine** (passive): a long tail sampled from the serpent's path is part of its hitbox.
+ *   It vanishes while dodging, and the dodge itself goes three times as far (ArenaScene/NpcOpponent).
+ * - **Toxin**: stacks on the victim (`Fighter.toxinStacks`) that never fade. Tiers at 25/50/100/
+ *   250/500/1000 — burn, acid drips, weakness, max HP, more of each, death — all run here.
+ * - **The floor** is a grid of acid cells per owner (`AcidGrid`). Fresh cells nip the first body
+ *   over them and cool; standing on acid burns 1 and lands 3 toxin a second. Coverage — acid cells
+ *   over all cells — drives the whip's double toxin, the bite's stage and Shed Skin's charges.
+ * - **Festering Bite** purges (strips every buff), bites and poisons, scaled by coverage.
+ *
+ * Every ability is owner-aware: the player, a bot and an online opponent all run the same code.
+ * Online, the owner's sim decides; toxin reaches the victim through the `tox` status mirror.
+ */
 export class SlimeKit {
-  // ── Visuals ───────────────────────────────────────────────────────────
-  /** Colour mappers + effect painters, one per owner so a skin recolours one side. */
   private readonly pcol: AcidColorFn;
   private readonly ncol: AcidColorFn;
   private readonly pfx: AcidFx;
   private readonly nfx: AcidFx;
-  /** The dripping character rig (globule arms, eyes, running crest) for each acid fighter. */
   private playerAvatar: AcidAvatar | null = null;
   private npcAvatar: AcidAvatar | null = null;
-  private burrowAura: AcidAura | null = null;
-  private breakdownAura: AcidAura | null = null;
-  /** Melt/purge tells riding on their victims — one aura per fighter. */
+  private burrowAuras: Record<Owner, AcidAura | null> = { player: null, npc: null };
   private meltAuras = new Map<Fighter, AcidAura>();
   private purgeAuras = new Map<Fighter, AcidAura>();
-  /** Every pool, footprint and melt puddle is drawn here, from scratch, every frame. */
-  private worldGfx: Phaser.GameObjects.Graphics | null = null;
-  /** Last aim point, cached in handleInput so the per-frame avatar update can face it. */
-  private aimX = 0;
-  private aimY = 0;
+  /** The floors, one per owner, repainted only when their grid changes. */
+  private floorGfx: Record<Owner, Phaser.GameObjects.Graphics | null> = { player: null, npc: null };
+  /** Bubbles, footprints, melt puddles, arcs, the toad and toxin marks — every frame. */
+  private overlayGfx: Phaser.GameObjects.Graphics | null = null;
+  /** Tails and shed skins: under the fighters, over the floor. */
+  private tailGfx: Phaser.GameObjects.Graphics | null = null;
+  /** The acidification gauge across the top of the screen. */
+  private barGfx: Phaser.GameObjects.Graphics | null = null;
+  private barText: Record<Owner, Phaser.GameObjects.Text | null> = { player: null, npc: null };
   private trailAccum = 0;
-  /** Edge-detects the opponent's cast so a gesture fires once, not every frame it is held. */
-  private lastNpcCastId: string | null = null;
 
-  private acidPools: AcidPool[] = [];
-  private burrowed = false;
-  /** Murk (divine perk): the toad left on the surface while burrowed. Null whenever you aren't. */
+  private sides: Record<Owner, Side> = { player: makeSide(), npc: makeSide() };
+  private toxins = new Map<Fighter, ToxinState>();
+  /** The last `purgedUntil` each body was stripped for — a fresh Purge (local or mirrored) strips again. */
+  private purgeSeen = new WeakMap<Fighter, number>();
+  private purgeHpStripped: WeakSet<Fighter> = new WeakSet();
   private murkToad: MurkToad | null = null;
-
-  /** Electrolysis (perk): live discharges, the next-arc clock, and who is currently jolted. */
   private electroArcs: ElectroArc[] = [];
   private electroNextAt = 0;
   private electroJolted = new Map<Fighter, number>();
-  private purgeHpStripped: WeakSet<Fighter> = new WeakSet();
-
-  private acidRainActiveUntil = 0;
-  private acidRainTickAccum = 0;
-  private acidRainDropAccum = 0;
-
-  // Rattling Strike (R+)
-  private drippingEnemies: Map<Fighter, DrippingStatus> = new Map();
-
-  // Meltdown (F+)
-  private meltStatuses: Map<Fighter, MeltStatus> = new Map();
+  private drippingEnemies = new Map<Fighter, DrippingStatus>();
+  private meltStatuses = new Map<Fighter, MeltStatus>();
   private meltPuddles: MeltPuddle[] = [];
   private activeMeltBuffs: { key: BuffFieldDef['key']; revertValue: number }[] = [];
   private meltBuffExpireAt = 0;
-
-  // ── Mastery: Acid Walker passive ──────────────────────────────────────
-  private acidFootprints: AcidFootprint[] = [];
-  private wasInAcid = false;
-  private footprintTrailUntil = 0;
-  private lastFootprintX = 0;
-  private lastFootprintY = 0;
-  private lastUnburrowAt = -FOOTPRINT_BOOST_MS;
-  private coverageAccum = 0;          // batches acidCoverageTotal writes
-  private sessionBestCoverage = 0;    // gate for the best-coverage stat write
+  private footprints: AcidFootprint[] = [];
+  private shedHusks: ShedHusk[] = [];
+  private coverageAccum = 0;
+  private sessionBestCoverage = 0;
   private meltKillCounted: WeakSet<Fighter> = new WeakSet();
 
-  // ── Mastery: Breakdown bindable ───────────────────────────────────────
-  private breakdownUntil = 0;
-  private breakdownLastCastAt = -BREAKDOWN_COOLDOWN_MS;
-
   constructor(private arena: SlimeArenaApi) {
-    // Built here, not as field initialisers, so they see the injected arena.
     this.pcol = (base) => arena.acidColor('player', base);
     this.ncol = (base) => arena.acidColor('npc', base);
     this.pfx = new AcidFx(arena.scene, this.pcol);
     this.nfx = new AcidFx(arena.scene, this.ncol);
   }
 
-  // ── Visual helpers ──────────────────────────────────────────────────
+  // ── Small helpers ──────────────────────────────────────────────────────
 
-  /** Effect painter for a side. */
-  private fx(owner: 'player' | 'npc'): AcidFx { return owner === 'player' ? this.pfx : this.nfx; }
-  /** Colour mapper for a side. */
-  private col(owner: 'player' | 'npc'): AcidColorFn { return owner === 'player' ? this.pcol : this.ncol; }
+  private get now(): number { return this.arena.scene.time.now; }
+  private side(owner: Owner): Side { return this.sides[owner]; }
+  private fighter(owner: Owner): Fighter { return owner === 'player' ? this.arena.player : this.arena.npc; }
+  private other(owner: Owner): Owner { return owner === 'player' ? 'npc' : 'player'; }
+  private fx(owner: Owner): AcidFx { return owner === 'player' ? this.pfx : this.nfx; }
+  private col(owner: Owner): AcidColorFn { return owner === 'player' ? this.pcol : this.ncol; }
+  private tones(owner: Owner): AcidTones { return owner === 'player' ? VILE_TONES : NPC_TONES; }
+  private avatar(owner: Owner): AcidAvatar | null { return owner === 'player' ? this.playerAvatar : this.npcAvatar; }
+  private alive(f: Fighter | null | undefined): boolean { return !!f && f.active && f.hp > 0; }
+  private bodyR(f: Fighter): number { return (f.body as Phaser.Physics.Arcade.Body | null)?.radius || 18; }
 
-  /** Shared Graphics for everything the kit repaints every frame. Rebuilt lazily after a reset. */
-  private world(): Phaser.GameObjects.Graphics {
-    if (!this.worldGfx || !this.worldGfx.active) {
-      this.worldGfx = this.arena.scene.add.graphics().setDepth(3);
+  private isAcid(owner: Owner): boolean {
+    return owner === 'player' ? this.arena.elementId === 'slime' : this.arena.npcElementId === 'slime';
+  }
+
+  /** An online opponent's body: drawn here, simulated on their own machine. */
+  private isReplica(owner: Owner): boolean { return owner === 'npc' && this.arena.isOnline; }
+
+  /** A bot opponent: this sim drives the decisions the player's keys would have made. */
+  private isBot(owner: Owner): boolean { return owner === 'npc' && !this.arena.isOnline && !this.arena.isInvasion; }
+
+  private up(owner: Owner, slot: string): boolean { return this.isAcid(owner) && this.arena.hasUpgrade(owner, slot); }
+
+  private masteryOn(owner: Owner): boolean {
+    return owner === 'player' ? this.arena.masteryActive : this.arena.npcMasteryActive;
+  }
+
+  private targetsOf(owner: Owner): Fighter[] {
+    if (owner === 'npc' && this.arena.isInvasion) return [];
+    const list = owner === 'player' ? this.arena.enemies : [this.arena.player];
+    return list.filter((f) => this.alive(f) && this.arena.isTargetable(f));
+  }
+
+  private allFighters(): Fighter[] {
+    const out: Fighter[] = [];
+    for (const f of [this.arena.player, this.arena.npc, ...this.arena.enemies]) {
+      if (f && !out.includes(f)) out.push(f);
     }
-    return this.worldGfx;
+    return out;
+  }
+
+  /** Who poisoned this body — the side opposite it. Husks are always the player's victims. */
+  private poisonerOf(f: Fighter): Owner { return f === this.arena.player ? 'npc' : 'player'; }
+
+  private relay(owner: Owner, id: string): void {
+    if (owner === 'player' && this.arena.isOnline) this.arena.broadcast(id);
+  }
+
+  private grid(owner: Owner): AcidGrid {
+    const s = this.side(owner);
+    if (!s.grid) {
+      const b = this.arena.bounds;
+      s.grid = new AcidGrid(b.x, b.y, b.width, b.height);
+    }
+    return s.grid;
+  }
+
+  coverage(owner: Owner): number { return this.side(owner).grid?.coverage ?? 0; }
+
+  private onAcid(owner: Owner, x: number, y: number): boolean {
+    return this.side(owner).grid?.isAcid(x, y) ?? false;
+  }
+
+  private hex(color: number): string { return `#${color.toString(16).padStart(6, '0')}`; }
+
+  /** `showFloatingText` is a no-op in this codebase, so the labels that matter are the kit's own. */
+  private announce(x: number, y: number, text: string, color: number, size = 12): void {
+    const { scene } = this.arena;
+    const t = scene.add.text(x, y, text, {
+      fontSize: `${size}px`, fontFamily: 'Arial Black', color: this.hex(color),
+      stroke: '#0a1406', strokeThickness: 3,
+    }).setOrigin(0.5).setDepth(18);
+    scene.tweens.add({ targets: t, y: y - 22, alpha: 0, duration: 1100, ease: 'Cubic.easeOut', onComplete: () => t.destroy() });
+  }
+
+  /** Lay acid. The single entry point, so coverage stats and the floor repaint see every cell. */
+  private paint(owner: Owner, x: number, y: number, radius: number, state: CellState = CellState.Hot): void {
+    const g = this.grid(owner);
+    const added = g.paintCircle(x, y, radius, state);
+    if (owner === 'player' && added > 0) {
+      this.coverageAccum += added / g.total;
+      if (this.coverageAccum >= 0.25) {
+        this.arena.recordMasteryStat('acidCoverageTotal', this.coverageAccum);
+        this.coverageAccum = 0;
+      }
+    }
+  }
+
+  private addSplat(owner: Owner, x: number, y: number, radius: number, ring = true): void {
+    this.paint(owner, x, y, radius);
+    const s = this.side(owner);
+    if (s.splats.length < MAX_SPLATS) s.splats.push({ x, y, radius, nextSpreadAt: this.now + SPREAD_CHECK_MS });
+    if (ring) {
+      const fx = this.fx(owner);
+      fx.ring(x, y, radius * 0.3, radius, ACID.hotRim, 340, 3, 4);
+      fx.fizz(x, y, Math.max(2, Math.round(radius / 12)), radius * 0.7, 4, this.tones(owner));
+    }
+  }
+
+  private noteAcidHit(owner: Owner, t: Fighter): void {
+    if (owner !== 'player') return;
+    if (t.hp <= 0 && !this.meltKillCounted.has(t)) {
+      this.meltKillCounted.add(t);
+      this.arena.recordMasteryStat('melts', 1);
+    }
   }
 
   // ── Public accessors ────────────────────────────────────────────────
 
-  getBurrowSpeedMult(): number {
-    // Breakdown roots the acid user in place for its duration.
-    if (this.arena.scene.time.now < this.breakdownUntil) return 0;
-    return this.burrowed ? BURROW_SPEED_MULT : 1;
+  getPlayerSpeedMult(): number { return this.speedMult('player'); }
+  getNpcSpeedMult(): number { return this.isAcid('npc') ? this.speedMult('npc') : 1; }
+
+  private speedMult(owner: Owner): number {
+    const s = this.side(owner);
+    return (s.burrowed ? BURROW_SPEED_MULT : 1) * (1 + s.shedSpeed);
   }
-  isBurrowed(): boolean { return this.burrowed; }
+
+  isBurrowed(owner: Owner = 'player'): boolean { return this.side(owner).burrowed; }
 
   // ── reset ────────────────────────────────────────────────────────────
 
   reset(): void {
-    // Visuals — every GameObject dies with the old scene run, so rebuild lazily in update().
-    if (this.playerAvatar) { this.playerAvatar.destroy(); this.playerAvatar = null; }
-    if (this.npcAvatar) { this.npcAvatar.destroy(); this.npcAvatar = null; }
-    if (this.burrowAura) { this.burrowAura.destroy(); this.burrowAura = null; }
-    if (this.breakdownAura) { this.breakdownAura.destroy(); this.breakdownAura = null; }
+    for (const owner of BOTH) {
+      const s = this.side(owner);
+      if (s.burrowed) {
+        const f = this.fighter(owner);
+        if (f?.active) { f.isInvincible = false; f.setAlpha(1); }
+      }
+      this.burrowAuras[owner]?.destroy();
+      this.burrowAuras[owner] = null;
+      this.floorGfx[owner]?.destroy();
+      this.floorGfx[owner] = null;
+      this.barText[owner]?.destroy();
+      this.barText[owner] = null;
+    }
+    this.sides = { player: makeSide(), npc: makeSide() };
+    this.playerAvatar?.destroy(); this.playerAvatar = null;
+    this.npcAvatar?.destroy(); this.npcAvatar = null;
     for (const a of this.meltAuras.values()) a.destroy();
     this.meltAuras.clear();
     for (const a of this.purgeAuras.values()) a.destroy();
     this.purgeAuras.clear();
-    if (this.worldGfx) { this.worldGfx.destroy(); this.worldGfx = null; }
-    this.aimX = 0;
-    this.aimY = 0;
+    for (const g of [this.overlayGfx, this.tailGfx, this.barGfx]) g?.destroy();
+    this.overlayGfx = this.tailGfx = this.barGfx = null;
     this.trailAccum = 0;
-    this.lastNpcCastId = null;
 
-    this.acidPools = [];
-    if (this.burrowed) {
-      this.burrowed = false;
-      this.murkToad = null;
-      this.arena.player.isInvincible = false;
-      this.arena.player.setAlpha(1);
+    // `reset()` runs before the new fighters exist: plain fields only on whatever is still here.
+    for (const f of this.allFighters()) {
+      f.toxinStacks = 0;
+      f.toxinIncomingMult = 1;
     }
+    this.toxins.clear();
+    this.purgeSeen = new WeakMap();
     this.purgeHpStripped = new WeakSet();
-    // Electrolysis: hand every jolted body its speed back before dropping the ledger.
+    this.murkToad = null;
     for (const f of this.electroJolted.keys()) if (f.active) f.walkSpeedMult = 1;
     this.electroArcs = [];
     this.electroNextAt = 0;
     this.electroJolted = new Map();
-    this.acidRainActiveUntil = 0;
-    this.acidRainTickAccum = 0;
-    this.acidRainDropAccum = 0;
     this.drippingEnemies = new Map();
     this.meltStatuses = new Map();
     this.meltPuddles = [];
     this.activeMeltBuffs = [];
     this.meltBuffExpireAt = 0;
-    // Mastery — Acid Walker + Breakdown
-    this.acidFootprints = [];
-    this.wasInAcid = false;
-    this.footprintTrailUntil = 0;
-    this.lastUnburrowAt = -FOOTPRINT_BOOST_MS;
+    this.footprints = [];
+    this.shedHusks = [];
     this.coverageAccum = 0;
     this.sessionBestCoverage = 0;
     this.meltKillCounted = new WeakSet();
-    this.breakdownUntil = 0;
-    this.breakdownLastCastAt = -BREAKDOWN_COOLDOWN_MS;
   }
 
-  startMatch(_W: number, _H: number, _isPlayerSlime: boolean): void { /* no per-match setup needed */ }
+  // ── Ruin Mastery — Second Skin ──────────────────────────────────────
 
-  // ── Shared hooks (called from ArenaScene's projectile hit pipeline) ──
+  /** Being under the acid is a form, not a buff — surfacing is the kit's own, safe undo. */
+  revertForms(f: Fighter): string[] {
+    const owner: Owner | null = f === this.arena.player ? 'player' : f === this.arena.npc ? 'npc' : null;
+    if (!owner || !this.side(owner).burrowed) return [];
+    this.surface(owner, 'DRAGGED UP');
+    return ['Burrow'];
+  }
 
-  /** Called for both the player-fires / enemy-fires directions when a Purge ball lands. */
-  onPurgeHit(target: Fighter, proj: Projectile, time: number): void {
-    const durationMs = (proj as unknown as { purgeDurationMs?: number }).purgeDurationMs ?? PURGE_STAGES[0].purgeMs;
-    target.purgedUntil = Math.max(target.purgedUntil, time + durationMs);
-    this.arena.showFloatingText(target.x, target.y - 26, '☠️ Purged!', '#66ff33');
-    // A ball that landed on the local player came from the opponent, so it is painted in their
-    // colours — otherwise an npc's purge would splash in the player's own green.
-    const fromNpc = target === this.arena.player;
-    const fx = fromNpc ? this.nfx : this.pfx;
-    const tones = fromNpc ? NPC_TONES : VILE_TONES;
-    // Snap on application, then a boiling-off tell so the strip stays readable for its duration.
-    fx.splash(target.x, target.y, 52, { droplets: 12, fizz: 4, depth: 8, tones });
+  // ── Projectile hooks (ArenaScene's hit pipeline) ──────────────────────
+
+  /** A Poison Whip lash landed on `target`: one toxin, or two at half coverage. */
+  onWhipHit(target: Fighter, proj: Projectile): void {
+    const n = (proj as unknown as { venomToxin?: number }).venomToxin ?? 1;
+    this.addToxin(target, n);
+  }
+
+  // ── Toxin ─────────────────────────────────────────────────────────────
+
+  private toxinState(f: Fighter): ToxinState {
+    let st = this.toxins.get(f);
+    if (!st) {
+      st = { dotAt: this.now + TOXIN_DOT_MS, tierSeen: 0, maxHpCut: 0, dripX: f.x, dripY: f.y, killAt: 0 };
+      this.toxins.set(f, st);
+    }
+    return st;
+  }
+
+  /**
+   * The one place toxin is laid. The local player in an online match is skipped: the attacker's
+   * sim owns that count and it arrives through the `tox` mirror, so adding here would double it.
+   */
+  addToxin(f: Fighter, n: number): void {
+    // Invincible frames (a burrow, a dodge) refuse toxin the same way they refuse the hit.
+    if (n <= 0 || !this.alive(f) || f.netAuthoritativeDamage || f.isInvincible) return;
+    // Memory's Rebirth: a sealed venom lays no toxin.
+    if ((f === this.arena.player ? this.arena.npc : this.arena.player).passivesSealed()) return;
+    f.toxinStacks += n;
+    this.toxinState(f);
+  }
+
+  private static tierOf(stacks: number): number {
+    let tier = 0;
+    for (const th of TOXIN_TIERS) if (stacks >= th) tier++;
+    return tier;
+  }
+
+  private static dps(stacks: number): number {
+    return stacks >= 500 ? 8 : stacks >= 100 ? 5 : stacks >= 25 ? 3 : 0;
+  }
+
+  /** What toxin leaves of a body's outgoing damage: 20% off at 100, another 20% at 500. */
+  private static weakenMult(stacks: number): number {
+    return stacks >= 500 ? 0.6 : stacks >= 100 ? 0.8 : 1;
+  }
+
+  private static TIER_LABELS = ['TOXIN 25', 'TOXIN 50 · DRIPPING', 'TOXIN 100 · WEAKENED', 'TOXIN 250 · −50 MAX HP', 'TOXIN 500 · −100 MAX HP', 'DISSOLVED'];
+
+  private updateToxins(time: number): void {
+    const { player, npc } = this.arena;
+    for (const f of this.allFighters()) {
+      // A mirrored count arrives with no state of its own yet.
+      if (f.toxinStacks > 0 && !this.toxins.has(f)) this.toxinState(f);
+    }
+    for (const [f, st] of this.toxins) {
+      if (!f.active) { this.toxins.delete(f); continue; }
+      if (f.hp <= 0) continue;
+      const stacks = f.toxinStacks;
+      const poisoner = this.poisonerOf(f);
+      const tier = SlimeKit.tierOf(stacks);
+      if (tier > st.tierSeen) {
+        st.tierSeen = tier;
+        this.announce(f.x, f.y - 46, SlimeKit.TIER_LABELS[tier - 1], tier >= 4 ? ACID.sting : ACID.neon, tier >= 5 ? 14 : 12);
+        this.fx(poisoner).splash(f.x, f.y, 34 + tier * 6, { droplets: 6 + tier * 2, fizz: 3, etch: false, depth: 8, tones: this.tones(poisoner) });
+      }
+
+      // The burn: once a second at 25+, harder at 100 and 500.
+      const dps = SlimeKit.dps(stacks);
+      if (dps > 0 && time >= st.dotAt) {
+        st.dotAt = time + TOXIN_DOT_MS;
+        f.takeDamage(dps, { source: st });
+        this.noteAcidHit(poisoner, f);
+        this.fx(poisoner).droplets(f.x, f.y - 6, 2 + Math.min(4, tier), {
+          speed: 50, angle: Math.PI / 2, spread: 1.2, size: 2.4, life: 420, fall: 24, depth: 8, tones: this.tones(poisoner),
+        });
+      } else if (dps === 0) {
+        st.dotAt = time + TOXIN_DOT_MS;
+      }
+
+      // 50+: acid runs off the body as it walks, laid a step behind so it never feeds itself.
+      if (stacks >= 50 && this.isAcid(poisoner)) {
+        const moved = Phaser.Math.Distance.Between(f.x, f.y, st.dripX, st.dripY);
+        if (moved >= TOXIN_DRIP_SPACING) {
+          this.paint(poisoner, st.dripX, st.dripY, TOXIN_DRIP_RADIUS);
+          st.dripX = f.x;
+          st.dripY = f.y;
+        }
+      } else {
+        st.dripX = f.x;
+        st.dripY = f.y;
+      }
+
+      // 250 / 500: max HP eaten. A replica's max HP is the victim's to report (vitals sync).
+      const isReplica = f === npc && this.arena.isOnline;
+      const cut = (stacks >= 250 ? 50 : 0) + (stacks >= 500 ? 100 : 0);
+      if (!isReplica && cut > st.maxHpCut) {
+        f.reduceMaxHp(cut - st.maxHpCut);
+        st.maxHpCut = cut;
+      }
+
+      // 1000: dead. Retried, because an invincible frame can refuse it.
+      if (stacks >= 1000 && time >= st.killAt) {
+        st.killAt = time + TOXIN_KILL_RETRY_MS;
+        f.takeDamage(99999, { trueDamage: true, source: st });
+        this.noteAcidHit(poisoner, f);
+      }
+    }
+
+    // Weakness: the toxified body deals less. `takeDamage` has no attacker, so the *victim* of a
+    // weakened attacker carries the cut (the hopelessness pattern).
+    if (!this.arena.isInvasion) {
+      player.toxinIncomingMult = SlimeKit.weakenMult(npc?.toxinStacks ?? 0);
+      if (npc) npc.toxinIncomingMult = SlimeKit.weakenMult(player.toxinStacks);
+    } else {
+      // A husk crowd: the least-poisoned husk near enough to be the one swinging decides it.
+      let mult = 1;
+      let any = false;
+      for (const e of this.arena.enemies) {
+        if (!this.alive(e) || Phaser.Math.Distance.Between(e.x, e.y, player.x, player.y) > 320) continue;
+        const m = SlimeKit.weakenMult(e.toxinStacks);
+        mult = any ? Math.max(mult, m) : m;
+        any = true;
+      }
+      player.toxinIncomingMult = any ? mult : 1;
+    }
+
+    // Purge watch: a fresh Purge — ours, or the opponent's arriving through the mirror — strips.
+    for (const f of this.allFighters()) {
+      if (!f.active) continue;
+      const seen = this.purgeSeen.get(f) ?? 0;
+      if (f.purgedUntil > seen) {
+        this.purgeSeen.set(f, f.purgedUntil);
+        if (f.purgedUntil > time) stripBuffs(f);
+      }
+    }
+  }
+
+  // ── The tail ──────────────────────────────────────────────────────────
+
+  private dodging(owner: Owner): boolean {
+    if (owner === 'player') return this.arena.playerDodging;
+    const npc = this.arena.npc;
+    const body = npc.body as Phaser.Physics.Arcade.Body | null;
+    const fast = !!body && body.velocity.length() > DASH_SPEED_READ;
+    return Date.now() - npc.dodgingAt < 160 || fast;
+  }
+
+  /** The tail counts as a hitbox only while it is out: not burrowed, not mid-dodge. */
+  private tailLive(owner: Owner): boolean {
+    const s = this.side(owner);
+    return s.tail.length >= 2 && !s.burrowed && !this.dodging(owner);
+  }
+
+  /** Sample where the serpent has been, at a fixed spacing — the shape is a hitbox, so it cannot depend on frame rate. */
+  private updateTail(owner: Owner): void {
+    const s = this.side(owner);
+    const f = this.fighter(owner);
+    if (!this.isAcid(owner) || !this.alive(f)) { s.tail = []; return; }
+    if (s.tail.length === 0) {
+      s.tail = [{ x: f.x, y: f.y }];
+      s.lastSampleX = f.x;
+      s.lastSampleY = f.y;
+    }
+    const moved = Phaser.Math.Distance.Between(f.x, f.y, s.lastSampleX, s.lastSampleY);
+    if (moved >= TAIL_SPACING) {
+      s.tail.unshift({ x: f.x, y: f.y });
+      s.lastSampleX = f.x;
+      s.lastSampleY = f.y;
+    } else {
+      s.tail[0] = { x: f.x, y: f.y };
+    }
+    const want = Math.max(3, Math.round(TAIL_SEGMENTS * s.tailMult)) + 1;
+    if (s.tail.length > want) s.tail.length = want;
+    // An idle serpent still lies at full length: pay slack out behind the last knot.
+    while (s.tail.length < want) {
+      const tail = s.tail[s.tail.length - 1];
+      const prev = s.tail[s.tail.length - 2] ?? { x: tail.x - 1, y: tail.y };
+      const ang = Math.atan2(tail.y - prev.y, tail.x - prev.x);
+      s.tail.push({ x: tail.x + Math.cos(ang) * TAIL_SPACING, y: tail.y + Math.sin(ang) * TAIL_SPACING });
+    }
+  }
+
+  private nearTail(tail: TailKnot[], x: number, y: number): boolean {
+    for (let i = 1; i < tail.length - 1; i++) {
+      if (distToSegment(x, y, tail[i].x, tail[i].y, tail[i + 1].x, tail[i + 1].y) <= TAIL_HIT_R) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Serpentine doing its job: an enemy shot that touches the tail hits the serpent. Both shot
+   * systems — the physics group and the hand-drawn registry — are checked, as Cloth's scarf does.
+   */
+  private tailCatchesShots(owner: Owner): void {
+    // An Invasion npc slot is a co-op ally: the player's shots must pass straight through it.
+    if (!this.tailLive(owner) || (owner === 'npc' && this.arena.isInvasion)) return;
+    const f = this.fighter(owner);
+    if (!this.alive(f)) return;
+    const tail = this.side(owner).tail;
+    const mineIsPlayer = owner === 'player';
+    // A snapshot: `destroy()` splices the group's live array.
+    for (const obj of [...this.arena.projectiles.getChildren()]) {
+      const p = obj as Projectile;
+      if (!p.active || p.isHeal || p.isFromPlayer === mineIsPlayer) continue;
+      if (Phaser.Math.Distance.Between(p.x, p.y, f.x, f.y) < TAIL_BODY_SKIP) continue;
+      if (!this.nearTail(tail, p.x, p.y)) continue;
+      this.tailHit(owner, Math.max(1, p.damage ?? 8), p.x, p.y);
+      p.destroy();
+    }
+    for (let i = 2; i < tail.length; i += 2) {
+      const k = tail[i];
+      for (const rp of this.arena.projectileRegistry.within(this.other(owner), k.x, k.y, TAIL_HIT_R)) {
+        this.tailHit(owner, Math.max(1, rp.damage), k.x, k.y);
+        this.arena.projectileRegistry.steal(rp);
+      }
+    }
+  }
+
+  private tailHit(owner: Owner, damage: number, x: number, y: number): void {
+    const f = this.fighter(owner);
+    f.takeDamage(damage, { sourceX: x, sourceY: y });
+    this.arena.spawnHitFlash(x, y, this.col(owner)(ACID.lime));
+    this.fx(owner).droplets(x, y, 3, { speed: 80, size: 2.4, life: 300, depth: 7, tones: this.tones(owner) });
+  }
+
+  // ── Abilities (every one reachable from the player, a bot and an online replay) ──
+
+  doWhip(owner: Owner, tx: number, ty: number): void {
+    const f = this.fighter(owner);
+    if (!this.alive(f)) return;
+    const { scene } = this.arena;
+    const count = this.onAcid(owner, f.x, f.y) ? WHIP_COUNT_ENHANCED : WHIP_COUNT_BASE;
+    const toxin = this.coverage(owner) >= WHIP_DOUBLE_AT ? 2 : 1;
+    const baseAngle = Math.atan2(ty - f.y, tx - f.x);
+    this.side(owner).aimX = tx;
+    this.side(owner).aimY = ty;
+    this.avatar(owner)?.play('punch', baseAngle);
+    const fx = this.fx(owner);
+    const tones = this.tones(owner);
+    for (let i = 0; i < count; i++) {
+      scene.time.delayedCall(i * WHIP_STAGGER_MS, () => {
+        if (!this.alive(f)) return;
+        const ang = baseAngle + Phaser.Math.DegToRad(Phaser.Math.FloatBetween(-WHIP_SPREAD_DEG, WHIP_SPREAD_DEG));
+        // A muzzle spray every third lash: fifteen in 375ms is a wall of white.
+        if (i % 3 === 0) fx.muzzleSpray(f.x, f.y, ang, 0.85, 7, tones);
+        this.spawnLash(owner, f.x + Math.cos(ang) * 30, f.y + Math.sin(ang) * 30, ang, toxin);
+      });
+    }
+  }
+
+  private spawnLash(owner: Owner, x: number, y: number, ang: number, toxin: number): void {
+    const proj = new Projectile(this.arena.scene, x, y, 'proj-acid-whip', WHIP_DAMAGE, owner === 'player');
+    (proj as unknown as { venomToxin: number }).venomToxin = toxin;
+    this.arena.projectiles.add(proj);
+    proj.launch(Math.cos(ang) * WHIP_SPEED, Math.sin(ang) * WHIP_SPEED);
+    proj.setRotation(ang);
+  }
+
+  doSpray(owner: Owner, tx: number, ty: number): void {
+    const f = this.fighter(owner);
+    if (!this.alive(f)) return;
+    const ang = Math.atan2(ty - f.y, tx - f.x);
+    const fx = this.fx(owner);
+    const tones = this.tones(owner);
+    this.avatar(owner)?.play('sweep', ang);
+    fx.muzzleSpray(f.x, f.y, ang, 1.6, 7, tones);
+    for (const dist of SPLAT_DISTANCES) {
+      this.addSplat(owner, f.x + Math.cos(ang) * dist, f.y + Math.sin(ang) * dist, SPLAT_RADIUS);
+      // Each splash is thrown out there, so the spray reads as one arcing stream.
+      fx.droplets(f.x, f.y, 5, {
+        speed: dist * 2.2, angle: ang, spread: 0.22, size: 4.4, life: 340, fall: 20, depth: 6, tones,
+      });
+    }
+  }
+
+  doBurrow(owner: Owner): void {
+    const s = this.side(owner);
+    const f = this.fighter(owner);
+    if (s.burrowed || !this.alive(f)) return;
+    // The player is checked before the cooldown is spent; a replica was in acid on its own sim.
+    if (owner === 'npc' && !this.isReplica('npc') && !this.onAcid('npc', f.x, f.y)) return;
+    s.burrowed = true;
+    s.burrowedAt = this.now;
+    f.isInvincible = true;
+    f.setAlpha(0.4);
+    if (owner === 'player' && this.arena.hasPerk('player', 'murk')) this.spawnMurkToad();
+    this.avatar(owner)?.play('flex');
+    this.fx(owner).gather(f.x, f.y, 46, 400, () => (f.active ? { x: f.x, y: f.y } : null), 5, this.tones(owner));
+    this.fx(owner).ring(f.x, f.y, 46, 12, ACID.hotRim, 380, 3.5, 4);
+  }
+
+  private surface(owner: Owner, reason: string | null): void {
+    const s = this.side(owner);
+    if (!s.burrowed) return;
+    s.burrowed = false;
+    s.lastUnburrowAt = this.now;
+    if (owner === 'player') this.despawnMurkToad();
+    const f = this.fighter(owner);
+    f.isInvincible = false;
+    f.setAlpha(1);
+    this.relay(owner, 'acid-surface');
+    if (reason) this.announce(f.x, f.y - 34, reason, ACID.hotRim, 11);
+    this.fx(owner).splash(f.x, f.y, 56, { droplets: 12, fizz: 4, etch: false, depth: 6, tones: this.tones(owner) });
+    this.avatar(owner)?.play('flex');
+
+    // Rattling Strike (R+): a red blast at the hole, and every toxin stack on the caught ×1.5.
+    if (!this.up(owner, 'r')) return;
+    const x = f.x, y = f.y;
+    this.fx(owner).splash(x, y, RATTLING_RADIUS, { droplets: 18, fizz: 4, depth: 6, duration: 480, tones: STING_TONES });
+    this.arena.scene.cameras.main.shake(180, 0.005);
+    let hit = 0;
+    for (const t of this.targetsOf(owner)) {
+      if (Phaser.Math.Distance.Between(x, y, t.x, t.y) > RATTLING_RADIUS + this.bodyR(t)) continue;
+      t.takeDamage(RATTLING_DAMAGE, { source: f, sourceX: x, sourceY: y });
+      this.addToxin(t, t.toxinStacks * (RATTLING_TOXIN_MULT - 1));
+      this.arena.spawnHitFlash(t.x, t.y, this.col(owner)(ACID.sting));
+      this.fx(owner).splash(t.x, t.y, 34, { droplets: 6, fizz: 0, etch: false, depth: 8, tones: STING_TONES });
+      this.drippingEnemies.set(t, { owner, until: this.now + RATTLING_DRIP_MS, nextDripAt: this.now });
+      if (owner === 'player') this.arena.recordMasteryStat('burrowAttacks', 1);
+      this.noteAcidHit(owner, t);
+      hit++;
+    }
+    if (hit > 0) this.announce(x, y - 48, 'RATTLING STRIKE', ACID.sting, 12);
+  }
+
+  private biteStage(owner: Owner): { stage: number; def: typeof BITE_STAGES[number] } {
+    const cov = this.coverage(owner);
+    const idx = BITE_STAGES.findIndex((s) => cov < s.maxCoverage);
+    const i = idx < 0 ? BITE_STAGES.length - 1 : idx;
+    return { stage: i + 1, def: BITE_STAGES[i] };
+  }
+
+  /** How far the bite reaches from this body's centre right now — the bot reads this. */
+  biteReach(owner: Owner): number {
+    return this.biteStage(owner).def.reach + this.bodyR(this.fighter(owner));
+  }
+
+  doBite(owner: Owner, tx: number, ty: number): void {
+    const f = this.fighter(owner);
+    if (!this.alive(f)) return;
+    const { stage, def } = this.biteStage(owner);
+    const ang = Math.atan2(ty - f.y, tx - f.x);
+    const reach = def.reach + this.bodyR(f);
+    const fx = this.fx(owner);
+    const tones = this.tones(owner);
+    this.avatar(owner)?.play('slam', ang);
+    fx.bite(f.x, f.y, ang, reach, stage, 8, tones);
+    let hit = 0;
+    for (const t of this.targetsOf(owner)) {
+      const d = Phaser.Math.Distance.Between(f.x, f.y, t.x, t.y);
+      if (d > reach + this.bodyR(t)) continue;
+      const da = Math.abs(Phaser.Math.Angle.Wrap(Math.atan2(t.y - f.y, t.x - f.x) - ang));
+      if (d > this.bodyR(f) + this.bodyR(t) && da > BITE_HALF_ANGLE) continue;
+      // Snapshot first: Purge takes the buffs, Meltdown carries away exactly what it took.
+      const melt = stage === BITE_MELT_STAGE && this.up(owner, 'f');
+      const buffs = melt ? this.snapshotBuffs(t) : [];
+      this.purge(owner, t, def.purgeMs);
+      t.takeDamage(def.damage, { source: f, sourceX: f.x, sourceY: f.y });
+      this.addToxin(t, BITE_TOXIN);
+      if (melt) this.startMelt(owner, t, buffs);
+      fx.punctures(t.x, t.y, ang, 9, tones);
+      this.arena.spawnHitFlash(t.x, t.y, this.col(owner)(ACID.neon));
+      this.noteAcidHit(owner, t);
+      hit++;
+    }
+    if (hit > 0 && stage >= 2) this.announce(f.x + Math.cos(ang) * reach, f.y + Math.sin(ang) * reach - 30, stage === 3 ? 'FESTERING BITE III' : 'FESTERING BITE II', ACID.neon, 11);
+  }
+
+  /** Purge: every buff stripped now, speed boosts held down for `ms`, a husk's baked bonuses gone. */
+  private purge(owner: Owner, target: Fighter, ms: number): void {
+    target.purgedUntil = Math.max(target.purgedUntil, this.now + ms);
+    this.purgeSeen.set(target, target.purgedUntil);
+    stripBuffs(target);
+    this.fx(owner).splash(target.x, target.y, 52, { droplets: 12, fizz: 4, depth: 8, tones: this.tones(owner) });
     if (!this.purgeAuras.has(target)) {
-      this.purgeAuras.set(target, new AcidAura(
-        this.arena.scene, fromNpc ? this.ncol : this.pcol, 'purge', tones, 28, 4));
+      this.purgeAuras.set(target, new AcidAura(this.arena.scene, this.col(owner), 'purge', this.tones(owner), 28, 4));
     }
-
-    // Meltdown (F+): only a fully-charged (stage 3) player purge ball melts the target.
-    const stage = (proj as unknown as { purgeStage?: number }).purgeStage;
-    if (stage === PURGE_MELT_STAGE && this.arena.hasUpgrade('f')) {
-      this.startMelt(target, time);
-    }
-
     const variant = (target as unknown as { variant?: HuskLikeVariant }).variant;
     if (!variant) return;
     if (variant.speedMult && variant.speedMult > 1) {
@@ -457,61 +1004,377 @@ export class SlimeKit {
       this.purgeHpStripped.add(target);
       const baseMax = Math.max(1, Math.round(target.maxHp / variant.hpMult));
       target.reduceMaxHp(target.maxHp - baseMax);
-      this.arena.showFloatingText(target.x, target.y - 44, 'Bonus HP stripped!', '#33ff88');
+      this.announce(target.x, target.y - 44, 'BONUS HP STRIPPED', ACID.caustic, 11);
     }
   }
 
-  // ── Private helpers ──────────────────────────────────────────────────
-
-  private isPointInAcid(x: number, y: number): boolean {
-    return this.acidPools.some(p => Phaser.Math.Distance.Between(x, y, p.x, p.y) <= p.radius);
+  doApocalypse(owner: Owner): void {
+    const f = this.fighter(owner);
+    const s = this.side(owner);
+    s.rainUntil = this.now + RAIN_DURATION_MS;
+    s.rainTickAt = this.now + RAIN_TICK_MS;
+    s.rainDropAccum = 0;
+    const fx = this.fx(owner);
+    this.avatar(owner)?.play('raise', -Math.PI / 2, 900);
+    if (f?.active) fx.ring(f.x, f.y, 12, 160, ACID.neon, 620, 6, 5);
+    for (const sp of s.splats) fx.ring(sp.x, sp.y, sp.radius * 0.4, sp.radius * 1.3, ACID.hotRim, 460, 3, 4);
+    const { width: W, height: H } = this.arena.scene.scale;
+    this.announce(W / 2, H / 2 - 60, 'ACID APOCALYPSE', ACID.neon, 16);
+    this.arena.scene.cameras.main.shake(320, 0.005);
   }
 
-  private computeAcidCoveragePct(): number {
-    if (this.acidPools.length === 0) return 0;
-    const { width: W, height: H } = this.arena.scene.scale;
-    const arenaArea = Math.max(1, W * H);
-    const coveredArea = this.acidPools.reduce((sum, p) => sum + Math.PI * p.radius * p.radius, 0);
-    return Math.min(1, coveredArea / arenaArea);
-  }
+  // ── Mastery — Shed Skin ──────────────────────────────────────────────
 
-  /** Single entry point for creating an acid pool, so Spray Spread/Rattling Strike share the same object shape as Vile Spray. */
-  private createAcidPool(x: number, y: number, radius: number, time: number): AcidPool {
-    const pool: AcidPool = {
-      x, y, radius, baseRadius: radius, state: 'hot', nextTickAt: 0,
-      nextSpreadCheckAt: time + SPREAD_CHECK_MS,
-      seed: Math.random() * Math.PI * 2,
-    };
-    this.acidPools.push(pool);
-    // A pool lands: the surface breaks and fizzes where it hit.
-    this.pfx.ring(x, y, radius * 0.3, radius, ACID.hotRim, 340, 3, 4);
-    this.pfx.fizz(x, y, Math.max(2, Math.round(radius / 12)), radius * 0.7, 4, VILE_TONES);
-    // Mastery — track cumulative acid laid down (batched to keep localStorage writes rare).
-    const { width: W, height: H } = this.arena.scene.scale;
-    this.coverageAccum += (Math.PI * radius * radius) / Math.max(1, W * H);
-    if (this.coverageAccum >= 0.25) {
-      this.arena.recordMasteryStat('acidCoverageTotal', this.coverageAccum);
-      this.coverageAccum = 0;
+  private shedSlot(owner: Owner): 'e' | 'r' | 'f' | 'q' | null {
+    if (!this.masteryOn(owner)) return null;
+    for (const s of ['e', 'r', 'f', 'q'] as const) {
+      const bind = owner === 'player' ? this.arena.masteryBindFor(s) : this.arena.npcMasteryBindFor(s);
+      if (bind === 'shed-skin') return s;
     }
-    return pool;
+    return null;
   }
 
-  /** Mastery — count an enemy killed by acid ("melt"), once per target. */
-  // ── Electrolysis (abstract-triple perk) ───────────────────────────────
+  private shedCharges(owner: Owner): number {
+    const s = this.side(owner);
+    return s.shedReached - s.shedUsed;
+  }
 
-  /**
-   * The pool field is the circuit. Every beat one random pair close enough to conduct shorts
-   * across the gap between them — random rather than nearest, so a wide field keeps throwing
-   * current somewhere new instead of settling on its two tightest pools. The surge roll is
-   * what fate is paying for.
-   */
+  /** The bound slot's HUD bar: full while a shed is banked, otherwise progress to the next milestone. */
+  getShedRatio(): number {
+    if (this.shedCharges('player') > 0) return 1;
+    const s = this.side('player');
+    if (s.shedReached >= SHED_MILESTONES.length) return 0;
+    const prev = s.shedReached === 0 ? 0 : SHED_MILESTONES[s.shedReached - 1];
+    const next = SHED_MILESTONES[s.shedReached];
+    return Phaser.Math.Clamp((this.coverage('player') - prev) / (next - prev), 0, 1);
+  }
+
+  private tryShed(owner: Owner): void {
+    const f = this.fighter(owner);
+    if (this.shedCharges(owner) <= 0) {
+      if (owner === 'player') {
+        const s = this.side(owner);
+        const next = SHED_MILESTONES[s.shedReached];
+        this.announce(f.x, f.y - 34, next ? `SHED AT ${Math.round(next * 100)}% ACID` : 'NO SKIN LEFT', ACID.sting, 11);
+      }
+      return;
+    }
+    this.side(owner).shedUsed++;
+    // triggerCooldown broadcasts the cast online; the peer replays through `doNpcShed`.
+    if (owner === 'player') f.triggerCooldown('shed-skin');
+    this.shed(owner);
+  }
+
+  /** Online replay: the remote serpent shed. Their sim already checked the charge. */
+  doNpcShed(): void { this.shed('npc'); }
+
+  private shed(owner: Owner): void {
+    const f = this.fighter(owner);
+    const s = this.side(owner);
+    if (!this.alive(f)) return;
+    const { scene } = this.arena;
+    // The old skin stays where it lay, and the serpent comes out of it shorter and quicker.
+    if (s.tail.length >= 2) {
+      this.shedHusks.push({ owner, knots: s.tail.map((k) => ({ x: k.x, y: k.y })), width: TAIL_WIDTH * 1.1, bornAt: this.now });
+    }
+    s.tailMult *= SHED_TAIL_MULT;
+    s.shedSpeed += SHED_SPEED_BONUS;
+    this.announce(f.x, f.y - 46, 'SHED SKIN', ACID.glow, 14);
+    const fx = this.fx(owner);
+    const tones = this.tones(owner);
+    this.avatar(owner)?.play('flex');
+    fx.splash(f.x, f.y, 90, { droplets: 20, fizz: 6, duration: 560, depth: 6, tones });
+    scene.cameras.main.shake(220, 0.005);
+
+    const toxin = this.coverage(owner) >= WHIP_DOUBLE_AT ? 2 : 1;
+    for (let i = 0; i < SHED_LASH_COUNT; i++) {
+      scene.time.delayedCall(Math.floor((i * SHED_BARRAGE_MS) / SHED_LASH_COUNT), () => {
+        if (!this.alive(f)) return;
+        // Spiralling out, so the barrage sweeps the whole ring instead of clumping.
+        const ang = (i / SHED_LASH_COUNT) * Math.PI * 6 + Math.random() * 0.2;
+        this.spawnLash(owner, f.x + Math.cos(ang) * 24, f.y + Math.sin(ang) * 24, ang, toxin);
+      });
+    }
+    // The acid it came out of.
+    this.paint(owner, f.x, f.y, SHED_POOL_RADIUS);
+    for (let i = 0; i < SHED_SPLATS; i++) {
+      const a = (i / SHED_SPLATS) * Math.PI * 2 + Math.random() * 0.5;
+      const d = 40 + Math.random() * 40;
+      this.addSplat(owner, f.x + Math.cos(a) * d, f.y + Math.sin(a) * d, 22, false);
+    }
+  }
+
+  // ── update ────────────────────────────────────────────────────────────
+
+  /** Runs every frame, whichever side (if either) is Venom: both kits share the floor and the toxin. */
+  update(time: number, delta: number): void {
+    for (const owner of BOTH) {
+      if (this.isAcid(owner) || this.side(owner).grid) this.updateSide(owner, time, delta);
+    }
+    this.updateToxins(time);
+    this.updateElectrolysis(time);
+    this.updateMurkToad(time);
+    if (this.drippingEnemies.size > 0) this.updateDripping(time);
+    if (this.meltStatuses.size > 0) this.updateMelts(time);
+    if (this.meltPuddles.length > 0 || this.activeMeltBuffs.length > 0) this.updateMeltPickup(time);
+    if (this.footprints.length > 0) this.updateFootprints(time);
+    this.shedHusks = this.shedHusks.filter((h) => time - h.bornAt < SHED_HUSK_MS);
+
+    const cov = this.coverage('player') * 100;
+    if (this.isAcid('player') && cov > this.sessionBestCoverage) {
+      this.sessionBestCoverage = cov;
+      this.arena.recordMasteryBest('acidCoverageBestPct', cov);
+    }
+    this.updateVisuals(time, delta);
+  }
+
+  private updateSide(owner: Owner, time: number, delta: number): void {
+    const s = this.side(owner);
+    const f = this.fighter(owner);
+    const grid = this.grid(owner);
+
+    this.updateTail(owner);
+    if (this.isAcid(owner)) this.tailCatchesShots(owner);
+
+    // The floor: fresh cells nip and cool, standing burns and poisons.
+    for (const t of this.targetsOf(owner)) {
+      const cooled = grid.coolUnder(t.x, t.y, this.bodyR(t) * 0.8);
+      if (cooled > 0) {
+        const owed = (s.hotOwed.get(t) ?? 0) + cooled * HOT_DAMAGE_PER_CELL;
+        const dmg = Math.floor(owed);
+        s.hotOwed.set(t, owed - dmg);
+        if (dmg > 0) {
+          t.takeDamage(dmg, { source: grid, sourceX: t.x, sourceY: t.y });
+          this.fx(owner).splash(t.x, t.y + 6, 26, { droplets: 4, fizz: 2, etch: false, depth: 8, tones: this.tones(owner) });
+          this.noteAcidHit(owner, t);
+        }
+      }
+      if (grid.isAcid(t.x, t.y)) {
+        const at = s.standAt.get(t) ?? 0;
+        if (time >= at) {
+          s.standAt.set(t, time + STAND_TICK_MS);
+          t.takeDamage(STAND_DAMAGE, { source: grid, sourceX: t.x, sourceY: t.y });
+          this.addToxin(t, STAND_TOXIN);
+          this.noteAcidHit(owner, t);
+          this.fx(owner).droplets(t.x, t.y + 8, 3, {
+            speed: 60, angle: -Math.PI / 2, spread: 1, size: 2.4, life: 380, depth: 5, tones: this.tones(owner),
+          });
+        }
+      } else {
+        s.standAt.delete(t);
+      }
+    }
+
+    // Spray Spread (E+): every splat periodically buds a smaller one.
+    if (this.up(owner, 'e')) {
+      for (const sp of s.splats.slice()) {
+        if (time < sp.nextSpreadAt) continue;
+        sp.nextSpreadAt = time + SPREAD_CHECK_MS;
+        if (s.splats.length >= MAX_SPLATS || Math.random() >= SPREAD_CHANCE) continue;
+        const a = Math.random() * Math.PI * 2;
+        const d = Phaser.Math.Between(SPREAD_OFFSET_MIN, SPREAD_OFFSET_MAX);
+        this.addSplat(owner, sp.x + Math.cos(a) * d, sp.y + Math.sin(a) * d, Math.max(SPREAD_MIN_RADIUS, sp.radius * SPREAD_RADIUS_MULT));
+      }
+    }
+
+    // Burrow: invincible while under, forced up off the acid. A bot surfaces itself at its target.
+    if (s.burrowed) {
+      if (!this.alive(f)) {
+        s.burrowed = false;
+      } else if (!this.isReplica(owner) && !grid.isAcid(f.x, f.y)) {
+        this.surface(owner, 'OUT OF ACID');
+      } else {
+        f.isInvincible = true;
+        if (this.isBot(owner)) {
+          const tgt = this.arena.player;
+          const range = this.up(owner, 'r') ? NPC_SURFACE_RANGE : NPC_SURFACE_RANGE_PLAIN;
+          if ((this.alive(tgt) && Phaser.Math.Distance.Between(f.x, f.y, tgt.x, tgt.y) < range)
+              || time - s.burrowedAt > NPC_BURROW_MAX_MS) {
+            this.surface(owner, null);
+          }
+        }
+      }
+    }
+
+    // Acid Apocalypse: rain over all of this side's acid.
+    if (time < s.rainUntil) {
+      if (time >= s.rainTickAt) {
+        s.rainTickAt += RAIN_TICK_MS;
+        for (const t of this.targetsOf(owner)) {
+          if (!grid.isAcid(t.x, t.y)) continue;
+          t.takeDamage(RAIN_TICK_DAMAGE, { source: grid, sourceX: t.x, sourceY: t.y });
+          this.arena.spawnHitFlash(t.x, t.y, this.col(owner)(ACID.neon));
+          this.fx(owner).splash(t.x, t.y, 30, { droplets: 5, fizz: 0, etch: false, depth: 8, tones: this.tones(owner) });
+          this.noteAcidHit(owner, t);
+        }
+        // Acid Flood (Q+): the floor creeps outward for as long as it rains.
+        if (this.up(owner, 'q')) grid.creep(FLOOD_CREEP_CHANCE);
+      }
+      s.rainDropAccum += delta;
+      if (s.rainDropAccum >= RAIN_DROP_INTERVAL_MS) {
+        s.rainDropAccum -= RAIN_DROP_INTERVAL_MS;
+        for (let i = 0; i < 3; i++) {
+          const p = grid.randomAcid();
+          if (p) this.fx(owner).rainDrop(p.x + Phaser.Math.Between(-6, 6), p.y, 140, 6, this.tones(owner));
+        }
+      }
+    }
+
+    // Shed Skin milestones: each first crossing banks one shed.
+    const cov = grid.coverage;
+    let reached = 0;
+    for (const m of SHED_MILESTONES) if (cov >= m) reached++;
+    if (reached > s.shedReached) {
+      s.shedReached = reached;
+      if (this.shedSlot(owner) && this.alive(f)) {
+        this.announce(f.x, f.y - 52, `${Math.round(SHED_MILESTONES[reached - 1] * 100)}% · SHED READY`, ACID.glow, 12);
+      }
+    }
+    // A bot sheds itself, close enough that the barrage lands.
+    if (this.isBot(owner) && this.shedSlot(owner) && this.shedCharges(owner) > 0 && this.alive(f) && !s.burrowed) {
+      const tgt = this.arena.player;
+      if (this.alive(tgt) && Phaser.Math.Distance.Between(f.x, f.y, tgt.x, tgt.y) < NPC_SHED_RANGE) this.tryShed(owner);
+    }
+
+    // Venom Mastery — Acid Walker: prints for 5s after stepping off acid.
+    if (this.masteryOn(owner) && this.alive(f) && !this.isReplica(owner)) {
+      const inAcid = grid.isAcid(f.x, f.y);
+      if (s.wasInAcid && !inAcid) {
+        s.footprintTrailUntil = time + FOOTPRINT_TRAIL_MS;
+        s.lastPrintX = f.x;
+        s.lastPrintY = f.y;
+      }
+      s.wasInAcid = inAcid;
+      if (!inAcid && time < s.footprintTrailUntil
+          && Phaser.Math.Distance.Between(f.x, f.y, s.lastPrintX, s.lastPrintY) >= FOOTPRINT_SPACING) {
+        s.lastPrintX = f.x;
+        s.lastPrintY = f.y;
+        this.spawnFootprint(owner, f.x, f.y, time, time - s.lastUnburrowAt <= FOOTPRINT_BOOST_MS);
+      }
+    }
+  }
+
+  // ── Rattling drips, Meltdown, footprints ────────────────────────────
+
+  private updateDripping(time: number): void {
+    for (const [t, st] of this.drippingEnemies) {
+      if (!t.active || t.hp <= 0 || time >= st.until) { this.drippingEnemies.delete(t); continue; }
+      if (time >= st.nextDripAt) {
+        st.nextDripAt = time + RATTLING_DRIP_INTERVAL_MS;
+        this.addSplat(st.owner, t.x, t.y, RATTLING_DRIP_RADIUS, false);
+      }
+    }
+  }
+
+  private snapshotBuffs(target: Fighter): BuffSnapshotEntry[] {
+    const out: BuffSnapshotEntry[] = [];
+    for (const f of MELT_BUFF_FIELDS) {
+      const v = target[f.key];
+      const isBuffed = f.better === 'higher' ? v > f.neutral : v < f.neutral;
+      if (isBuffed) out.push({ key: f.key, value: v, label: f.label(v) });
+    }
+    return out;
+  }
+
+  private startMelt(owner: Owner, target: Fighter, buffs: BuffSnapshotEntry[]): void {
+    this.meltStatuses.set(target, {
+      owner, until: this.now + MELT_DURATION_MS, nextDripAt: this.now + MELT_TICK_MS, buffs, color: target.element.color,
+    });
+    this.announce(target.x, target.y - 40, 'MELTING', ACID.caustic, 12);
+    if (!this.meltAuras.has(target)) {
+      this.meltAuras.set(target, new AcidAura(this.arena.scene, this.col(owner), 'melt', this.tones(owner), 24, 4));
+    }
+  }
+
+  private updateMelts(time: number): void {
+    for (const [target, st] of this.meltStatuses) {
+      if (!target.active || target.hp <= 0) { this.meltStatuses.delete(target); continue; }
+      // `nextDripAt <= until` so the boundary tick still fires instead of being cut off by expiry.
+      if (time >= st.nextDripAt && st.nextDripAt <= st.until) {
+        st.nextDripAt += MELT_TICK_MS;
+        target.takeDamage(Math.max(1, Math.round(target.hp * MELT_HP_LOSS_PCT)));
+        if (!(target === this.arena.npc && this.arena.isOnline)) {
+          target.reduceMaxHp(Math.max(1, Math.round(target.maxHp * MELT_HP_LOSS_PCT)));
+        }
+        target.sizeMult = Math.max(MELT_MIN_SIZE_MULT, target.sizeMult * (1 - MELT_SIZE_LOSS_PCT));
+        target.applySizeMult();
+        this.arena.spawnHitFlash(target.x, target.y, st.color);
+        // Only the player can stand in a puddle and take the buffs, so only theirs leave puddles.
+        if (st.owner === 'player') {
+          this.meltPuddles.push({ x: target.x, y: target.y, radius: MELT_PUDDLE_RADIUS, buffs: st.buffs, color: st.color, seed: Math.random() * 6 });
+        }
+        this.noteAcidHit(st.owner, target);
+      }
+      if (time >= st.until) this.meltStatuses.delete(target);
+    }
+  }
+
+  private grantMeltBuffs(recipient: Fighter, buffs: BuffSnapshotEntry[], time: number): void {
+    this.revertMeltBuffs(recipient);
+    if (buffs.length === 0) {
+      this.announce(recipient.x, recipient.y - 40, 'EMPTY PUDDLE', 0x888888, 10);
+      return;
+    }
+    const labels: string[] = [];
+    for (const b of buffs) {
+      this.activeMeltBuffs.push({ key: b.key, revertValue: recipient[b.key] });
+      recipient[b.key] = b.value;
+      labels.push(b.label);
+    }
+    this.meltBuffExpireAt = time + MELT_BUFF_GRANT_MS;
+    this.announce(recipient.x, recipient.y - 44, `${labels.join(', ')} (8s)`, ACID.caustic, 11);
+  }
+
+  private revertMeltBuffs(recipient: Fighter): void {
+    for (const b of this.activeMeltBuffs) recipient[b.key] = b.revertValue;
+    this.activeMeltBuffs = [];
+  }
+
+  private updateMeltPickup(time: number): void {
+    const player = this.arena.player;
+    for (let i = this.meltPuddles.length - 1; i >= 0; i--) {
+      const mp = this.meltPuddles[i];
+      if (Phaser.Math.Distance.Between(player.x, player.y, mp.x, mp.y) > mp.radius) continue;
+      this.grantMeltBuffs(player, mp.buffs, time);
+      this.pfx.gather(mp.x, mp.y, mp.radius * 1.6, 380, () => (player.active ? { x: player.x, y: player.y } : null), 5, VILE_TONES);
+      this.pfx.ring(mp.x, mp.y, mp.radius, 6, mp.color, 340, 3, 5);
+      this.meltPuddles.splice(i, 1);
+    }
+    if (this.activeMeltBuffs.length > 0 && time >= this.meltBuffExpireAt) this.revertMeltBuffs(player);
+  }
+
+  private spawnFootprint(owner: Owner, x: number, y: number, time: number, boosted: boolean): void {
+    const radius = boosted ? FOOTPRINT_BOOST_RADIUS : FOOTPRINT_RADIUS;
+    this.footprints.push({
+      owner, x, y, radius, damage: boosted ? FOOTPRINT_BOOST_DAMAGE : FOOTPRINT_DAMAGE,
+      expiresAt: time + FOOTPRINT_LIFETIME_MS, nextTickAt: time + FOOTPRINT_TICK_MS, boosted, seed: Math.random() * 6,
+    });
+    if (boosted) this.fx(owner).fizz(x, y, 3, radius, 4, this.tones(owner));
+  }
+
+  private updateFootprints(time: number): void {
+    for (let i = this.footprints.length - 1; i >= 0; i--) {
+      const fp = this.footprints[i];
+      if (time >= fp.expiresAt) { this.footprints.splice(i, 1); continue; }
+      if (time < fp.nextTickAt) continue;
+      fp.nextTickAt = time + FOOTPRINT_TICK_MS;
+      for (const t of this.targetsOf(fp.owner)) {
+        if (Phaser.Math.Distance.Between(t.x, t.y, fp.x, fp.y) > fp.radius) continue;
+        t.takeDamage(fp.damage, { source: fp, sourceX: fp.x, sourceY: fp.y });
+        this.arena.spawnHitFlash(t.x, t.y, this.col(fp.owner)(ACID.neon));
+        this.noteAcidHit(fp.owner, t);
+      }
+    }
+  }
+
+  // ── Electrolysis (perk, player) ───────────────────────────────────────
+
+  /** The splats are the circuit: every beat a random pair close enough to conduct shorts across. */
   private updateElectrolysis(time: number): void {
     for (let i = this.electroArcs.length - 1; i >= 0; i--) {
       if (time - this.electroArcs[i].bornAt >= ELECTRO_ARC_MS) this.electroArcs.splice(i, 1);
     }
-
-    // Jolts are re-applied every frame and written back on lapse — walkSpeedMult has no
-    // stacking discipline of its own, so the ledger is the only thing keeping this honest.
+    // Jolts are re-applied every frame and written back on lapse — walkSpeedMult has no stacking discipline.
     for (const [f, until] of this.electroJolted) {
       if (!f.active || time >= until) {
         if (f.active) f.walkSpeedMult = 1;
@@ -520,167 +1383,114 @@ export class SlimeKit {
         f.walkSpeedMult = Math.min(f.walkSpeedMult, ELECTRO_JOLT_SPEED_MULT);
       }
     }
-
-    if (!this.arena.hasPerk('player', 'electrolysis')) return;
-    // Nothing to conduct through yet: hold the clock so the first pair arcs immediately.
-    if (this.acidPools.length < 2) { this.electroNextAt = time; return; }
+    if (!this.isAcid('player') || !this.arena.hasPerk('player', 'electrolysis')) return;
+    const splats = this.side('player').splats;
+    if (splats.length < 2) { this.electroNextAt = time; return; }
     if (time < this.electroNextAt) return;
     this.electroNextAt = time + ELECTRO_INTERVAL_MS;
-
     const pair = this.pickConductingPair(null);
     if (!pair) return;
     const surge = Math.random() < ELECTRO_SURGE_CHANCE;
     this.fireElectroArc(pair[0], pair[1], time, surge);
-
-    // A surge does not stop at the far pool — it looks for somewhere else to go.
     if (surge) {
       const onward = this.pickConductingPair(pair[1], pair[0]);
       if (onward) this.fireElectroArc(onward[0], onward[1], time, true);
     }
   }
 
-  /**
-   * A random pool pair within conducting range. `from` fixes one end (the surge's chain step)
-   * and `avoid` keeps that chain from bouncing straight back where it came from.
-   */
-  private pickConductingPair(from: AcidPool | null, avoid?: AcidPool): [AcidPool, AcidPool] | null {
-    const options: [AcidPool, AcidPool][] = [];
-    for (const a of (from ? [from] : this.acidPools)) {
-      for (const b of this.acidPools) {
+  private pickConductingPair(from: Splat | null, avoid?: Splat): [Splat, Splat] | null {
+    const splats = this.side('player').splats;
+    const options: [Splat, Splat][] = [];
+    for (const a of (from ? [from] : splats)) {
+      for (const b of splats) {
         if (b === a || b === avoid) continue;
         const d = Phaser.Math.Distance.Between(a.x, a.y, b.x, b.y);
         if (d > ELECTRO_MAX_SPAN || d < 1) continue;
         options.push([a, b]);
       }
     }
-    if (options.length === 0) return null;
-    return options[Phaser.Math.Between(0, options.length - 1)];
+    return options.length === 0 ? null : options[Phaser.Math.Between(0, options.length - 1)];
   }
 
-  private fireElectroArc(a: AcidPool, b: AcidPool, time: number, surge: boolean): void {
-    this.electroArcs.push({
-      x1: a.x, y1: a.y, x2: b.x, y2: b.y,
-      bornAt: time, surge, seed: Math.random() * Math.PI * 2,
-    });
+  private fireElectroArc(a: Splat, b: Splat, time: number, surge: boolean): void {
+    this.electroArcs.push({ x1: a.x, y1: a.y, x2: b.x, y2: b.y, bornAt: time, surge, seed: Math.random() * Math.PI * 2 });
     const dmg = ELECTRO_DAMAGE * (surge ? ELECTRO_SURGE_MULT : 1);
-    let hit = false;
-    for (const t of this.arena.enemies) {
-      if (!t.active || t.hp <= 0) continue;
+    for (const t of this.targetsOf('player')) {
       if (distToSegment(t.x, t.y, a.x, a.y, b.x, b.y) > ELECTRO_LANE_HALF_W) continue;
       t.takeDamage(dmg, { source: a, sourceX: a.x, sourceY: a.y });
       this.electroJolted.set(t, time + ELECTRO_JOLT_MS);
       this.arena.spawnHitFlash(t.x, t.y, this.pcol(surge ? ACID.glow : ACID.caustic));
-      this.noteAcidHit(t);
-      // Current going through a body throws the liquid off it.
+      this.noteAcidHit('player', t);
       this.pfx.fizz(t.x, t.y, surge ? 8 : 5, 26, 8, VILE_TONES);
-      this.pfx.droplets(t.x, t.y, surge ? 6 : 3, {
-        speed: 130, size: 2.6, life: 380, depth: 8, tones: VILE_TONES,
-      });
-      hit = true;
     }
-    // Both terminals boil whether or not the line found anybody.
     this.pfx.fizz(a.x, a.y, surge ? 7 : 4, a.radius * 0.7, 5, VILE_TONES);
     this.pfx.fizz(b.x, b.y, surge ? 7 : 4, b.radius * 0.7, 5, VILE_TONES);
-    if (surge) {
-      this.arena.showFloatingText((a.x + b.x) / 2, (a.y + b.y) / 2 - 26, '⚡ SURGE', '#ccff88');
-    } else if (hit) {
-      this.arena.showFloatingText((a.x + b.x) / 2, (a.y + b.y) / 2 - 26, '⚡ ARC', '#aaff44');
-    }
+    if (surge) this.announce((a.x + b.x) / 2, (a.y + b.y) / 2 - 26, 'SURGE', ACID.glow, 11);
   }
 
-  private noteAcidHit(t: Fighter): void {
-    if (t.hp <= 0 && !this.meltKillCounted.has(t)) {
-      this.meltKillCounted.add(t);
-      this.arena.recordMasteryStat('melts', 1);
-    }
-  }
+  // ── Murk (divine perk, player) ────────────────────────────────────────
 
-  // ── Murk (divine perk) ────────────────────────────────────────────────
-
-  /** The toad only exists while its summoner is under the surface. */
-  private spawnMurkToad(time: number): void {
-    const player = this.arena.player;
+  private spawnMurkToad(): void {
+    const p = this.arena.player;
+    const time = this.now;
     this.murkToad = {
-      x: player.x, y: player.y,
-      fromX: player.x, fromY: player.y, toX: player.x, toY: player.y,
+      x: p.x, y: p.y, fromX: p.x, fromY: p.y, toX: p.x, toY: p.y,
       hopStart: time, hopEnd: time, restUntil: time + TOAD_REST_MS, facing: 0,
     };
-    this.pfx.fizz(player.x, player.y, 5, 24, 5, VILE_TONES);
+    this.pfx.fizz(p.x, p.y, 5, 24, 5, VILE_TONES);
   }
 
   private despawnMurkToad(): void {
     const toad = this.murkToad;
     if (!toad) return;
     this.murkToad = null;
-    // It doesn't hop away, it melts — back down the hole with whoever called it up.
     this.pfx.splash(toad.x, toad.y, 30, { droplets: 7, fizz: 3, etch: false, depth: 6, tones: VILE_TONES });
   }
 
-  /**
-   * The toad's whole behaviour: rest, pick a spot at random, hop, and dribble a small pool
-   * wherever it lands. It never chases and never attacks — the pools are the threat, and they
-   * are also the acid the burrowed player needs to keep moving through.
-   */
+  /** Rest, pick a spot, hop, dribble acid where it lands. It never chases — the acid is the threat. */
   private updateMurkToad(time: number): void {
     const toad = this.murkToad;
     if (!toad) return;
-    const { width: W, height: H } = this.arena.scene.scale;
+    const b = this.arena.bounds;
     const pad = 40;
-
     if (time < toad.hopEnd) {
-      // Mid-hop: straight line across the ground, with the arc added at draw time.
       const p = (time - toad.hopStart) / Math.max(1, toad.hopEnd - toad.hopStart);
       toad.x = Phaser.Math.Linear(toad.fromX, toad.toX, p);
       toad.y = Phaser.Math.Linear(toad.fromY, toad.toY, p);
       return;
     }
-    // Just landed this frame? The rest timer is set on landing, so an unset one means "land now".
     if (toad.restUntil < toad.hopEnd) {
       toad.x = toad.toX;
       toad.y = toad.toY;
       toad.restUntil = time + TOAD_REST_MS;
-      if (this.acidPools.length < MAX_ACID_POOLS) {
-        this.createAcidPool(toad.x, toad.y, TOAD_PUDDLE_RADIUS, time);
-      }
+      this.addSplat('player', toad.x, toad.y, TOAD_PUDDLE_RADIUS, false);
       return;
     }
     if (time < toad.restUntil) return;
-
-    // Pick somewhere new, biased nowhere in particular — a toad has no plan.
     const ang = Math.random() * Math.PI * 2;
     const dist = TOAD_HOP_DIST * (0.5 + Math.random() * 0.5);
     toad.fromX = toad.x;
     toad.fromY = toad.y;
-    toad.toX = Phaser.Math.Clamp(toad.x + Math.cos(ang) * dist, pad, W - pad);
-    toad.toY = Phaser.Math.Clamp(toad.y + Math.sin(ang) * dist, pad, H - pad);
+    toad.toX = Phaser.Math.Clamp(toad.x + Math.cos(ang) * dist, b.x + pad, b.right - pad);
+    toad.toY = Phaser.Math.Clamp(toad.y + Math.sin(ang) * dist, b.y + pad, b.bottom - pad);
     toad.facing = Math.atan2(toad.toY - toad.fromY, toad.toX - toad.fromX);
     toad.hopStart = time;
     toad.hopEnd = time + TOAD_HOP_MS;
   }
 
-  /**
-   * The toad itself: a squat body that stretches into the hop and squashes on landing, four legs
-   * folded under it, two bulging eyes and a throat that pumps while it sits. Drawn on the world
-   * layer above its own pools.
-   */
+  /** A squat body that stretches into the hop and squashes on landing, bulging eyes, a pumping throat. */
   private drawMurkToad(g: Phaser.GameObjects.Graphics, time: number): void {
     const toad = this.murkToad;
     if (!toad) return;
     const hopping = time < toad.hopEnd;
     const p = hopping ? (time - toad.hopStart) / Math.max(1, toad.hopEnd - toad.hopStart) : 1;
-    // Arc: up and back down over the hop, so the shadow and the body separate mid-flight.
     const lift = hopping ? Math.sin(p * Math.PI) * TOAD_HOP_HEIGHT : 0;
     const bx = toad.x, by = toad.y - lift;
-    // Stretched along the hop, squat when sitting.
     const stretch = hopping ? 1 + Math.sin(p * Math.PI) * 0.25 : 1;
     const throat = 1 + (hopping ? 0 : Math.sin(time / 260) * 0.12);
     const col = this.pcol;
-
-    // Ground shadow — tightest at the ends of the hop, so the arc reads.
     g.fillStyle(col(ACID.rot), 0.3 * (1 - lift / (TOAD_HOP_HEIGHT * 1.6)));
     g.fillEllipse(toad.x, toad.y + 5, 24, 8);
-
-    // Legs: two folded back, two braced forward.
     g.lineStyle(3, col(ACID.bog), 0.9);
     for (const side of [-1, 1]) {
       const knee = hopping ? 0.9 : 0.3;
@@ -694,23 +1504,17 @@ export class SlimeKit {
       g.lineTo(bx + side * 15, by - 2 + knee * 3);
       g.strokePath();
     }
-
-    // Body, then the wetter back over it.
     g.fillStyle(col(ACID.sludge), 0.95);
     g.fillEllipse(bx, by, 26 * stretch, 18 / stretch);
     g.fillStyle(col(ACID.neon), 0.5);
     g.fillEllipse(bx, by - 3, 18 * stretch, 9 / stretch);
-    // Warts.
     g.fillStyle(col(ACID.bog), 0.5);
     for (let i = 0; i < 4; i++) {
       const a = toad.facing + 1.2 + i * 0.9;
       g.fillCircle(bx + Math.cos(a) * 7, by + Math.sin(a) * 4 - 2, 1.6);
     }
-    // Throat, pumping while it sits.
     g.fillStyle(col(ACID.hotRim), 0.5);
     g.fillEllipse(bx, by + 6, 13 * throat, 6 * throat);
-
-    // Eyes: two bulges on top with dark slits, looking where it is going.
     for (const side of [-1, 1]) {
       const ex = bx + Math.cos(toad.facing) * 7 + Math.cos(toad.facing + Math.PI / 2) * side * 5;
       const ey = by + Math.sin(toad.facing) * 4 + Math.sin(toad.facing + Math.PI / 2) * side * 5 - 7;
@@ -721,444 +1525,140 @@ export class SlimeKit {
     }
   }
 
-  /**
-   * Ruin Mastery — Second Skin. Being under the acid is a form, not a buff: the body is gone,
-   * it is invincible, and the whole moveset while burrowed is a different one. `unburrow` is the
-   * kit's own surfacing, which is also the only thing that hands back the invincibility safely.
-   */
-  revertForms(f: Fighter): string[] {
-    if (f !== this.arena.player || !this.burrowed) return [];
-    this.unburrow('🐍 Dragged up!');
-    return ['Burrow'];
-  }
+  // ── Visuals ───────────────────────────────────────────────────────────
 
-  private unburrow(reason: string): void {
-    this.burrowed = false;
-    this.despawnMurkToad();
-    const player = this.arena.player;
-    player.isInvincible = false;
-    player.setAlpha(1);
-    this.arena.showFloatingText(player.x, player.y - 30, reason, '#99ff66');
-    // Mastery — Acid Walker: footprints dropped shortly after surfacing are boosted.
-    this.lastUnburrowAt = this.arena.scene.time.now;
-
-    // Surfacing: the mound bursts open and throws acid clear.
-    this.pfx.splash(player.x, player.y, 56, { droplets: 12, fizz: 4, etch: false, depth: 6, tones: VILE_TONES });
-    this.playerAvatar?.play('flex');
-
-    // Rattling Strike (R+): un-burrowing detonates a red AOE and marks hit enemies as dripping.
-    if (this.arena.hasUpgrade('r')) {
-      const x = player.x, y = player.y, time = this.arena.scene.time.now;
-      // The one warm effect in the element, so it can never be mistaken for a normal surface.
-      this.pfx.splash(x, y, RATTLING_RADIUS, {
-        droplets: 18, fizz: 4, depth: 6, duration: 480, tones: STING_TONES,
-      });
-      this.arena.scene.cameras.main.shake(180, 0.005);
-      let hitAny = false;
-      for (const t of this.arena.enemies) {
-        if (!t.active || t.hp <= 0) continue;
-        if (Phaser.Math.Distance.Between(x, y, t.x, t.y) <= RATTLING_RADIUS) {
-          t.takeDamage(RATTLING_DAMAGE);
-          this.arena.spawnHitFlash(t.x, t.y, this.pcol(ACID.sting));
-          this.pfx.splash(t.x, t.y, 34, { droplets: 6, fizz: 0, etch: false, depth: 8, tones: STING_TONES });
-          this.drippingEnemies.set(t, { until: time + RATTLING_DRIP_MS, nextDripAt: time });
-          // Mastery — "attack enemies by un-burrowing next to them".
-          this.arena.recordMasteryStat('burrowAttacks', 1);
-          this.noteAcidHit(t);
-          hitAny = true;
-        }
-      }
-      if (hitAny) this.arena.showFloatingText(x, y - 30, '🐍 Rattling Strike!', '#ff6666');
-    }
-  }
-
-  // ── Meltdown (F+) ─────────────────────────────────────────────────────
-
-  private snapshotBuffs(target: Fighter): BuffSnapshotEntry[] {
-    const out: BuffSnapshotEntry[] = [];
-    for (const f of MELT_BUFF_FIELDS) {
-      const v = target[f.key];
-      const isBuffed = f.better === 'higher' ? v > f.neutral : v < f.neutral;
-      if (isBuffed) out.push({ key: f.key, value: v, label: f.label(v) });
-    }
-    return out;
-  }
-
-  private startMelt(target: Fighter, time: number): void {
-    const buffs = this.snapshotBuffs(target);
-    this.meltStatuses.set(target, { until: time + MELT_DURATION_MS, nextDripAt: time + MELT_TICK_MS, buffs, color: target.element.color });
-    this.arena.showFloatingText(target.x, target.y - 40, '🫠 Melting!', '#33cc33');
-    // A running tell on the victim for the whole melt, not just on the tick frames.
-    if (!this.meltAuras.has(target)) {
-      this.meltAuras.set(target, new AcidAura(this.arena.scene, this.pcol, 'melt', VILE_TONES, 24, 4));
-    }
-    this.pfx.splash(target.x, target.y, 40, { droplets: 8, fizz: 3, etch: false, depth: 8, tones: VILE_TONES });
-  }
-
-  private spawnMeltPuddle(x: number, y: number, buffs: BuffSnapshotEntry[], color: number): void {
-    this.meltPuddles.push({
-      x, y, radius: MELT_PUDDLE_RADIUS, buffs, color, seed: Math.random() * Math.PI * 2,
-    });
-  }
-
-  private updateMeltStatuses(time: number): void {
-    for (const [target, status] of this.meltStatuses) {
-      if (!target.active || target.hp <= 0) {
-        this.meltStatuses.delete(target);
-        continue;
-      }
-      // Guard with `nextDripAt <= until` (not just `time >= until` below) so the final
-      // tick at the duration boundary still fires instead of being cut off by expiry.
-      if (time >= status.nextDripAt && status.nextDripAt <= status.until) {
-        status.nextDripAt += MELT_TICK_MS;
-        const hpLoss = Math.max(1, Math.round(target.hp * MELT_HP_LOSS_PCT));
-        const maxHpLoss = Math.max(1, Math.round(target.maxHp * MELT_HP_LOSS_PCT));
-        target.takeDamage(hpLoss);
-        target.reduceMaxHp(maxHpLoss);
-        target.sizeMult = Math.max(MELT_MIN_SIZE_MULT, target.sizeMult * (1 - MELT_SIZE_LOSS_PCT));
-        target.applySizeMult();
-        this.arena.spawnHitFlash(target.x, target.y, status.color);
-        this.spawnMeltPuddle(target.x, target.y, status.buffs, status.color);
-      }
-      if (time >= status.until) this.meltStatuses.delete(target);
-    }
-  }
-
-  private grantMeltBuffs(recipient: Fighter, buffs: BuffSnapshotEntry[], time: number): void {
-    this.revertMeltBuffs(recipient);
-    if (buffs.length === 0) {
-      this.arena.showFloatingText(recipient.x, recipient.y - 40, 'Empty puddle...', '#888888');
-      return;
-    }
-    const labels: string[] = [];
-    for (const b of buffs) {
-      this.activeMeltBuffs.push({ key: b.key, revertValue: recipient[b.key] });
-      recipient[b.key] = b.value;
-      labels.push(b.label);
-    }
-    this.meltBuffExpireAt = time + MELT_BUFF_GRANT_MS;
-    this.arena.showFloatingText(recipient.x, recipient.y - 44, `🫠 ${labels.join(', ')} (8s)`, '#33ff99');
-  }
-
-  private revertMeltBuffs(recipient: Fighter): void {
-    for (const b of this.activeMeltBuffs) recipient[b.key] = b.revertValue;
-    this.activeMeltBuffs = [];
-  }
-
-  private updateMeltPuddlePickup(time: number): void {
-    const player = this.arena.player;
-    for (let i = this.meltPuddles.length - 1; i >= 0; i--) {
-      const mp = this.meltPuddles[i];
-      if (Phaser.Math.Distance.Between(player.x, player.y, mp.x, mp.y) <= mp.radius) {
-        this.grantMeltBuffs(player, mp.buffs, time);
-        // Absorbing a puddle: it collapses inward into the player rather than blinking out.
-        this.pfx.gather(mp.x, mp.y, mp.radius * 1.6, 380,
-          () => (player.active ? { x: player.x, y: player.y } : null), 5, VILE_TONES);
-        this.pfx.ring(mp.x, mp.y, mp.radius, 6, mp.color, 340, 3, 5);
-        this.meltPuddles.splice(i, 1);
-      }
-    }
-    if (this.activeMeltBuffs.length > 0 && time >= this.meltBuffExpireAt) {
-      this.revertMeltBuffs(player);
-    }
-  }
-
-  private updateDrippingEnemies(time: number): void {
-    for (const [target, status] of this.drippingEnemies) {
-      if (!target.active || target.hp <= 0 || time >= status.until) {
-        this.drippingEnemies.delete(target);
-        continue;
-      }
-      if (time >= status.nextDripAt) {
-        status.nextDripAt = time + RATTLING_DRIP_INTERVAL_MS;
-        if (this.acidPools.length < MAX_ACID_POOLS) this.createAcidPool(target.x, target.y, RATTLING_DRIP_POOL_RADIUS, time);
-      }
-    }
-  }
-
-  private fireWhipBarrage(count: number): void {
-    const { player, scene } = this.arena;
-    const ptr = scene.input.activePointer;
-    const mouseX = ptr.worldX;
-    const mouseY = ptr.worldY;
-    const baseAngle = Math.atan2(mouseY - player.y, mouseX - player.x);
-    this.playerAvatar?.play('punch', baseAngle);
-    for (let i = 0; i < count; i++) {
-      scene.time.delayedCall(i * WHIP_STAGGER_MS, () => {
-        if (!player.active || player.hp <= 0) return;
-        const jitter = Phaser.Math.DegToRad(Phaser.Math.FloatBetween(-WHIP_SPREAD_DEG, WHIP_SPREAD_DEG));
-        const ang = baseAngle + jitter;
-        const spawnDist = 30;
-        // A lash every few shots, not every one: fifteen muzzle sprays in 375ms is a wall of
-        // white, and the barrage reads better as an irregular spit.
-        if (i % 3 === 0) this.pfx.muzzleSpray(player.x, player.y, ang, 0.85, 7, VILE_TONES);
-        const proj = new Projectile(
-          scene,
-          player.x + Math.cos(ang) * spawnDist,
-          player.y + Math.sin(ang) * spawnDist,
-          'proj-acid-whip',
-          WHIP_DAMAGE,
-          true,
-        );
-        this.arena.projectiles.add(proj);
-        proj.launch(Math.cos(ang) * WHIP_SPEED, Math.sin(ang) * WHIP_SPEED);
-        proj.setRotation(ang);
-      });
-    }
-  }
-
-  private spawnAcidPools(time: number): void {
-    const { player, scene } = this.arena;
-    const ptr = scene.input.activePointer;
-    const ang = Math.atan2(ptr.worldY - player.y, ptr.worldX - player.x);
-    this.playerAvatar?.play('sweep', ang);
-    this.pfx.muzzleSpray(player.x, player.y, ang, 1.6, 7, VILE_TONES);
-    for (const dist of POOL_DISTANCES) {
-      const x = player.x + Math.cos(ang) * dist;
-      const y = player.y + Math.sin(ang) * dist;
-      this.createAcidPool(x, y, POOL_RADIUS, time);
-      // Each pool is thrown out there, so the spray reads as one arcing stream of acid rather
-      // than three circles appearing at once.
-      this.pfx.droplets(player.x, player.y, 5, {
-        speed: dist * 2.2, angle: ang, spread: 0.22, size: 4.4,
-        life: 340, fall: 20, depth: 6, tones: VILE_TONES,
-      });
-    }
-    this.arena.showFloatingText(player.x, player.y - 30, '🧪 Vile Spray!', '#66ff33');
-  }
-
-  private fireBurst(): void {
-    const { player, scene } = this.arena;
-    const ptr = scene.input.activePointer;
-    const coverage = this.computeAcidCoveragePct();
-    const stage = PURGE_STAGES.find(s => coverage < s.maxCoverage) ?? PURGE_STAGES[PURGE_STAGES.length - 1];
-    const stageIndex = PURGE_STAGES.indexOf(stage) + 1;
-    const dx = ptr.worldX - player.x;
-    const dy = ptr.worldY - player.y;
-    const len = Math.sqrt(dx * dx + dy * dy) || 1;
-    const spawnDist = 30;
-    const proj = new Projectile(
-      scene,
-      player.x + (dx / len) * spawnDist,
-      player.y + (dy / len) * spawnDist,
-      'proj-purge',
-      stage.damage,
-      true,
-    );
-    proj.setScale(stage.sizeSpeedMult);
-    (proj as unknown as { purgeDurationMs: number }).purgeDurationMs = stage.purgeMs;
-    (proj as unknown as { purgeStage: number }).purgeStage = stageIndex;
-    this.arena.projectiles.add(proj);
-    const speed = PURGE_BASE_SPEED * stage.sizeSpeedMult;
-    proj.launch((dx / len) * speed, (dy / len) * speed);
-    this.arena.showFloatingText(player.x, player.y - 30, `☠️ Purge (Stage ${stageIndex})`, '#66ff33');
-    // The stage is the whole point of the ability, so the throw grows with it rather than the
-    // projectile simply being scaled: a bigger spray, a wider front, more thrown acid.
-    const ang = Math.atan2(dy, dx);
-    this.playerAvatar?.play('slam', ang);
-    this.pfx.muzzleSpray(player.x, player.y, ang, 1 + stageIndex * 0.4, 7, VILE_TONES);
-    this.pfx.ring(player.x, player.y, 10, 30 + stageIndex * 16, ACID.neon, 300 + stageIndex * 90, 3, 5);
-    this.pfx.droplets(player.x, player.y, 4 + stageIndex * 4, {
-      speed: 200, angle: ang, spread: 0.5, size: 3.4 + stageIndex,
-      life: 420, depth: 6, tones: VILE_TONES,
-    });
-  }
-
-  // ── update ────────────────────────────────────────────────────────────
-
-  update(time: number, delta: number): void {
-    const { player, scene } = this.arena;
-
-    // Acid pools: first-touch burst, then permanent cool-state tick damage
-    for (const pool of this.acidPools) {
-      if (pool.state === 'hot') {
-        for (const t of this.arena.enemies) {
-          if (!t.active || t.hp <= 0) continue;
-          if (Phaser.Math.Distance.Between(t.x, t.y, pool.x, pool.y) <= pool.radius) {
-            t.takeDamage(POOL_HOT_DAMAGE, { source: pool, sourceX: pool.x, sourceY: pool.y });
-            this.arena.spawnHitFlash(t.x, t.y, POOL_HOT_COLOR);
-            this.arena.showFloatingText(t.x, t.y - 20, String(POOL_HOT_DAMAGE), '#66ff33');
-            this.noteAcidHit(t);
-            pool.state = 'cool';
-            pool.nextTickAt = time + POOL_COOL_TICK_MS;
-            // The pool spends its bite: it flares, throws acid up the victim, and goes dark.
-            this.pfx.splash(t.x, t.y, 40, { droplets: 8, fizz: 3, etch: false, depth: 8, tones: VILE_TONES });
-            this.pfx.fizz(pool.x, pool.y, Math.max(3, Math.round(pool.radius / 9)), pool.radius, 4, VILE_TONES);
-            break;
-          }
-        }
-      } else if (time >= pool.nextTickAt) {
-        pool.nextTickAt = time + POOL_COOL_TICK_MS;
-        for (const t of this.arena.enemies) {
-          if (!t.active || t.hp <= 0) continue;
-          if (Phaser.Math.Distance.Between(t.x, t.y, pool.x, pool.y) <= pool.radius) {
-            t.takeDamage(POOL_COOL_TICK_DAMAGE, { source: pool, sourceX: pool.x, sourceY: pool.y });
-            this.arena.spawnHitFlash(t.x, t.y, POOL_COOL_COLOR);
-            this.noteAcidHit(t);
-            // A quiet tick still burns — a couple of drops thrown up off the victim's feet.
-            this.pfx.droplets(t.x, t.y + 8, 3, {
-              speed: 60, angle: -Math.PI / 2, spread: 1, size: 2.4, life: 380, depth: 5, tones: VILE_TONES,
-            });
-          }
-        }
-      }
-    }
-
-    // Spray Spread (E+): each pool has a periodic 20% chance to bud off a smaller pool
-    if (this.arena.hasUpgrade('e')) {
-      for (const pool of this.acidPools.slice()) {
-        if (time < pool.nextSpreadCheckAt) continue;
-        pool.nextSpreadCheckAt = time + SPREAD_CHECK_MS;
-        if (this.acidPools.length >= MAX_ACID_POOLS || Math.random() >= SPREAD_CHANCE) continue;
-        const ang = Math.random() * Math.PI * 2;
-        const dist = Phaser.Math.Between(SPREAD_OFFSET_MIN, SPREAD_OFFSET_MAX);
-        const spreadRadius = Math.max(SPREAD_MIN_RADIUS, pool.radius * SPREAD_RADIUS_MULT);
-        this.createAcidPool(pool.x + Math.cos(ang) * dist, pool.y + Math.sin(ang) * dist, spreadRadius, time);
-      }
-    }
-
-    // Electrolysis: run before the burrow check, so a jolt landing this frame is already on
-    // the books when anything downstream reads walkSpeedMult.
-    this.updateElectrolysis(time);
-
-    // Murk: the toad hops on its own clock, before the auto-surface check below — the pool it
-    // just dribbled can be the one that keeps a burrowed player under.
-    this.updateMurkToad(time);
-
-    // Auto-unburrow if the player has drifted out of every acid pool
-    if (this.burrowed) {
-      if (!this.isPointInAcid(player.x, player.y)) {
-        this.unburrow('🐍 Out of acid — surfaced!');
-      } else {
-        player.isInvincible = true;
-      }
-    }
-
-    // Acid Apocalypse: tick damage to enemies standing in any pool, plus falling-rain flair
-    if (time < this.acidRainActiveUntil) {
-      this.acidRainTickAccum += delta;
-      if (this.acidRainTickAccum >= RAIN_TICK_MS) {
-        this.acidRainTickAccum -= RAIN_TICK_MS;
-        for (const pool of this.acidPools) {
-          for (const t of this.arena.enemies) {
-            if (!t.active || t.hp <= 0) continue;
-            if (Phaser.Math.Distance.Between(t.x, t.y, pool.x, pool.y) <= pool.radius) {
-              t.takeDamage(RAIN_TICK_DAMAGE, { source: pool, sourceX: pool.x, sourceY: pool.y });
-              this.arena.spawnHitFlash(t.x, t.y, this.pcol(ACID.neon));
-              this.noteAcidHit(t);
-              this.pfx.splash(t.x, t.y, 30, { droplets: 5, fizz: 0, etch: false, depth: 8, tones: VILE_TONES });
-            }
-          }
-        }
-      }
-      this.acidRainDropAccum += delta;
-      if (this.acidRainDropAccum >= RAIN_DROP_INTERVAL_MS && this.acidPools.length > 0) {
-        this.acidRainDropAccum -= RAIN_DROP_INTERVAL_MS;
-        // Two or three drops per beat, each a real fall that breaks where it lands.
-        for (let i = 0; i < 3; i++) {
-          const pool = this.acidPools[Phaser.Math.Between(0, this.acidPools.length - 1)];
-          const dx = Phaser.Math.Between(-pool.radius, pool.radius);
-          this.pfx.rainDrop(pool.x + dx, pool.y + Phaser.Math.Between(-8, 8), 140, 6, VILE_TONES);
-        }
-      }
-
-      // Acid Flood (Q+): puddles slowly expand while the rain is active
-      if (this.arena.hasUpgrade('q')) {
-        const growth = FLOOD_GROWTH_PER_SEC * (delta / 1000);
-        for (const pool of this.acidPools) {
-          const cap = pool.baseRadius * FLOOD_MAX_RADIUS_MULT;
-          if (pool.radius >= cap) continue;
-          // drawWorld reads `radius` every frame, so growing the pool is the whole update.
-          pool.radius = Math.min(cap, pool.radius + growth);
-        }
-      }
-    }
-
-    // Rattling Strike (R+) drip status
-    if (this.drippingEnemies.size > 0) this.updateDrippingEnemies(time);
-
-    // Meltdown (F+): melt ticks, drip puddles, and player pickup
-    if (this.meltStatuses.size > 0) this.updateMeltStatuses(time);
-    if (this.meltPuddles.length > 0 || this.activeMeltBuffs.length > 0) this.updateMeltPuddlePickup(time);
-
-    // ── Mastery — best-coverage stat (only written on a fresh session high) ──
-    const covPct = this.computeAcidCoveragePct() * 100;
-    if (covPct > this.sessionBestCoverage) {
-      this.sessionBestCoverage = covPct;
-      this.arena.recordMasteryBest('acidCoverageBestPct', covPct);
-    }
-
-    // ── Mastery — Acid Walker: leave footprints for 5s after leaving acid ──
-    if (this.arena.masteryActive) {
-      const inAcid = this.isPointInAcid(player.x, player.y);
-      if (this.wasInAcid && !inAcid) {
-        this.footprintTrailUntil = time + FOOTPRINT_TRAIL_MS;
-        this.lastFootprintX = player.x;
-        this.lastFootprintY = player.y;
-      }
-      this.wasInAcid = inAcid;
-      if (!inAcid && time < this.footprintTrailUntil) {
-        if (Phaser.Math.Distance.Between(player.x, player.y, this.lastFootprintX, this.lastFootprintY) >= FOOTPRINT_SPACING) {
-          this.lastFootprintX = player.x;
-          this.lastFootprintY = player.y;
-          this.spawnFootprint(player.x, player.y, time, time - this.lastUnburrowAt <= FOOTPRINT_BOOST_MS);
-        }
-      }
-    }
-    if (this.acidFootprints.length > 0) this.updateFootprints(time);
-
-    this.updateVisuals(time, delta);
-  }
-
-  /** Online: opponent is acid — advance only the visuals that can appear on our screen. */
-  updateNpc(time: number, delta: number): void {
-    this.updateVisuals(time, delta);
-  }
-
-  /**
-   * Everything that must run for whichever side is acid: both rigs, the persistent tells, the
-   * trails coming off live shots, one repaint of every pool, and the opponent's cast gestures.
-   */
   private updateVisuals(time: number, delta: number): void {
+    const { scene } = this.arena;
     this.updateAvatars(delta);
     this.updateAuras(delta, time);
     this.updateProjectileTrails(delta);
-    this.drawWorld(time);
-    const castId = this.arena.npcCastId;
-    if (castId !== this.lastNpcCastId) {
-      this.lastNpcCastId = castId;
-      this.handleNpcCastId(castId);
+
+    // The floors — only repainted when their grid moved.
+    for (const owner of (['npc', 'player'] as const)) {
+      const s = this.side(owner);
+      if (!s.grid) continue;
+      if (!this.floorGfx[owner]) {
+        this.floorGfx[owner] = scene.add.graphics().setDepth(owner === 'player' ? 2.95 : 2.9);
+        s.paintedVersion = -1;
+      }
+      if (s.paintedVersion !== s.grid.version) {
+        s.paintedVersion = s.grid.version;
+        drawAcidFloor(this.floorGfx[owner]!, this.col(owner), s.grid, this.tones(owner));
+      }
+      // A rotating handful of bubbles keeps the floor alive without repainting it.
+      s.bubbleAccum += delta;
+      if (s.bubbleAccum >= 70 && s.grid.count > 0) {
+        s.bubbleAccum = 0;
+        const p = s.grid.randomAcid();
+        if (p) s.bubbles.push({ x: p.x + Phaser.Math.Between(-5, 5), y: p.y + Phaser.Math.Between(-5, 5), born: time, hot: s.grid.at(p.x, p.y) === CellState.Hot });
+      }
+      s.bubbles = s.bubbles.filter((b) => time - b.born < 900);
+    }
+
+    if (!this.overlayGfx) this.overlayGfx = scene.add.graphics().setDepth(3.1);
+    const g = this.overlayGfx;
+    const t = time / 1000;
+    g.clear();
+    for (const owner of BOTH) drawAcidBubbles(g, this.col(owner), this.side(owner).bubbles, time, this.tones(owner));
+    for (const fp of this.footprints) {
+      const a = Phaser.Math.Clamp((fp.expiresAt - time) / 600, 0, 1);
+      AcidFx.drawPool(g, this.col(fp.owner), fp.x, fp.y, fp.radius, t, fp.seed, fp.boosted, a * 0.9);
+    }
+    for (const mp of this.meltPuddles) {
+      AcidFx.drawMeltPuddle(g, this.pcol, mp.x, mp.y, mp.radius, mp.color, t, mp.seed, mp.buffs.length);
+    }
+    for (const arc of this.electroArcs) {
+      const life = Phaser.Math.Clamp(1 - (time - arc.bornAt) / ELECTRO_ARC_MS, 0, 1);
+      AcidFx.drawElectroArc(g, this.pcol, arc.x1, arc.y1, arc.x2, arc.y2, t, arc.seed, arc.surge, life);
+    }
+    this.drawMurkToad(g, time);
+    for (const f of this.allFighters()) {
+      if (!f.active || f.hp <= 0 || f.toxinStacks < 1) continue;
+      const by = this.poisonerOf(f);
+      drawToxinMark(g, this.col(by), f.x, f.y, f.toxinStacks, t, this.tones(by), f.forceInvisible ? 0 : f.alpha);
+    }
+
+    // Tails and sloughed skins.
+    if (!this.tailGfx) this.tailGfx = scene.add.graphics().setDepth(4.5);
+    const tg = this.tailGfx;
+    tg.clear();
+    for (const h of this.shedHusks) {
+      drawVenomTail(tg, this.col(h.owner), h.knots, h.width, t, this.tones(h.owner), 1 - (time - h.bornAt) / SHED_HUSK_MS, true);
+    }
+    for (const owner of BOTH) {
+      const s = this.side(owner);
+      const f = this.fighter(owner);
+      if (!this.isAcid(owner) || !this.alive(f) || s.tail.length < 2 || s.burrowed) continue;
+      // Mid-dodge the tail is gone from the hitbox, and it reads that way: a faint after-image.
+      const alpha = (f.forceInvisible ? 0 : f.alpha) * (this.dodging(owner) ? 0.25 : 1);
+      drawVenomTail(tg, this.col(owner), s.tail, TAIL_WIDTH, t, this.tones(owner), alpha);
+    }
+
+    this.drawGauge(t);
+  }
+
+  /** The acidification gauge, top centre — the player's own, and the opponent's under it. */
+  private drawGauge(t: number): void {
+    const { scene } = this.arena;
+    const showing = BOTH.filter((o) => this.isAcid(o));
+    if (showing.length === 0) {
+      this.barGfx?.clear();
+      for (const o of BOTH) this.barText[o]?.setVisible(false);
+      return;
+    }
+    if (!this.barGfx) this.barGfx = scene.add.graphics().setDepth(20).setScrollFactor(0);
+    const g = this.barGfx;
+    g.clear();
+    const W = scene.scale.width;
+    const bw = 220, bh = 8;
+    let y = 12;
+    for (const owner of BOTH) {
+      const txt = this.barText[owner];
+      if (!this.isAcid(owner)) { txt?.setVisible(false); continue; }
+      const s = this.side(owner);
+      const cov = this.coverage(owner);
+      const x = W / 2 - bw / 2;
+      drawAcidBar(g, this.col(owner), x, y, bw, bh, cov, t, this.tones(owner), SHED_MILESTONES, s.shedReached);
+      if (!this.barText[owner]) {
+        this.barText[owner] = scene.add.text(0, 0, '', {
+          fontSize: '10px', fontFamily: 'Arial Black', color: '#ccff88', stroke: '#0a1406', strokeThickness: 3,
+        }).setOrigin(0, 0.5).setDepth(20).setScrollFactor(0);
+      }
+      const shed = this.shedSlot(owner) ? ` · SHED ${this.shedCharges(owner)}` : '';
+      const who = owner === 'player' ? 'ACID' : 'FOE ACID';
+      this.barText[owner]!.setVisible(true).setPosition(x + bw + 10, y + bh / 2)
+        .setColor(owner === 'player' ? '#ccff88' : '#eeff99')
+        .setText(`${who} ${Math.floor(cov * 100)}%${shed}`);
+      y += 20;
     }
   }
 
-  /**
-   * Builds (on first frame) and drives the dripping rig for whichever fighters are acid. The
-   * player faces the cursor; the NPC faces whoever it is fighting. Burrowed, the rig sinks with
-   * the fighter's own alpha, and the burrow aura closes over the top of it.
-   */
+  /** The dripping rig for whichever fighters are Venom. The player faces the cursor; the npc its target. */
   private updateAvatars(delta: number): void {
-    const { player, npc, scene, elementId, npcElementId } = this.arena;
-
-    if (elementId === 'slime' && player?.active) {
+    const { player, npc, scene } = this.arena;
+    if (this.isAcid('player') && player?.active) {
       if (!this.playerAvatar) this.playerAvatar = new AcidAvatar(scene, this.pcol, VILE_TONES);
-      const aimX = this.aimX || player.x + 1;
-      const aimY = this.aimY || player.y;
-      this.playerAvatar.setFacing(Math.atan2(aimY - player.y, aimX - player.x));
-      const breaking = scene.time.now < this.breakdownUntil;
-      this.playerAvatar.setIntensity(breaking ? 1.5 : this.acidRainActiveUntil > scene.time.now ? 1.25 : 1);
+      const s = this.side('player');
+      const aimX = s.aimX || player.x + 1;
+      const aimY = s.aimY || player.y;
+      const facing = Math.atan2(aimY - player.y, aimX - player.x);
+      this.playerAvatar.setFacing(facing);
+      this.playerAvatar.setIntensity(this.now < s.rainUntil ? 1.25 : 1 + s.shedSpeed);
       this.playerAvatar.setMastered(this.arena.masteryActive);
-      // Burrowed, the character works low under the surface rather than standing in it.
-      this.playerAvatar.setHold(this.burrowed ? 'brace' : null,
-        Math.atan2(aimY - player.y, aimX - player.x));
+      this.playerAvatar.setHold(s.burrowed ? 'brace' : null, facing);
       this.playerAvatar.update(delta, player.x, player.y, player.forceInvisible ? 0 : player.alpha);
     } else if (this.playerAvatar) {
       this.playerAvatar.destroy();
       this.playerAvatar = null;
     }
-
-    if (npcElementId === 'slime' && npc?.active) {
+    if (this.isAcid('npc') && npc?.active) {
       if (!this.npcAvatar) this.npcAvatar = new AcidAvatar(scene, this.ncol, NPC_TONES);
-      this.npcAvatar.setFacing(Math.atan2(player.y - npc.y, player.x - npc.x));
+      const s = this.side('npc');
+      const facing = Math.atan2(player.y - npc.y, player.x - npc.x);
+      this.npcAvatar.setFacing(facing);
+      this.npcAvatar.setIntensity(this.now < s.rainUntil ? 1.25 : 1 + s.shedSpeed);
+      this.npcAvatar.setMastered(this.arena.npcMasteryActive);
+      this.npcAvatar.setHold(s.burrowed ? 'brace' : null, facing);
       this.npcAvatar.update(delta, npc.x, npc.y, npc.forceInvisible ? 0 : npc.alpha);
     } else if (this.npcAvatar) {
       this.npcAvatar.destroy();
@@ -1166,27 +1666,19 @@ export class SlimeKit {
     }
   }
 
-  /** Burrow and Breakdown on the caster; melt and purge tells on whoever is carrying them. */
   private updateAuras(delta: number, time: number): void {
-    const { player, scene } = this.arena;
-    const alive = player?.active ? (player.forceInvisible ? 0 : 1) : 0;
-
-    if (this.burrowed && alive) {
-      if (!this.burrowAura) this.burrowAura = new AcidAura(scene, this.pcol, 'burrow', VILE_TONES, 30, 4);
-      this.burrowAura.update(delta, player.x, player.y, 1);
-    } else if (this.burrowAura) {
-      this.burrowAura.destroy();
-      this.burrowAura = null;
+    const { scene } = this.arena;
+    for (const owner of BOTH) {
+      const f = this.fighter(owner);
+      const visible = f?.active && !f.forceInvisible;
+      if (this.side(owner).burrowed && visible) {
+        if (!this.burrowAuras[owner]) this.burrowAuras[owner] = new AcidAura(scene, this.col(owner), 'burrow', this.tones(owner), 30, 4);
+        this.burrowAuras[owner]!.update(delta, f.x, f.y, 1);
+      } else if (this.burrowAuras[owner]) {
+        this.burrowAuras[owner]!.destroy();
+        this.burrowAuras[owner] = null;
+      }
     }
-
-    if (time < this.breakdownUntil && alive) {
-      if (!this.breakdownAura) this.breakdownAura = new AcidAura(scene, this.pcol, 'breakdown', VILE_TONES, 34, 4);
-      this.breakdownAura.update(delta, player.x, player.y, 1);
-    } else if (this.breakdownAura) {
-      this.breakdownAura.destroy();
-      this.breakdownAura = null;
-    }
-
     for (const [victim, aura] of this.meltAuras) {
       if (!this.meltStatuses.has(victim) || !victim.active || victim.hp <= 0) {
         aura.destroy();
@@ -1205,265 +1697,121 @@ export class SlimeKit {
     }
   }
 
-  /**
-   * Live lashes and Purge balls shed droplets out of their *back*, which is what makes a bead of
-   * green read as something travelling rather than sliding. Scanned off the shared projectile
-   * group on an accumulator so a 200-lash Breakdown stays cheap.
-   */
+  /** Live lashes shed droplets out of their back — what makes a bead of green read as travelling. */
   private updateProjectileTrails(delta: number): void {
     this.trailAccum += delta;
     if (this.trailAccum < TRAIL_INTERVAL_MS) return;
     this.trailAccum = 0;
     for (const child of this.arena.projectiles.getChildren()) {
       const proj = child as Projectile;
-      const key = proj.texture?.key;
-      if (!proj.active || (key !== 'proj-acid-whip' && key !== 'proj-purge')) continue;
+      if (!proj.active || proj.texture?.key !== 'proj-acid-whip' || Math.random() > 0.3) continue;
       const body = proj.body as Phaser.Physics.Arcade.Body | null;
       if (!body) continue;
-      // Whip lashes are cheap and numerous; only a fraction of them trail on any given tick.
-      if (key === 'proj-acid-whip' && Math.random() > 0.3) continue;
       const back = Math.atan2(-body.velocity.y, -body.velocity.x);
-      const fx = proj.isFromPlayer ? this.pfx : this.nfx;
-      const tones = proj.isFromPlayer ? VILE_TONES : NPC_TONES;
-      fx.droplets(proj.x, proj.y, key === 'proj-purge' ? 3 : 1, {
-        speed: 50, spread: 0.45, angle: back,
-        size: key === 'proj-purge' ? 3.4 : 2.2,
-        life: 320, fall: 22, depth: 5, tones,
+      const owner: Owner = proj.isFromPlayer ? 'player' : 'npc';
+      this.fx(owner).droplets(proj.x, proj.y, 1, {
+        speed: 50, spread: 0.45, angle: back, size: 2.2, life: 320, fall: 22, depth: 5, tones: this.tones(owner),
       });
-    }
-  }
-
-  /** Mirrors the opponent's casts onto their rig. */
-  private handleNpcCastId(id: string | null): void {
-    if (!id) return;
-    const gesture = NPC_GESTURES[id];
-    if (!gesture) return;
-    const { npc, player } = this.arena;
-    if (!npc?.active) return;
-    const ang = Math.atan2(player.y - npc.y, player.x - npc.x);
-    this.npcAvatar?.play(gesture, ang);
-    if (id === 'poison-whip' || id === 'purge') {
-      this.nfx.muzzleSpray(npc.x, npc.y, ang, id === 'purge' ? 1.4 : 0.9, 7, NPC_TONES);
-    }
-  }
-
-  /**
-   * One repaint of every pool, footprint and melt puddle the kit owns. All of them creep and
-   * bubble, so none of them can be a sprite with a tween on it.
-   */
-  private drawWorld(time: number): void {
-    const g = this.world();
-    const t = time / 1000;
-    g.clear();
-
-    for (const pool of this.acidPools) {
-      AcidFx.drawPool(g, this.pcol, pool.x, pool.y, pool.radius, t, pool.seed, pool.state === 'hot');
-    }
-    for (const fp of this.acidFootprints) {
-      // Prints fade out over their last half-second rather than popping.
-      const a = Phaser.Math.Clamp((fp.expiresAt - time) / 600, 0, 1);
-      AcidFx.drawPool(g, this.pcol, fp.x, fp.y, fp.radius, t, fp.seed, fp.boosted, a * 0.9);
-    }
-    for (const mp of this.meltPuddles) {
-      AcidFx.drawMeltPuddle(g, this.pcol, mp.x, mp.y, mp.radius, mp.color, t, mp.seed, mp.buffs.length);
-    }
-    // Over the pools it is jumping between, under the toad.
-    for (const arc of this.electroArcs) {
-      const life = Phaser.Math.Clamp(1 - (time - arc.bornAt) / ELECTRO_ARC_MS, 0, 1);
-      AcidFx.drawElectroArc(g, this.pcol, arc.x1, arc.y1, arc.x2, arc.y2, t, arc.seed, arc.surge, life);
-    }
-    // Above its own pools, so the toad never disappears into the one it just made.
-    this.drawMurkToad(g, time);
-  }
-
-  private spawnFootprint(x: number, y: number, time: number, boosted: boolean): void {
-    const radius = boosted ? FOOTPRINT_BOOST_RADIUS : FOOTPRINT_RADIUS;
-    this.acidFootprints.push({
-      x, y, radius,
-      damage: boosted ? FOOTPRINT_BOOST_DAMAGE : FOOTPRINT_DAMAGE,
-      expiresAt: time + FOOTPRINT_LIFETIME_MS,
-      nextTickAt: time + FOOTPRINT_TICK_MS,
-      boosted, seed: Math.random() * Math.PI * 2,
-    });
-    // A boosted print is a step out of a burst, so it lands with its own small splash.
-    if (boosted) this.pfx.fizz(x, y, 3, radius, 4, VILE_TONES);
-  }
-
-  private updateFootprints(time: number): void {
-    for (let i = this.acidFootprints.length - 1; i >= 0; i--) {
-      const fp = this.acidFootprints[i];
-      if (time >= fp.expiresAt) { this.acidFootprints.splice(i, 1); continue; }
-      if (time < fp.nextTickAt) continue;
-      fp.nextTickAt = time + FOOTPRINT_TICK_MS;
-      for (const t of this.arena.enemies) {
-        if (!t.active || t.hp <= 0) continue;
-        if (Phaser.Math.Distance.Between(t.x, t.y, fp.x, fp.y) <= fp.radius) {
-          t.takeDamage(fp.damage, { source: fp, sourceX: fp.x, sourceY: fp.y });
-          this.arena.spawnHitFlash(t.x, t.y, this.pcol(0x66ff33));
-          this.noteAcidHit(t);
-        }
-      }
     }
   }
 
   // ── handleInput ───────────────────────────────────────────────────────
 
-  handleInput(time: number, pointer: Phaser.Input.Pointer, mouseX: number, mouseY: number): void {
+  handleInput(_time: number, pointer: Phaser.Input.Pointer, mouseX: number, mouseY: number): void {
+    if (!this.isAcid('player')) return;
     const { player, eKey, fKey, rKey, qKey, pointerWasDown } = this.arena;
-    const playerCtx = this.arena.buildPlayerContext(mouseX, mouseY);
-    // Cached for the avatar rig, which runs in update() and has no pointer of its own.
-    this.aimX = mouseX;
-    this.aimY = mouseY;
+    const s = this.side('player');
+    s.aimX = mouseX;
+    s.aimY = mouseY;
+    const ctx = this.arena.buildPlayerContext(mouseX, mouseY);
 
-    // ── Mastery — Breakdown takes over whichever slot it's bound to ──────
-    const breakdownSlot = this.arena.masteryActive ? this.breakdownSlot() : null;
-    if (breakdownSlot) {
-      const bdKey = breakdownSlot === 'e' ? eKey : breakdownSlot === 'r' ? rKey : breakdownSlot === 'f' ? fKey : qKey;
-      if (Phaser.Input.Keyboard.JustDown(bdKey)) this.tryCastBreakdown(time);
+    // Venom Mastery — Shed Skin takes over whichever slot it is bound to.
+    const shedSlot = this.shedSlot('player');
+    if (shedSlot) {
+      const key = shedSlot === 'e' ? eKey : shedSlot === 'r' ? rKey : shedSlot === 'f' ? fKey : qKey;
+      if (Phaser.Input.Keyboard.JustDown(key)) this.tryShed('player');
     }
 
-    // Click: Poison Whip
-    if (pointer.isDown && !pointerWasDown) {
-      if (player.castAbility('poison-whip', playerCtx)) {
-        const count = this.isPointInAcid(player.x, player.y) ? WHIP_COUNT_ENHANCED : WHIP_COUNT_BASE;
-        this.fireWhipBarrage(count);
+    if (pointer.isDown && !pointerWasDown) player.castAbility('poison-whip', ctx);
+
+    if (shedSlot !== 'e' && Phaser.Input.Keyboard.JustDown(eKey)) player.castAbility('vile-spray', ctx);
+
+    // R: toggle. Entering needs acid underfoot, checked before the cooldown is spent.
+    if (shedSlot !== 'r' && Phaser.Input.Keyboard.JustDown(rKey)) {
+      if (s.burrowed) {
+        this.surface('player', null);
+      } else if (!this.onAcid('player', player.x, player.y)) {
+        this.announce(player.x, player.y - 30, 'NEED ACID UNDERFOOT', ACID.sting, 11);
+      } else {
+        player.castAbility('snake-burrow', ctx);
       }
     }
 
-    // E: Vile Spray
-    if (breakdownSlot !== 'e' && Phaser.Input.Keyboard.JustDown(eKey)) {
-      if (player.castAbility('vile-spray', playerCtx)) this.spawnAcidPools(time);
-    }
-
-    // R: Snake Burrow — toggle, only enterable while standing in acid
-    if (breakdownSlot !== 'r' && Phaser.Input.Keyboard.JustDown(rKey)) {
-      if (this.burrowed) {
-        this.unburrow('🐍 Surfaced!');
-      } else if (!this.isPointInAcid(player.x, player.y)) {
-        this.arena.showFloatingText(player.x, player.y - 30, 'Need to be standing in acid!', '#ff4444');
-      } else if (player.castAbility('snake-burrow', playerCtx)) {
-        this.burrowed = true;
-        player.isInvincible = true;
-        player.setAlpha(0.4);
-        this.arena.showFloatingText(player.x, player.y - 30, '🐍 Burrowed!', '#99ff66');
-        // Murk: something has to be left on the surface while you are under it.
-        if (this.arena.hasPerk('player', 'murk')) {
-          this.spawnMurkToad(time);
-          this.arena.showFloatingText(player.x, player.y - 48, '🐸 Toad!', '#77aa44');
-        }
-        // Going under: the surface closes over the caster and swallows them.
-        this.playerAvatar?.play('flex');
-        this.pfx.gather(player.x, player.y, 46, 400,
-          () => (player.active ? { x: player.x, y: player.y } : null), 5, VILE_TONES);
-        this.pfx.ring(player.x, player.y, 46, 12, ACID.hotRim, 380, 3.5, 4);
-      }
-    }
-
-    // F: Purge
-    if (breakdownSlot !== 'f' && Phaser.Input.Keyboard.JustDown(fKey)) {
-      if (player.castAbility('purge', playerCtx)) this.fireBurst();
-    }
-
-    // Q: Acid Apocalypse
-    if (breakdownSlot !== 'q' && Phaser.Input.Keyboard.JustDown(qKey)) {
-      if (player.castAbility('acid-apocalypse', playerCtx)) {
-        this.acidRainActiveUntil = time + RAIN_DURATION_MS;
-        this.acidRainTickAccum = 0;
-        this.acidRainDropAccum = 0;
-        const { width: W, height: H } = this.arena.scene.scale;
-        this.arena.showFloatingText(W / 2, H / 2 - 60, '☠️ Acid Apocalypse!', '#66ff33');
-        // The sky opening: the caster throws both arms up and every live pool flares at once.
-        this.playerAvatar?.play('raise', -Math.PI / 2, 900);
-        this.pfx.ring(player.x, player.y, 12, 160, ACID.neon, 620, 6, 5);
-        for (const pool of this.acidPools) {
-          this.pfx.ring(pool.x, pool.y, pool.radius * 0.4, pool.radius * 1.3, ACID.hotRim, 460, 3, 4);
-          this.pfx.fizz(pool.x, pool.y, 4, pool.radius, 4, VILE_TONES);
-        }
-        this.arena.scene.cameras.main.shake(320, 0.005);
-      }
-    }
+    if (shedSlot !== 'f' && Phaser.Input.Keyboard.JustDown(fKey)) player.castAbility('festering-bite', ctx);
+    if (shedSlot !== 'q' && Phaser.Input.Keyboard.JustDown(qKey)) player.castAbility('acid-apocalypse', ctx);
   }
 
-  // ── Mastery — Breakdown ────────────────────────────────────────────────
-
-  /** The slot Breakdown is bound over this match, or null. */
-  private breakdownSlot(): 'e' | 'r' | 'f' | 'q' | null {
-    for (const s of ['e', 'r', 'f', 'q'] as const) {
-      if (this.arena.masteryBindFor(s) === 'breakdown') return s;
-    }
-    return null;
+  /** Online: the presses only the owner's sim decides. */
+  replayNet(id: string): void {
+    if (id === 'acid-surface') this.surface('npc', null);
   }
 
-  /** 0 = just cast, 1 = ready. Drives the HUD bar for the bound slot. */
-  getBreakdownCooldownRatio(time: number): number {
-    return Math.min(1, (time - this.breakdownLastCastAt) / BREAKDOWN_COOLDOWN_MS);
+  // ── Bot reads (side-effect-free) ──────────────────────────────────────
+
+  npcBurrowed(): boolean { return this.isAcid('npc') && this.side('npc').burrowed; }
+
+  /** Which slot the bot's Shed Skin took over, so the rotation leaves that key alone. */
+  npcShedSlot(): string | undefined { return this.shedSlot('npc') ?? undefined; }
+
+  /**
+   * Snake Burrow is worth entering: the bot is on its own acid and either has Rattling Strike and a
+   * target close enough to tunnel up under, or is hurt and wants out.
+   */
+  npcBurrowReady(): boolean {
+    if (!this.isAcid('npc') || this.side('npc').burrowed) return false;
+    const npc = this.arena.npc;
+    const tgt = this.arena.player;
+    if (!this.alive(npc) || !this.alive(tgt) || !this.onAcid('npc', npc.x, npc.y)) return false;
+    const d = Phaser.Math.Distance.Between(npc.x, npc.y, tgt.x, tgt.y);
+    const hurt = npc.hp / Math.max(1, npc.maxHp) < 0.35;
+    return (this.up('npc', 'r') && d > NPC_SURFACE_RANGE && d < 380) || (hurt && d < 260);
   }
 
-  private tryCastBreakdown(time: number): void {
-    if (time - this.breakdownLastCastAt < BREAKDOWN_COOLDOWN_MS) return;
-    const player = this.arena.player;
-    if (this.computeAcidCoveragePct() < BREAKDOWN_MIN_COVERAGE) {
-      this.arena.showFloatingText(player.x, player.y - 30, 'NEED 50% ACID', '#ff6666');
-      return;
-    }
-    this.breakdownLastCastAt = time;
-    // triggerCooldown broadcasts the cast online; the peer replays via doNpcBreakdown.
-    player.triggerCooldown('breakdown');
-    this.startBreakdown('player', time);
+  /** Burrowing is wanted but there is no acid underfoot: the nearest of its own, if it is close. */
+  npcAcidSeekPoint(): { x: number; y: number } | null {
+    if (!this.isAcid('npc') || this.side('npc').burrowed) return null;
+    const npc = this.arena.npc;
+    const tgt = this.arena.player;
+    if (!this.alive(npc) || !this.alive(tgt) || this.onAcid('npc', npc.x, npc.y)) return null;
+    if (npc.getCooldownRatio('snake-burrow') < 1 || this.npcShedSlot() === 'r') return null;
+    const hurt = npc.hp / Math.max(1, npc.maxHp) < 0.35;
+    if (!this.up('npc', 'r') && !hurt) return null;
+    return this.side('npc').grid?.nearestAcid(npc.x, npc.y, 160) ?? null;
   }
 
-  /** Online replay: the remote acid player cast Breakdown — spray lashes at the local player. */
-  doNpcBreakdown(_tx: number, _ty: number): void {
-    this.startBreakdown('npc', this.arena.scene.time.now);
+  /** The target is standing on the bot's acid — the rain lands on them. */
+  npcApocalypseReady(): boolean {
+    if (!this.isAcid('npc')) return false;
+    const tgt = this.arena.player;
+    return this.alive(tgt) && this.onAcid('npc', tgt.x, tgt.y) && this.coverage('npc') >= 0.06;
   }
 
-  private startBreakdown(owner: 'player' | 'npc', time: number): void {
-    const { scene } = this.arena;
-    const origin = owner === 'player' ? this.arena.player : this.arena.npc;
-    const fromPlayer = owner === 'player';
-    if (owner === 'player') this.breakdownUntil = time + BREAKDOWN_DURATION_MS;
-    this.arena.showFloatingText(origin.x, origin.y - 40, '☣️ BREAKDOWN!', '#33ff33');
-    // Coming apart: a hard burst on the frame it starts, then the aura carries the 3s of leak.
-    const bfx = this.fx(owner);
-    const btones = owner === 'player' ? VILE_TONES : NPC_TONES;
-    (owner === 'player' ? this.playerAvatar : this.npcAvatar)?.play('flex');
-    bfx.splash(origin.x, origin.y, 90, { droplets: 20, fizz: 6, duration: 560, depth: 6, tones: btones });
-    scene.cameras.main.shake(280, 0.006);
+  /** The target is inside the bite's reach right now (stage-aware). */
+  npcBiteReady(): boolean {
+    if (!this.isAcid('npc')) return false;
+    const npc = this.arena.npc;
+    const tgt = this.arena.player;
+    if (!this.alive(npc) || !this.alive(tgt)) return false;
+    return Phaser.Math.Distance.Between(npc.x, npc.y, tgt.x, tgt.y) <= this.biteReach('npc') + this.bodyR(tgt) * 0.5;
+  }
 
-    // 200 acid lashes sprayed in random directions across the full 360° over 3 seconds.
-    for (let i = 0; i < BREAKDOWN_LASH_COUNT; i++) {
-      scene.time.delayedCall(Math.floor(i * BREAKDOWN_DURATION_MS / BREAKDOWN_LASH_COUNT), () => {
-        const caster = owner === 'player' ? this.arena.player : this.arena.npc;
-        if (!caster.active || caster.hp <= 0) return;
-        const ang = Math.random() * Math.PI * 2;
-        const proj = new Projectile(
-          scene,
-          caster.x + Math.cos(ang) * 24,
-          caster.y + Math.sin(ang) * 24,
-          'proj-acid-whip',
-          WHIP_DAMAGE,
-          fromPlayer,
-        );
-        this.arena.projectiles.add(proj);
-        proj.launch(Math.cos(ang) * WHIP_SPEED, Math.sin(ang) * WHIP_SPEED);
-        proj.setRotation(ang);
-      });
-    }
-
-    // Leaking acid particles occasionally pool up (player sim only — pools damage enemies).
-    if (owner === 'player') {
-      for (let i = 0; i < BREAKDOWN_LEAK_COUNT; i++) {
-        scene.time.delayedCall(Math.floor(i * BREAKDOWN_DURATION_MS / BREAKDOWN_LEAK_COUNT), () => {
-          const p = this.arena.player;
-          if (!p.active || p.hp <= 0) return;
-          const ox = Phaser.Math.Between(-16, 16), oy = Phaser.Math.Between(-16, 16);
-          if (this.acidPools.length < MAX_ACID_POOLS) this.createAcidPool(p.x + ox, p.y + oy, BREAKDOWN_LEAK_RADIUS, scene.time.now);
-          this.pfx.droplets(p.x + ox, p.y - 6, 3, {
-            speed: 40, angle: Math.PI / 2, spread: 0.6, size: 3,
-            life: 380, fall: 30, depth: 6, tones: VILE_TONES,
-          });
-        });
-      }
-    }
+  /** Spraying is worth it: the target is off the bot's acid (spray it under them), or a milestone is near. */
+  npcSprayWorth(): boolean {
+    if (!this.isAcid('npc')) return false;
+    const tgt = this.arena.player;
+    if (!this.alive(tgt)) return false;
+    if (!this.onAcid('npc', tgt.x, tgt.y)) return true;
+    const s = this.side('npc');
+    return s.shedReached < SHED_MILESTONES.length || this.coverage('npc') < WHIP_DOUBLE_AT;
   }
 }

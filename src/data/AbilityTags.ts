@@ -23,7 +23,7 @@ export const ABILITY_TAGS: Record<string, readonly AbilityTag[]> = {
   bash: ['hold'],
   'biome-builder': ['recast'],
   // Oil
-  'drone-command': ['hold'],
+  'drone-command': ['rmb', 'hold'],
   'barrel-roll': ['recast'],
   // Shadow
   'shadow-caltrop': ['hold'],
@@ -50,7 +50,7 @@ export const ABILITY_TAGS: Record<string, readonly AbilityTag[]> = {
   // Electricity
   'electro-dash': ['recast'],
   'pain-battery': ['hold'],
-  // Acid
+  // Venom
   'snake-burrow': ['recast'],
   // Sound
   fermata: ['recast'],
@@ -114,9 +114,7 @@ export const ABILITY_TAGS: Record<string, readonly AbilityTag[]> = {
   // Gold
   'fortune-fray': ['hold'],
   // Cloth
-  'cloth-pin': ['hold'],
-  'cloth-longpin': ['recast'],
-  'cloth-safety-line': ['recast'],
+  'cloth-scarf-hand': ['hold'],
   // Marrow
   'marrow-antibody': ['hold'],
   // Myth
@@ -130,11 +128,25 @@ export const ABILITY_TAGS: Record<string, readonly AbilityTag[]> = {
   // Radiation
   'radiation-railgun': ['hold'],
   // Bind
-  'bind-summon': ['hold'],
+  'bind-daggers': ['rmb', 'hold'],
+  'bind-chain': ['recast'],
+  'bind-siphon': ['recast'],
   // Slime
   'gum-grab': ['hold'],
-  // Harvest
-  'harvest-sickle': ['rmb', 'hold'],
+  // Wood
+  'wood-carverang': ['rmb'],
+  // Pressure: everything is held to charge. Release banks its charge and fires on a tap.
+  'pressure-punch': ['hold'],
+  'pressure-slam': ['hold'],
+  'pressure-point': ['hold'],
+  'pressure-release': ['hold'],
+  // Ink: Skedaddle is held to run; the anvil is pulled with F and dropped with a click.
+  'ink-skedaddle': ['hold'],
+  'ink-anvil': ['recast'],
+  // Memory
+  'memory-rebirth': ['recast'],
+  // String: R again snaps the hex strand.
+  'string-hexing-strand': ['recast'],
 };
 
 /** The tags for one ability id, in tray order. Empty for an ability with none. */

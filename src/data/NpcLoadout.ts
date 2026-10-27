@@ -43,7 +43,8 @@ const NPC_MASTERY_BINDS: Record<string, { enhId: string; slot: MasterySlot }> = 
   sand: { enhId: 'time-bomb', slot: 'f' },
   // Magnet has no mastery since its 2026-10-15 scrap rework, so nothing to bind.
   growth: { enhId: 'syringe-shot', slot: 'f' },
-  slime: { enhId: 'breakdown', slot: 'f' },
+  // Venom keeps its bite and its ultimate; Shed Skin goes over the burrow.
+  slime: { enhId: 'shed-skin', slot: 'r' },
   metal: { enhId: 'steel-shield', slot: 'f' },
   magic: { enhId: 'transmogrify', slot: 'f' },
   creation: { enhId: 'mortar-command', slot: 'f' },
@@ -63,11 +64,9 @@ const NPC_MASTERY_BINDS: Record<string, { enhId: string; slot: MasterySlot }> = 
   // charges 25, the saw charges 30 a second), and a bot holding a chainsaw is committed to being
   // in melee anyway — which is exactly where a saved block would have mattered least.
   magma: { enhId: 'magma-saw', slot: 'r' },
-  // Bind gives up the idol. It is the one slot a movement state machine plays worst — the payout
-  // is entirely "keep standing inside a 118px ring" and the penalty for walking away is 5 anger a
-  // second — and the ward it keeps instead is both its survival tool and the biggest single source
-  // of the anger Ritual Sacrifice exists to pay off, which is what makes the dagger worth a slot.
-  bind: { enhId: 'ritual-sacrifice', slot: 'r' },
+  // Bind gives up Siphon for False Idol: the eyes and the chain are what feed the Ritual, and the
+  // kit plants the idol at the bot's feet and parks a spare soul in it.
+  bind: { enhId: 'false-idol', slot: 'f' },
   // Death gives up Riposte. It is the one ability in the kit whose whole value is aiming a 70px
   // line at the shot that is actually coming, which is exactly what a state machine is worst at
   // — and the delay does the same job (half damage taken for eight seconds) without asking the
@@ -92,10 +91,6 @@ const NPC_MASTERY_BINDS: Record<string, { enhId: string; slot: MasterySlot }> = 
   // decision at all, which is exactly the kind of trade a state machine plays well. The
   // barracks, the turret and the Expansion, the three the bot actually wins with, all survive.
   conquest: { enhId: 'market', slot: 'f' },
-  // Cloth gives up R. The bot's whole safety-line play is a two-press combo it already runs
-  // well, and Bleed Stop is a better bail-out for a body that cannot plan one — and E is the
-  // reel, which every other branch of its rotation is built around.
-  cloth: { enhId: 'bleed-stop', slot: 'r' },
   // Clay gives up Slink. The wall run is the one ability a movement state machine plays worst —
   // its whole value is choosing when to drop off, which a bot does on a timer — while the
   // creature Give Life wakes is a summon the bot plays perfectly by standing still. The golem,
@@ -107,11 +102,6 @@ const NPC_MASTERY_BINDS: Record<string, { enhId: string; slot: MasterySlot }> = 
   // rotation a real reason to press Solidify up close, which it otherwise never has. Q is refused
   // by `excludeSlots`, and the balls and the gum barrage are the two the bot already wins with.
   gum: { enhId: 'oobleck', slot: 'f' },
-  // Harvest (id `gluttony`) gives up Feeding Frenzy. The crows are the one ability whose value is
-  // all in where a cursor steers them, and a bot's drifting orbit centre plays them worst; the
-  // shotgun is the same corruption-feeding pressure at range, aimed in one press. The bite and the
-  // execute — the two the rotation's synergies are built on — both survive.
-  gluttony: { enhId: 'corrupt-predation', slot: 'r' },
   // Marrow gives up Mastacre. The mast cells' value is a fever bar the Cellular Defense wall
   // already feeds every time a brick dies, and Brainstem — fired by the kit when the bot is losing
   // and has a macrophage or killer worth riding — turns the board it builds into an invincible

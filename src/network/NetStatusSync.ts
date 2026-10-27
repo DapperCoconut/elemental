@@ -39,7 +39,11 @@ const MIRRORED_TIMERS = new Set([
   'confused', 'wandering', 'hallucinating', 'lagging', 'panicked', 'intoxicated', 'unsteady',
   'high-gravity', 'inverted', 'exposed', 'purged', 'heal-block', 'dark-link', 'oily',
   'gold-heart', 'midas', 'stalked', 'stunned', 'out-of-tune',
-  'rad-mutated', 'over-radiated', 'devotion-slow', 'gold-hex', 'gold-statue', 'harvest-poison',
+  'rad-mutated', 'over-radiated', 'devotion-slow', 'gold-hex', 'gold-statue', 'wood-slow',
+  'pain-lock', 'pressure-slow', 'grounded', 'astra-slow',
+  'memory-sealed',
+  'string-hexed', 'string-snared',
+  'ink-slip', 'ink-flat',
   'sound-dance', 'sound-dissonant', 'dream-nightmare', 'dream-clawed', 'dream-paralysis', 'turned-around',
 ]);
 
@@ -112,6 +116,18 @@ const NUMERIC_FIELDS: NetNumericField[] = [
     },
     clear: (f) => { f.mythVulnStacks = 0; f.mythVulnUntil = 0; },
   },
+  // Memory's shards: only the thrower's sim latches them, onto its replica of us. The count rides
+  // with its own short expiry, like Despress, so the static on our screen lapses with the last one.
+  {
+    i: 'mshard',
+    read: (f) => f.memoryShards.filter((u) => u > Date.now()).length,
+    apply: (f, v) => {
+      if (v <= 0) return;
+      f.memoryShardMirror = Math.round(v);
+      f.memoryShardMirrorUntil = Date.now() + 400;
+    },
+    clear: (f) => { f.memoryShardMirror = 0; f.memoryShardMirrorUntil = 0; },
+  },
   // Permanent by design on both sims — mirrored once, never cleared.
   { i: 'carrier', read: (f) => (f.sicknessCarrier ? 1 : 0), apply: (f, v) => { if (v > 0) f.sicknessCarrier = true; }, clear: () => {} },
   { i: 'atkint', read: (f) => f.attackIntervalMult, apply: (f, v) => { f.attackIntervalMult = Math.max(f.attackIntervalMult, v); }, clear: (f) => { f.attackIntervalMult = 1; } },
@@ -121,10 +137,22 @@ const NUMERIC_FIELDS: NetNumericField[] = [
   { i: 'gstress', read: (f) => f.goldHeartStress, apply: (f, v) => { f.goldHeartStress = v; }, clear: (f) => { f.goldHeartStress = 0; } },
   // Gold's Ruby Vigor: max HP the attacker's picks take off. The victim's kit applies the delta.
   { i: 'gvig', read: (f) => f.goldVigorCut, apply: (f, v) => { f.goldVigorCut = v; }, clear: (f) => { f.goldVigorCut = 0; } },
-  // Harvest's rot: the attacker's sim decides it; a mirror only ever raises it.
   // Devotion's faith: decided on the priest's sim; a mirror only ever raises it.
   { i: 'fth', read: (f) => f.devotionFaith, apply: (f, v) => { f.devotionFaith = Math.max(f.devotionFaith, v); }, clear: () => {} },
-  { i: 'hcorr', read: (f) => f.harvestCorruption, apply: (f, v) => { f.harvestCorruption = Math.max(f.harvestCorruption, v); }, clear: () => {} },
+  // Venom's toxin stacks: they never fade, and only the venom's sim lays them; a mirror only ever raises it.
+  { i: 'tox', read: (f) => f.toxinStacks, apply: (f, v) => { f.toxinStacks = Math.max(f.toxinStacks, v); }, clear: () => {} },
+  // Wood's Taint: permanent, decided on the ent's sim; a mirror only ever raises it.
+  { i: 'wtnt', read: (f) => f.woodTainted, apply: (f, v) => { f.woodTainted = Math.max(f.woodTainted, v); }, clear: () => {} },
+  // Pressure Point's PainLock: what each cast costs rides with the timer above (a lock with no
+  // price would jolt nothing). The slow's strength likewise.
+  { i: 'plkd', read: (f) => f.painLockDamage, apply: (f, v) => { f.painLockDamage = Math.max(f.painLockDamage, v); }, clear: (f) => { f.painLockDamage = 0; } },
+  { i: 'plks', read: (f) => f.painLockStunMs, apply: (f, v) => { f.painLockStunMs = Math.max(f.painLockStunMs, v); }, clear: (f) => { f.painLockStunMs = 0; } },
+  {
+    i: 'pslow',
+    read: (f) => (Date.now() < f.pressureSlowUntil ? f.pressureSlowFactor : 0),
+    apply: (f, v) => { if (v > 0 && v < 1) f.pressureSlowFactor = Math.min(Date.now() < f.pressureSlowUntil ? f.pressureSlowFactor : 1, v); },
+    clear: (f) => { f.pressureSlowFactor = 1; },
+  },
   // Dream: drowsiness and sleep are decided on the dreamer's sim. They land in their own fields,
   // and DreamKit folds them in — it has to be able to ignore a report that was already stale
   // when it arrived, or the hit that woke a sleeper here would be undone a tick later.

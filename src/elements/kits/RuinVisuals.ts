@@ -224,43 +224,95 @@ export function crackWeb(
 }
 
 /**
- * The Spikes of Ruin ring on the floor. `charge` (0–1) is the two-second fuse: the ring
- * tightens, the cracks spread and the spike stubs push further up out of the ground, so the
- * whole warning is one shape getting worse rather than a countdown printed over it.
+ * The Spikes of Ruin ring on the floor — a true circle, so what you see is exactly what the
+ * eruption catches. `charge` (0–1) is the two-second fuse, read three ways off the one shape:
+ * a burning arc sweeps round the rim like a clock hand, the cracks spread in from the edge, and
+ * the crown of spike tips pushes up out of the ground in the last third.
  */
 export function ruinRing(
   g: Phaser.GameObjects.Graphics,
   tint: RuinColorFn,
   x: number, y: number, r: number, t: number, alpha: number, charge: number, seed = 0,
 ): void {
-  const steps = 40;
-  const rim: Phaser.Geom.Point[] = [];
-  for (let i = 0; i < steps; i++) {
-    const a = (i / steps) * TAU;
-    const rr = r * (1 + (jitter(seed, i) - 0.5) * 0.07 + Math.sin(t * 2 + i * 0.7) * 0.012);
-    rim.push(new Phaser.Geom.Point(x + Math.cos(a) * rr, y + Math.sin(a) * rr * 0.62));
+  const steps = 72;
+  const circle = (rad: number, wobble = 0): Phaser.Geom.Point[] => {
+    const pts: Phaser.Geom.Point[] = [];
+    for (let i = 0; i < steps; i++) {
+      const a = (i / steps) * TAU;
+      const rr = rad * (1 + (jitter(seed, i) - 0.5) * wobble + Math.sin(t * 2 + i * 0.5) * wobble * 0.15);
+      pts.push(new Phaser.Geom.Point(x + Math.cos(a) * rr, y + Math.sin(a) * rr));
+    }
+    return pts;
+  };
+
+  // The floor inside, darkening toward the rim so the disc reads as a pit opening up.
+  g.fillStyle(tint(RUI.voidDark), alpha * (0.06 + charge * 0.1));
+  g.fillCircle(x, y, r);
+  g.fillStyle(tint(RUI.blood), alpha * (0.06 + charge * 0.12));
+  g.fillPoints(circle(r * 0.86, 0.02), true);
+  g.fillStyle(tint(RUI.red), alpha * (0.03 + charge * 0.07));
+  g.fillCircle(x, y, r * 0.5);
+
+  crackWeb(g, tint, x, y, r * 0.95, seed, alpha * (0.3 + charge * 0.6), charge, { runs: 12, squash: 1, width: 2.4 });
+
+  // The rune band: a broken outer rim and a clean inner one, with notches between them that
+  // drift slowly round, so the ring looks carved rather than painted.
+  const rim = circle(r, 0.025);
+  g.lineStyle(2.5 + charge * 2.5, tint(RUI.red), alpha * (0.6 + charge * 0.4));
+  g.strokePoints(rim, true, true);
+  g.lineStyle(1.2, tint(RUI.rust), alpha * (0.45 + charge * 0.35));
+  g.strokeCircle(x, y, r * 0.86);
+  const rot = seed + t * 0.25;
+  const notches = 36;
+  for (let i = 0; i < notches; i++) {
+    const a = rot + (i / notches) * TAU;
+    const c = Math.cos(a), s = Math.sin(a);
+    const long = i % 3 === 0;
+    const r0 = r * (long ? 0.86 : 0.9);
+    const r1 = r * (long ? 0.99 : 0.95);
+    g.lineStyle(long ? 2 : 1.2, tint(long ? RUI.ash : RUI.rust), alpha * (0.35 + charge * 0.45));
+    g.lineBetween(x + c * r0, y + s * r0, x + c * r1, y + s * r1);
   }
 
-  g.fillStyle(tint(RUI.blood), alpha * (0.08 + charge * 0.14));
-  g.fillPoints(rim, true);
-  g.lineStyle(2 + charge * 2.5, tint(RUI.red), alpha * (0.55 + charge * 0.45));
-  g.strokePoints(rim, true, true);
-  g.lineStyle(1, tint(RUI.bright), alpha * 0.4 * charge);
-  g.strokePoints(rim.map((p) => new Phaser.Geom.Point(x + (p.x - x) * 0.9, y + (p.y - y) * 0.9)), true, true);
+  // The fuse: a burning arc that sweeps a full turn round the band as the two seconds run out.
+  if (charge > 0.01) {
+    const a0 = -Math.PI / 2;
+    const a1 = a0 + charge * TAU;
+    g.lineStyle(5 + charge * 2, tint(RUI.red), alpha * 0.85);
+    g.beginPath();
+    g.arc(x, y, r * 0.93, a0, a1, false);
+    g.strokePath();
+    g.lineStyle(2, tint(RUI.bright), alpha * (0.5 + charge * 0.5));
+    g.beginPath();
+    g.arc(x, y, r * 0.93, a0, a1, false);
+    g.strokePath();
+    // The lit head of the fuse.
+    const hx = x + Math.cos(a1) * r * 0.93;
+    const hy = y + Math.sin(a1) * r * 0.93;
+    g.fillStyle(tint(RUI.bright), alpha * 0.9);
+    g.fillCircle(hx, hy, 3.5 + Math.sin(t * 20) * 0.8);
+    g.fillStyle(tint(RUI.red), alpha * 0.35);
+    g.fillCircle(hx, hy, 8);
+  }
 
-  crackWeb(g, tint, x, y, r * 0.95, seed, alpha * (0.3 + charge * 0.6), charge, { runs: 9, squash: 0.62, width: 2.4 });
-
-  // Stubs coming up around the rim. They only clear the ground in the last third of the fuse,
-  // which is the tell that the ring is about to go off.
+  // Spike tips coming up — an even crown on the rim and a looser inner ring. They only clear
+  // the ground in the last third of the fuse, which is the tell that it's about to go off.
   const push = Math.max(0, charge - 0.62) / 0.38;
   if (push <= 0) return;
-  for (let i = 0; i < 18; i++) {
-    const a = (i / 18) * TAU + seed;
-    const rr = r * (0.55 + jitter(seed, 200 + i) * 0.42);
-    const sx = x + Math.cos(a) * rr;
-    const sy = y + Math.sin(a) * rr * 0.62;
-    rustySpike(g, tint, sx, sy + 4, -Math.PI / 2, 8 + push * 14 * (0.6 + jitter(seed, 220 + i) * 0.8), 4,
-      alpha * 0.9, { seed: seed + i, wear: 0.8, barbs: 0, color: RUI.ash });
+  const crown = 24;
+  for (let i = 0; i < crown; i++) {
+    const a = (i / crown) * TAU + seed;
+    const sx = x + Math.cos(a) * r * 0.93;
+    const sy = y + Math.sin(a) * r * 0.93;
+    rustySpike(g, tint, sx, sy + 4, -Math.PI / 2, 8 + push * 16 * (0.75 + jitter(seed, 220 + i) * 0.5), 4.5,
+      alpha * 0.92, { seed: seed + i, wear: 0.8, barbs: 0, color: RUI.ash });
+  }
+  for (let i = 0; i < 10; i++) {
+    const a = (i / 10) * TAU + seed + 0.3;
+    const rr = r * (0.48 + jitter(seed, 200 + i) * 0.14);
+    rustySpike(g, tint, x + Math.cos(a) * rr, y + Math.sin(a) * rr + 4, -Math.PI / 2,
+      6 + push * 10 * (0.6 + jitter(seed, 240 + i) * 0.8), 3.5,
+      alpha * 0.8, { seed: seed + 50 + i, wear: 0.8, barbs: 0, color: RUI.ash });
   }
 }
 
@@ -608,25 +660,41 @@ export class RuinFx extends FxBase {
     });
   }
 
-  /** A spike driving up out of the ground and sinking back. The F ring's per-spike beat. */
+  /**
+   * The F eruption: a full crown of spikes driving up round the rim of the circle, a looser
+   * inner ring behind it and a few in the middle, all leaning outward. Out fast, back slowly.
+   */
   spikeBurst(x: number, y: number, count = 10, r = 60, ms = 520, depth = 10, seed = 0): void {
+    const rows = [
+      { n: count, d: 0.92, lean: 0.35, len: 30, w: 7 },
+      { n: Math.max(4, Math.round(count * 0.5)), d: 0.58, lean: 0.22, len: 24, w: 6 },
+      { n: Math.max(3, Math.round(count * 0.2)), d: 0.22, lean: 0.1, len: 18, w: 5 },
+    ];
     this.anim(depth, ms, (g, t) => {
-      // Out fast, back slowly — the whole read is the moment they arrive.
-      const up = t < 0.28 ? easeOut(t / 0.28) : 1 - easeIn((t - 0.28) / 0.72);
-      for (let i = 0; i < count; i++) {
-        const a = (i / count) * TAU + jitter(seed, i) * 0.5;
-        const d = r * (0.25 + jitter(seed, 20 + i) * 0.75);
-        const sx = x + Math.cos(a) * d;
-        const sy = y + Math.sin(a) * d * 0.62;
-        rustySpike(g, this.tint, sx, sy + 6, -Math.PI / 2 + (jitter(seed, 40 + i) - 0.5) * 0.5,
-          (22 + jitter(seed, 60 + i) * 26) * up, 6 * up, 1,
-          { seed: seed + i, wear: 0.7, barbs: 1, color: RUI.ash });
-      }
+      // Out fast, back slowly — the whole read is the moment they arrive. The outer crown lands
+      // a beat after the middle, so the eruption visibly travels outward to the edge.
+      rows.forEach((row, ri) => {
+        const lag = (rows.length - 1 - ri) * 0.04;
+        const lt = Phaser.Math.Clamp((t - lag) / (1 - lag), 0, 1);
+        const up = lt < 0.28 ? easeOut(lt / 0.28) : 1 - easeIn((lt - 0.28) / 0.72);
+        if (up <= 0) return;
+        for (let i = 0; i < row.n; i++) {
+          const a = (i / row.n + (jitter(seed, ri * 50 + i) - 0.5) * 0.2 / row.n) * TAU + seed + ri * 0.4;
+          const d = r * row.d * (0.95 + jitter(seed, 20 + ri * 50 + i) * 0.1);
+          const sx = x + Math.cos(a) * d;
+          const sy = y + Math.sin(a) * d;
+          // Lean outward, away from the centre.
+          const lean = Math.cos(a) * row.lean;
+          rustySpike(g, this.tint, sx, sy + 6, -Math.PI / 2 + lean,
+            (row.len + jitter(seed, 60 + ri * 50 + i) * row.len * 0.8) * up, row.w * up, 1,
+            { seed: seed + ri * 50 + i, wear: 0.7, barbs: 1, color: RUI.ash });
+        }
+      });
     });
   }
 
   /** An expanding ring of broken ground. Casts, eruptions, releases. */
-  ring(x: number, y: number, r0: number, r1: number, color = RUI.red, ms = 460, depth = 9): void {
+  ring(x: number, y: number, r0: number, r1: number, color = RUI.red, ms = 460, depth = 9, squash = 0.7): void {
     const seed = Math.random() * 999;
     this.anim(depth, ms, (g, t) => {
       const r = r0 + (r1 - r0) * easeOut(t);
@@ -634,7 +702,7 @@ export class RuinFx extends FxBase {
       for (let i = 0; i <= 26; i++) {
         const a = (i / 26) * TAU;
         const rr = r * (1 + (jitter(seed, i) - 0.5) * 0.13);
-        pts.push(new Phaser.Geom.Point(x + Math.cos(a) * rr, y + Math.sin(a) * rr * 0.7));
+        pts.push(new Phaser.Geom.Point(x + Math.cos(a) * rr, y + Math.sin(a) * rr * squash));
       }
       g.lineStyle(3.5 * (1 - t) + 0.8, this.tint(color), (1 - t) * 0.85);
       g.strokePoints(pts, true, true);
@@ -660,10 +728,10 @@ export class RuinFx extends FxBase {
   }
 
   /** A crack tearing open across the floor, then healing shut. */
-  crack(x: number, y: number, r = 50, ms = 620, depth = 4): void {
+  crack(x: number, y: number, r = 50, ms = 620, depth = 4, squash = 0.65): void {
     const seed = Math.random() * 999;
     this.anim(depth, ms, (g, t) => {
-      crackWeb(g, this.tint, x, y, r, seed, 1 - t, Math.min(1, t * 2.4), { runs: 8, squash: 0.65, width: 2.6 });
+      crackWeb(g, this.tint, x, y, r, seed, 1 - t, Math.min(1, t * 2.4), { runs: squash >= 1 ? 12 : 8, squash, width: 2.6 });
     });
   }
 

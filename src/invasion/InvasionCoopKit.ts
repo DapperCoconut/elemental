@@ -33,6 +33,8 @@ export interface InvasionCoopArenaApi {
   /** City: the local player's drafted loadout. */
   readonly cityLoadout: CityLoadoutApi | null;
   latchPointer(): void;
+  /** A Wood teammate's brew or digest reached us (see `sendWoodGift`). */
+  onWoodGift(sap: number, heal: number, brewMs: number): void;
 }
 
 /** A downed defender in a City run stands back up at the plinth after this long. */
@@ -493,6 +495,22 @@ export class InvasionCoopKit {
    * True while the npc slot's ally is somewhere we can't see (another room, or gone). The
    * arena hides that fighter's rig with it — the sprite alone is not the whole character.
    */
+  /**
+   * Teammates in our room that can be helped: the npc slot's full replica and every light one,
+   * with the slot that owns each body (their health lives on that machine).
+   */
+  teammates(): { slot: number; fighter: Fighter }[] {
+    const room = this.myRoom();
+    return this.allies
+      .filter((a) => !a.gone && !a.downed && a.room === room && a.fighter.active && a.fighter.hp > 0)
+      .map((a) => ({ slot: a.slot, fighter: a.fighter }));
+  }
+
+  /** Wood: hand a teammate the Sap HP, healing and brew armour we just gave their replica. */
+  sendWoodGift(slot: number, sap: number, heal: number, brewMs: number): void {
+    Net.sendTo(slot, { t: 'woodGift', sap: Math.round(sap), heal: Math.round(heal), brewMs: Math.round(brewMs) });
+  }
+
   isNpcAllyHidden(): boolean {
     const a = this.primaryAlly();
     return !a || a.gone || a.room !== this.myRoom();
@@ -619,6 +637,7 @@ export class InvasionCoopKit {
       // Where our torch is pointing — in the apocalypse dark, the ally's beam
       // cutting our fog is the only way to see where they are.
       fa: p.facingAngle,
+      sap: Math.round(p.sapHp),
     });
   }
 
@@ -996,6 +1015,7 @@ export class InvasionCoopKit {
         if (!ally) break;
         ally.remote = { x: msg.x, y: msg.y, vx: msg.vx, vy: msg.vy, recvAt: Date.now() };
         ally.fighter.netSyncVitals(msg.hp, msg.maxHp, msg.shieldHp, msg.shieldCharges);
+        ally.fighter.sapHp = msg.sap ?? 0;
         ally.downed = msg.downed ?? false;
         ally.fighter.downed = ally.downed;
         const moved = ally.room !== (msg.room ?? 0);
@@ -1005,6 +1025,9 @@ export class InvasionCoopKit {
         if (moved && !ally.light) this.castQueue = [];
         break;
       }
+      case 'woodGift':
+        if (ally) this.api.onWoodGift(msg.sap, msg.heal, msg.brewMs);
+        break;
       case 'cast':
         if (!ally) break;
         if (ally.light) this.playLightCast(ally, msg.tx, msg.ty);

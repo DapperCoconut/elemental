@@ -35,7 +35,7 @@ const SKEWER_HALF_WIDTH = 13;
 const RIDER_FIRST_OFFSET = 26;
 const RIDER_SPACING = 34;
 
-const RING_R = 122;
+const RING_R = 160;
 const RING_FUSE_MS = 2000;
 
 const CRYSTAL_R = 15;
@@ -451,7 +451,7 @@ function spikesLoop(ctx: PreviewCtx, opts: { chain: boolean }): void {
   ctx.at(300, () => {
     started = 300;
     av.play('flex');
-    fx.ring(ctx.cx, ctx.cy, 12, RING_R, RUI.red, 520);
+    fx.ring(ctx.cx, ctx.cy, 12, RING_R, RUI.red, 520, 9, 1);
     tick(ctx, ctx.cx, ctx.cy - 46, '🔻 SPIKES OF RUIN', RUI.red);
   });
 
@@ -501,9 +501,9 @@ function spikesLoop(ctx: PreviewCtx, opts: { chain: boolean }): void {
 
   ctx.at(300 + RING_FUSE_MS, () => {
     const at = { x: ringAt.x, y: ringAt.y };
-    fx.spikeBurst(at.x, at.y, 16, RING_R, 560, 10, 61);
-    fx.ring(at.x, at.y, RING_R * 0.4, RING_R * 1.15, RUI.red, 520);
-    fx.crack(at.x, at.y, RING_R);
+    fx.spikeBurst(at.x, at.y, 26, RING_R, 560, 10, 61);
+    fx.ring(at.x, at.y, RING_R * 0.4, RING_R * 1.1, RUI.red, 520, 9, 1);
+    fx.crack(at.x, at.y, RING_R, 620, 4, 1);
     if (Phaser.Math.Distance.Between(at.x, at.y, foe.x, foe.y) <= RING_R) {
       fx.shatter(foe.x, foe.y, 6, 26, RUI.red, 420, 11);
       tick(ctx, foe.x, foe.y - 30, '15', RUI.bright);
@@ -525,7 +525,7 @@ function spikesLoop(ctx: PreviewCtx, opts: { chain: boolean }): void {
 export const spikes: PreviewScript = {
   duration: 5200,
   scale: 0.9,
-  caption: 'F — a 122px ring worn for 2s, then 15 damage, every buff turned inside out, and every structure inside deleted',
+  caption: 'F — a 160px ring worn for 2s, then 15 damage, every buff turned inside out, and every structure inside deleted',
   run(ctx) { spikesLoop(ctx, { chain: false }); },
 };
 

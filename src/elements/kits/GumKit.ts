@@ -1577,6 +1577,7 @@ export class GumKit {
       if (!this.alive(f)) continue;
 
       if (sl.hard) {
+        if (f.soulWalking) continue; // Bind's Blackened Eyes walks through.
         const { along, across } = this.slabLocal(sl, f.x, f.y);
         const limit = SLAB_THICK / 2 + SLAB_BODY_R;
         if (Math.abs(along) <= SLAB_LEN / 2 + SLAB_BODY_R * 0.5 && Math.abs(across) < limit) {

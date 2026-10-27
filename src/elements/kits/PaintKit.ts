@@ -1777,6 +1777,7 @@ export class PaintKit implements SummonPurgeTarget {
       const mine = walls.filter((d) => d.owner === owner);
       if (!mine.length) continue;
       for (const t of this.targetsOf(owner)) {
+        if (t.soulWalking) continue; // Bind's Blackened Eyes walks through.
         const r = this.bodyR(t);
         for (let pass = 0; pass < 2; pass++) {
           for (const d of mine) {

@@ -1860,6 +1860,8 @@ export class DreamKit {
   private addDrowsy(t: Fighter, amount: number, by: Owner): void {
     // A body that is off dreaming cannot be made any sleepier — it is not here.
     if (this.isDreaming(t)) return;
+    // Memory's Rebirth: a sealed sandman makes nobody drowsy.
+    if (this.fighter(by).passivesSealed()) return;
     const r = this.rec(t);
     t.dreamDrowsy = Math.min(DROWSY_MAX, t.dreamDrowsy + meterGain(this.fighter(by), amount));
     r.lastGainAt = this.now;

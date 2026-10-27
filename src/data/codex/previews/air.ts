@@ -269,3 +269,115 @@ export const windBreakerUpgraded: PreviewScript = {
     });
   },
 };
+
+// ── Element perks ─────────────────────────────────────────────────────────────
+
+function pop(ctx: PreviewCtx, x: number, y: number, label: string, color: string): void {
+  const t = ctx.adopt(ctx.scene.add.text(x, y, label, {
+    fontSize: '11px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif',
+    color, stroke: '#1a2a3a', strokeThickness: 3,
+  }).setOrigin(0.5).setDepth(10));
+  ctx.scene.tweens.add({ targets: t, y: y - 22, alpha: 0, duration: 900 });
+}
+
+export const perkQuick: PreviewScript = {
+  duration: 3000,
+  caption: 'Perk — Quick: every ability, spin charges and Weather Cycle recharge 20% faster',
+  run(ctx) {
+    const { fx, av } = stage(ctx);
+    // Two spins back to back on a 4.8s charge — the faster clock, shown as a tighter rhythm.
+    for (let i = 0; i < 2; i++) {
+      ctx.at(300 + i * 1200, () => {
+        av.play('sweep', ctx.aim, 420);
+        fx.spinFlourish(ctx.cx, ctx.cy, 115);
+        fx.ring(ctx.cx, ctx.cy, 20, 115, AIR.frost, 420, 4, 6);
+        pop(ctx, ctx.cx, ctx.cy - 50, '⏩ −20% CD', '#aaddff');
+      });
+    }
+  },
+};
+
+export const perkGust: PreviewScript = {
+  duration: 3600,
+  scale: 0.95,
+  caption: 'Perk — Gust: R throws a free spin, and R again teleports you onto the glaive for another',
+  run(ctx) {
+    const { fx, av } = stage(ctx);
+    const parkX = ctx.tx, parkY = ctx.ty;
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(7));
+    let recalled = false;
+    ctx.at(250, () => {
+      av.play('sweep', ctx.aim, 420);
+      fx.spinFlourish(ctx.cx, ctx.cy, 115);
+      pop(ctx, ctx.cx, ctx.cy - 50, '🌬️ GUST!', '#bbe8ff');
+      ctx.at(160, () => av.play('punch', ctx.aim));
+    });
+    ctx.onFrame((_dt, elapsed) => {
+      g.clear();
+      const e = elapsed - 410;
+      if (e < 0 || recalled) return;
+      const t = Math.min(1, e / 420);
+      AirFx.drawGlaive(g, ctx.tint, ctx.cx + (parkX - ctx.cx) * t, ctx.cy + (parkY - ctx.cy) * t, 26, e / 90, 1);
+    });
+    ctx.at(1500, () => {
+      recalled = true;
+      g.clear();
+      fx.featherPuff(ctx.cx, ctx.cy, 6);
+      fx.slipstream(ctx.cx, ctx.cy, parkX - 40, parkY);
+      ctx.moveCaster(parkX - 40, parkY);
+      fx.bloom(parkX - 40, parkY, 46, 8, 6);
+      pop(ctx, parkX - 40, parkY - 50, '🌬️ GUST RECALL!', '#bbe8ff');
+      av.play('sweep', ctx.aim, 420);
+      fx.spinFlourish(parkX - 40, parkY, 115);
+      fx.ring(parkX - 40, parkY, 20, 115, AIR.frost, 420, 4, 6);
+    });
+    ctx.at(3200, () => ctx.moveCaster(ctx.cx, ctx.cy));
+  },
+};
+
+export const perkVacuum: PreviewScript = {
+  duration: 3600,
+  caption: 'Perk — Vacuum: a 170px draw pulls foes in, and foes inside it hit you 15% softer',
+  run(ctx) {
+    stage(ctx);
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(3));
+    const foe = ctx.adopt(ctx.scene.add.graphics().setDepth(5));
+    let fx0 = ctx.cx + 170;
+    let shown = false;
+    ctx.onFrame((dt, elapsed) => {
+      g.clear();
+      AirFx.drawVacuum(g, ctx.tint, ctx.cx, ctx.cy, 170 * 0.6, elapsed / 1000, elapsed > 400);
+      // A stand-in foe drifting inward at the draw's real 55 px/s (scaled with the ring).
+      if (elapsed > 400 && fx0 > ctx.cx + 60) fx0 -= 55 * 0.6 * (dt / 1000);
+      foe.clear();
+      foe.fillStyle(0x2b2f3d, 1); foe.fillCircle(fx0, ctx.cy, 17);
+      foe.fillStyle(0x3c4254, 1); foe.fillCircle(fx0, ctx.cy, 13);
+      if (!shown && elapsed > 500) { shown = true; pop(ctx, fx0, ctx.cy - 36, '🌀 VACUUM −15% DMG', '#bbe8ff'); }
+    });
+  },
+};
+
+export const perkBlowback: PreviewScript = {
+  duration: 3000,
+  caption: 'Perk — Blowback: a dodged hit throws 20% back at them; each dodge costs 15% wind dodge',
+  run(ctx) {
+    const { fx, av } = stage(ctx);
+    ctx.at(300, () => {
+      ctx.fly({
+        texture: 'proj-fire', from: { x: ctx.tx, y: ctx.ty }, to: { x: ctx.cx, y: ctx.cy }, speed: 520,
+        onHit: () => {
+          pop(ctx, ctx.cx, ctx.cy - 44, 'DODGED  −15%', '#ccddff');
+          fx.featherPuff(ctx.cx, ctx.cy, 5);
+          fx.bloom(ctx.cx, ctx.cy, 44, 7, 6);
+          av.play('punch', ctx.aim);
+          fx.muzzleGust(ctx.cx + Math.cos(ctx.aim) * 18, ctx.cy + Math.sin(ctx.aim) * 18, ctx.aim, 0.8);
+          fx.slipstream(ctx.cx, ctx.cy, ctx.tx, ctx.ty);
+          ctx.at(200, () => {
+            fx.gustBurst(ctx.tx, ctx.ty, 40, { duration: 320, dust: false });
+            pop(ctx, ctx.tx, ctx.ty - 44, '💨 BLOWBACK', '#e4f2ff');
+          });
+        },
+      });
+    });
+  },
+};
