@@ -74,7 +74,7 @@ const HUSK_TRICKS: Record<string, string> = {
   psychic: 'Its orbs turn to follow you. Running is not an answer; cover is.',
   radiation: 'Everything inside a wide ring around it is being cooked, bite or no bite.',
   bind: 'Throws a chain and shackles you where you stand for a second or so.',
-  gum: 'Trails a thick green mire. Crossing one costs you most of your speed.',
+  gum: 'Sheds a sticky sugar trail as it walks. Crossing one drags your speed right down.',
   gluttony: 'A hollow birch husk with eyes in its bark. It roots into any corpse that falls near it and grows off the meal.',
   pressure: 'A rusted boiler on legs with one huge fist. It winds up, then charges — get out of the line before the valve blows.',
   astra: 'A cracked husk with a guttering star inside. It keeps its distance and fires level bolts of sunlight.',

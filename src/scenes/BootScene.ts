@@ -2835,48 +2835,15 @@ export class BootScene extends Phaser.Scene {
     gfx.generateTexture('elem-bind', 48, 48);
     gfx.clear();
 
-    // Slime (id: gum) — a squat blob with one enormous hand reaching out of it, because the
-    // silhouette has to say "no legs, one arm" before anything else does. Green body, pink
-    // bubble caught in the palm, and a wet crescent on both so they read as the same material.
-    gfx.fillStyle(0x0f2410, 0.4);
-    gfx.fillEllipse(18, 41, 30, 8);
-    // Body: bottom-heavy, flat where it meets the ground.
-    gfx.fillStyle(0x1f6b2a, 1);
-    gfx.fillEllipse(16, 30, 28, 24);
-    gfx.fillStyle(0x46b93f, 1);
-    gfx.fillEllipse(16, 30, 24, 20);
-    gfx.fillStyle(0x8ce65a, 0.55);
-    gfx.fillEllipse(13, 27, 15, 12);
-    gfx.fillStyle(0x0f2410, 1);
-    gfx.fillCircle(12, 28, 2.2);
-    gfx.fillCircle(20, 28, 2.2);
-    // The arm, tapering up and to the right, sagging in the middle.
-    gfx.fillStyle(0x1f6b2a, 1);
-    gfx.fillTriangle(20, 24, 26, 32, 39, 15);
-    gfx.fillStyle(0x46b93f, 1);
-    gfx.fillTriangle(21, 25, 26, 30, 38, 16);
-    // The hand: a fat ball of ooze at the end of it, holding a bubble.
-    gfx.fillStyle(0x1f6b2a, 1);
-    gfx.fillCircle(38, 14, 10);
-    gfx.fillStyle(0x46b93f, 1);
-    gfx.fillCircle(38, 14, 8.4);
-    gfx.fillStyle(0xff70bd, 0.75);
-    gfx.fillCircle(38, 13, 4.6);
-    gfx.lineStyle(1.4, 0xffc9e8, 1);
-    gfx.strokeCircle(38, 13, 4.6);
-    // Two wet crescents, one on each mass — the element's whole signature.
-    gfx.lineStyle(2, 0xe2ffc8, 0.9);
-    gfx.beginPath();
-    gfx.arc(14, 28, 8, -2.5, -1.4, false);
-    gfx.strokePath();
-    gfx.lineStyle(1.7, 0xe2ffc8, 0.9);
-    gfx.beginPath();
-    gfx.arc(37, 13, 5.6, -2.6, -1.5, false);
-    gfx.strokePath();
-    // A drip letting go of the underside of the arm.
-    gfx.fillStyle(0x46b93f, 0.9);
-    gfx.fillEllipse(29, 27, 3, 6);
-    gfx.fillCircle(29, 30, 1.7);
+    // Savor (id: gum) — a soft white sugar orb. Salt's facets, scar and spikes are painted over it
+    // by SavorAvatar, so the one texture serves both forms; Sugar reads first because a match
+    // starts in Sugar.
+    bakeOrb(gfx, { rim: 0xb7aac4, shell: 0xe2d8ec, body: 0xf3eef8, mid: 0xfbf7ff, core: 0xffffff, light: 0xffe8f4, glint: 0xffffff });
+    // A few grains of sugar, and a blush of candy pink at the base.
+    gfx.fillStyle(0xff8fc0, 0.28);
+    gfx.fillEllipse(24, 34, 22, 7);
+    gfx.fillStyle(0xfff2c4, 0.95);
+    for (const [gx, gy] of [[15, 20], [30, 17], [33, 29], [18, 32], [26, 24]]) gfx.fillRect(gx - 1, gy - 1, 2, 2);
     gfx.generateTexture('elem-gum', 48, 48);
     gfx.clear();
 

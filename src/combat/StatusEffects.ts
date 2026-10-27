@@ -520,6 +520,12 @@ export const STATUS_DESCRIPTORS: StatusDescriptor[] = [
     write: (f, t) => { f.stringSnareUntil = t; },
   },
   {
+    id: 'string-infested', name: 'Infested', emoji: '🕷️', color: 0x8c7f6a, priority: 46.8582, kind: 'timer',
+    description: 'Spinal Snap\'s web broke over you. You move at 70% speed, and every couple of seconds a spider crawls out of you to bite.',
+    read: (f) => f.stringInfestedUntil,
+    write: (f, t) => { f.stringInfestedUntil = t; },
+  },
+  {
     id: 'string-puppet', name: 'Puppet', emoji: '🎎', color: 0xf0d6ac, priority: 46.8585, kind: 'timer',
     description: 'On a Marionette\'s control bar. While the spider holds the arrow keys, you walk where it steers.',
     read: (f) => f.stringPuppetUntil,

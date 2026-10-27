@@ -1,1395 +1,484 @@
 import Phaser from 'phaser';
 import { PreviewScript, PreviewCtx } from '../../../ui/AbilityPreview';
-import { BaseAvatar } from '../../../elements/kits/ElementVisuals';
 import {
-  GUM, GumAvatar, GumFx, bloatShell, drips, gripSplat, gumBubble, gumShell, gummyArm, oobleckSlab,
-  oozeBlob, slimeBeacon, slimeling, slimePuddle, slimeShard, zipLine,
-} from '../../../elements/kits/GumVisuals';
+  BUFF_KINDS, CandyKind, SAVOR, SavorAvatar, SavorForm, SavorFx, candy, chocoBall, crashCrystal, saltShard,
+  saltSpear, sugarBomb, sugarCloud, sugarGrain, timingBar,
+} from '../../../elements/kits/SavorVisuals';
 
 /**
- * Slime's showcases.
- *
- * There is one object in this element and every loop has to have it in frame: **the hand**. It
- * is the legs, the weapon and the inventory at once, so a Slime preview that does not show the
- * arm reaching, gripping, hauling or holding something is documenting a generic green projectile
- * element. Half of these scripts therefore drive the caster themselves — the body is *supposed*
- * to be moved by the arm, and a caster pinned to the caster mark would be the one thing this
- * element never does.
- *
- * Slime puts no sprite in the world: balls, bubbles, shards, puddles, beacons, gum shells and
- * the zip-lines are all Graphics repainted per frame out of `GumVisuals`, so `ctx.fly` is
- * useless here. The one exception is a caught enemy shot, which really is somebody else's
- * projectile — the loops stage `proj-fire` for it, because a shot you stole has to look like a
- * shot somebody fired.
- *
- * Containment: `ctx.at` and `ctx.onFrame` run outside the harness's capture window, so anything
- * built inside one goes through `ctx.adopt`. `GumFx` carries a sticky sink.
+ * Savor's showcases. Each loop fires the kit's own `SavorFx` painters and draws the kit's own
+ * candies, shards and bars at the kit's numbers.
  */
 
-// ── The kit's constants, mirrored ─────────────────────────────────────
+// ── Kit numbers the loops replay ───────────────────────────────────────
+const SLAM_SPEED = 560;
+const SLAM_R = 70;
+const SLICE_SPEED = 950;
+const CHOCO_SPEED = 560;
+const INFUSE_SPEED = 780;
+const BAR_PERIOD_MS = 1100;
+const GREEN_HALF = 0.08;
+const YELLOW_HALF = 0.22;
+const WOUND_HALF = 0.62;
+const WOUND_RANGE = 180;
 
-const HAND_MAX = 250;
-const HAND_MIN = 20;
-const DRAG_MAX_SPEED = 560;
+// ── Staging ───────────────────────────────────────────────────────────
 
-const PUNCH_DAMAGE = 20;
-const SMACK_DAMAGE = 15;
-const SMACK_SPEED = 620;
+const hex = (c: number): string => `#${c.toString(16).padStart(6, '0')}`;
 
-const BALL_R = 13;
-const BALL_DAMAGE = 30;
-const BALL_HARD_DAMAGE = 45;
-const SURGE_COUNT = 3;
-
-const BUBBLE_COUNT = 9;
-const BUBBLE_DAMAGE = 5;
-const BUBBLE_SPEED = 540;
-const BUBBLE_SPREAD = 0.46;
-const BUBBLE_R = 15;
-const WALL_SLAM_DAMAGE = 30;
-
-const OOZE_SWELL = 1.2;
-const HEAL_MIN_RATE = 3;
-const HEAL_MAX_RATE = 12;
-const EMESIS_COUNT = 3;
-
-const SOLIDIFY_SHARDS = 16;
-const SHARD_DAMAGE = 8;
-const SHARD_SPEED = 420;
-const SHARD_LIFE_MS = 900;
-const HAND_REGROW_MS = 3000;
-
-const ZIP_COUNT = 3;
-const ZIP_SPEED = 640;
-const ZIP_SPARK_COUNT = 7;
-const ZIP_SPARK_DAMAGE = 4;
-
-const BOMB_AOE_R = 78;
-const PUDDLE_R = 46;
-const PUDDLE_SLOW_FLOOR = 0.4;
-const SOAK_RAMP_MS = 2500;
-
-const BLOAT_DAMAGE = 12;
-const BLOAT_BASE_R = 30;
-const BLOAT_R_PER_LAYER = 7;
-
-const SHARD_HAND_MS = 8000;
-const SHARD_PUNCH_BONUS = 12;
-const SHARD_SMACK_BONUS = 9;
-
-const BEACON_R = 15;
-const BEACON_AURA_R = 122;
-const BEACON_MAX_ACTIVE_MS = 6000;
-const BEACON_HEAL_RATE = 8;
-
-const TAU = Math.PI * 2;
-
-interface Mark { x: number; y: number }
-
-function hex(color: number): string {
-  return `#${color.toString(16).padStart(6, '0')}`;
+function fxOf(ctx: PreviewCtx): SavorFx {
+  return ctx.capture(() => new SavorFx(ctx.scene, ctx.tint).setSink(ctx.sink));
 }
 
-// ── Shared staging ────────────────────────────────────────────────────
-
-/**
- * A slime the script drives: body position, arm reach and everything the hand is doing.
- *
- * Every loop uses this rather than `ctx.useAvatar` on its own, because the hand's position is
- * both the art and the hitbox, and the scripts need to read it back the same way the kit does.
- */
-interface Slime {
-  fx: GumFx;
-  av: BaseAvatar;
-  gav: GumAvatar | null;
-  /** Where the body is. Written by the script; the rig follows it. */
-  at: Mark;
-  /** Where the hand ended up this frame, read back off the rig exactly as `updateHand` does. */
-  hand: Mark;
-  /** Hand velocity, px/s — the number the smack and the throw both read. */
-  handV: Mark;
-  /** Where the hand is being sent. Clamped to the arm's 250px reach. */
-  reach: Mark;
+function stand(ctx: PreviewCtx, form: SavorForm): SavorAvatar | null {
+  const av = ctx.useAvatar(() => new SavorAvatar(ctx.scene, ctx.tint));
+  const sav = av instanceof SavorAvatar ? av : null;
+  sav?.setForm(form);
+  av.setFacing(ctx.aim);
+  return sav;
 }
 
-function slime(ctx: PreviewCtx, at: Mark): Slime {
-  const fx = ctx.capture(() => new GumFx(ctx.scene, ctx.tint).setSink(ctx.sink));
-  if (ctx.scene.textures.exists('elem-gum')) {
-    const body = ctx.adopt(ctx.scene.add.image(at.x, at.y, 'elem-gum').setDepth(5));
-    ctx.onFrame(() => body.setPosition(at.x, at.y));
-  }
-  const av = ctx.useAvatar(() => new GumAvatar(ctx.scene, ctx.tint));
-  const s: Slime = {
-    fx, av, gav: av instanceof GumAvatar ? av : null,
-    at, hand: { x: at.x + 40, y: at.y }, handV: { x: 0, y: 0 }, reach: { x: at.x + 40, y: at.y },
-  };
-  let seeded = false;
-  ctx.onFrame((dt) => {
-    const dx = s.reach.x - s.at.x;
-    const dy = s.reach.y - s.at.y;
-    const dist = Phaser.Math.Clamp(Math.hypot(dx, dy) || 1, HAND_MIN, HAND_MAX);
-    const ang = Math.atan2(dy, dx);
-    s.gav?.setReach(dist, ang, dist / HAND_MAX);
-    s.av.setFacing(ang);
-    s.av.update(dt, s.at.x, s.at.y, 1);
-    // The rendered hand is the authoritative one — the same rule the kit works to.
-    const pos = s.gav?.handPos() ?? { x: s.at.x + Math.cos(ang) * dist, y: s.at.y + Math.sin(ang) * dist };
-    const step = Math.max(0.001, dt / 1000);
-    if (seeded) {
-      s.handV.x = (pos.x - s.hand.x) / step;
-      s.handV.y = (pos.y - s.hand.y) / step;
-    }
-    s.hand.x = pos.x;
-    s.hand.y = pos.y;
-    seeded = true;
-  });
-  return s;
-}
-
-function tick(ctx: PreviewCtx, x: number, y: number, text: string, color: number): void {
-  const t = ctx.adopt(ctx.scene.add.text(x, y, text, {
-    fontSize: '11px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif',
-    color: hex(color), stroke: '#08160a', strokeThickness: 3,
-  }).setOrigin(0.5).setDepth(20));
-  const y0 = y;
-  let age = 0;
-  ctx.onFrame((dt) => {
-    age += dt;
-    t.setY(y0 - (age / 760) * 20);
-    t.setAlpha(Phaser.Math.Clamp(1 - age / 760, 0, 1));
-  });
-}
-
-function label(ctx: PreviewCtx, x: number, y: number, text: string, color: number): void {
-  ctx.adopt(ctx.scene.add.text(x, y, text, {
-    fontSize: '9px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif',
-    color: hex(color), align: 'center',
+function label(ctx: PreviewCtx, x: number, y: number, color: number, size = 11): Phaser.GameObjects.Text {
+  return ctx.adopt(ctx.scene.add.text(x, y, '', {
+    fontSize: `${size}px`, fontFamily: 'Arial Black', color: hex(color), stroke: '#161218', strokeThickness: 3,
   }).setOrigin(0.5).setDepth(19));
 }
 
-function dummy(ctx: PreviewCtx, at: Mark, o?: { alpha?: () => number }): void {
-  const g = ctx.adopt(ctx.scene.add.graphics().setDepth(5));
-  ctx.onFrame(() => {
-    const a = o?.alpha?.() ?? 1;
-    g.clear();
-    if (a <= 0.02) return;
-    g.fillStyle(0x2b2f3d, a);
-    g.fillCircle(at.x, at.y, 17);
-    g.fillStyle(0x3c4254, a);
-    g.fillCircle(at.x, at.y, 13);
-    g.fillStyle(0x8e97ad, a * 0.9);
-    g.fillCircle(at.x - 5, at.y - 4, 3.2);
-    g.fillCircle(at.x + 5, at.y - 4, 3.2);
-    g.fillStyle(0x11131b, a);
-    g.fillCircle(at.x - 5.6, at.y - 4, 1.6);
-    g.fillCircle(at.x + 4.4, at.y - 4, 1.6);
-  });
+function float(ctx: PreviewCtx, x: number, y: number, text: string, color: number): void {
+  const t = label(ctx, x, y, color);
+  t.setText(text);
+  ctx.scene.tweens.add({ targets: t, y: y - 18, alpha: 0, duration: 900 });
 }
 
-/** The gum shell an encased body wears, plus the bloat balloon under it. */
-function encasedShell(
-  ctx: PreviewCtx, at: Mark, read: () => { on: boolean; hard: boolean; layers: number },
+function layer(ctx: PreviewCtx, depth = 9): Phaser.GameObjects.Graphics {
+  return ctx.adopt(ctx.scene.add.graphics().setDepth(depth));
+}
+
+/** A thing that flies from `from` to `to` at `speed`, painted by `paint`, then calls `onHit`. */
+function flight(
+  ctx: PreviewCtx, from: { x: number; y: number }, to: { x: number; y: number }, speed: number,
+  paint: (g: Phaser.GameObjects.Graphics, x: number, y: number, k: number) => void, onHit: () => void,
 ): void {
-  const g = ctx.adopt(ctx.scene.add.graphics().setDepth(16));
-  ctx.onFrame((_dt, elapsed) => {
-    const t = elapsed / 1000;
-    const st = read();
-    g.clear();
-    if (!st.on) return;
-    if (st.layers >= 2) {
-      bloatShell(g, ctx.tint, at.x, at.y,
-        Math.min(96, BLOAT_BASE_R + st.layers * BLOAT_R_PER_LAYER), st.layers, 0.95, t,
-        { hard: st.hard });
-    }
-    gumShell(g, ctx.tint, at.x, at.y, 24, 0.95, t, { hard: st.hard });
-  });
-}
-
-// ── Slimeballs and shards, the two things every loop reuses ───────────
-
-interface BallState {
-  x: number; y: number; vx: number; vy: number;
-  flying: boolean; hard: boolean; bomb: boolean; stolen: boolean;
-  damage: number; seed: number; landsAt: number; gone: boolean;
-}
-
-/** Resting and thrown slimeballs, painted the way `paintGround`/`paintAir` paint them. */
-function ballField(
-  ctx: PreviewCtx, s: Slime, foe: Mark,
-  o?: { onHit?: (b: BallState) => void; onBomb?: (b: BallState) => void },
-): { list: BallState[]; add(x: number, y: number, opts?: Partial<BallState>): BallState } {
-  const list: BallState[] = [];
-  const g = ctx.adopt(ctx.scene.add.graphics().setDepth(4));
-  let now = 0;
+  const g = layer(ctx);
+  const ms = (Phaser.Math.Distance.Between(from.x, from.y, to.x, to.y) / speed) * 1000;
+  let el = 0;
+  let done = false;
   ctx.onFrame((dt) => {
-    now += dt;
-    const step = dt / 1000;
+    if (done) return;
+    el += dt;
+    const k = Math.min(1, el / ms);
     g.clear();
-    for (const b of list) {
-      if (b.gone) continue;
-      if (b.flying) {
-        b.x += b.vx * step;
-        b.y += b.vy * step;
-        if (Phaser.Math.Distance.Between(b.x, b.y, foe.x, foe.y) <= BALL_R + 16) {
-          b.gone = true;
-          if (b.bomb) o?.onBomb?.(b); else o?.onHit?.(b);
-          continue;
-        }
-        if (b.x <= 6 || b.x >= ctx.w - 6 || b.y <= 6 || b.y >= ctx.h - 6) {
-          b.x = Phaser.Math.Clamp(b.x, 7, ctx.w - 7);
-          b.y = Phaser.Math.Clamp(b.y, 7, ctx.h - 7);
-          if (b.bomb) { b.gone = true; o?.onBomb?.(b); continue; }
-          // Hardened slime does not stick — the wall is what breaks it.
-          if (b.hard) { b.gone = true; s.fx.harden(b.x, b.y, 22); s.fx.shardBurst(b.x, b.y, 8); continue; }
-          b.flying = false;
-          b.vx = 0;
-          b.vy = 0;
-          s.fx.splat(b.x, b.y, 18, 4);
-        } else if (now >= b.landsAt) {
-          if (b.stolen) { b.gone = true; s.fx.pop(b.x, b.y, 14); continue; }
-          b.flying = false;
-          b.vx = 0;
-          b.vy = 0;
-          s.fx.splat(b.x, b.y, 16, 4);
-        }
-      }
-      // Resting balls sit in their own little puddles, dripping.
-      if (!b.flying) {
-        g.fillStyle(ctx.tint(GUM.murk), 0.35);
-        g.fillEllipse(b.x, b.y + BALL_R * 0.7, BALL_R * 2.2, BALL_R * 0.9);
-      }
-      oozeBlob(g, ctx.tint, b.x, b.y, BALL_R, 0.95, now / 1000, {
-        seed: b.seed, squat: b.flying ? 0.2 : 0.5, wobble: 0.14,
-        deep: b.hard ? GUM.solidDeep : GUM.oozeDeep,
-        fill: b.hard ? GUM.solid : GUM.ooze,
-        lit: b.hard ? GUM.solidLit : GUM.oozeLit,
-      });
-      if (b.hard) {
-        for (let i = 0; i < 3; i++) {
-          slimeShard(g, ctx.tint, b.x, b.y, (i / 3) * TAU + (now / 1000) * 0.4, BALL_R * 1.1, 0.85, { seed: i });
-        }
-      }
-      if (b.stolen) {
-        g.lineStyle(1.6, ctx.tint(GUM.shine), 0.8);
-        g.strokeCircle(b.x, b.y, BALL_R * 0.55);
-      }
-      if (b.bomb) {
-        // The fuse, so a bomb reads as a bomb before it goes off.
-        g.lineStyle(1.4, ctx.tint(GUM.solidLit), 0.9);
-        g.lineBetween(b.x, b.y - BALL_R, b.x + 3, b.y - BALL_R - 6);
-        g.fillStyle(ctx.tint(GUM.shine), 0.6 + 0.4 * Math.sin(now / 90));
-        g.fillCircle(b.x + 3.4, b.y - BALL_R - 7, 2.1);
-      }
-      drips(g, ctx.tint, b.x, b.y + BALL_R * 0.6, BALL_R, 2, 0.55, now / 1000, { seed: b.seed });
-    }
+    paint(g, from.x + (to.x - from.x) * k, from.y + (to.y - from.y) * k, k);
+    if (k >= 1) { done = true; g.clear(); onHit(); }
   });
-  return {
-    list,
-    add(x, y, opts) {
-      const b: BallState = {
-        x, y, vx: 0, vy: 0, flying: false, hard: false, bomb: false, stolen: false,
-        damage: BALL_DAMAGE, seed: Math.random() * 999, landsAt: 0, gone: false, ...opts,
-      };
-      list.push(b);
-      return b;
-    },
-  };
 }
 
-/** Shards from a shattered hand, a broken ball or a zip-line spark. */
-function shardField(ctx: PreviewCtx, foe: Mark, onHit: (damage: number) => void): {
-  burst(x: number, y: number, count: number, damage: number, spark: boolean): void;
-} {
-  interface Sh { x: number; y: number; vx: number; vy: number; life: number; seed: number; damage: number; spark: boolean; done: boolean }
-  const list: Sh[] = [];
-  const g = ctx.adopt(ctx.scene.add.graphics().setDepth(16));
-  ctx.onFrame((dt) => {
-    const step = dt / 1000;
-    g.clear();
-    for (let i = list.length - 1; i >= 0; i--) {
-      const sh = list[i];
-      sh.x += sh.vx * step;
-      sh.y += sh.vy * step;
-      sh.life -= dt;
-      if (!sh.done && Phaser.Math.Distance.Between(sh.x, sh.y, foe.x, foe.y) <= 20) {
-        sh.done = true;
-        onHit(sh.damage);
-        list.splice(i, 1);
-        continue;
-      }
-      if (sh.life <= 0 || sh.x < -20 || sh.x > ctx.w + 20 || sh.y < -20 || sh.y > ctx.h + 20) {
-        list.splice(i, 1);
-        continue;
-      }
-      slimeShard(g, ctx.tint, sh.x, sh.y, Math.atan2(sh.vy, sh.vx), sh.spark ? 9 : 15,
-        Phaser.Math.Clamp(sh.life / 400, 0, 1),
-        sh.spark
-          ? { seed: sh.seed, deep: GUM.stoneDeep, fill: GUM.stone, lit: GUM.stoneLit }
-          : { seed: sh.seed });
-    }
-  });
-  return {
-    burst(x, y, count, damage, spark) {
-      for (let i = 0; i < count; i++) {
-        const a = (i / count) * TAU + Math.random() * 0.3;
-        const sp = (spark ? 300 : SHARD_SPEED) * (0.7 + Math.random() * 0.5);
-        list.push({
-          x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
-          life: spark ? 260 : SHARD_LIFE_MS, seed: Math.random() * 999, damage, spark, done: false,
-        });
-      }
-    },
-  };
-}
+// ══ PASSIVES ═══════════════════════════════════════════════════════════
 
-// ── Click — Grab ──────────────────────────────────────────────────────
-
-export const grab: PreviewScript = {
-  duration: 9000,
-  scale: 0.9,
-  bodyTexture: '',
-  caption: 'Click — grip the floor and the cursor becomes a handle: drag it back, and the arm hauls you forward',
+export const sugarAndSalt: PreviewScript = {
+  duration: 4800,
+  caption: 'Space — every dodge flips you between Sugar and Salt, and the tray flips with you',
   run(ctx) {
-    const home: Mark = { x: ctx.w * 0.24, y: ctx.h * 0.66 };
-    const s = slime(ctx, home);
-    const foe: Mark = { x: ctx.w * 0.8, y: ctx.h * 0.4 };
-    dummy(ctx, foe);
-
-    // The anchor, and the splat it leaves. Everything after this is the drag.
-    const anchor: Mark = { x: ctx.w * 0.58, y: ctx.h * 0.78 };
-    let gripping = false;
-    const ground = ctx.adopt(ctx.scene.add.graphics().setDepth(4));
-    ctx.onFrame((_dt, elapsed) => {
-      ground.clear();
-      if (!gripping) return;
-      gripSplat(ground, ctx.tint, anchor.x, anchor.y, 11, 0.95, elapsed / 1000,
-        { pull: 1, toward: Math.atan2(home.y - anchor.y, home.x - anchor.x), wall: false });
-    });
-
-    ctx.at(700, () => {
-      gripping = true;
-      s.reach.x = anchor.x;
-      s.reach.y = anchor.y;
-      s.gav?.setGrip(true);
-      s.fx.splat(anchor.x, anchor.y, 16, 4);
-      tick(ctx, anchor.x, anchor.y - 24, '🖐 GRIP', GUM.oozeLit);
-    });
-
-    // The haul. The body moves toward the anchor at up to the kit's own 560 px/s ceiling, which
-    // is what a player dragging the mouse steadily actually produces.
-    ctx.onFrame((dt, elapsed) => {
-      if (!gripping || elapsed < 900) return;
-      s.reach.x = anchor.x;
-      s.reach.y = anchor.y;
-      const d = Phaser.Math.Distance.Between(home.x, home.y, anchor.x, anchor.y);
-      if (d <= 30) return;
-      const step = Math.min(d - 30, DRAG_MAX_SPEED * 0.4 * (dt / 1000));
-      home.x += ((anchor.x - home.x) / d) * step;
-      home.y += ((anchor.y - home.y) / d) * step;
-    });
-
-    // A punch, once the haul has put somebody in reach.
-    ctx.at(4200, () => {
-      gripping = false;
-      s.gav?.setGrip(false);
-    });
-    ctx.onFrame((_dt, elapsed) => {
-      if (elapsed < 4200 || elapsed > 5400) return;
-      s.reach.x = foe.x;
-      s.reach.y = foe.y;
-    });
-    ctx.at(5000, () => {
-      s.av.play('punch', Math.atan2(foe.y - home.y, foe.x - home.x));
-      s.fx.splat(foe.x, foe.y, 22);
-      tick(ctx, foe.x, foe.y - 16, `${PUNCH_DAMAGE}`, GUM.oozeLit);
-    });
-
-    // …and then the free half: the hand whipped past on the way back.
-    ctx.onFrame((dt, elapsed) => {
-      if (elapsed < 5600) return;
-      const sweep = (elapsed - 5600) / 1000;
-      s.reach.x = foe.x + Math.cos(sweep * 4) * 90;
-      s.reach.y = foe.y + Math.sin(sweep * 4) * 60;
-      void dt;
-    });
-    let gate = 0;
-    ctx.onFrame((_dt, elapsed) => {
-      if (elapsed < 5600 || elapsed < gate) return;
-      if (Math.hypot(s.handV.x, s.handV.y) < SMACK_SPEED) return;
-      if (Phaser.Math.Distance.Between(s.hand.x, s.hand.y, foe.x, foe.y) > 32) return;
-      gate = elapsed + 520;
-      s.fx.splat(foe.x, foe.y, 18);
-      tick(ctx, foe.x, foe.y - 16, `${SMACK_DAMAGE}`, GUM.oozeLit);
-    });
-
-    label(ctx, ctx.w * 0.5, ctx.h - 10,
-      'grip → haul → 20-damage punch → free 15s from a hand moving over 620 px/s', GUM.oozeDeep);
+    const av = stand(ctx, 'sugar');
+    const fx = fxOf(ctx);
+    const read = label(ctx, ctx.w * 0.5, 16, SAVOR.sugar);
+    let form: SavorForm = 'sugar';
+    read.setText('SUGAR');
+    for (let i = 0; i < 4; i++) {
+      ctx.at(500 + i * 1100, () => {
+        const c = ctx.casterAt();
+        const to = { x: ctx.cx + (i % 2 ? -60 : 60), y: ctx.cy + (i % 2 ? 10 : -10) };
+        ctx.glideCaster({ to, ms: 280, ease: 'out' });
+        form = form === 'sugar' ? 'salt' : 'sugar';
+        av?.setForm(form);
+        fx.shift(c.x, c.y, form);
+        read.setText(form === 'sugar' ? 'SUGAR' : 'SALT');
+        read.setColor(hex(form === 'sugar' ? SAVOR.punchLit : SAVOR.salt));
+      });
+    }
   },
 };
 
-export const grabUpgraded: PreviewScript = {
-  duration: 7000,
-  scale: 0.8,
-  bodyTexture: '',
-  caption: 'Zip-Line — three strands only your hand can touch, and a 640 px/s ride you cannot steer',
+export const candyBuffs: PreviewScript = {
+  duration: 5200,
+  caption: 'Candy buffs — permanent for the match: Cinnamon damage, Mint resistance, Lemon speed, Fruit Punch dodge',
   run(ctx) {
-    const home: Mark = { x: ctx.w * 0.12, y: ctx.h * 0.5 };
-    const s = slime(ctx, home);
-    const foe: Mark = { x: ctx.w * 0.7, y: ctx.h * 0.72 };
-    dummy(ctx, foe);
-
-    const lines: number[] = [];
-    for (let i = 0; i < ZIP_COUNT; i++) lines.push((ctx.h * (i + 1)) / (ZIP_COUNT + 1));
-    let riding = -1;
-    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(16));
-    ctx.onFrame((_dt, elapsed) => {
+    stand(ctx, 'sugar');
+    const fx = fxOf(ctx);
+    const g = layer(ctx, 4);
+    const kinds: CandyKind[] = ['cinnamon', 'mint', 'lemon', 'punch', 'rainbow', 'licorice'];
+    const spots = kinds.map((_, i) => ({ x: ctx.cx + 70 + i * 52, y: ctx.cy + (i % 2 ? 18 : -18) }));
+    const eaten = new Set<number>();
+    let t = 0;
+    ctx.onFrame((dt) => {
+      t += dt / 1000;
       g.clear();
-      for (let i = 0; i < lines.length; i++) {
-        const lit = riding === i;
-        zipLine(g, ctx.tint, 8, ctx.w - 8, lines[i], lit ? 1 : 0.72, elapsed / 1000,
-          { seed: 4 + i * 3, lit });
-      }
+      spots.forEach((s, i) => { if (!eaten.has(i)) candy(g, ctx.tint, s.x, s.y, kinds[i], 1.1, t, 1); });
     });
-
-    const sparks = shardField(ctx, foe, (dmg) => tick(ctx, foe.x, foe.y - 14, `${dmg}`, GUM.stoneLit));
-    ctx.at(600, () => {
-      riding = 1;
-      s.gav?.setGrip(true);
-      s.gav?.setShardHand(true);
-      s.fx.splat(s.hand.x, lines[1], 14, 8);
-      tick(ctx, home.x, home.y - 44, '🪢 ZIP-LINE', GUM.oozeLit);
+    const names = ['+CINNAMON', '+MINT', '+LEMON', '+FRUIT PUNCH', '+1 ALL!', '−1 ALL'];
+    spots.forEach((s, i) => {
+      ctx.at(400 + i * 700, () => {
+        ctx.glideCaster({ to: s, ms: 420, ease: 'out', onDone: () => {
+          eaten.add(i);
+          fx.pickup(s.x, s.y, kinds[i]);
+          float(ctx, s.x, s.y - 30, names[i], kinds[i] === 'licorice' ? SAVOR.licoriceHi : kinds[i] === 'rainbow' ? SAVOR.violet : SAVOR.sparkle);
+        } });
+      });
     });
-
-    let nextSpark = 0;
-    ctx.onFrame((dt, elapsed) => {
-      if (riding < 0) return;
-      // 640 px/s flat across, and the hand rides 46px ahead of the body.
-      home.y = Phaser.Math.Linear(home.y, lines[riding], Math.min(1, dt / 90));
-      home.x += ZIP_SPEED * (dt / 1000);
-      s.reach.x = home.x + 46;
-      s.reach.y = lines[riding];
-      if (elapsed >= nextSpark) {
-        nextSpark = elapsed + 110;
-        sparks.burst(s.hand.x, s.hand.y, ZIP_SPARK_COUNT, ZIP_SPARK_DAMAGE, true);
-        s.fx.sparks(s.hand.x, s.hand.y, 22);
-      }
-      if (home.x >= ctx.w - 20) {
-        riding = -1;
-        s.gav?.setGrip(false);
-        s.fx.splat(home.x, home.y, 26, 8);
-        tick(ctx, home.x, home.y - 40, '🧱 END OF THE LINE', GUM.oozeLit);
-      }
-    });
-
-    label(ctx, ctx.w * 0.5, ctx.h - 10,
-      'catch within 22px of a line · with the hand of stone it throws 7 sparks at 4 every 110ms', GUM.oozeDeep);
   },
 };
 
-// ── E — Slime Surge ───────────────────────────────────────────────────
+// ══ SUGAR ══════════════════════════════════════════════════════════════
 
-function surgeLoop(ctx: PreviewCtx, opts: { bomb: boolean }): void {
-  const home: Mark = { x: ctx.w * 0.22, y: ctx.h * 0.66 };
-  const s = slime(ctx, home);
-  const foe: Mark = { x: ctx.w * 0.82, y: ctx.h * 0.5 };
-  dummy(ctx, foe);
-
-  // Slime Splash's puddles: the ramp is the ability, so the loop runs the real soak integrator.
-  interface Pud { x: number; y: number; until: number; seed: number }
-  const puddles: Pud[] = [];
-  let soak = 0;
-  const ground = ctx.adopt(ctx.scene.add.graphics().setDepth(3));
-  ctx.onFrame((dt, elapsed) => {
-    const t = elapsed / 1000;
-    ground.clear();
-    let inIt = false;
-    for (const pd of puddles) {
-      if (Phaser.Math.Distance.Between(pd.x, pd.y, foe.x, foe.y) <= PUDDLE_R) inIt = true;
-      slimePuddle(ground, ctx.tint, pd.x, pd.y, PUDDLE_R, 1, t,
-        { seed: pd.seed, heal: false, soak, life: 1 });
-    }
-    soak = Phaser.Math.Clamp(soak + (inIt ? dt / SOAK_RAMP_MS : -dt / 1500), 0, 1);
-  });
-
-  const balls = ballField(ctx, s, foe, {
-    onHit: (b) => {
-      s.fx.splat(foe.x, foe.y, b.hard ? 26 : 30);
-      tick(ctx, foe.x, foe.y - 16, `${b.damage}`, b.hard ? GUM.solidLit : GUM.oozeLit);
-      if (!b.stolen) tick(ctx, foe.x, foe.y - 34, '🐌 SLIMED · −50%', GUM.oozeLit);
-    },
-    onBomb: (b) => {
-      s.fx.splat(b.x, b.y, 42, 6);
-      tick(ctx, b.x, b.y - 26, '💥 SPLASH', GUM.oozeLit);
-      if (Phaser.Math.Distance.Between(b.x, b.y, foe.x, foe.y) <= BOMB_AOE_R) {
-        tick(ctx, foe.x, foe.y - 16, `${b.damage}`, GUM.oozeLit);
-      }
-      puddles.push({ x: b.x, y: b.y, until: 12000, seed: Math.random() * 999 });
-    },
-  });
-
-  ctx.at(400, () => {
-    s.av.play('sweep', 0);
-    const base = Math.atan2(foe.y - home.y, foe.x - home.x);
-    for (let i = 0; i < SURGE_COUNT; i++) {
-      const a = base + (i - 1) * 0.42;
-      const d = 58 + Math.random() * 42;
-      const x = Phaser.Math.Clamp(home.x + Math.cos(a) * d, 12, ctx.w - 12);
-      const y = Phaser.Math.Clamp(home.y + Math.sin(a) * d, 12, ctx.h - 12);
-      balls.add(x, y, { bomb: opts.bomb });
-      s.fx.splat(x, y, 18, 4);
-    }
-    tick(ctx, home.x, home.y - 44, opts.bomb ? '💣 SLIME SPLASH' : '🟢 SLIME SURGE', GUM.oozeLit);
-  });
-
-  // Reach out, pick one up, wind up and flick it. The throw is the hand's own velocity ×1.15.
-  let held: BallState | null = null;
-  const pickAt = 1600;
-  ctx.at(pickAt, () => {
-    held = balls.list.find((b) => !b.flying && !b.gone) ?? null;
-    if (!held) return;
-    s.reach.x = held.x;
-    s.reach.y = held.y;
-    s.gav?.setCarry(true);
-    tick(ctx, held.x, held.y - 22, '🫳 PICKED UP', GUM.oozeLit);
-  });
-  ctx.onFrame((_dt, elapsed) => {
-    if (!held || elapsed < pickAt) return;
-    if (elapsed < pickAt + 900) {
-      // Winding up: the hand is swung back, and the ball rides it.
-      const k = (elapsed - pickAt) / 900;
-      s.reach.x = home.x - 60 * k;
-      s.reach.y = home.y - 30 * k;
-    }
-    if (held.flying) return;
-    held.x = s.hand.x;
-    held.y = s.hand.y;
-  });
-  ctx.at(pickAt + 900, () => {
-    if (!held) return;
-    s.reach.x = foe.x;
-    s.reach.y = foe.y;
-  });
-  ctx.at(pickAt + 1120, () => {
-    if (!held) return;
-    s.gav?.setCarry(false);
-    const a = Math.atan2(foe.y - s.hand.y, foe.x - s.hand.x);
-    held.vx = Math.cos(a) * 820;
-    held.vy = Math.sin(a) * 820;
-    held.flying = true;
-    held.landsAt = 99999;
-    s.fx.splat(held.x, held.y, 12, 6);
-    tick(ctx, home.x, home.y - 58, '🤾 THROWN · 820 px/s', GUM.shine);
-    held = null;
-  });
-
-  label(ctx, ctx.w * 0.5, ctx.h - 10,
-    opts.bomb ? `a ${BOMB_AOE_R}px burst and a ${PUDDLE_R}px puddle — 2.5s of standing in it is ${Math.round(PUDDLE_SLOW_FLOOR * 100)}% speed`
-      : 'the balls just sit there — only your hand can pick one up, and a miss lands and waits',
-    GUM.oozeDeep);
-}
-
-export const surge: PreviewScript = {
-  duration: 6000,
-  scale: 0.9,
-  bodyTexture: '',
-  caption: 'E — three balls of ammunition on the floor. 30 damage and a 50% slow once one is thrown',
-  run(ctx) { surgeLoop(ctx, { bomb: false }); },
+export const sugarSlam: PreviewScript = {
+  duration: 4200,
+  caption: 'Click — a sugar bomb to the cursor: 22 in a burst, a stinging cloud where it lands, a sugar trail behind it',
+  run(ctx) {
+    const av = stand(ctx, 'sugar');
+    ctx.addDummy();
+    const fx = fxOf(ctx);
+    const ground = layer(ctx, 4);
+    const grains: { x: number; y: number; at: number }[] = [];
+    let cloudAt = -1;
+    let t = 0;
+    ctx.onFrame((dt) => {
+      t += dt;
+      ground.clear();
+      for (const gr of grains) sugarGrain(ground, ctx.tint, gr.x, gr.y, 4, Math.max(0, 1 - (t - gr.at) / 3000), t / 1000);
+      if (cloudAt >= 0 && t - cloudAt < 2600) sugarCloud(ground, ctx.tint, ctx.tx, ctx.ty, 48, t / 1000, Math.min(1, (2600 - (t - cloudAt)) / 500) * 0.75, 3);
+    });
+    ctx.at(300, () => {
+      av?.play('punch', ctx.aim);
+      const c = ctx.casterAt();
+      const from = { x: c.x + Math.cos(ctx.aim) * 18, y: c.y + Math.sin(ctx.aim) * 18 };
+      fx.slamLaunch(from.x, from.y, ctx.aim);
+      let last = { ...from };
+      flight(ctx, from, { x: ctx.tx, y: ctx.ty }, SLAM_SPEED, (g, x, y, k) => {
+        if (Phaser.Math.Distance.Between(last.x, last.y, x, y) >= 26) { grains.push({ x, y, at: t }); last = { x, y }; }
+        sugarBomb(g, ctx.tint, x, y - Math.sin(k * Math.PI) * 60, 9, t / 1000, 1);
+      }, () => {
+        fx.slamBurst(ctx.tx, ctx.ty, SLAM_R);
+        cloudAt = t;
+        float(ctx, ctx.tx, ctx.ty - 34, '-22', SAVOR.sugar);
+      });
+    });
+    for (let i = 0; i < 4; i++) ctx.at(1400 + i * 500, () => float(ctx, ctx.tx + 10, ctx.ty - 24, '-3', SAVOR.sparkle));
+  },
 };
 
-export const surgeUpgraded: PreviewScript = {
-  duration: 7600,
-  scale: 0.9,
-  bodyTexture: '',
-  caption: 'Slime Splash — a 78px burst wherever it stops, and a puddle that gets worse the longer you stand in it',
-  run(ctx) { surgeLoop(ctx, { bomb: true }); },
+export const sweetTooth: PreviewScript = {
+  duration: 4600,
+  caption: 'E — a bag of five candies thrown round you. Eat them for permanent buffs; avoid the Black Licorice',
+  run(ctx) {
+    const av = stand(ctx, 'sugar');
+    const fx = fxOf(ctx);
+    const g = layer(ctx, 4);
+    const kinds: CandyKind[] = ['cinnamon', 'lemon', 'licorice', 'mint', 'rainbow'];
+    const c0 = ctx.casterAt();
+    const spots = kinds.map((_, i) => {
+      const a = (i / kinds.length) * Math.PI * 2 + 0.3;
+      return { x: c0.x + Math.cos(a) * 110, y: c0.y + Math.sin(a) * 70 };
+    });
+    let thrownAt = -1;
+    const eaten = new Set<number>();
+    let t = 0;
+    ctx.onFrame((dt) => {
+      t += dt;
+      g.clear();
+      if (thrownAt < 0) return;
+      const k = Math.min(1, (t - thrownAt) / 420);
+      spots.forEach((s, i) => {
+        if (eaten.has(i)) return;
+        const x = c0.x + (s.x - c0.x) * k;
+        const y = c0.y + (s.y - c0.y) * k - Math.sin(k * Math.PI) * 40;
+        candy(g, ctx.tint, x, y, kinds[i], 1, t / 1000, 1, k < 1 ? k * 8 : 0);
+      });
+    });
+    ctx.at(300, () => { av?.play('sweep'); fx.bagBurst(c0.x, c0.y - 6); thrownAt = t; });
+    [0, 1, 3, 4].forEach((i, n) => {
+      ctx.at(1200 + n * 750, () => ctx.glideCaster({ to: spots[i], ms: 400, ease: 'out', onDone: () => {
+        eaten.add(i);
+        fx.pickup(spots[i].x, spots[i].y, kinds[i]);
+        float(ctx, spots[i].x, spots[i].y - 28, kinds[i] === 'rainbow' ? '+1 ALL!' : `+${kinds[i].toUpperCase()}`, SAVOR.sparkle);
+      } }));
+    });
+  },
 };
 
-// ── R — Gumball ───────────────────────────────────────────────────────
-
-function gumballLoop(ctx: PreviewCtx, opts: { bloat: boolean }): void {
-  const home: Mark = { x: ctx.w * 0.18, y: ctx.h * 0.6 };
-  const s = slime(ctx, home);
-  const foe: Mark = { x: ctx.w * 0.52, y: ctx.h * 0.6 };
-  dummy(ctx, foe);
-
-  const enc = { on: false, hard: false, layers: 0 };
-  encasedShell(ctx, foe, () => enc);
-
-  // The fan of nine, stepped and popped the way `updateBubbles` does it.
-  interface Bub { x: number; y: number; vx: number; vy: number; life: number; seed: number; gone: boolean }
-  const bubbles: Bub[] = [];
-  const g = ctx.adopt(ctx.scene.add.graphics().setDepth(16));
-  ctx.onFrame((dt, elapsed) => {
-    const step = dt / 1000;
-    g.clear();
-    for (let i = bubbles.length - 1; i >= 0; i--) {
-      const b = bubbles[i];
-      b.x += b.vx * step;
-      b.y += b.vy * step;
-      b.life -= dt;
-      if (Phaser.Math.Distance.Between(b.x, b.y, foe.x, foe.y) <= BUBBLE_R + 16) {
-        bubbles.splice(i, 1);
-        s.fx.pop(b.x, b.y, 20);
-        tick(ctx, foe.x + (Math.random() - 0.5) * 20, foe.y - 12, `${BUBBLE_DAMAGE}`, GUM.gum);
-        if (!enc.on) {
-          enc.on = true;
-          tick(ctx, foe.x, foe.y - 36, '🩷 ENCASED · −55%', GUM.gumLit);
-        }
-        if (opts.bloat) {
-          enc.layers++;
-          if (enc.layers === 2) tick(ctx, foe.x, foe.y - 54, '🎈 BLOATED', GUM.gumLit);
-        }
-        continue;
+export const sugarDiffusion: PreviewScript = {
+  duration: 5200,
+  caption: 'R — +50% speed for 5s. Run a loop round an enemy: their blood sugar becomes a cube over your head',
+  run(ctx) {
+    const av = stand(ctx, 'sugar');
+    ctx.addDummy();
+    const fx = fxOf(ctx);
+    const center = { x: ctx.tx, y: ctx.ty };
+    const R = 95;
+    let start = -1;
+    let t = 0;
+    let cubed = false;
+    ctx.onFrame((dt) => {
+      t += dt;
+      if (start < 0) return;
+      const k = Math.min(1, (t - start) / 2600);
+      const a = Math.PI + k * Math.PI * 2;
+      ctx.moveCaster(center.x + Math.cos(a) * R, center.y + Math.sin(a) * R * 0.7, { facing: a + Math.PI / 2 });
+      if (k >= 1 && !cubed) {
+        cubed = true;
+        const c = ctx.casterAt();
+        fx.drain(center.x, center.y, c.x, c.y - 40);
+        av?.setCubes(1);
+        float(ctx, center.x, center.y - 32, '🧊 BLOOD SUGAR', SAVOR.sugar);
+        ctx.at(t + 600, () => float(ctx, center.x, center.y - 20, 'SLOWER FOR GOOD', SAVOR.sugarRim));
       }
-      if (b.life <= 0 || b.x <= 4 || b.x >= ctx.w - 4 || b.y <= 4 || b.y >= ctx.h - 4) {
-        bubbles.splice(i, 1);
-        s.fx.pop(b.x, b.y, 12);
-        continue;
-      }
-      gumBubble(g, ctx.tint, b.x, b.y, BUBBLE_R, 0.95, elapsed / 1000, { seed: b.seed });
-    }
-  });
+    });
+    ctx.at(300, () => { av?.play('dash'); start = t; ctx.moveCaster(center.x - R, center.y); });
+  },
+};
 
-  ctx.at(400, () => {
-    s.av.play('sweep', 0);
-    const base = Math.atan2(foe.y - home.y, foe.x - home.x);
-    for (let i = 0; i < BUBBLE_COUNT; i++) {
-      const a = base + (i / (BUBBLE_COUNT - 1) - 0.5) * BUBBLE_SPREAD * 2 + (Math.random() - 0.5) * 0.08;
-      const sp = BUBBLE_SPEED * (0.85 + Math.random() * 0.3);
-      bubbles.push({
-        x: home.x + Math.cos(a) * 22, y: home.y + Math.sin(a) * 22,
-        vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, life: 900, seed: Math.random() * 999, gone: false,
+export const caringShare: PreviewScript = {
+  duration: 5600,
+  caption: 'F — chocolate: lends them 150% of your buffs for 5s, then they crash and drop 3 candies for you',
+  run(ctx) {
+    const av = stand(ctx, 'sugar');
+    ctx.addDummy();
+    const fx = fxOf(ctx);
+    const g = layer(ctx, 9);
+    let loanAt = -1;
+    let t = 0;
+    ctx.onFrame((dt) => {
+      t += dt;
+      g.clear();
+      if (loanAt < 0) return;
+      const age = t - loanAt;
+      if (age < 2000) {
+        g.lineStyle(2, ctx.tint(SAVOR.lemon), 0.7);
+        g.strokeCircle(ctx.tx, ctx.ty, 28);
+        for (let i = 0; i < 4; i++) {
+          const a = t / 500 + (i / 4) * Math.PI * 2;
+          candy(g, ctx.tint, ctx.tx + Math.cos(a) * 30, ctx.ty + Math.sin(a) * 30 - 6, BUFF_KINDS[i], 0.55, t / 1000, 0.9);
+        }
+      } else if (age < 3800) {
+        for (let i = 0; i < 3; i++) {
+          const a = i * 2.1 + 0.4;
+          candy(g, ctx.tint, ctx.tx + Math.cos(a) * 60, ctx.ty + Math.sin(a) * 40, BUFF_KINDS[i], 1, t / 1000, 1);
+        }
+      }
+    });
+    ctx.at(300, () => {
+      av?.play('punch', ctx.aim);
+      const c = ctx.casterAt();
+      flight(ctx, { x: c.x + 20, y: c.y }, { x: ctx.tx - 14, y: ctx.ty }, CHOCO_SPEED,
+        (gg, x, y) => chocoBall(gg, ctx.tint, x, y, 11, t / 1000, 1),
+        () => { fx.chocoSplat(ctx.tx, ctx.ty); loanAt = t; float(ctx, ctx.tx, ctx.ty - 36, '🍫 SHARED +6', SAVOR.lemon); });
+    });
+    ctx.at(2700, () => { fx.crash(ctx.tx, ctx.ty); float(ctx, ctx.tx, ctx.ty - 36, '💤 SUGAR CRASH', SAVOR.saltDark); });
+  },
+};
+
+export const sugarRush: PreviewScript = {
+  duration: 4400,
+  caption: 'Q — Sugar Rush: triple speed and every candy buff doubled for 12s',
+  run(ctx) {
+    const av = stand(ctx, 'sugar');
+    const fx = fxOf(ctx);
+    const g = layer(ctx, 18);
+    let on = -1;
+    let t = 0;
+    const colors = [SAVOR.cinnamon, SAVOR.lemon, SAVOR.mint, SAVOR.sky, SAVOR.violet, SAVOR.punch];
+    ctx.onFrame((dt) => {
+      t += dt;
+      g.clear();
+      if (on < 0) return;
+      for (let i = 0; i < colors.length; i++) {
+        g.lineStyle(5, ctx.tint(colors[(i + Math.floor(t / 100)) % colors.length]), 0.3);
+        g.strokeRect(4 + i * 5, 4 + i * 5, ctx.w - 8 - i * 10, ctx.h - 8 - i * 10);
+      }
+    });
+    ctx.at(300, () => {
+      const c = ctx.casterAt();
+      av?.play('raise');
+      av?.setRush(1);
+      fx.rushIgnite(c.x, c.y);
+      on = t;
+      float(ctx, c.x, c.y - 44, 'SUGAR RUSH!', SAVOR.punchLit);
+    });
+    ctx.at(1100, () => ctx.glideCaster({ to: { x: ctx.cx + 180, y: ctx.cy - 20 }, ms: 300, ease: 'out' }));
+    ctx.at(1700, () => ctx.glideCaster({ to: { x: ctx.cx - 180, y: ctx.cy + 20 }, ms: 300, ease: 'out' }));
+    ctx.at(2300, () => ctx.glideCaster({ to: { x: ctx.cx, y: ctx.cy }, ms: 300, ease: 'out' }));
+  },
+};
+
+// ══ SALT ═══════════════════════════════════════════════════════════════
+
+export const saltSlice: PreviewScript = {
+  duration: 3200,
+  caption: 'Click (Salt) — a fast shard: 12 plus 3% of their max health. Big health pools bleed faster',
+  run(ctx) {
+    const av = stand(ctx, 'salt');
+    ctx.addDummy();
+    const fx = fxOf(ctx);
+    for (let i = 0; i < 3; i++) {
+      ctx.at(300 + i * 700, () => {
+        av?.play('punch', ctx.aim);
+        const c = ctx.casterAt();
+        const from = { x: c.x + Math.cos(ctx.aim) * 20, y: c.y + Math.sin(ctx.aim) * 20 };
+        fx.sliceLaunch(from.x, from.y, ctx.aim);
+        flight(ctx, from, { x: ctx.tx - 16, y: ctx.ty }, SLICE_SPEED,
+          (g, x, y) => saltShard(g, ctx.tint, x, y, ctx.aim, 22, 4.5, 1),
+          () => { fx.shatter(ctx.tx - 16, ctx.ty, ctx.aim); float(ctx, ctx.tx, ctx.ty - 30, '-24', SAVOR.saltEdge); });
       });
     }
-    tick(ctx, home.x, home.y - 44, '🩷 GUMBALL', GUM.gum);
-  });
-
-  // Pick them up — a gummed body is the hand's first grab priority — and throw them at the wall.
-  let carrying = false;
-  ctx.at(1900, () => {
-    if (!enc.on) return;
-    carrying = true;
-    s.gav?.setCarry(true);
-    tick(ctx, foe.x, foe.y - 40, '🫳 GRABBED', GUM.gumLit);
-  });
-  ctx.onFrame((_dt, elapsed) => {
-    if (!carrying) return;
-    // Wound back, then flicked at the far wall. A carried body goes exactly where the hand goes.
-    const k = Phaser.Math.Clamp((elapsed - 1900) / 900, 0, 1);
-    s.reach.x = home.x + Math.cos(Math.PI * (1 - k * 0.9)) * 90;
-    s.reach.y = home.y + Math.sin(Math.PI * (1 - k * 0.9)) * 50;
-    foe.x = s.hand.x;
-    foe.y = s.hand.y;
-  });
-
-  let flung: Mark | null = null;
-  ctx.at(2900, () => {
-    if (!carrying) return;
-    carrying = false;
-    s.gav?.setCarry(false);
-    flung = { x: 900, y: -60 };
-    tick(ctx, foe.x, foe.y - 40, '🤾 THROWN', GUM.gumLit);
-  });
-  ctx.onFrame((dt) => {
-    if (!flung) return;
-    foe.x += flung.x * (dt / 1000);
-    foe.y += flung.y * (dt / 1000);
-    if (foe.x < ctx.w - 14) return;
-    foe.x = ctx.w - 14;
-    flung = null;
-    s.fx.splat(foe.x, foe.y, 30, 6, true);
-    tick(ctx, foe.x - 20, foe.y - 16, `${WALL_SLAM_DAMAGE}`, GUM.gumLit);
-    tick(ctx, foe.x - 20, foe.y - 40, '🧱 STUCK · 5s AT ZERO SPEED', GUM.gumLit);
-    if (!opts.bloat || enc.layers < 2) return;
-    // Any wall does it — including one they walked into themselves.
-    const dmg = BLOAT_DAMAGE * enc.layers;
-    s.fx.bloatBurst(foe.x, foe.y, Math.min(96, BLOAT_BASE_R + enc.layers * BLOAT_R_PER_LAYER), false);
-    tick(ctx, foe.x - 20, foe.y - 58, `🎈 BLOAT ×${enc.layers} · ${dmg}`, GUM.gumLit);
-    enc.layers = 0;
-  });
-
-  label(ctx, ctx.w * 0.5, ctx.h - 10,
-    opts.bloat ? `${BLOAT_DAMAGE} a layer on any wall — 18 a layer if you had solidified them first`
-      : '9 bubbles at 5 · encased for 5s · picked up like a slimeball · 30 and a 5s root on the wall',
-    GUM.gumDeep);
-}
-
-export const gumball: PreviewScript = {
-  duration: 6400,
-  scale: 0.9,
-  bodyTexture: '',
-  caption: 'R — the barrage is only 45. Everything after it is a way of getting them to a wall',
-  run(ctx) { gumballLoop(ctx, { bloat: false }); },
-};
-
-export const gumballUpgraded: PreviewScript = {
-  duration: 6400,
-  scale: 0.9,
-  bodyTexture: '',
-  caption: 'Bubble Bloat — a layer per bubble that connected, and it all comes off against the wall',
-  run(ctx) { gumballLoop(ctx, { bloat: true }); },
-};
-
-// ── F — Oozorbtion ────────────────────────────────────────────────────
-
-function oozorbtionLoop(ctx: PreviewCtx, opts: { emesis: boolean }): void {
-  const home: Mark = { x: ctx.w * 0.3, y: ctx.h * 0.62 };
-  const s = slime(ctx, home);
-  const foe: Mark = { x: ctx.w * 0.86, y: ctx.h * 0.44 };
-  dummy(ctx, foe);
-
-  // The swell: the body really does get a fifth bigger, and it is a real cost.
-  let swollen = false;
-  const swell = ctx.adopt(ctx.scene.add.graphics().setDepth(4));
-  ctx.onFrame((_dt, elapsed) => {
-    swell.clear();
-    if (!swollen) return;
-    const t = elapsed / 1000;
-    oozeBlob(swell, ctx.tint, home.x, home.y, 24 * OOZE_SWELL, 0.4, t,
-      { seed: 3, wobble: 0.2, rim: true });
-  });
-
-  // Pink puddles, and the healing ramp they run on.
-  interface Pud { x: number; y: number; seed: number }
-  const puddles: Pud[] = [];
-  let heal = 0;
-  let acc = 0;
-  const ground = ctx.adopt(ctx.scene.add.graphics().setDepth(3));
-  ctx.onFrame((dt, elapsed) => {
-    const t = elapsed / 1000;
-    ground.clear();
-    let inIt = false;
-    for (const pd of puddles) {
-      if (Phaser.Math.Distance.Between(pd.x, pd.y, home.x, home.y) <= PUDDLE_R) inIt = true;
-      slimePuddle(ground, ctx.tint, pd.x, pd.y, PUDDLE_R, 1, t,
-        { seed: pd.seed, heal: true, soak: heal, life: 1 });
-    }
-    heal = Phaser.Math.Clamp(heal + (inIt ? dt / 3000 : -dt / 1500), 0, 1);
-    if (!inIt) { acc = 0; return; }
-    const rate = HEAL_MIN_RATE + (HEAL_MAX_RATE - HEAL_MIN_RATE) * heal;
-    acc += rate * (dt / 1000);
-    while (acc >= 1) { acc -= 1; }
-    if (Math.random() < 0.04) {
-      s.fx.digest(home.x, home.y);
-      tick(ctx, home.x, home.y - 24, `+${Math.round(rate)}/s`, GUM.gumLit);
-    }
-  });
-
-  ctx.at(400, () => {
-    swollen = true;
-    s.av.play('flex');
-    s.fx.swallow(home.x, home.y);
-    tick(ctx, home.x, home.y - 46, '🫧 OOZORBTION', GUM.oozeLit);
-    tick(ctx, home.x, home.y - 64, '×1.2 SIZE · 8s ARMED', GUM.oozeDeep);
-  });
-
-  // A real enemy shot, on a real projectile texture — swallowed before it lands.
-  const INCOMING = 42;
-  ctx.at(1300, () => {
-    ctx.fly({
-      texture: 'proj-fire',
-      from: { x: foe.x, y: foe.y },
-      to: { x: home.x, y: home.y },
-      speed: 520,
-      onHit: () => {
-        swollen = false;
-        s.fx.swallow(home.x, home.y);
-        tick(ctx, home.x, home.y - 40, `🫗 ABSORBED ${INCOMING}`, GUM.oozeLit);
-        if (!opts.emesis) return;
-        for (let i = 0; i < EMESIS_COUNT; i++) {
-          const a = (i / EMESIS_COUNT) * TAU + Math.random() * 0.5;
-          const d = 46 + Math.random() * 26;
-          puddles.push({ x: home.x + Math.cos(a) * d, y: home.y + Math.sin(a) * d, seed: Math.random() * 999 });
-        }
-        s.fx.splat(home.x, home.y, 30, 4, true);
-        tick(ctx, home.x, home.y - 60, '🤮 EMESIS', GUM.gumLit);
-      },
-    });
-  });
-
-  // Three seconds later it comes back out as exactly that much health.
-  ctx.at(1300 + 620 + 3000, () => {
-    s.fx.digest(home.x, home.y);
-    tick(ctx, home.x, home.y - 48, `🍽 DIGESTED +${INCOMING}`, GUM.shine);
-  });
-
-  label(ctx, ctx.w * 0.5, ctx.h - 10,
-    opts.emesis ? `three pink puddles: ${HEAL_MIN_RATE} HP/s rising to ${HEAL_MAX_RATE} over 3s of standing`
-      : 'the hit is nullified whatever its size, and 3s later it is that much health', GUM.oozeDeep);
-}
-
-export const oozorbtion: PreviewScript = {
-  duration: 6600,
-  scale: 0.9,
-  bodyTexture: '',
-  caption: 'F — swell up and swallow the next attack whole, then digest it into exactly that much health',
-  run(ctx) { oozorbtionLoop(ctx, { emesis: false }); },
-};
-
-export const oozorbtionUpgraded: PreviewScript = {
-  duration: 8000,
-  scale: 0.9,
-  bodyTexture: '',
-  caption: 'Emesis — everything you swallow brings three pink puddles back up with it',
-  run(ctx) { oozorbtionLoop(ctx, { emesis: true }); },
-};
-
-// ── Q — Solidify ──────────────────────────────────────────────────────
-
-export const solidify: PreviewScript = {
-  duration: 8600,
-  scale: 0.9,
-  bodyTexture: '',
-  caption: 'Q — the hand bursts into 16 shards, and for 3 seconds you have no arm and therefore no legs',
-  run(ctx) {
-    const home: Mark = { x: ctx.w * 0.42, y: ctx.h * 0.6 };
-    const s = slime(ctx, home);
-    const foe: Mark = { x: ctx.w * 0.7, y: ctx.h * 0.46 };
-    dummy(ctx, foe);
-    const shards = shardField(ctx, foe, (dmg) => tick(ctx, foe.x, foe.y - 14, `${dmg}`, GUM.solidLit));
-    const balls = ballField(ctx, s, foe);
-
-    // Two slimeballs and a puddle already on the floor — the ultimate is worth what you had
-    // already set up, and nothing more.
-    balls.add(ctx.w * 0.24, ctx.h * 0.78);
-    balls.add(ctx.w * 0.58, ctx.h * 0.8);
-    const beacons: Array<{ x: number; y: number; seed: number; on: boolean; charge: number; active: number }> = [];
-    const puddles = [{ x: ctx.w * 0.3, y: ctx.h * 0.34, seed: 41, set: false }];
-    const ground = ctx.adopt(ctx.scene.add.graphics().setDepth(3));
-    const air = ctx.adopt(ctx.scene.add.graphics().setDepth(15));
-    ctx.onFrame((_dt, elapsed) => {
-      const t = elapsed / 1000;
-      ground.clear();
-      air.clear();
-      for (const pd of puddles) {
-        if (pd.set) continue;
-        slimePuddle(ground, ctx.tint, pd.x, pd.y, PUDDLE_R, 1, t, { seed: pd.seed, life: 1 });
-      }
-      for (const b of beacons) {
-        slimeBeacon(air, ctx.tint, b.x, b.y, BEACON_R, 1, t,
-          { seed: 5, heal: false, charge: b.charge, active: b.active, auraR: BEACON_AURA_R });
-      }
-    });
-
-    let handless = false;
-    ctx.at(900, () => {
-      s.av.play('raise');
-      handless = true;
-      s.gav?.setHandless(true);
-      s.fx.harden(s.hand.x, s.hand.y, 36);
-      shards.burst(s.hand.x, s.hand.y, SOLIDIFY_SHARDS, SHARD_DAMAGE, false);
-      // Everything of yours on the field sets at once.
-      for (const b of balls.list) {
-        b.hard = true;
-        b.damage = BALL_HARD_DAMAGE;
-        s.fx.harden(b.x, b.y, 20);
-      }
-      for (const pd of puddles) {
-        pd.set = true;
-        beacons.push({ x: pd.x, y: pd.y, seed: pd.seed, on: false, charge: 0, active: 0 });
-        s.fx.harden(pd.x, pd.y, 24);
-      }
-      ctx.scene.cameras.main.shake(200, 0.004);
-      tick(ctx, home.x, home.y - 50, '🧊 SOLIDIFY · 2 HARDENED · 1 BEACON', GUM.solidLit);
-      tick(ctx, home.x, home.y - 68, '🫠 NO HAND — CANNOT MOVE', GUM.solidLit);
-    });
-    ctx.at(900 + HAND_REGROW_MS, () => {
-      handless = false;
-      s.gav?.setHandless(false);
-      s.fx.splat(home.x, home.y, 22);
-      tick(ctx, home.x, home.y - 44, '🖐 HAND REGROWN', GUM.oozeLit);
-    });
-    ctx.onFrame(() => {
-      if (!handless) return;
-      s.reach.x = home.x + HAND_MIN;
-      s.reach.y = home.y;
-    });
-
-    // Picking a beacon up, shaking it and setting it down — the whole switch, in one gesture.
-    let carried: typeof beacons[number] | null = null;
-    ctx.at(900 + HAND_REGROW_MS + 400, () => {
-      carried = beacons[0] ?? null;
-      if (!carried) return;
-      s.gav?.setCarry(true);
-      tick(ctx, carried.x, carried.y - 24, '🫳 BEACON', GUM.oozeLit);
-    });
-    ctx.onFrame((dt, elapsed) => {
-      const from = 900 + HAND_REGROW_MS + 400;
-      if (!carried || elapsed < from) return;
-      // Shaking: the hand has to be moving at 430 px/s or better to bank anything.
-      const sw = (elapsed - from) / 1000;
-      s.reach.x = home.x + Math.cos(sw * 15) * 60;
-      s.reach.y = home.y + Math.sin(sw * 15) * 40;
-      carried.x = s.hand.x;
-      carried.y = s.hand.y;
-      if (Math.hypot(s.handV.x, s.handV.y) >= 430) {
-        carried.charge = Math.min(1, carried.charge + dt / BEACON_MAX_ACTIVE_MS);
-      }
-    });
-    ctx.at(900 + HAND_REGROW_MS + 2000, () => {
-      if (!carried) return;
-      s.gav?.setCarry(false);
-      const ms = carried.charge * BEACON_MAX_ACTIVE_MS;
-      carried.active = 1;
-      s.fx.harden(carried.x, carried.y, 26);
-      tick(ctx, carried.x, carried.y - 30, `🐌 BEACON · ${(ms / 1000).toFixed(1)}s`, GUM.oozeLit);
-      tick(ctx, carried.x, carried.y - 48, '122px · −50% SPEED', GUM.oozeDeep);
-      carried = null;
-    });
-
-    label(ctx, ctx.w * 0.5, ctx.h - 10,
-      `${SOLIDIFY_SHARDS} shards at ${SHARD_DAMAGE} · balls to ${BALL_HARD_DAMAGE} · puddles to beacons`, GUM.solidDeep);
   },
 };
 
-export const solidifyUpgraded: PreviewScript = {
-  duration: 8000,
-  scale: 0.9,
-  bodyTexture: '',
-  caption: 'Hand of Stone — no shatter and no standstill: 8s of a claw that hardens everything it touches',
+export const saltShield: PreviewScript = {
+  duration: 5000,
+  caption: 'E (Salt) — a crust of shield, 2/s rising to 5/s, until 75 — or until it is knocked to nothing',
   run(ctx) {
-    const home: Mark = { x: ctx.w * 0.26, y: ctx.h * 0.62 };
-    const s = slime(ctx, home);
-    const foe: Mark = { x: ctx.w * 0.74, y: ctx.h * 0.5 };
-    dummy(ctx, foe);
-    const balls = ballField(ctx, s, foe);
-    balls.add(ctx.w * 0.5, ctx.h * 0.76);
-    balls.add(ctx.w * 0.62, ctx.h * 0.3);
-
-    const enc = { on: true, hard: false, layers: 0 };
-    encasedShell(ctx, foe, () => enc);
-
-    ctx.at(500, () => {
-      s.av.play('raise');
-      s.gav?.setShardHand(true);
-      s.fx.harden(s.hand.x, s.hand.y, 30);
-      s.fx.sparks(s.hand.x, s.hand.y, 34);
-      tick(ctx, home.x, home.y - 50, '🪨 HAND OF STONE · 8s', GUM.stoneLit);
-      tick(ctx, home.x, home.y - 68, 'no shatter, no standstill', GUM.stoneLit);
+    const av = stand(ctx, 'salt');
+    const fx = fxOf(ctx);
+    const read = label(ctx, ctx.w * 0.5, 16, SAVOR.salt);
+    let shield = 0;
+    let on = false;
+    let age = 0;
+    ctx.onFrame((dt) => {
+      if (!on) return;
+      age += dt / 1000;
+      // The preview runs the growth at 4× so the whole climb fits the loop.
+      const rate = Math.min(5, 2 + age * 4);
+      shield = Math.min(75, shield + rate * (dt / 1000) * 4);
+      av?.setShield(shield / 75);
+      read.setText(`SHIELD ${Math.round(shield)}/75  (${rate.toFixed(1)}/s)`);
+      if (shield >= 75) on = false;
     });
-
-    // It sweeps across the field, and everything it brushes goes glassy on contact.
-    ctx.onFrame((_dt, elapsed) => {
-      if (elapsed < 700) return;
-      const k = (elapsed - 700) / 1000;
-      s.reach.x = home.x + 60 + Math.min(220, k * 130);
-      s.reach.y = home.y + Math.sin(k * 2.4) * 60;
-      for (const b of balls.list) {
-        if (b.hard || b.gone) continue;
-        if (Phaser.Math.Distance.Between(s.hand.x, s.hand.y, b.x, b.y) > 32 + BALL_R) continue;
-        b.hard = true;
-        b.damage = BALL_HARD_DAMAGE;
-        s.fx.harden(b.x, b.y, 20);
-        tick(ctx, b.x, b.y - 22, `🪨 ${BALL_HARD_DAMAGE}`, GUM.solidLit);
-      }
-      if (!enc.hard && Phaser.Math.Distance.Between(s.hand.x, s.hand.y, foe.x, foe.y) <= 32 + 24) {
-        enc.hard = true;
-        s.fx.harden(foe.x, foe.y, 34);
-        tick(ctx, foe.x, foe.y - 44, '🪨 SEALED · +5s', GUM.solidLit);
-      }
-    });
-
-    // The claw hits harder both ways.
-    ctx.at(4200, () => {
-      s.av.play('punch', Math.atan2(foe.y - home.y, foe.x - home.x));
-      s.fx.shardBurst(foe.x, foe.y, 5);
-      tick(ctx, foe.x, foe.y - 16, `${PUNCH_DAMAGE + SHARD_PUNCH_BONUS}`, GUM.stoneLit);
-    });
-    ctx.at(5400, () => {
-      s.fx.sparks(foe.x, foe.y, 20);
-      tick(ctx, foe.x, foe.y - 16, `${SMACK_DAMAGE + SHARD_SMACK_BONUS}`, GUM.stoneLit);
-      tick(ctx, foe.x, foe.y - 34, 'passing smack', GUM.stoneLit);
-    });
-    ctx.at(500 + SHARD_HAND_MS - 1200, () => {
-      s.gav?.setShardHand(false);
-      s.fx.splat(home.x, home.y, 20);
-      tick(ctx, home.x, home.y - 44, '🫠 HAND SOFTENED', GUM.oozeLit);
-    });
-
-    label(ctx, ctx.w * 0.5, ctx.h - 10,
-      `punch ${PUNCH_DAMAGE} → ${PUNCH_DAMAGE + SHARD_PUNCH_BONUS} · smack ${SMACK_DAMAGE} → ${SMACK_DAMAGE + SHARD_SMACK_BONUS} · everything within 32px goes glassy`,
-      GUM.stoneDeep);
+    ctx.at(300, () => { av?.play('flex'); const c = ctx.casterAt(); fx.shift(c.x, c.y, 'salt'); on = true; });
   },
 };
 
-// ── Passives ──────────────────────────────────────────────────────────
-
-export const theHand: PreviewScript = {
-  duration: 9000,
-  scale: 0.9,
-  bodyTexture: '',
-  caption: 'The cursor is a handle, not an aim: every pixel you drag it hauls the body one pixel the other way',
+export const saltInfusion: PreviewScript = {
+  duration: 5200,
+  caption: 'R (Salt) — grow a stalactite, R again on the bar: 48 green / 32 yellow / 18 red. It soaks up their buffs',
   run(ctx) {
-    const home: Mark = { x: ctx.w * 0.7, y: ctx.h * 0.4 };
-    const s = slime(ctx, home);
-
-    const anchor: Mark = { x: ctx.w * 0.24, y: ctx.h * 0.82 };
-    let gripping = false;
-    let wall = false;
-    const ground = ctx.adopt(ctx.scene.add.graphics().setDepth(4));
-    const cursor = ctx.adopt(ctx.scene.add.graphics().setDepth(19));
-    const mouse: Mark = { x: ctx.w * 0.24, y: ctx.h * 0.82 };
-    ctx.onFrame((_dt, elapsed) => {
-      const t = elapsed / 1000;
-      ground.clear();
-      cursor.clear();
-      if (gripping) {
-        gripSplat(ground, ctx.tint, anchor.x, anchor.y, 11, 0.95, t,
-          { pull: 1, toward: Math.atan2(home.y - anchor.y, home.x - anchor.x), wall });
+    const av = stand(ctx, 'salt');
+    ctx.addDummy();
+    const fx = fxOf(ctx);
+    const g = layer(ctx, 9);
+    let aimAt = -1;
+    let crystal = false;
+    let t = 0;
+    const coat = [SAVOR.cinnamon, SAVOR.lemon];
+    ctx.onFrame((dt) => {
+      t += dt;
+      g.clear();
+      const c = ctx.casterAt();
+      if (aimAt >= 0) {
+        const ph = ((t - aimAt) % BAR_PERIOD_MS) / BAR_PERIOD_MS;
+        const k = ph < 0.5 ? ph * 2 : 2 - ph * 2;
+        saltShard(g, ctx.tint, c.x + Math.cos(ctx.aim) * 34, c.y + Math.sin(ctx.aim) * 34, ctx.aim, 44, 9, 1);
+        timingBar(g, ctx.tint, c.x, c.y + 38, 84, k, 1, GREEN_HALF, YELLOW_HALF);
       }
-      // The mouse itself, drawn — this loop is about what the cursor is doing, so it has to be
-      // on screen.
-      cursor.lineStyle(1.4, ctx.tint(GUM.shine), 0.85);
-      cursor.strokeCircle(mouse.x, mouse.y, 5);
-      cursor.lineBetween(mouse.x - 8, mouse.y, mouse.x + 8, mouse.y);
-      cursor.lineBetween(mouse.x, mouse.y - 8, mouse.x, mouse.y + 8);
+      // The target wears borrowed buffs: a gold ring.
+      g.lineStyle(2, ctx.tint(SAVOR.lemon), 0.6);
+      g.strokeCircle(ctx.tx, ctx.ty, 26);
+      if (crystal) saltShard(g, ctx.tint, ctx.tx + 140, ctx.ty, -Math.PI / 2 + 0.3, 26, 7, 1, coat);
     });
-
-    ctx.at(500, () => {
-      gripping = true;
-      wall = anchor.x < 54;
-      s.gav?.setGrip(true);
-      s.fx.splat(anchor.x, anchor.y, 16, 4);
-      tick(ctx, anchor.x, anchor.y - 24, '🖐 GRIP', GUM.oozeLit);
+    ctx.at(300, () => { aimAt = t; av?.setHold('charge', ctx.aim); });
+    // Fire exactly as the marker crosses the green: half a period after the bar starts.
+    ctx.at(300 + BAR_PERIOD_MS * 1.5, () => {
+      aimAt = -1;
+      av?.setHold(null);
+      av?.play('punch', ctx.aim);
+      const c = ctx.casterAt();
+      float(ctx, c.x, c.y - 40, 'PERFECT!', SAVOR.zoneGreen);
+      const from = { x: c.x + Math.cos(ctx.aim) * 26, y: c.y + Math.sin(ctx.aim) * 26 };
+      let coated = false;
+      flight(ctx, from, { x: ctx.tx + 140, y: ctx.ty }, INFUSE_SPEED, (gg, x, y) => {
+        if (!coated && x >= ctx.tx) { coated = true; fx.coatFlash(ctx.tx, ctx.ty, coat); float(ctx, ctx.tx, ctx.ty - 30, '-48', SAVOR.saltEdge); }
+        saltShard(gg, ctx.tint, x, y, ctx.aim, 44, 9, 1, coated ? coat : []);
+      }, () => { fx.shatter(ctx.tx + 140, ctx.ty, ctx.aim, true); crystal = true; });
     });
-
-    // Drag the cursor away from the anchor; the body is hauled toward it, one pixel per pixel.
-    ctx.onFrame((dt, elapsed) => {
-      if (!gripping) return;
-      s.reach.x = anchor.x;
-      s.reach.y = anchor.y;
-      if (elapsed < 800 || elapsed > 5000) return;
-      const step = 90 * (dt / 1000);
-      const before = { x: mouse.x, y: mouse.y };
-      mouse.x += step * 1.4;
-      mouse.y -= step * 0.5;
-      // 1 pixel of body per pixel of mouse travel, in the opposite direction.
-      home.x -= mouse.x - before.x;
-      home.y -= mouse.y - before.y;
-    });
-    ctx.at(2400, () => tick(ctx, mouse.x, mouse.y - 20, 'cursor →', GUM.shine));
-    ctx.at(2400, () => tick(ctx, home.x, home.y - 44, '← body', GUM.oozeLit));
-
-    // …and then wound too far, which tears the grip.
-    ctx.at(5000, () => {
-      gripping = false;
-      s.gav?.setGrip(false);
-      s.fx.pop(anchor.x, anchor.y, 18);
-      tick(ctx, anchor.x, anchor.y - 24, '💢 SLIPPED', GUM.oozeDeep);
-      tick(ctx, anchor.x, anchor.y - 42, 'cursor wound past 437px', GUM.oozeDeep);
-    });
-
-    // Then a hand full of slimeball, which is a body that cannot move at all.
-    const foe: Mark = { x: ctx.w * 0.88, y: ctx.h * 0.3 };
-    const balls = ballField(ctx, s, foe);
-    ctx.at(5600, () => {
-      const b = balls.add(home.x + 50, home.y + 20);
-      s.gav?.setCarry(true);
-      tick(ctx, home.x, home.y - 44, '🫳 A FULL HAND', GUM.oozeLit);
-      tick(ctx, home.x, home.y - 62, 'IS A STILL BODY', GUM.oozeDeep);
-      ctx.onFrame(() => { if (!b.flying) { b.x = s.hand.x; b.y = s.hand.y; } });
-    });
-    ctx.onFrame((_dt, elapsed) => {
-      if (elapsed < 5600) return;
-      s.reach.x = home.x + 50 + Math.sin((elapsed - 5600) / 400) * 26;
-      s.reach.y = home.y + 10;
-    });
-
-    label(ctx, ctx.w * 0.5, ctx.h - 10,
-      `250px arm · ×1 on the floor, ×1.35 on a wall · capped at ${DRAG_MAX_SPEED} px/s`, GUM.oozeDeep);
+    ctx.at(4000, () => ctx.glideCaster({ to: { x: ctx.tx + 140, y: ctx.ty + 4 }, ms: 500, ease: 'out', onDone: () => {
+      crystal = false;
+      fx.coatFlash(ctx.tx + 140, ctx.ty, coat);
+      float(ctx, ctx.tx + 140, ctx.ty - 30, '🧂 +2 STACKS', SAVOR.salt);
+    } }));
   },
 };
 
-export const theSmack: PreviewScript = {
-  duration: 6400,
-  scale: 0.9,
-  bodyTexture: '',
-  caption: 'A hand travelling over 620 px/s hurts whatever it passes through — no press, no cooldown',
+export const saltWounds: PreviewScript = {
+  duration: 4200,
+  caption: 'F (Salt) — a cone of stinging salt: half of everything they took in the last 2 seconds',
   run(ctx) {
-    const home: Mark = { x: ctx.w * 0.28, y: ctx.h * 0.62 };
-    const s = slime(ctx, home);
-    const foe: Mark = { x: ctx.w * 0.66, y: ctx.h * 0.5 };
-    dummy(ctx, foe);
-
-    // A speed readout, because the whole passive is a threshold on one number.
-    const meter = ctx.adopt(ctx.scene.add.text(ctx.w * 0.5, 14, '', {
-      fontSize: '10px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif',
-      color: hex(GUM.shine),
-    }).setOrigin(0.5).setDepth(19));
-
-    let gate = 0;
-    ctx.onFrame((_dt, elapsed) => {
-      // Slow figure-of-eight first, then a fast one: the same path, either side of the line.
-      const fast = elapsed > 3000;
-      const w = fast ? 5.2 : 1.3;
-      const t = elapsed / 1000;
-      s.reach.x = foe.x + Math.cos(t * w) * 84;
-      s.reach.y = foe.y + Math.sin(t * w * 2) * 46;
-
-      const sp = Math.hypot(s.handV.x, s.handV.y);
-      meter.setText(`hand ${Math.round(sp)} px/s   ·   smack at ${SMACK_SPEED}`);
-      meter.setColor(hex(sp >= SMACK_SPEED ? GUM.oozeLit : GUM.oozeDeep));
-
-      if (sp < SMACK_SPEED || elapsed < gate) return;
-      if (Phaser.Math.Distance.Between(s.hand.x, s.hand.y, foe.x, foe.y) > 32) return;
-      gate = elapsed + 520;
-      s.fx.splat(foe.x, foe.y, 18);
-      tick(ctx, foe.x, foe.y - 16, `${SMACK_DAMAGE}`, GUM.oozeLit);
-    });
-
-    label(ctx, ctx.w * 0.5, ctx.h - 10,
-      '32px, 520ms per target — about 29 damage a second from a hand you were moving anyway', GUM.oozeDeep);
-  },
-};
-
-// ── Mastery ───────────────────────────────────────────────────────────
-
-const SPLIT_COUNT = 3;
-const SPLIT_HP = 50;
-const LING_R = 12;
-const LING_ORBIT = 42;
-
-const SLAB_LEN = 132;
-const SLAB_THICK = 26;
-const SLAB_CATCH = 5;
-const SLAB_DISSOLVE_MS = 5000;
-const OOBLECK_EFFECT_MS = 12000;
-const OOBLECK_SLOW_FLOOR = 0.3;
-
-/**
- * Slime Split.
- *
- * The one thing this loop has to sell is that the three bodies are *one character*: the arms
- * converge on the same hand, the hand keeps working, and the pool is peeled from the back. So the
- * script drives the hand exactly as every other Slime loop does and simply replaces the body with
- * three of them — and then kills two of the three, in order, to show which end they come off.
- */
-export const masterySplit: PreviewScript = {
-  duration: 9600,
-  scale: 0.9,
-  bodyTexture: '',
-  caption: 'Passive — the killing blow splits you into three 50 HP slimelings that share one hand',
-  run(ctx) {
-    const home: Mark = { x: ctx.w * 0.36, y: ctx.h * 0.58 };
-    const s = slime(ctx, home);
-    const foe: Mark = { x: ctx.w * 0.78, y: ctx.h * 0.44 };
-    dummy(ctx, foe);
-
-    // The pool, exactly as the kit derives it: slimeling `i` is whatever is left above i × 50.
-    let pool = 0;
-    let split = false;
-    const lings = Array.from({ length: SPLIT_COUNT }, (_, i) => ({
-      index: i,
-      x: home.x,
-      y: home.y,
-      seed: 11 + i * 7,
-      phase: (i / SPLIT_COUNT) * TAU,
-    }));
-    const hpOf = (i: number): number => Phaser.Math.Clamp(pool - i * SPLIT_HP, 0, SPLIT_HP);
-
-    const ground = ctx.adopt(ctx.scene.add.graphics().setDepth(4));
-    const bar = ctx.adopt(ctx.scene.add.text(ctx.w * 0.5, 14, '', {
-      fontSize: '10px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif',
-      color: hex(GUM.shine),
-    }).setOrigin(0.5).setDepth(19));
-
-    ctx.onFrame((dt, elapsed) => {
-      const t = elapsed / 1000;
-      ground.clear();
-      bar.setText(split ? `pool ${Math.round(pool)} / ${SPLIT_COUNT * SPLIT_HP}` : '');
-      if (!split) return;
-      for (const l of lings) {
-        const hp = hpOf(l.index) / SPLIT_HP;
-        if (hp <= 0) continue;
-        if (l.index === 0) { l.x = home.x; l.y = home.y; continue; }
-        const a = l.phase + t * 0.7;
-        const k = Math.min(1, 7.5 * (dt / 1000));
-        l.x += (home.x + Math.cos(a) * LING_ORBIT - l.x) * k;
-        l.y += (home.y + Math.sin(a) * LING_ORBIT * 0.72 - l.y) * k;
-        slimeling(ground, ctx.tint, l.x, l.y, LING_R, 0.95, t,
-          { seed: l.seed, hp, aim: Math.atan2(s.hand.y - l.y, s.hand.x - l.x) });
-        // Its share of the one hand.
-        gummyArm(ground, ctx.tint, l.x, l.y - 2, s.hand.x, s.hand.y, 4.6, 3.2, 0.8, t,
-          { stretch: 0.5, seed: l.seed });
-      }
-    });
-
-    // The hit that would have finished it.
-    ctx.at(1100, () => {
-      tick(ctx, home.x, home.y - 30, '1 HP', GUM.gum);
-    });
+    const av = stand(ctx, 'salt');
+    ctx.addDummy();
+    const fx = fxOf(ctx);
+    const tx = ctx.cx + 140;
+    const ty = ctx.cy;
+    ctx.moveCaster(ctx.cx, ctx.cy);
+    for (let i = 0; i < 3; i++) ctx.at(300 + i * 350, () => { fx.shatter(tx, ty, Math.PI); float(ctx, tx, ty - 28, '-20', SAVOR.saltEdge); });
     ctx.at(1700, () => {
-      split = true;
-      pool = SPLIT_COUNT * SPLIT_HP;
-      s.gav?.setRigScale(0.62);
-      s.fx.split(home.x, home.y);
-      ctx.scene.cameras.main.shake(360, 0.008);
-      tick(ctx, home.x, home.y - 56, '🟢 SLIME SPLIT', GUM.solidLit);
-      tick(ctx, home.x, home.y - 74, `${SPLIT_COUNT} × ${SPLIT_HP} HP`, GUM.oozeLit);
+      av?.play('sweep', 0);
+      fx.woundSpray(ctx.cx, ctx.cy, 0, WOUND_HALF, WOUND_RANGE, 1);
+      fx.sting(tx, ty, 0.8);
+      float(ctx, tx, ty - 36, '-30  (½ of 60)', SAVOR.zoneRed);
     });
-
-    // The hand carries on working. That is the whole point of the passive.
-    ctx.onFrame((_dt, elapsed) => {
-      if (elapsed < 1700) { s.reach.x = home.x + 46; s.reach.y = home.y - 10; return; }
-      const t = (elapsed - 1700) / 1000;
-      s.reach.x = home.x + 110 + Math.cos(t * 1.6) * 70;
-      s.reach.y = home.y - 20 + Math.sin(t * 2.2) * 46;
-    });
-
-    // Peeled from the back: the hindmost one goes first, and the lead is last.
-    for (const [when, dmg] of [[3400, 50], [5600, 50]] as const) {
-      ctx.at(when, () => {
-        pool = Math.max(SPLIT_HP, pool - dmg);
-        const dead = lings.find((l) => hpOf(l.index) <= 0);
-        if (dead) s.fx.lingPop(dead.x, dead.y);
-        tick(ctx, home.x, home.y - 52, `🟢 ${lings.filter((l) => hpOf(l.index) > 0).length} LEFT`, GUM.oozeLit);
-      });
-    }
-    // …and a heal puts one back, because the three are read straight off the pool.
-    ctx.at(7400, () => {
-      pool = SPLIT_HP * 2;
-      s.fx.digest(home.x, home.y);
-      tick(ctx, home.x, home.y - 52, '🍽 +50 — ONE BACK', GUM.shine);
-    });
-
-    label(ctx, ctx.w * 0.5, ctx.h - 10,
-      `${SPLIT_COUNT} × ${SPLIT_HP} HP · damage comes off the hindmost first · one hand between them · once per match`,
-      GUM.oozeDeep);
   },
 };
 
-/**
- * Oobleck.
- *
- * Three beats, because the ability is three objects wearing one shape: the shield that eats
- * shots, the doorway that costs something to walk through, and the wall Solidify makes of it.
- */
-export const masteryOobleck: PreviewScript = {
-  duration: 11000,
-  scale: 0.9,
-  bodyTexture: '',
-  caption: 'A slab of half-set slime: shots stick in it, walkers are slowed harder and harder, and Q sets it into a wall',
+export const saltCrash: PreviewScript = {
+  duration: 6000,
+  caption: 'Q (Salt) — spears hold everyone up; race to press the crystals. Win: +40 damage and Salted candies',
   run(ctx) {
-    const home: Mark = { x: ctx.w * 0.22, y: ctx.h * 0.6 };
-    const s = slime(ctx, home);
-    const foe: Mark = { x: ctx.w * 0.86, y: ctx.h * 0.44 };
-    dummy(ctx, foe);
-
-    const slab = {
-      x: home.x + 90, y: home.y - 10, ang: 0, on: false, hard: false, held: true,
-      stuck: [] as { along: number; across: number; seed: number; until: number }[],
-    };
-    const air = ctx.adopt(ctx.scene.add.graphics().setDepth(15));
-    const meter = ctx.adopt(ctx.scene.add.text(ctx.w * 0.5, 14, '', {
-      fontSize: '10px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif',
-      color: hex(GUM.oozeLit),
-    }).setOrigin(0.5).setDepth(19));
-
-    ctx.onFrame((_dt, elapsed) => {
-      const t = elapsed / 1000;
-      air.clear();
-      if (!slab.on) { meter.setText(''); return; }
-      if (slab.held) {
-        // Held: it hangs off the hand, turned across the line from the body to it.
-        slab.x = s.hand.x;
-        slab.y = s.hand.y;
-        slab.ang = Math.atan2(slab.y - home.y, slab.x - home.x) + Math.PI / 2;
-      }
-      for (let i = slab.stuck.length - 1; i >= 0; i--) {
-        if (elapsed >= slab.stuck[i].until) slab.stuck.splice(i, 1);
-      }
-      oobleckSlab(air, ctx.tint, slab.x, slab.y, slab.ang, SLAB_LEN, SLAB_THICK, 1, t, {
-        seed: 6, hard: slab.hard, held: slab.held,
-        stuck: slab.stuck.map((q) => ({
-          along: q.along, across: q.across, seed: q.seed,
-          life: Phaser.Math.Clamp((q.until - elapsed) / SLAB_DISSOLVE_MS, 0, 1),
-        })),
-      });
-      meter.setText(slab.hard ? 'WALL — every projectile, no limit' : `${slab.stuck.length} / ${SLAB_CATCH} stuck`);
-      meter.setColor(hex(slab.hard ? GUM.solidLit : GUM.oozeLit));
+    const av = stand(ctx, 'salt');
+    ctx.addDummy();
+    const fx = fxOf(ctx);
+    const g = layer(ctx, 18);
+    const spears = layer(ctx, 4);
+    let raceAt = -1;
+    let t = 0;
+    let mine = 0;
+    let theirs = 0;
+    const targets = [{ x: ctx.w * 0.25, y: ctx.h * 0.3 }, { x: ctx.w * 0.7, y: ctx.h * 0.65 }];
+    ctx.onFrame((dt) => {
+      t += dt;
+      g.clear();
+      spears.clear();
+      if (raceAt < 0) return;
+      for (let i = 0; i < 3; i++) saltSpear(spears, ctx.tint, ctx.tx + (i - 1) * 12, ctx.ty + 22, 34 + (i === 1 ? 10 : 0), 1, 0.95, (1 - i) * 0.08);
+      const age = t - raceAt;
+      if (age > 3000) return;
+      for (const p of targets) crashCrystal(g, ctx.tint, p.x, p.y, 16, t / 1000, 1);
+      const bw = 200;
+      const total = Math.max(1, mine + theirs);
+      g.fillStyle(SAVOR.ink, 0.85);
+      g.fillRect(ctx.w / 2 - bw / 2 - 3, 8, bw + 6, 16);
+      g.fillStyle(ctx.tint(SAVOR.salt), 1);
+      g.fillRect(ctx.w / 2 - bw / 2, 11, bw * (mine / total), 10);
+      g.fillStyle(ctx.tint(SAVOR.zoneRed), 1);
+      g.fillRect(ctx.w / 2 - bw / 2 + bw * (mine / total), 11, bw * (theirs / total), 10);
     });
-
-    // 1 — summoned into the hand and carried out in front of the body.
-    ctx.at(700, () => {
-      slab.on = true;
-      s.gav?.setCarry(true);
-      s.av.play('raise');
-      s.fx.slabSet(slab.x, slab.y, slab.ang, SLAB_LEN);
-      tick(ctx, home.x, home.y - 52, '🛡 OOBLECK', GUM.oozeLit);
+    ctx.at(300, () => {
+      av?.play('slam');
+      fx.spearsErupt(ctx.tx, ctx.ty);
+      float(ctx, ctx.tx, ctx.ty - 40, '-30', SAVOR.saltEdge);
+      raceAt = t;
     });
-    ctx.onFrame((_dt, elapsed) => {
-      if (elapsed < 700) { s.reach.x = home.x + 40; s.reach.y = home.y; return; }
-      if (elapsed > 5200) return;
-      const t = (elapsed - 700) / 1000;
-      s.reach.x = home.x + 96;
-      s.reach.y = home.y - 8 + Math.sin(t * 1.4) * 34;
-    });
-
-    // 2 — shots arriving and burying themselves in it.
-    for (const [when, off] of [[1500, -34], [2200, 4], [2900, 36], [3600, -12]] as const) {
-      ctx.at(when, () => {
-        ctx.fly({
-          texture: 'proj-fire', from: { x: foe.x, y: foe.y },
-          to: { x: slab.x, y: slab.y }, speed: 460,
-          onHit: () => {
-            slab.stuck.push({ along: off, across: 0, seed: when, until: when + 900 + SLAB_DISSOLVE_MS });
-            s.fx.stick(slab.x + Math.cos(slab.ang) * off, slab.y + Math.sin(slab.ang) * off);
-          },
-        });
+    for (let i = 0; i < 7; i++) {
+      ctx.at(700 + i * 360, () => {
+        const p = targets[i % 2];
+        fx.shatter(p.x, p.y, -Math.PI / 2);
+        mine++;
+        if (i % 2) theirs++;
+        p.x = ctx.w * (0.2 + ((i * 37) % 60) / 100);
+        p.y = ctx.h * (0.25 + ((i * 23) % 50) / 100);
       });
     }
-
-    // 3 — set down, and somebody walks through it.
-    ctx.at(5200, () => {
-      slab.held = false;
-      s.gav?.setCarry(false);
-      slab.x = ctx.w * 0.54;
-      slab.y = ctx.h * 0.5;
-      slab.ang = Math.PI / 2;
-      s.fx.slabSet(slab.x, slab.y, slab.ang, SLAB_LEN);
-      tick(ctx, slab.x, slab.y - 30, '🧱 SET DOWN', GUM.oozeDeep);
+    ctx.at(3500, () => {
+      const c = ctx.casterAt();
+      float(ctx, ctx.tx, ctx.ty - 40, '-40', SAVOR.saltEdge);
+      fx.salted(c.x, c.y);
+      float(ctx, c.x, c.y - 44, '🧂 SALTED!', SAVOR.white);
     });
-    let oobleckFrom = 0;
-    ctx.at(6000, () => {
-      oobleckFrom = 6000;
-      s.fx.splat(slab.x, slab.y, 22, 5);
-      tick(ctx, slab.x, slab.y - 44, '🫧 OOBLECK · 12s', GUM.oozeLit);
-    });
-    ctx.onFrame((_dt, elapsed) => {
-      if (!oobleckFrom) return;
-      // The ramp: a walker gets slower the longer it has been on them, not while they stand in it.
-      const run = Phaser.Math.Clamp((elapsed - oobleckFrom) / OOBLECK_EFFECT_MS, 0, 1);
-      const k = 0.15 + 0.85 * run;
-      const spd = 1 - (1 - OOBLECK_SLOW_FLOOR) * k;
-      foe.x = Math.max(slab.x - 70, foe.x - 70 * spd * 0.016);
-      if (Math.random() < 0.06) {
-        tick(ctx, foe.x, foe.y - 20, `${Math.round(spd * 100)}%`, GUM.oozeDeep);
-      }
-    });
-
-    // 4 — Solidify sets it. The pane stops being a filter and becomes a wall.
-    ctx.at(8600, () => {
-      slab.hard = true;
-      s.av.play('raise');
-      s.fx.harden(slab.x, slab.y, 40);
-      s.fx.slabSet(slab.x, slab.y, slab.ang, SLAB_LEN, true);
-      ctx.scene.cameras.main.shake(200, 0.005);
-      tick(ctx, slab.x, slab.y - 34, '🧱 WALL', GUM.solidLit);
-    });
-    ctx.at(9400, () => {
-      ctx.fly({
-        texture: 'proj-fire', from: { x: foe.x, y: foe.y },
-        to: { x: slab.x, y: slab.y }, speed: 520,
-        onHit: () => {
-          slab.stuck.push({ along: 20, across: 0, seed: 99, until: 9400 + 400 + SLAB_DISSOLVE_MS });
-          s.fx.stick(slab.x, slab.y + 20);
-          tick(ctx, slab.x, slab.y - 50, 'NO LIMIT', GUM.solidLit);
-        },
-      });
-    });
-
-    label(ctx, ctx.w * 0.5, ctx.h - 10,
-      `${SLAB_LEN}×${SLAB_THICK}px · ${SLAB_CATCH} shots, each dissolving over ${SLAB_DISSOLVE_MS / 1000}s · walkers slowed to ${Math.round(OOBLECK_SLOW_FLOOR * 100)}% over ${OOBLECK_EFFECT_MS / 1000}s`,
-      GUM.oozeDeep);
   },
 };

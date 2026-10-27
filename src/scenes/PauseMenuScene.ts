@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { C, T, DEPTH, FONT_UI, addButton, addModal } from '../ui';
+import type { IslesFightPayload } from '../isles/IslesTypes';
 
 export class PauseMenuScene extends Phaser.Scene {
   private parentSceneKey = 'ArenaScene';
@@ -23,8 +24,14 @@ export class PauseMenuScene extends Phaser.Scene {
     };
 
     const exitToMenu = () => {
+      // A Ten Isles fight retreats to where you stood in the world rather than the duel menu.
+      const isles = (this.scene.get(this.parentSceneKey) as unknown as { isles?: IslesFightPayload | null }).isles;
       this.scene.stop(this.parentSceneKey);
       this.scene.stop();
+      if (isles) {
+        this.scene.start('IsleWorldScene', { area: isles.area, pos: isles.pos });
+        return;
+      }
       // Phaser only overwrites scene.settings.data when a truthy object is passed —
       // an empty object here (not omitted) clears any stale { mode: 'invasion' }
       // left over from a previous MenuScene launch.

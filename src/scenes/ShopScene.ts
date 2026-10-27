@@ -24,7 +24,7 @@ const ELEMENT_COLORS: Record<string, number> = {
   electricity: 0xffee00, slime: 0x66cc44, fate: 0x88eecc, sound: 0x44bbff, light: 0xffffff,
   magnet: 0xcc2244, metal: 0xaabbcc, plasma: 0xdd66ff, passion: 0xf5e08a, chalk: 0xe0457b,
   wax: 0xf2c85b, clay: 0x9a5c32, illusion: 0xb45cff, depths: 0x0e8f9c, ruin: 0xc4392c,
-  paper: 0xf2ead6, death: 0x4a4468, quantum: 0x7df9ff, gum: 0x46b93f, bind: 0xe0b743,
+  paper: 0xf2ead6, death: 0x4a4468, quantum: 0x7df9ff, gum: 0xf7b2d0, bind: 0xe0b743,
   radiation: 0x7cff3d, psychic: 0xe8e4d8,
 };
 

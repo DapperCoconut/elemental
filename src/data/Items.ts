@@ -875,7 +875,17 @@ export function getItemsForElement(elementId: string): ItemDef[] {
 }
 
 export function getItem(id: string): ItemDef | undefined {
-  return ITEMS.find((i) => i.id === id);
+  return ITEMS.find((i) => i.id === id) ?? extraItemResolver?.(id);
+}
+
+/**
+ * The Ten Isles keep their own item tables (charms, meals, the genome) and resolve them here, so
+ * `ItemsKit` applies them through the same `consumedItemIds` path as the old campaign's.
+ */
+let extraItemResolver: ((id: string) => ItemDef | undefined) | null = null;
+
+export function registerItemResolver(fn: (id: string) => ItemDef | undefined): void {
+  extraItemResolver = fn;
 }
 
 /** Per-match consumed set — cleared at ArenaScene.create() after buffs are applied. */

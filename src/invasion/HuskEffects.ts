@@ -446,7 +446,7 @@ export class HuskEffectEngine {
       case 'gum':
         if (time >= st.nextActionAt) {
           st.nextActionAt = time + 1000;
-          this.addZone(husk.x, husk.y + 8, 30 + p * 5, 0x46b93f, room, time + 4600, { slowMult: Math.max(0.4, 0.65 - p * 0.05) });
+          this.addZone(husk.x, husk.y + 8, 30 + p * 5, 0xfbf7ff, room, time + 4600, { slowMult: Math.max(0.4, 0.65 - p * 0.05) });
         }
         break;
       case 'radiation': {

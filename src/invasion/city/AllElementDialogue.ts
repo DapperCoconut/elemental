@@ -887,19 +887,19 @@ export const DREAM_LINES: Record<string, DreamLines> = {
   },
   gum: {
     intro: [
-      'Mm. Sticky. Squishy. Slime is crawling around my dream again.',
-      'Your hand is the hitbox. You grab them, ooze across the floor, then zip along your own trails.',
-      'Grab the husks at the gates and keep them off my plinth. Please do not grab me.',
+      'Mm. Spun sugar and a pinch of salt. Savor is skipping through my dream again.',
+      'Dodge to flip between Sugar and Salt. Eat your candies, lend them out, then salt the wound.',
+      'Sweeten the lanes and keep the husks off my plinth. Do not drop licorice near me.',
     ],
     milestones: [
-      'Five waves. You grabbed a husk in the red lane and threw it back through the gate. Bravo.',
-      'Ten. Your trails crisscross the whole city. You zip along them like a bead on a string.',
-      'Fifteen. The husks are all slimy now. They cannot get a grip. You can.',
+      'Five waves. You ran a loop round a husk and drank its blood sugar. Bravo.',
+      'Ten. Candy wrappers all down the red lane. You ate every good one.',
+      'Fifteen. Salt crystals glittering on every street. The husks sting just walking past.',
     ],
-    hurt: 'They are on me, Slime. Grab them off. Hold on tight.',
-    saved: 'Twenty. The city is saved and slimed. The night is long and sticky. Keep oozing.',
-    fallen: 'Dried out. Nothing left to stick.',
-    downed: 'Splatted? Ooze back together and get up.',
+    hurt: 'They are on me, Savor. Something sweet, quickly. Or something sharp.',
+    saved: 'Twenty. The city is saved, sugared and salted. Have a lollipop. You earned it.',
+    fallen: 'Sugar crash. Nothing left but crumbs.',
+    downed: 'Crumbled? Shake the salt off and get up.',
   },
   gluttony: {
     intro: [

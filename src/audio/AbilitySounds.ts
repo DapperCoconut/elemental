@@ -446,12 +446,17 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   'bind-siphon': ['beam-charge', 0.6, 0.7],
   'bind-ritual': ['judgement', 0.7, 1.0],
 
-  // ── Slime (id: gum) ──
-  'gum-grab': ['slime-splat', 1.1, 0.7],
-  'gum-surge': ['slime-splat', 0.8, 0.95],
-  'gum-gumball': ['bubble', 0.9, 1.0],
-  'gum-oozorbtion': ['stretch', 0.7, 0.95],
-  'gum-solidify': ['ice-shatter', 1.1, 1.0],
+  // ── Savor (id: gum) ──
+  'savor-sugar-slam': ['grenade-throw', 1.25, 0.7],
+  'savor-sweet-tooth': ['sparkle', 1.0, 0.9],
+  'savor-sugar-diffusion': ['dash', 0.9, 0.9],
+  'savor-caring-share': ['slime-splat', 0.8, 0.9],
+  'savor-sugar-rush': ['jackpot', 1.0, 1.0],
+  'savor-salt-slice': ['ice-shard', 1.2, 0.75],
+  'savor-salt-shield': ['shield-up', 0.9, 0.9],
+  'savor-salt-infusion': ['crystal-chime', 0.8, 0.9],
+  'savor-salt-wounds': ['acid-spray', 1.3, 0.9],
+  'savor-salt-crash': ['crystal-shatter', 0.7, 1.0],
 
   // ── Quantum's Third State ──
   // Every one of these is a *split*, so the row is built out of things that come apart: a

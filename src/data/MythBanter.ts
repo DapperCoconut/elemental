@@ -8,7 +8,7 @@
  * player learns something true about that element from its own mouth.
  *
  * Keyed by element id (mind the traps: `sand` is Time, `dune` is Sand, `slime` is Venom,
- * `gum` is Slime, `passion` is Devotion, `fortune` is Gold, `gluttony` is Wood). `king` is
+ * `gum` is Savor, `passion` is Devotion, `fortune` is Gold, `gluttony` is Wood). `king` is
  * the Disgraced King, `reality` the finale, `myth` a mirror. Anything unlisted — husks, odd
  * bosses — gets `default` through `banterFor`.
  */
@@ -872,18 +872,18 @@ export const MYTH_BANTER: Record<string, BanterSet> = {
   },
   gum: {
     opener: [
-      m('Slime. The only character in the game that cannot walk.'),
-      f('Nothing under me but more me. One enormous gummy arm. Throw it, grip, haul the rest in.'),
-      m('The hand is the legs, the weapon and the inventory. A whole element in one decision.'),
-      f('Picking anything up is the same move as moving. Including you.'),
+      m('Savor. Sugar on one side, salt on the other, and every dodge flips the coin.'),
+      f('Have a sweet. Have another. You will want them back in a minute.'),
+      m('It lends you its buffs with a chocolate ball, then takes them back with a crash.'),
+      f('Sharing is caring. Crashing is just physics.'),
     ],
     mid: [
-      m('You zip along your own trails. The crowd has never seen locomotion like it.'),
-      f('Ooze across the floor, grab, repeat. It is not elegant. It is sticky.'),
+      m('A loop round the enemy, and there goes their blood sugar. A cube over its head.'),
+      f('Salt in the wound, storyteller. Half of everything you just took, again.'),
     ],
     closer: [
-      m('Everything sticky dries out eventually, Grabber.'),
-      f('Not in a puddle this size.'),
+      m('Every sugar high comes down eventually, Shapeshifter.'),
+      f('Then I will just turn to salt.'),
     ],
   },
   gluttony: {

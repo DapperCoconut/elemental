@@ -35,6 +35,17 @@ export const STRING = {
   snap: 0xfff4c8,
   strain: 0xff6a4a,
   blood: 0xc8243a,
+  // Click+ Metal Spool.
+  steel: 0x9aa6b4,
+  steelDark: 0x3c444e,
+  steelLit: 0xeef4fa,
+  spark: 0xffd27a,
+  // F+ Puppet Play: their own ability, turned on them.
+  backfire: 0xff2a3a,
+  backfireHot: 0xffb0a8,
+  // Q+ Spinal Snap: the bloodless dead hanging in the web.
+  corpse: 0x9a9a9a,
+  rot: 0x6e7068,
 };
 
 export type StringColorFn = ColorFn;
@@ -330,6 +341,244 @@ export function cocoon(
   }
 }
 
+/**
+ * Click+ Metal Spool's string: braided steel wire — a dark core, a cold bright body, a running glint
+ * and the braid's crossings. `strain` heats it toward red; each shot it has stopped leaves a bright
+ * notch (`dents`, up to 12) at a fixed spot along it.
+ */
+export function metalLine(
+  g: Phaser.GameObjects.Graphics, tint: ColorFn, pts: Pt[], t: number, alpha: number, strain: number, dents: number,
+): void {
+  if (pts.length < 2) return;
+  const body = strain > 0.05 ? lerpColor(STRING.steel, STRING.strain, Math.min(1, strain) * 0.75) : STRING.steel;
+  g.lineStyle(6.5, tint(STRING.ink), alpha * 0.6);
+  g.strokePoints(pts, false);
+  g.lineStyle(4.4, tint(STRING.steelDark), alpha);
+  g.strokePoints(pts, false);
+  g.lineStyle(2.8, tint(body), alpha);
+  g.strokePoints(pts, false);
+  // The braid: alternating crossings every 7px.
+  const total = polyLength(pts);
+  g.lineStyle(1.1, tint(STRING.steelDark), alpha * 0.85);
+  for (let d = 4, i = 0; d < total - 2; d += 7, i++) {
+    const p = pointAlong(pts, d);
+    const nx = -Math.sin(p.ang);
+    const ny = Math.cos(p.ang);
+    const ux = Math.cos(p.ang);
+    const uy = Math.sin(p.ang);
+    const s = i % 2 ? 1 : -1;
+    g.lineBetween(p.x + nx * 2 * s - ux * 2, p.y + ny * 2 * s - uy * 2, p.x - nx * 2 * s + ux * 2, p.y - ny * 2 * s + uy * 2);
+  }
+  // A glint that runs the wire.
+  const at = ((t * 260) % total + total) % total;
+  for (let k = 0; k < 3; k++) {
+    const p = pointAlong(pts, at - k * 5);
+    g.fillStyle(tint(STRING.steelLit), alpha * (0.9 - k * 0.28));
+    g.fillCircle(p.x, p.y, 1.9 - k * 0.4);
+  }
+  for (let i = 0; i < dents; i++) {
+    const p = pointAlong(pts, total * (0.12 + ((i * 0.37) % 0.76)));
+    g.fillStyle(tint(STRING.spark), alpha);
+    g.fillRect(p.x - 1.5, p.y - 1.5, 3, 3);
+  }
+}
+
+/**
+ * The spool winding in the spider's hand while click is held: two steel cheeks, wire wrapping on
+ * as `k` climbs 0→1, and a ring that closes round it the moment it fires.
+ */
+export function spoolCharge(g: Phaser.GameObjects.Graphics, tint: ColorFn, x: number, y: number, k: number, t: number, alpha: number): void {
+  const r = 6 + k * 4;
+  const spin = t * (4 + k * 14);
+  g.fillStyle(tint(STRING.ink), alpha * 0.4);
+  g.fillCircle(x + 1, y + 2, r + 4);
+  // The wire already on it.
+  g.fillStyle(tint(STRING.steelDark), alpha);
+  g.fillCircle(x, y, r);
+  g.fillStyle(tint(STRING.steel), alpha);
+  g.fillCircle(x, y, r * (0.45 + k * 0.5));
+  g.lineStyle(1, tint(STRING.steelLit), alpha * 0.8);
+  for (let i = 0; i < 3; i++) g.strokeCircle(x, y, r * (0.4 + k * 0.5) * (0.5 + i * 0.22));
+  // The cheeks, turning.
+  g.lineStyle(2, tint(STRING.steelLit), alpha);
+  for (let i = 0; i < 4; i++) {
+    const a = spin + (i * Math.PI) / 2;
+    g.lineBetween(x + Math.cos(a) * 2, y + Math.sin(a) * 2, x + Math.cos(a) * (r + 2), y + Math.sin(a) * (r + 2));
+  }
+  g.fillStyle(tint(STRING.brassLit), alpha);
+  g.fillCircle(x, y, 1.8);
+  // The countdown ring.
+  g.lineStyle(2.2, tint(k >= 0.999 ? STRING.spark : STRING.steelLit), alpha * 0.9);
+  g.beginPath();
+  g.arc(x, y, r + 7, -Math.PI / 2, -Math.PI / 2 + TAU * k);
+  g.strokePath();
+}
+
+/** E+ Bewitched Spiders: a wad of hexed web in flight, trailing threads. */
+export function webWad(g: Phaser.GameObjects.Graphics, tint: ColorFn, x: number, y: number, ang: number, t: number, alpha: number): void {
+  const bx = -Math.cos(ang);
+  const by = -Math.sin(ang);
+  g.lineStyle(1.2, tint(STRING.hexGlow), alpha * 0.7);
+  for (let i = -1; i <= 1; i++) {
+    const w = Math.sin(t * 30 + i * 2) * 3;
+    g.lineBetween(x, y, x + bx * 16 - by * (i * 4 + w), y + by * 16 + bx * (i * 4 + w));
+  }
+  g.fillStyle(tint(STRING.hex), alpha * 0.35);
+  g.fillCircle(x, y, 8);
+  g.fillStyle(tint(STRING.silk), alpha);
+  g.fillCircle(x, y, 5);
+  g.fillStyle(tint(STRING.hexGlow), alpha);
+  g.fillCircle(x - 1.5, y - 1, 2.4);
+  g.lineStyle(1, tint(STRING.silkDeep), alpha);
+  g.strokeCircle(x, y, 5);
+}
+
+/** A Bewitched spider's mark: a purple halo under it, so a small spitter reads apart from a biter. */
+export function bewitchedHalo(g: Phaser.GameObjects.Graphics, tint: ColorFn, x: number, y: number, t: number, alpha: number): void {
+  g.fillStyle(tint(STRING.hex), alpha * (0.22 + 0.08 * Math.sin(t * 6)));
+  g.fillCircle(x, y, 15);
+  g.lineStyle(1.2, tint(STRING.hexGlow), alpha * 0.7);
+  g.strokeCircle(x, y, 11 + Math.sin(t * 6) * 1.5);
+}
+
+/**
+ * Q+ Spinal Snap's web over the arena `b`: a faint wheel from the middle out to the walls, heavy
+ * corner webs and silk garlands sagging off every wall. `torn` 0..1 drops spokes and threads as
+ * the web loses HP; `flash` brightens it the moment it is hit.
+ */
+export function webCover(
+  g: Phaser.GameObjects.Graphics, tint: ColorFn, b: { left: number; right: number; top: number; bottom: number },
+  torn: number, flash: number, alpha: number,
+): void {
+  const cx = (b.left + b.right) / 2;
+  const cy = (b.top + b.bottom) / 2;
+  const gone = (i: number): boolean => ((i * 0.6180339) % 1) < torn * 0.75;
+  // The wheel: spokes to the walls, rings joining them.
+  const SPOKES = 18;
+  const rays: { x: number; y: number; len: number }[] = [];
+  for (let i = 0; i < SPOKES; i++) {
+    const a = (i / SPOKES) * TAU + 0.09;
+    const dx = Math.cos(a);
+    const dy = Math.sin(a);
+    const tx = dx > 0 ? (b.right - cx) / dx : dx < 0 ? (b.left - cx) / dx : Infinity;
+    const ty = dy > 0 ? (b.bottom - cy) / dy : dy < 0 ? (b.top - cy) / dy : Infinity;
+    const d = Math.min(tx, ty);
+    rays.push({ x: dx, y: dy, len: d });
+  }
+  const faint = alpha * (0.12 + flash * 0.25);
+  g.lineStyle(1, tint(STRING.silk), faint);
+  rays.forEach((r, i) => {
+    if (!gone(i)) g.lineBetween(cx, cy, cx + r.x * r.len, cy + r.y * r.len);
+  });
+  for (let ring = 1; ring <= 9; ring++) {
+    const rr = ring * 52;
+    for (let i = 0; i < SPOKES; i++) {
+      if (gone(ring * 31 + i)) continue;
+      const r0 = rays[i];
+      const r1 = rays[(i + 1) % SPOKES];
+      if (rr > r0.len || rr > r1.len) continue;
+      // Each thread sags a little toward the hub, as real orb-web threads do.
+      const x0 = cx + r0.x * rr, y0 = cy + r0.y * rr;
+      const x1 = cx + r1.x * rr, y1 = cy + r1.y * rr;
+      const mx = (x0 + x1) / 2 + (cx - (x0 + x1) / 2) * 0.05;
+      const my = (y0 + y1) / 2 + (cy - (y0 + y1) / 2) * 0.05;
+      g.strokePoints([{ x: x0, y: y0 }, { x: mx, y: my }, { x: x1, y: y1 }], false);
+    }
+  }
+  // Corner webs: thick and plain to see.
+  const heavy = alpha * (0.5 + flash * 0.4);
+  const corners: [number, number, number][] = [
+    [b.left, b.top, 0], [b.right, b.top, Math.PI / 2], [b.right, b.bottom, Math.PI], [b.left, b.bottom, Math.PI * 1.5],
+  ];
+  corners.forEach(([x, y, a0], ci) => {
+    const spokes: Pt[] = [];
+    for (let i = 0; i <= 6; i++) {
+      const a = a0 + (i / 6) * (Math.PI / 2);
+      spokes.push({ x: Math.cos(a), y: Math.sin(a) });
+    }
+    g.lineStyle(2.4, tint(STRING.silk), heavy);
+    spokes.forEach((s, i) => { if (!gone(ci * 7 + i + 400)) g.lineBetween(x, y, x + s.x * 170, y + s.y * 170); });
+    g.lineStyle(1.6, tint(STRING.silkShade), heavy);
+    for (let r = 26; r <= 160; r += 22) {
+      for (let i = 0; i < spokes.length - 1; i++) {
+        if (gone(ci * 97 + r + i)) continue;
+        const p = spokes[i];
+        const q = spokes[i + 1];
+        const mx = (p.x + q.x) / 2;
+        const my = (p.y + q.y) / 2;
+        g.strokePoints([
+          { x: x + p.x * r, y: y + p.y * r }, { x: x + mx * r * 0.9, y: y + my * r * 0.9 }, { x: x + q.x * r, y: y + q.y * r },
+        ], false);
+      }
+    }
+  });
+  // Garlands: silk swags hanging off every wall.
+  g.lineStyle(2, tint(STRING.silk), heavy * 0.85);
+  const swag = (x0: number, y0: number, x1: number, y1: number, nx: number, ny: number, i: number): void => {
+    if (gone(i + 700)) return;
+    const pts: Pt[] = [];
+    for (let k = 0; k <= 8; k++) {
+      const u = k / 8;
+      const s = Math.sin(u * Math.PI) * 16;
+      pts.push({ x: x0 + (x1 - x0) * u + nx * s, y: y0 + (y1 - y0) * u + ny * s });
+    }
+    g.strokePoints(pts, false);
+  };
+  const W = b.right - b.left;
+  const H = b.bottom - b.top;
+  const nx = Math.max(2, Math.round(W / 130));
+  const ny = Math.max(2, Math.round(H / 130));
+  for (let i = 0; i < nx; i++) {
+    const x0 = b.left + (W / nx) * i;
+    const x1 = x0 + W / nx;
+    swag(x0, b.top + 2, x1, b.top + 2, 0, 1, i);
+    swag(x0, b.bottom - 2, x1, b.bottom - 2, 0, -1, i + 50);
+  }
+  for (let i = 0; i < ny; i++) {
+    const y0 = b.top + (H / ny) * i;
+    const y1 = y0 + H / ny;
+    swag(b.left + 2, y0, b.left + 2, y1, 1, 0, i + 100);
+    swag(b.right - 2, y0, b.right - 2, y1, -1, 0, i + 150);
+  }
+}
+
+/**
+ * A dead body in the web, over its grey sprite: the thread it hangs from, and silk bound round it in
+ * crossing bands, with a dark dried trickle at the bottom.
+ */
+export function corpseWrap(
+  g: Phaser.GameObjects.Graphics, tint: ColorFn, ax: number, ay: number, x: number, y: number, r: number, ang: number, alpha: number,
+): void {
+  g.lineStyle(1.4, tint(STRING.silk), alpha * 0.85);
+  g.lineBetween(ax, ay, x, y - r);
+  const c = Math.cos(ang);
+  const s = Math.sin(ang);
+  g.lineStyle(2.2, tint(STRING.silk), alpha * 0.9);
+  for (let i = -2; i <= 2; i++) {
+    const oy = i * r * 0.36;
+    const half = r * Math.sqrt(Math.max(0, 1 - (oy / r) ** 2)) * 0.98;
+    const tilt = (i % 2 ? 1 : -1) * r * 0.22;
+    const p0 = { x: -half, y: oy - tilt };
+    const p1 = { x: half, y: oy + tilt };
+    g.lineBetween(x + p0.x * c - p0.y * s, y + p0.x * s + p0.y * c, x + p1.x * c - p1.y * s, y + p1.x * s + p1.y * c);
+  }
+  g.lineStyle(1, tint(STRING.silkDeep), alpha * 0.7);
+  g.strokeCircle(x, y, r);
+  g.fillStyle(tint(STRING.rot), alpha * 0.8);
+  g.fillEllipse(x + s * r, y + c * r + 2, 3, 6);
+}
+
+/** The web's health, a strip of silk at the top of the arena. */
+export function webBar(g: Phaser.GameObjects.Graphics, tint: ColorFn, x: number, y: number, k: number, alpha: number): void {
+  const w = 150;
+  g.fillStyle(tint(STRING.ink), alpha * 0.8);
+  g.fillRoundedRect(x - w / 2 - 3, y - 5, w + 6, 10, 4);
+  g.fillStyle(tint(STRING.silkShade), alpha);
+  g.fillRoundedRect(x - w / 2, y - 3, Math.max(0.5, w * k), 6, 3);
+  g.lineStyle(1, tint(STRING.silkDeep), alpha);
+  for (let i = 1; i < 10; i++) g.lineBetween(x - w / 2 + (w / 10) * i, y - 3, x - w / 2 + (w / 10) * i, y + 3);
+}
+
 /** The tomb's health, a strip of silk that unravels. */
 export function tombBar(g: Phaser.GameObjects.Graphics, tint: ColorFn, x: number, y: number, k: number, alpha: number): void {
   const w = 62;
@@ -481,6 +730,123 @@ export class StringFx extends FxBase {
       g.lineBetween(x + 5 + t * 4, y - 6, x + 2, y + 2);
       g.fillStyle(this.tint(STRING.blood), (1 - t) * 0.85);
       g.fillCircle(x, y + 3 + t * 3, 2.4);
+    });
+  }
+
+  /** A metal string stops a shot: a spray of sparks off the wire. */
+  clang(x: number, y: number): void {
+    this.anim(10, 260, (g, t) => {
+      for (let i = 0; i < 7; i++) {
+        const a = i * 0.9 + 0.3;
+        const d0 = 2 + easeOut(t) * 6;
+        const d1 = 5 + easeOut(t) * 18;
+        g.lineStyle(1.6, this.tint(i % 2 ? STRING.spark : STRING.steelLit), 1 - t);
+        g.lineBetween(x + Math.cos(a) * d0, y + Math.sin(a) * d0, x + Math.cos(a) * d1, y + Math.sin(a) * d1 + t * 6);
+      }
+    });
+  }
+
+  /** The spool lets go: the wire whips off the hand in a ring of steel. */
+  spoolFire(x: number, y: number, ang: number): void {
+    this.flashIn(x, y, 8, STRING.steelLit, STRING.steel, 10);
+    this.anim(9.5, 300, (g, t) => {
+      g.lineStyle(2.4, this.tint(STRING.steelLit), 1 - t);
+      g.strokeCircle(x, y, 8 + easeOut(t) * 18);
+      g.lineStyle(1.6, this.tint(STRING.spark), (1 - t) * 0.9);
+      for (let i = -2; i <= 2; i++) {
+        const a = ang + i * 0.35;
+        g.lineBetween(x + Math.cos(a) * 10, y + Math.sin(a) * 10, x + Math.cos(a) * (14 + t * 22), y + Math.sin(a) * (14 + t * 22));
+      }
+    });
+  }
+
+  /** A web wad lands: a splat of hexed silk. */
+  wadSplat(x: number, y: number): void {
+    this.anim(10, 380, (g, t) => {
+      const k = easeOut(t);
+      g.fillStyle(this.tint(STRING.silk), (1 - t) * 0.85);
+      for (let i = 0; i < 6; i++) {
+        const a = i * 1.05 + 0.4;
+        g.fillCircle(x + Math.cos(a) * k * 12, y + Math.sin(a) * k * 12, 2.6 * (1 - t) + 0.6);
+      }
+      g.lineStyle(1.4, this.tint(STRING.hexGlow), 1 - t);
+      g.strokeCircle(x, y, 4 + k * 12);
+    });
+  }
+
+  /** R+ Spider Swing lands: dust and a ring where the spider touches down. */
+  swingLand(x: number, y: number): void {
+    this.anim(9, 360, (g, t) => {
+      g.lineStyle(2, this.tint(STRING.hexGlow), 1 - t);
+      g.strokeEllipse(x, y + 10, 20 + easeOut(t) * 40, 8 + easeOut(t) * 14);
+      for (let i = 0; i < 6; i++) {
+        const a = Math.PI + (i / 5) * Math.PI;
+        const d = 8 + easeOut(t) * 20;
+        g.fillStyle(this.tint(STRING.silkShade), (1 - t) * 0.8);
+        g.fillCircle(x + Math.cos(a) * d, y + 10 + Math.sin(a) * d * 0.4, 2);
+      }
+    });
+  }
+
+  /**
+   * F+ Puppet Play: the puppet's own ability turned on them. The four strings yank taut and go red,
+   * a crimson ring closes in on them — an attack folding back on its caster — and sparks in their
+   * own element's colour, burnt red, burst off them. `color` is that element's colour.
+   */
+  backfire(x: number, y: number, r: number, color: number, big: boolean): void {
+    const hot = lerpColor(color, STRING.backfire, 0.65);
+    this.flashIn(x, y, r * (big ? 1.4 : 0.9), STRING.backfireHot, STRING.backfire, 10.5);
+    this.anim(10.5, big ? 640 : 440, (g, t) => {
+      const k = easeIn(t);
+      // The strings jerk tight from the bar above.
+      const by = y - r - 34;
+      g.lineStyle(2, this.tint(STRING.backfire), (1 - t));
+      for (const ox of [-14, -5, 5, 14]) g.lineBetween(x + ox, by, x + ox * 0.5, y - r * 0.4);
+      // The ring folds inward.
+      const rr = (r + (big ? 70 : 44)) * (1 - k) + r * 0.6;
+      g.lineStyle(big ? 4 : 3, this.tint(STRING.backfire), 1 - t * 0.6);
+      g.strokeCircle(x, y, rr);
+      g.lineStyle(1.5, this.tint(STRING.backfireHot), (1 - t) * 0.9);
+      g.strokeCircle(x, y, rr * 0.82);
+      // Their element's sparks, burnt red, thrown back off them.
+      for (let i = 0; i < (big ? 12 : 8); i++) {
+        const a = (i / (big ? 12 : 8)) * TAU + 0.25;
+        const d = r * 0.7 + easeOut(t) * (big ? 46 : 30);
+        g.fillStyle(this.tint(i % 2 ? hot : STRING.backfire), 1 - t);
+        g.fillCircle(x + Math.cos(a) * d, y + Math.sin(a) * d, (big ? 3.4 : 2.6) * (1 - t) + 0.6);
+      }
+    });
+  }
+
+  /** Spinal Snap's web goes: every corner whips in and a grey shudder runs the arena. */
+  webBreak(b: { left: number; right: number; top: number; bottom: number }): void {
+    const cx = (b.left + b.right) / 2;
+    const cy = (b.top + b.bottom) / 2;
+    this.anim(9.4, 700, (g, t) => {
+      const k = easeOut(t);
+      g.lineStyle(2.4, this.tint(STRING.silk), (1 - t) * 0.8);
+      for (const [x, y] of [[b.left, b.top], [b.right, b.top], [b.right, b.bottom], [b.left, b.bottom]]) {
+        for (let i = 0; i < 5; i++) {
+          const a = Math.atan2(cy - y, cx - x) + (i - 2) * 0.28;
+          const d0 = 20 + k * 120;
+          g.lineBetween(x + Math.cos(a) * d0, y + Math.sin(a) * d0, x + Math.cos(a + 0.2) * (d0 + 40), y + Math.sin(a + 0.2) * (d0 + 40));
+        }
+      }
+      g.lineStyle(3, this.tint(STRING.silkShade), (1 - t) * 0.5);
+      g.strokeCircle(cx, cy, 40 + k * 520);
+    });
+  }
+
+  /** Infested: a spider shoulders its way out of the host. */
+  broodBurst(x: number, y: number): void {
+    this.anim(10, 320, (g, t) => {
+      g.fillStyle(this.tint(STRING.blood), (1 - t) * 0.8);
+      for (let i = 0; i < 4; i++) {
+        const a = i * 1.6 + 0.5;
+        g.fillCircle(x + Math.cos(a) * (4 + t * 10), y + Math.sin(a) * (4 + t * 10), 1.8);
+      }
+      g.lineStyle(1.4, this.tint(STRING.silkShade), 1 - t);
+      g.strokeCircle(x, y, 5 + easeOut(t) * 12);
     });
   }
 

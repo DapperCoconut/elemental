@@ -1,7 +1,7 @@
 import type { TowerDef } from '../StrongholdTypes';
 import { ab, path, up } from './helpers';
 
-/** Bind, Slime (gum), Wood (gluttony), Pressure, Ink, Astra, Memory, String, Wax and Clay. */
+/** Bind, Savor (gum), Wood (gluttony), Pressure, Ink, Astra, Memory, String, Wax and Clay. */
 export const BATCH7_TOWERS: Record<string, TowerDef> = {
   bind: {
     cost: 195, range: 180, role: 'control', body: { kind: 'ground' },
@@ -76,63 +76,63 @@ export const BATCH7_TOWERS: Record<string, TowerDef> = {
   },
 
   gum: {
-    cost: 80, range: 170, role: 'control', body: { kind: 'ground' },
-    blurb: 'Glue. Barely scratches a husk — but nothing it touches gets anywhere quickly.',
-    signature: { name: 'Gummed Up', desc: 'The strongest, longest slows in the game. Damage is an afterthought.' },
+    cost: 90, range: 175, role: 'control', body: { kind: 'ground' },
+    blurb: 'Savor. Sugar bombs that leave the road sticky — and, further up, salt that cuts.',
+    signature: { name: 'Sugar Trail', desc: 'Everything it throws leaves the road sticky. Damage comes later, with the salt.' },
     traits: {},
     attacks: {
-      gob: ab(3, 700, { kind: 'bolt', color: 0x46b93f, speed: 520 }, 'Grab: a gob of glue that gums a husk up for 3s.', { name: 'Grab', rider: { slow: { mult: 0.55, ms: 3000 } } }),
+      slam: ab(4, 750, { kind: 'bolt', color: 0xfbf7ff, speed: 560, splash: 40 }, 'Sugar Slam: a sugar bomb that leaves a husk sticky for 3s.', { name: 'Sugar Slam', rider: { slow: { mult: 0.55, ms: 3000 } } }),
     },
     paths: [
-      path('Goo Pools', 'Turn the road itself to glue', [
-        up('Puddle', 90, 'Adds a pool of goo on the road that slows to 45%.', 'bubbles', {
-          add: { pool: ab(2, 4500, { kind: 'zone', radius: 70, ms: 4000, color: 0x46b93f, shape: 'glue' }, 'Slime Surge: a pool of goo that slows.', { name: 'Slime Surge', rider: { slow: { mult: 0.45, ms: 700 } }, gesture: 'e' }) },
+      path('Sugar Rush', 'Turn the road itself to syrup', [
+        up('Sugar Cloud', 90, 'Adds a sugar cloud on the road that slows to 45%.', 'bubbles', {
+          add: { cloud: ab(2, 4500, { kind: 'zone', radius: 70, ms: 4000, color: 0xfbf7ff, shape: 'glue' }, 'Sugar cloud: the road goes sticky.', { name: 'Sugar Slam', rider: { slow: { mult: 0.45, ms: 700 } }, gesture: 'e' }) },
         }),
-        up('Deep Goo', 200, 'Pools are 30% wider and slow to 35%.', 'bubbles', {
-          mods: { pool: { areaMult: 1.3, rider: { slow: { mult: 0.35, ms: 700 } } } },
+        up('Thick Syrup', 200, 'Clouds are 30% wider and slow to 35%.', 'bubbles', {
+          mods: { cloud: { areaMult: 1.3, rider: { slow: { mult: 0.35, ms: 700 } } } },
         }),
-        up('Morass', 700, 'Adds Morass: a 160px stretch of road turns to glue for 6s.', 'moat', {
-          add: { morass: ab(3, 9000, { kind: 'zone', radius: 160, ms: 6000, color: 0x46b93f, shape: 'glue' }, 'Morass: a whole stretch of road turns to glue.', { name: 'Morass', rider: { slow: { mult: 0.3, ms: 600 } }, gesture: 'q' }) },
+        up('Sugar Diffusion', 700, 'Adds Sugar Diffusion: a 160px stretch of road turns to syrup for 6s.', 'moat', {
+          add: { diffusion: ab(3, 9000, { kind: 'zone', radius: 160, ms: 6000, color: 0xff8fc0, shape: 'glue' }, 'Sugar Diffusion: a whole stretch of road turns to syrup.', { name: 'Sugar Diffusion', rider: { slow: { mult: 0.3, ms: 600 } }, gesture: 'r' }) },
         }),
-        up('Tar Pit', 1900, 'Pools and the morass suck husks backward up the road.', 'moat', {
-          mods: { pool: { fx: { pull: 22 } }, morass: { fx: { pull: 30 }, cooldownMult: 0.8 } },
+        up('Blood Sugar', 1900, 'Clouds and the syrup drain husks backward up the road.', 'moat', {
+          mods: { cloud: { fx: { pull: 22 } }, diffusion: { fx: { pull: 30 }, cooldownMult: 0.8 } },
         }),
-        up('Oobleck Sea', 5500, 'Morass 40% wider, sets solid under pressure: slows to 20% and stuns in bursts.', { kind: 'crown', color: 0x88ff66 }, {
-          mods: { morass: { areaMult: 1.4, damageMult: 5, rider: { slow: { mult: 0.2, ms: 700 }, stun: 250 } }, pool: { rider: { slow: { mult: 0.25, ms: 700 } } } },
-        }),
-      ]),
-      path('Glue Guns', 'Splatter the pack and glue the whole road', [
-        up('Gumball', 120, 'Adds Gumball: a splatter of glue over the pack every 2.5s.', 'barrel', {
-          add: { gumball: ab(6, 2500, { kind: 'bolt', color: 0x66dd55, speed: 480, size: 1.4, splash: 50 }, 'Gumball: splatters the pack with glue.', { name: 'Gumball', rider: { slow: { mult: 0.5, ms: 2500 } }, gesture: 'r' }) },
-        }),
-        up('Sticky Spread', 260, 'Grab throws three gobs at once.', 'barrel', {
-          mods: { gob: { countAdd: 2, fx: { spread: 0.5 } } },
-        }),
-        up('Glue Flood', 900, 'ABILITY — Glue Flood: every husk on the map is slowed to 30% for 5s.', 'shield', {
-          active: { name: 'Glue Flood', desc: 'Every husk on the map slowed to 30% for 5s.', cooldown: 35000, global: true, cast: ab(0, 0, { kind: 'field', color: 0x46b93f }, 'Glue everywhere.', { rider: { slow: { mult: 0.3, ms: 5000 } } }) },
-        }),
-        up('Superglue', 2400, 'Everything it throws slows to 30% and drags flyers down to the road for 3s.', 'spikes', {
-          mods: { '*': { rider: { slow: { mult: 0.3, ms: 3000 }, ground: 3000 } }, gumball: { areaMult: 1.3 } },
-        }),
-        up('Amber Tomb', 7000, 'ABILITY — Amber Tomb: every husk on the map is encased 3s, then slowed to 20%. Gumball ×3.', { kind: 'sun', color: 0xffb030 }, {
-          mods: { gumball: { damageMult: 3, cooldownMult: 0.7 } },
-          active: { name: 'Amber Tomb', desc: 'Every husk encased for 3s, then slowed to 20% for 6s.', cooldown: 40000, global: true, cast: ab(0, 0, { kind: 'field', color: 0xffb030 }, 'Amber sets over the road.', { rider: { encase: 3000, slow: { mult: 0.2, ms: 6000 } } }) },
+        up('Sugar High', 5500, 'Syrup 40% wider, crystallises under pressure: slows to 20% and stuns in bursts.', { kind: 'crown', color: 0xff5f9e }, {
+          mods: { diffusion: { areaMult: 1.4, damageMult: 5, rider: { slow: { mult: 0.2, ms: 700 }, stun: 250 } }, cloud: { rider: { slow: { mult: 0.25, ms: 700 } } } },
         }),
       ]),
-      path('Sticky Fingers', 'Glued husks crack and pay', [
-        up('Tacky', 100, 'Gummed husks are brittle: every hit on them lands +2 for 3s.', 'sparks', {
-          mods: { gob: { rider: { brittle: { add: 2, ms: 3000 } } } },
+      path('Salt', 'Shards that cut the whole pack', [
+        up('Salt Slice', 120, 'Adds Salt Slice: a fast shard over the pack every 2.5s.', 'barrel', {
+          add: { slice: ab(6, 2500, { kind: 'bolt', color: 0xe8eef2, speed: 950, size: 1.4, splash: 50 }, 'Salt Slice: a fast shard of salt.', { name: 'Salt Slice', rider: { slow: { mult: 0.5, ms: 2500 } }, gesture: 'click' }) },
         }),
-        up('Flypaper', 240, 'Adds flypaper: three glue traps on the road that hold three husks each.', 'pennant', {
-          add: { paper: ab(2, 5000, { kind: 'trap', count: 3, hits: 3, ms: 12000, color: 0xd8f0c8, look: 'glue' }, 'Flypaper: glue traps that grab whoever steps in.', { name: 'Flypaper', rider: { slow: { mult: 0.3, ms: 2500 } }, gesture: 'f' }) },
+        up('Shaker', 260, 'Sugar Slam throws three bombs at once.', 'barrel', {
+          mods: { slam: { countAdd: 2, fx: { spread: 0.5 } } },
         }),
-        up('Sap Siphon', 800, 'Every hit pays a gold, up to 90 a wave.', 'coins', {
+        up('Sugar Rush', 900, 'ABILITY — Sugar Rush: every husk on the map is slowed to 30% for 5s.', 'shield', {
+          active: { name: 'Sugar Rush', desc: 'Every husk on the map slowed to 30% for 5s.', cooldown: 35000, global: true, cast: ab(0, 0, { kind: 'field', color: 0xff8fc0 }, 'Sugar everywhere.', { rider: { slow: { mult: 0.3, ms: 5000 } } }) },
+        }),
+        up('Salt in the Wounds', 2400, 'Everything it throws slows to 30% and drags flyers down to the road for 3s.', 'spikes', {
+          mods: { '*': { rider: { slow: { mult: 0.3, ms: 3000 }, ground: 3000 } }, slice: { areaMult: 1.3 } },
+        }),
+        up('Salt Crash', 7000, 'ABILITY — Salt Crash: every husk on the map is held on spears 3s, then slowed to 20%. Salt Slice ×3.', { kind: 'sun', color: 0xe8eef2 }, {
+          mods: { slice: { damageMult: 3, cooldownMult: 0.7 } },
+          active: { name: 'Salt Crash', desc: 'Every husk held on salt spears for 3s, then slowed to 20% for 6s.', cooldown: 40000, global: true, cast: ab(0, 0, { kind: 'field', color: 0xe8eef2 }, 'Salt spears burst through the road.', { rider: { encase: 3000, slow: { mult: 0.2, ms: 6000 } } }) },
+        }),
+      ]),
+      path('Sweet Tooth', 'Sticky husks crack and pay', [
+        up('Cinnamon Spice', 100, 'Sticky husks are brittle: every hit on them lands +2 for 3s.', 'sparks', {
+          mods: { slam: { rider: { brittle: { add: 2, ms: 3000 } } } },
+        }),
+        up('Caring Share', 240, 'Adds candy traps: three sweets on the road that hold three husks each.', 'pennant', {
+          add: { candy: ab(2, 5000, { kind: 'trap', count: 3, hits: 3, ms: 12000, color: 0xff5f9e, look: 'glue' }, 'Caring Share: candies that grab whoever stops to eat.', { name: 'Caring Share', rider: { slow: { mult: 0.3, ms: 2500 } }, gesture: 'f' }) },
+        }),
+        up('Sugar Tax', 800, 'Every hit pays a gold, up to 90 a wave.', 'coins', {
           traits: { goldOnHit: { perHit: 1, cap: 90 } },
         }),
-        up('Glue Factory', 2200, 'Pays 6 gold a second during waves. Towers built near it cost 10% less.', 'gears', {
+        up('Candy Shop', 2200, 'Pays 6 gold a second during waves. Towers built near it cost 10% less.', 'gears', {
           traits: { trickle: 6, discount: { radius: 160, mult: 0.9 } },
         }),
-        up('Rubber Cement', 6000, 'Everything it touches is brittle (+10 per hit for 5s), and it hits slowed husks ×2.', 'hat', {
+        up('Rainbow Lollipop', 6000, 'Everything it touches is brittle (+10 per hit for 5s), and it hits slowed husks ×2.', 'hat', {
           mods: { '*': { rider: { brittle: { add: 10, ms: 5000 } } } },
           traits: { bully: 2, goldOnHit: { perHit: 1, cap: 150 } },
         }),

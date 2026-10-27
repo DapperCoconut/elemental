@@ -1,7 +1,8 @@
 import Phaser from 'phaser';
 import { PreviewScript, PreviewCtx } from '../../../ui/AbilityPreview';
 import {
-  MEMORY, MemoryAvatar, MemoryFx, latchedShard, rebirthLine, shardBody, staticEcho, staticRect, woundMark,
+  MEMORY, MemoryAvatar, MemoryFx, latchedShard, rebirthLine, saltBall, saltBorder, saltPhantom, shardBody,
+  staticBubble, staticEcho, staticRect, woundMark,
 } from '../../../elements/kits/MemoryVisuals';
 
 /**
@@ -21,7 +22,9 @@ const SLICE_W = 14;
 const SWEEP_RAD_PER_S = Math.PI * 1.5;
 const REBIRTH_W = 40;
 const ECHO_R = 20;
-const TRAUMA_MS = 3000;
+const TRAUMA_MS = 5000;
+const SALT_SPEED = 950;
+const SALT_R = 7;
 
 // ── Staging ───────────────────────────────────────────────────────────
 
@@ -321,9 +324,9 @@ export const repression: PreviewScript = {
 // ══ Q — Trauma ═════════════════════════════════════════════════════════
 
 export const trauma: PreviewScript = {
-  duration: 8000,
+  duration: 9600,
   scale: 0.85,
-  caption: 'Q — a 3s red window. Afterwards they take 5% of everything they took in it, every second, for the rest of the match',
+  caption: 'Q — a 5s red window. Afterwards they take 5% of everything they took in it, every second, for the rest of the match',
   run(ctx) {
     const av = stand(ctx);
     const fx = fxOf(ctx);
@@ -339,28 +342,247 @@ export const trauma: PreviewScript = {
       const c = ctx.casterAt();
       fx.traumaPulse(c.x, c.y);
       av?.play('raise', -Math.PI / 2, 520);
-      readout.setText('3s: everything they take is remembered');
+      readout.setText('5s: everything they take is remembered');
     });
     ctx.onFrame((_dt, e) => {
       if (e > 300 && e < 300 + TRAUMA_MS) av?.setAura('red', (e - 300) / TRAUMA_MS);
       else av?.setAura(null);
     });
-    [700, 1500, 2300].forEach((t) => ctx.at(t, () => {
+    [700, 1500, 2300, 3100, 3900].forEach((t) => ctx.at(t, () => {
       av?.play('punch', 0);
       fx.snatchHit(victim.x, victim.y, false);
       float(ctx, victim.x, victim.y - 30, '-20', MEMORY.staticHi);
     }));
     ctx.at(300 + TRAUMA_MS, () => {
       fx.traumaSeal(victim.x, victim.y);
-      float(ctx, victim.x, victim.y - 40, 'TRAUMA  60 taken', MEMORY.redHot, 12);
+      float(ctx, victim.x, victim.y - 40, 'TRAUMA  100 taken', MEMORY.redHot, 12);
       wounded = 300 + TRAUMA_MS;
-      readout.setText('5% of 60 — 3 a second, forever');
+      readout.setText('5% of 100 — 5 a second, forever');
     });
     for (let i = 1; i <= 4; i++) {
       ctx.at(300 + TRAUMA_MS + i * 1000, () => {
         fx.traumaTick(victim.x, victim.y);
-        float(ctx, victim.x, victim.y - 30, '-3', MEMORY.red);
+        float(ctx, victim.x, victim.y - 30, '-5', MEMORY.red);
       });
     }
+  },
+};
+
+// ══ Upgraded ═══════════════════════════════════════════════════════════
+
+/** E+ Shutdown: the snatch, and red-gold sparks of ultimate charge pulled out of both of them. */
+export const snatchUpgraded: PreviewScript = {
+  duration: 4800,
+  scale: 0.75,
+  caption: 'E+ Shutdown — the snatch steals ultimate charge too: a slice a little, the beam a lot, more from a fuller bank',
+  run(ctx) {
+    const av = stand(ctx);
+    const fx = fxOf(ctx);
+    const main = dummy(ctx, { x: ctx.cx + 230, y: ctx.cy });
+    const side = dummy(ctx, { x: ctx.cx + 190, y: ctx.cy + 95 });
+    const readout = label(ctx, ctx.w * 0.5, 14, hex(MEMORY.bandLit), 11);
+    ctx.at(200, () => { av?.setSpin(true); av?.setHold('charge', 0); readout.setText('spin the cane…'); });
+    ctx.at(200 + SPIN_MS, () => {
+      av?.setSpin(false);
+      av?.setHold(null);
+      av?.play('sweep', 0);
+      const c = ctx.casterAt();
+      const len = 280;
+      fx.snatchBeam(c.x + 16, c.y, c.x + len, c.y, SNATCH_W);
+      fx.snatchSlice(c.x + 16, c.y, 0, -SLICE_HALF_ANGLE, len, SLICE_SWEEP_MS, SLICE_W);
+      fx.snatchSlice(c.x + 16, c.y, 0, SLICE_HALF_ANGLE, len, SLICE_SWEEP_MS, SLICE_W);
+      fx.snatchHit(main.x, main.y, true);
+      fx.ultSteal(main.x, main.y, () => ctx.casterAt(), 74);
+      float(ctx, main.x, main.y - 30, '-74 ULT', MEMORY.redHot, 12);
+      readout.setText('the beam: 14 + 30% of their bank (200 banked → 74)');
+    });
+    ctx.at(200 + SPIN_MS + SLICE_SWEEP_MS, () => {
+      fx.snatchHit(side.x, side.y, false);
+      fx.ultSteal(side.x, side.y, () => ctx.casterAt(), 21);
+      float(ctx, side.x, side.y - 30, '-21 ULT', MEMORY.redHot);
+    });
+    ctx.at(200 + SPIN_MS + 900, () => {
+      const c = ctx.casterAt();
+      float(ctx, c.x, c.y - 56, '+95 ULT', MEMORY.bandLit, 12);
+      readout.setText('a slice: 6 + 15% (100 banked → 21). All of it is banked as yours');
+    });
+  },
+};
+
+/** R+ Brain Drain: the strike, then what it took dragged out of them and into the hat. */
+export const rebirthUpgraded: PreviewScript = {
+  duration: 4600,
+  scale: 0.75,
+  caption: 'R+ Brain Drain — a strike seals their passives for 8s and drains what their kit has built up, pulled out of them into you',
+  run(ctx) {
+    stand(ctx);
+    const fx = fxOf(ctx);
+    const victim = dummy(ctx, { x: ctx.cx + 210, y: ctx.cy - 20 });
+    const readout = label(ctx, ctx.w * 0.5, 14, hex(MEMORY.white), 11);
+    ctx.at(400, () => {
+      const L = Math.max(ctx.w, ctx.h);
+      fx.rebirthBeam(victim.x - L, victim.y + L * 0.2, victim.x + L, victim.y - L * 0.2, REBIRTH_W);
+      fx.rebirthHit(victim.x, victim.y);
+      float(ctx, victim.x, victim.y - 30, '-24  SEALED', MEMORY.white, 12);
+      readout.setText('the strike seals their passives for 8s…');
+    });
+    ctx.at(800, () => {
+      fx.brainDrain(victim.x, victim.y, () => ctx.casterAt());
+      readout.setText('…and drains part of what their kit built up');
+    });
+    ['−3 HEAT', '−40% CHARGE'].forEach((text, i) => ctx.at(950 + i * 180, () => {
+      const t = label(ctx, victim.x, victim.y - 34 + i * 12, hex(MEMORY.staticHi), 11);
+      t.setText(text);
+      const sx = t.x;
+      const sy = t.y;
+      let el = 0;
+      ctx.onFrame((dt) => {
+        if (!t.active || el > 950) return;
+        el += dt;
+        const k = Math.min(1, el / 950);
+        const e = k * k * k;
+        const c = ctx.casterAt();
+        t.setPosition(sx + (c.x - sx) * e, sy + (c.y - 34 - sy) * e - Math.sin(e * Math.PI) * 26);
+        t.setScale(1 - 0.65 * e);
+        t.setAlpha(k < 0.85 ? 1 : (1 - k) / 0.15);
+      });
+    }));
+  },
+};
+
+/** F+ Unforgettable: a copy walks out and back; the next recording copies it as well. */
+export const repressionUpgraded: PreviewScript = {
+  duration: 7600,
+  scale: 0.75,
+  caption: 'F+ Unforgettable — copies last 8s, walking the recording back; a recording copies the copies too, up to 10',
+  run(ctx) {
+    const av = stand(ctx);
+    const fx = fxOf(ctx);
+    const readout = label(ctx, ctx.w * 0.5, 14, hex(MEMORY.grey), 11);
+    const cursor = { x: ctx.cx + 200, y: ctx.cy + 90 };
+    const pathA = (k: number) => ({ x: ctx.cx + 220 - 70 * Math.sin(k * Math.PI), y: ctx.cy - 60 + 40 * Math.sin(k * Math.PI * 2) });
+    const pathB = (k: number) => ({ x: ctx.cx + 120 + 60 * Math.cos(k * Math.PI), y: ctx.cy + 20 - 50 * Math.sin(k * Math.PI) });
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
+    const LEG = 1600;
+    const copies: { at: number; path: (k: number) => { x: number; y: number }; color: number }[] = [];
+    // Forward, then back again: a triangle wave over the recording.
+    const walk = (el: number) => { const p = (el % (2 * LEG)) / LEG; return p <= 1 ? p : 2 - p; };
+    ctx.onFrame((_dt, e) => {
+      g.clear();
+      g.lineStyle(1.5, 0xffffff, 0.8);
+      g.strokeCircle(cursor.x, cursor.y, 7);
+      for (const c of copies) {
+        if (e < c.at || e > c.at + LEG * 2.6) continue;
+        const p = c.path(walk(e - c.at));
+        staticEcho(g, ctx.tint, p.x, p.y, ECHO_R, c.color, Math.atan2(cursor.y - p.y, cursor.x - p.x), e / 1000, 0.92);
+      }
+    });
+    ctx.at(200, () => {
+      copies.push({ at: 200, path: pathA, color: 0xff6a2a });
+      fx.repressMark(pathA(0).x, pathA(0).y, false);
+      readout.setText('a copy walks the recording, then walks it back — 8s in all');
+    });
+    ctx.at(200 + LEG, () => readout.setText('…and back again, still clicking'));
+    ctx.at(200 + LEG * 1.2, () => {
+      av?.setAura('grey');
+      const c = ctx.casterAt();
+      fx.repressMark(c.x, c.y, true);
+      readout.setText('record again while it walks: the copy is recorded too');
+    });
+    ctx.at(200 + LEG * 2.6, () => {
+      av?.setAura(null);
+      copies.push({ at: 200 + LEG * 2.6, path: pathA, color: 0xff6a2a });
+      copies.push({ at: 200 + LEG * 2.6, path: pathB, color: 0xff6a2a });
+      fx.repressMark(pathB(0).x, pathB(0).y, false);
+      readout.setText('two copies now — a copy of them, and a copy of the copy. Up to 10');
+    });
+    [900, 2900, 4900, 5600].forEach((t) => ctx.at(t, () => {
+      fx.echoBurst(cursor.x, cursor.y, 22, 0xff6a2a);
+    }));
+  },
+};
+
+/** Q+ Salt in the Wound: the walls in red static, phantoms shouting static, balls of it thrown hard. */
+export const traumaUpgraded: PreviewScript = {
+  duration: 6200,
+  scale: 0.85,
+  caption: 'Q+ Salt in the Wound — for the 5s window, phantoms in red static along the walls shout at them and throw static balls (12 each)',
+  run(ctx) {
+    const av = stand(ctx);
+    const fx = fxOf(ctx);
+    const victim = dummy(ctx, { x: ctx.cx + 150, y: ctx.cy + 10 });
+    const readout = label(ctx, ctx.w * 0.5, 30, hex(MEMORY.redHot), 11);
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
+    const START = 300;
+    const inset = 26;
+    const phantoms = [
+      { x: inset, y: ctx.h * 0.3, color: 0xff6a2a, seed: 0.3 },
+      { x: ctx.w * 0.5, y: inset, color: 0x3a8cff, seed: 1.9 },
+      { x: ctx.w - inset, y: ctx.h * 0.25, color: 0x55d66b, seed: 3.4 },
+      { x: ctx.w - inset, y: ctx.h * 0.8, color: 0xffe24a, seed: 5.2 },
+      { x: ctx.w * 0.3, y: ctx.h - inset, color: 0x8a5cff, seed: 6.6 },
+    ];
+    const throws = new Map<number, number>();
+    const balls: { x: number; y: number; vx: number; vy: number; trail: { x: number; y: number }[]; done: boolean }[] = [];
+    ctx.onFrame((dt, e) => {
+      g.clear();
+      const on = e > START && e < START + TRAUMA_MS;
+      if (on) {
+        const a = Math.min(1, (e - START) / 300, (START + TRAUMA_MS - e) / 300);
+        saltBorder(g, ctx.tint, 0, 0, ctx.w, ctx.h, 20, e / 1000, a * 0.85);
+        phantoms.forEach((ph, i) => {
+          const aim = Math.atan2(victim.y - ph.y, victim.x - ph.x);
+          const tk = (e - (throws.get(i) ?? -1e9)) / 420;
+          saltPhantom(g, ctx.tint, ph.x, ph.y, ph.color, aim, e / 1000, a, tk >= 0 && tk < 1 ? tk : 0, ph.seed);
+          // Each one shouts for a beat, every couple of seconds.
+          if ((e - START + i * 380) % 1900 < 800) {
+            const bx = Phaser.Math.Clamp(ph.x + Math.sign(ctx.cx - ph.x) * 40, 36, ctx.w - 36);
+            const by = Phaser.Math.Clamp(ph.y + Math.sign(ctx.cy - ph.y) * 32 - 20, 18, ctx.h - 18);
+            staticBubble(g, ctx.tint, bx, by, 54, 22, ph.x, ph.y, e / 1000, a, ph.seed * 5);
+          }
+        });
+      }
+      for (const b of balls) {
+        if (b.done) continue;
+        b.trail.push({ x: b.x, y: b.y });
+        if (b.trail.length > 7) b.trail.shift();
+        b.x += b.vx * dt / 1000;
+        b.y += b.vy * dt / 1000;
+        if (Phaser.Math.Distance.Between(b.x, b.y, victim.x, victim.y) < SALT_R + 17) {
+          b.done = true;
+          fx.saltBurst(b.x, b.y);
+          float(ctx, victim.x, victim.y - 30, '-12', MEMORY.redHot, 12);
+          continue;
+        }
+        saltBall(g, ctx.tint, b.x, b.y, b.trail, SALT_R, e / 1000);
+      }
+    });
+    ctx.at(START, () => {
+      const c = ctx.casterAt();
+      fx.traumaPulse(c.x, c.y);
+      av?.play('raise', -Math.PI / 2, 520);
+      for (const ph of phantoms) fx.phantomRise(ph.x, ph.y);
+      readout.setText('the walls fill with red static — and the phantoms in it');
+    });
+    ctx.onFrame((_dt, e) => {
+      if (e > START && e < START + TRAUMA_MS) av?.setAura('red', (e - START) / TRAUMA_MS);
+      else av?.setAura(null);
+    });
+    [700, 1150, 1600, 2300, 2750, 3200, 3700, 4400].forEach((t, n) => ctx.at(t, () => {
+      const i = n % phantoms.length;
+      const ph = phantoms[i];
+      throws.set(i, t);
+      const ang = Math.atan2(victim.y - ph.y, victim.x - ph.x);
+      ctx.at(t + 170, () => balls.push({
+        x: ph.x + Math.cos(ang) * 22, y: ph.y + Math.sin(ang) * 22,
+        vx: Math.cos(ang) * SALT_SPEED * 0.6, vy: Math.sin(ang) * SALT_SPEED * 0.6, trail: [], done: false,
+      }));
+    }));
+    ctx.at(1900, () => readout.setText('static balls, thrown hard: 12 each (shown at 0.6× speed)'));
+    ctx.at(START + TRAUMA_MS, () => {
+      for (const ph of phantoms) fx.phantomFade(ph.x, ph.y, ph.color);
+      fx.traumaSeal(victim.x, victim.y);
+      readout.setText('and every ball that landed is in the wound');
+    });
   },
 };

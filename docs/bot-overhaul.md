@@ -250,24 +250,20 @@ fate, creation, growth, rubber, acid, hunt, time; then the remainder). For each 
   kit-side** at a banked milestone within 220px; `npcAcidShedSlot` keeps the rotation off that key.
   Profile `skirmisher [100, 240]`. The bot dodge is ×3 like the player's (Serpentine).
 
-- **Slime / `gum` (2026-08-12), step 2 + step 4 only.** Slime Mastery shipped, so the kit now has
-  its npc half. `npcMasteryActive` already drove `setMastered`; **Slime Split runs for the bot as
-  well as the player** — a Nightmare Slime that is killed comes apart into three 50 HP slimelings
-  and keeps fighting, with no decision for the AI to make about it (the whole passive is owner-
-  generic, because the cluster follows whichever body the physics is attached to). `GumKit.
-  updateNpcMastery` is the kit-side cast path for Oobleck (a private timer, so nothing for
-  `castAbility` to find): the bot **plants** its slab 76px along the line to the target instead of
-  carrying one, on a 400ms think tick, because a held slab pins the body still — that is the
-  player's trade, and a state machine cannot pay it. `NPC_MASTERY_BINDS.gum` gives up **F**
-  (Oozorbtion is one swallowed shot timed by guesswork; the pane keeps five out of the air with no
-  timing at all), `npcGumOobleckSlot` is published so `doGumAbilities` stops pressing what is no
-  longer under that key, and Q is refused by `excludeSlots` — Solidify *is* the slab's upgrade
-  path. One synergy field: `npcGumSlabSoft` says a slab is standing and unset, and the rotation
-  presses Solidify for it ahead of everything else. That is the first reason the bot has ever had
-  to cast the ultimate up close, and it is safe precisely because mastery is a Nightmare loadout
-  and a Nightmare loadout owns Hand of Stone (no handless window). **Steps 1, 3 and 5 are
-  untouched** — the kit was already owner-aware via `up(owner, slot)`, but the base rotation has
-  not been rewritten and the movement profile has not been retuned.
+- **Savor / `gum` (2026-10-26, replaces Slime).** No upgrades or mastery, so steps 1–2 do not
+  apply. Rotation `doSavorAbilities` rewritten for the two rows; profile `skirmisher [140, 320]`.
+  The bot has no Space for the form flip, so **SavorKit flips it** (`npcThink`, 380ms tick, 2.6s
+  gap) with a 200ms dash across the target's line, and publishes the row as `npcSavorForm`.
+  Kit-owned behaviour the AI never re-derives: the walk onto its own candies and coated crystals
+  (never licorice, not with the target within 110px), the orbit round the target during Sugar
+  Diffusion (that is what earns the cube), and the stalactite's release on the timing bar (green
+  at Nightmare+, yellow at Hard+, anywhere below). Synergy fields, checked first: `npcSavorLoanLive`
+  (a Caring Share loan is on the target → the kit flips to Salt and the rotation grows Salt
+  Infusion so the shard comes out coated), `npcSavorWound` (≥18 → Salt in the Wounds). Gates:
+  `npcSavorAiming` (never press R again while it hangs), `npcSavorRacing` (Salt Crash — press
+  nothing), `npcSavorStacks` (Caring Share ≥2, Sugar Rush ≥6), `npcSavorCandies` (bag only below 3),
+  `npcSavorTargetDrained` (no more loops once the target has 3 cubes). Salt Crash race: the bot
+  presses 0.6 + 0.4 × level crystals a second.
 
 - **Marrow (restored 2026-10-12 as its own test element, beside Cloth).** `doMarrowAbilities` came
   back from the pre-Cloth commit unchanged, with its four kit-published `NpcAiState` fields:
@@ -573,6 +569,11 @@ fate, creation, growth, rubber, acid, hunt, time; then the remainder). For each 
   → 40% of their casts at a Memory player go 16–32° wide (`ArenaScene.scatterAim`); three →
   `memoryBlindUntil` re-rolled every 0.8s at 45%, refusing all but the click in
   `NpcOpponent.castAbility`. Movement profile: zoner 220–380px, retreat at 30%. No mastery.
+  Upgrades (E–Q, 2026-10-26): Shutdown and Salt in the Wound need nothing new (the snatch already
+  waits for a loaded target; the phantoms are kit-aimed with lead and land inside the Trauma
+  window they open). Brain Drain turns `npcMemoryRebirthWorth`'s sealed check back on.
+  Unforgettable: `npcMemoryRepressReady` is also true while a copy still has >2.5s to walk, so the
+  bot records copies into copies of copies.
 - **String (new test element, 2026-10-26), steps 3–5.** The kit owns the geometry: where the
   strands lie, where the puppet is walked (`botSteerGoal`: onto the nearest of the bot's spiders,
   else 40px past the nearest of its strings so the push snaps it over them, else in front of the
@@ -586,6 +587,15 @@ fate, creation, growth, rubber, acid, hunt, time; then the remainder). For each 
   inside 700px. A bot *inside* a Linen Tomb holds still (`stringTombedUntil` zeroes its velocity
   ahead of the movement switch) and spends itself cutting the silk. Movement profile: zoner
   200–360px, retreat at 30%. No mastery.
+  **Upgrades (2026-10-26):** Click+ Metal Spool is kit-fired (`StringKit.botSpool`): with no metal
+  string out and the target inside 700px the kit winds the bot's spool and fires it at two
+  seconds, publishing `npcStringSpooling` so the rotation holds its plain throws meanwhile. E+
+  Bewitched Spiders needs nothing new (the hex strand is already thrown first and E follows).
+  R+ Spider Swing rides `botHexSnap`, which now goes through `recastHex` (so the bot swings in on a
+  strand tied to the target) and also snaps a wall-tied strand to escape (`npcSwingAway`: bot under
+  35%, target inside 220px, far end >300px from it). F+ Puppet Play: `npcStringPuppetPlay` (a live
+  puppet) → E then R before anything else, each one a backfire on the puppet. Q+ Spinal Snap needs
+  no reader — the web tears on everyone's casts, so the rotation already breaks it.
 - **Dream (2026-10-17 sandman rework replacing the pendulum), steps 3–5.** One info object,
   `npcDream` (`DreamKit.npcAiInfo`, side-effect free), plus `dreamSeekPoint`. In the waking
   world: a sleeping target is never shot (Sandmen damage wakes it) — the bot tops the meter up

@@ -53,7 +53,7 @@ const repression: Ability = {
 const trauma: Ability = {
   id: 'memory-trauma',
   name: 'Trauma',
-  description: 'Pulse with a red aura for 3s. Afterwards, every enemy takes 5% of the damage they took in those 3s, every second, for the rest of the match. Casting it again replaces the old wound with the new one.',
+  description: 'Pulse with a red aura for 5s. Afterwards, every enemy takes 5% of the damage they took in those 5s, every second, for the rest of the match. Casting it again replaces the old wound with the new one.',
   displayKey: 'Q',
   isUltimate: true,
   cooldown: 45000,

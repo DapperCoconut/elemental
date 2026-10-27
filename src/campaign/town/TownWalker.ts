@@ -34,8 +34,11 @@ export class TownWalker {
   private destroyed = false;
   private t = 0;
   private elementId: string;
+  /** A stranger's rig (a bot, a champion): no skin and no mastered silhouette — those are the player's. */
+  private bare: boolean;
 
-  constructor(private scene: Phaser.Scene, elementId: string, x: number, y: number) {
+  constructor(private scene: Phaser.Scene, elementId: string, x: number, y: number, opts: { bare?: boolean } = {}) {
+    this.bare = !!opts.bare;
     this.container = scene.add.container(x, y).setScale(SCALE).setDepth(y);
     this.elementId = elementId === 'quantum' ? 'fire' : elementId;
     this.build();
@@ -46,7 +49,7 @@ export class TownWalker {
     const shadow = this.scene.add.ellipse(0, 22, 46, 14, 0x000000, 0.35);
     this.container.add(shadow);
     try {
-      const skin = equippedSkin(id);
+      const skin = this.bare ? undefined : equippedSkin(id);
       const bodyTex = elementBodyTexture(this.scene, id);
       if (bodyTex) {
         this.capture(() => {
@@ -57,7 +60,7 @@ export class TownWalker {
         });
       }
       const avatar = this.capture(() =>
-        makeSkinAvatar(skin?.id ?? null, this.scene) ?? makeElementAvatar(id, this.scene, skinnedColorFn(id)));
+        makeSkinAvatar(skin?.id ?? null, this.scene) ?? makeElementAvatar(id, this.scene, this.bare ? (c) => c : skinnedColorFn(id)));
       if (avatar) {
         this.capture(() => avatar.captureInto((o) => this.adopt(o)));
         this.avatar = avatar;
@@ -82,7 +85,7 @@ export class TownWalker {
       this.capture(() => {
         const a = this.avatar!;
         a.setFacing(facing);
-        a.setMastered(PlayerData.isMasteryEnabled(this.elementId));
+        a.setMastered(!this.bare && PlayerData.isMasteryEnabled(this.elementId));
         a.update(dtMs, 0, 0, 1);
       });
     }

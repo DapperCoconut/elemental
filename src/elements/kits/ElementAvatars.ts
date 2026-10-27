@@ -27,7 +27,7 @@ import { StringAvatar } from './StringVisuals';
 import { InkAvatar } from './InkVisuals';
 import { GravityAvatar } from './GravityVisuals';
 import { GrowthAvatar } from './GrowthVisuals';
-import { GumAvatar } from './GumVisuals';
+import { SavorAvatar } from './SavorVisuals';
 import { GunpowderAvatar } from './GunpowderVisuals';
 import { HuntAvatar } from './HuntVisuals';
 import { IceAvatar } from './IceVisuals';
@@ -72,7 +72,7 @@ import { WaterAvatar } from './WaterVisuals';
  *
  * Two ids are traps and both are load-bearing here:
  *   `sand` is **Time** (TimeAvatar); `dune` is the actual sand element (SandAvatar).
- *   `slime` is **Acid** (AcidAvatar); `gum` is the actual slime element (GumAvatar).
+ *   `slime` is **Acid** (AcidAvatar); `gum` is **Savor** (SavorAvatar).
  *
  * Every avatar constructor is `(scene, tint, …defaulted extras)`, so a two-argument call
  * covers all of them. Quantum is deliberately absent: it has no character of its own — it is
@@ -139,7 +139,7 @@ const ELEMENT_AVATARS: Record<string, ElementAvatarFactory> = {
   passion: (s, t) => new PassionAvatar(s, t),
   death: (s, t) => new DeathAvatar(s, t),
   fortune: (s, t) => new FortuneAvatar(s, t),
-  gum: (s, t) => new GumAvatar(s, t),
+  gum: (s, t) => new SavorAvatar(s, t),
   gluttony: (s, t) => new GluttonyAvatar(s, t),
   pressure: (s, t) => new PressureAvatar(s, t),
   astra: (s, t) => new AstraAvatar(s, t),
@@ -211,7 +211,7 @@ const AVATAR_CLASSES: Record<string, abstract new (...args: never[]) => BaseAvat
   passion: PassionAvatar,
   death: DeathAvatar,
   fortune: FortuneAvatar,
-  gum: GumAvatar,
+  gum: SavorAvatar,
   gluttony: GluttonyAvatar,
   pressure: PressureAvatar,
   astra: AstraAvatar,

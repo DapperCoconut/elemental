@@ -91,7 +91,7 @@ const MOVEMENT_PROFILES: Record<string, MovementProfile> = {
   psychic:     { archetype: 'zoner',      range: [240, 400], retreatHp: 0.32 },
   radiation:   { archetype: 'skirmisher', range: [150, 290], retreatHp: 0.28 },
   bind:        { archetype: 'summoner',   range: [220, 380], retreatHp: 0.30 },
-  gum:         { archetype: 'brawler',    range: [50, 150],  retreatHp: 0.15 },
+  gum:         { archetype: 'skirmisher', range: [140, 320], retreatHp: 0.25 },
   gluttony:    { archetype: 'brawler',    range: [90, 240],  retreatHp: 0.2 },
   pressure:    { archetype: 'brawler',    range: [70, 200],  retreatHp: 0.18 },
   ink:         { archetype: 'skirmisher', range: [150, 320], retreatHp: 0.25 },
@@ -584,6 +584,10 @@ export interface NpcAiState {
   npcStringPuppetShot?: boolean;
   /** Linen Tomb: Spider Dance is ready to follow it up the guy-lines, or the target is low. */
   npcStringTombReady?: boolean;
+  /** Click+ Metal Spool: the kit is winding a metal string in the bot's hand — no plain throws until it fires. */
+  npcStringSpooling?: boolean;
+  /** F+ Puppet Play: the target is the bot's puppet, so every cast now also hits them with their own. */
+  npcStringPuppetPlay?: boolean;
 
   // Ink
   /** Running on the spot, bouncing, hauling or holding the anvil — the kit has the bot's hands. */
@@ -889,22 +893,23 @@ export interface NpcAiState {
   /** Bind Mastery: the slot False Idol took. The kit plants the idol; the rotation leaves that key alone. */
   npcBindIdolSlot?: string;
 
-  // Slime (id: gum)
-  /** Solidify threw its hand away — nothing it presses will answer until it grows back. */
-  npcGumHandless?: boolean;
-  /** Slimeballs lying on the floor. The click turns into a throw while it has any. */
-  npcGumBalls?: number;
-  /** Already swollen and open, or still digesting. A second Oozorbtion would be thrown away. */
-  npcGumAbsorbArmed?: boolean;
-  /** The target is already sealed in gum, so a second barrage buys nothing. */
-  npcGumTargetEncased?: boolean;
-  /** Slime Mastery: which of E/R/F Oobleck was bound over. That key is the kit's, not the rotation's. */
-  npcGumOobleckSlot?: 'e' | 'r' | 'f';
-  /**
-   * Slime Mastery: a slab is standing and has not been set yet. Solidify turns it into a wall
-   * neither fighter can cross — the one combo in the kit worth pressing the ultimate for on its own.
-   */
-  npcGumSlabSoft?: boolean;
+  // Savor (id: gum)
+  /** Which row the bot is on. The kit flips it (the bot has no Space of its own for it). */
+  npcSavorForm?: 'sugar' | 'salt';
+  /** A stalactite is hanging and the kit fires it on the timing bar — R is not to be pressed again. */
+  npcSavorAiming?: boolean;
+  /** Salt Crash's race is running: nobody can attack. */
+  npcSavorRacing?: boolean;
+  /** Synergy: the target wears a Caring Share loan. A stalactite through them comes out coated in it. */
+  npcSavorLoanLive?: boolean;
+  /** Synergy: what Salt in the Wounds would deal the target right now (half the last 2s of damage). */
+  npcSavorWound?: number;
+  /** Candy stacks held — Sugar Rush doubles them, Caring Share lends 150% of them. */
+  npcSavorStacks?: number;
+  /** The bot's own sweets still on the floor (the kit walks it onto them). */
+  npcSavorCandies?: number;
+  /** The target is already fully drained — another Sugar Diffusion loop buys only the bar drain. */
+  npcSavorTargetDrained?: boolean;
 
   // Paper
   /** Which storybook is open: 0 Knight, 1 Alien, 2 Fantasy. Decides what Click and Q even are. */
@@ -1208,7 +1213,7 @@ export class NpcOpponent extends Fighter {
       body.setVelocity(this.trueDodgeVx, this.trueDodgeVy);
       dodging = true;
     }
-    if (!dodging && this.difficulty.dodgeRange > 0 && !aiState.playerShotsUnseen) {
+    if (!dodging && this.difficulty.dodgeRange > 0 && !aiState.playerShotsUnseen && time >= this.savorNoDodgeUntil) {
       const projs = aiState.projectiles.getChildren();
       for (const go of projs) {
         if (!(go instanceof Projectile)) continue;
@@ -1808,7 +1813,7 @@ export class NpcOpponent extends Fighter {
       return this.doBindAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
     }
     if (this.element.id === 'gum') {
-      return this.doGumAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
+      return this.doSavorAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
     }
     if (this.element.id === 'gluttony') {
       return this.doGluttonyAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
@@ -1842,7 +1847,12 @@ export class NpcOpponent extends Fighter {
    *   the target (the spiders walk down it into them).
    * - **Puppet into the web**: F only when there are spiders or strings to walk the puppet into;
    *   the kit then steers them onto the spiders, or leans them through a string until it snaps.
-   * - **Hex then snap**: R ties the purple strand on the target; the kit snaps it once they are in it.
+   * - **Hex then snap**: R ties the purple strand on the target; the kit snaps it once they are in it
+   *   (with R+, and the bot in trouble, it also snaps a wall-tied one to swing away).
+   * - **Puppet Play** (F+): while the target is a puppet every cast is also theirs turned on them,
+   *   so the bot spends E and R inside the window before anything else.
+   * - **Metal Spool** (Click+): the kit winds and fires the metal string; the bot holds its plain
+   *   throws while it does (`npcStringSpooling`).
    *
    * Then the rotation: strings at the target, to tie them up and fence them in.
    */
@@ -1861,6 +1871,11 @@ export class NpcOpponent extends Fighter {
     void hpRatio;
     const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
 
+    if (aiState.npcStringPuppetPlay) {
+      // Every cast is a hit on the puppet now: E needs strands to stand on, R needs none out.
+      if (aiState.npcStringSpiderReady && this.castAbility('string-spider-dance', buildContext(aimX, aimY))) return 'string-spider-dance';
+      if (aiState.npcStringHexShot && this.castAbility('string-hexing-strand', buildContext(aimX, aimY))) return 'string-hexing-strand';
+    }
     if (aiState.npcStringTombReady && !skipSpecials) {
       if (this.castAbility('string-linen-tomb', buildContext(aimX, aimY))) return 'string-linen-tomb';
     }
@@ -1875,7 +1890,7 @@ export class NpcOpponent extends Fighter {
     }
 
     // ── Rotation ──
-    if (dist < 700) {
+    if (dist < 700 && !aiState.npcStringSpooling) {
       if (this.castAbility('string-snag', buildContext(aimX, aimY))) return 'string-snag';
     }
     return null;
@@ -2158,19 +2173,16 @@ export class NpcOpponent extends Fighter {
   }
 
   /**
-   * Slime. The bot cannot use the passive — it has no cursor to drag itself along the floor with,
-   * so GumKit lurches its walk instead — but every ability is genuinely available to it, and the
-   * ordering below is really "keep ammunition on the floor and something sticky on the target".
+   * Savor. The kit owns the form flip (with a dash, since a flip is a dodge), the walk onto its own
+   * sweets, the loop round the target during Sugar Diffusion and the stalactite's release on the
+   * timing bar. What is left here is which key to press on the row it is standing in.
    *
-   * Gumball comes before everything except the ultimate because encasing the target is what makes
-   * the rest of the kit work, and re-casting it on an already-gummed body buys nothing. Slime
-   * Surge is kept topped up at range, since the bot's click *is* the ball throw whenever it is too
-   * far away to punch — running dry turns its whole mid-range game off. Oozorbtion is held for the
-   * moment it is actually being shot at rather than opened on cooldown, and Solidify is refused
-   * outright at close quarters: three seconds of total paralysis next to somebody is a death
-   * sentence, however many shards it throws on the way in.
+   * Synergies first: a Caring Share loan on the target is what Salt Infusion's coat feeds on, so
+   * with a loan live the stalactite is the first thing grown; a big wound window is what Salt in the
+   * Wounds is for. Sugar side, the loan is only worth throwing with stacks to lend, Sugar Rush only
+   * with stacks to double, and the bag only while the floor is short of sweets.
    */
-  private doGumAbilities(
+  private doSavorAbilities(
     target: Fighter,
     buildContext: (tX: number, tY: number) => CastContext,
     time: number,
@@ -2182,45 +2194,48 @@ export class NpcOpponent extends Fighter {
   ): string | null {
     void target;
     void time;
-    // No hand: the kit refuses every cast, so there is nothing to press.
-    if (aiState.npcGumHandless) return null;
+    if (aiState.npcSavorRacing) return null;
     const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
-    const bound = aiState.npcGumOobleckSlot;
+    const cast = (id: string, x = aimX, y = aimY): string | null =>
+      (this.castAbility(id, buildContext(x, y)) ? id : null);
+    const stacks = aiState.npcSavorStacks ?? 0;
 
-    // Mastery: a slab that is standing is worth setting, and setting it is what Solidify is for
-    // now. GumKit plants the slab itself; this is the half of the combo that needs a key. The
-    // distance refusal below does not apply to it: mastery is a Nightmare loadout, and a
-    // Nightmare loadout owns Hand of Stone, so there is no three-second paralysis to fear.
-    if (!skipSpecials && aiState.npcGumSlabSoft) {
-      if (this.castAbility('gum-solidify', buildContext(aimX, aimY))) return 'gum-solidify';
+    if (aiState.npcSavorForm === 'salt') {
+      // Synergy: the loan is on them — grow the stalactite now so it comes out coated.
+      if (!skipSpecials && aiState.npcSavorLoanLive && !aiState.npcSavorAiming && dist < 520) {
+        const r = cast('savor-salt-infusion', this.leadX, this.leadY); if (r) return r;
+      }
+      // Synergy: the last two seconds hurt them — salt the wound.
+      if (!skipSpecials && (aiState.npcSavorWound ?? 0) >= 18 && dist < 190) {
+        const r = cast('savor-salt-wounds'); if (r) return r;
+      }
+      if (!skipSpecials && dist < 300 && hpRatio < 0.85) {
+        const r = cast('savor-salt-crash'); if (r) return r;
+      }
+      if (!skipSpecials && hpRatio < 0.7 && dist < 340) {
+        const r = cast('savor-salt-shield'); if (r) return r;
+      }
+      if (!skipSpecials && !aiState.npcSavorAiming && dist < 460) {
+        const r = cast('savor-salt-infusion', this.leadX, this.leadY); if (r) return r;
+      }
+      if (dist < 560) return cast('savor-salt-slice', this.leadX, this.leadY);
+      return null;
     }
 
-    // The ultimate is a three-second paralysis, so it is only ever thrown from a safe distance —
-    // and it is worth far more with slimeballs and a gummed body already on the field to harden.
-    if (!skipSpecials && dist > 300 && ((aiState.npcGumBalls ?? 0) > 0 || aiState.npcGumTargetEncased)) {
-      if (this.castAbility('gum-solidify', buildContext(aimX, aimY))) return 'gum-solidify';
+    // Sugar.
+    if (!skipSpecials && stacks >= 6 && dist < 420) {
+      const r = cast('savor-sugar-rush'); if (r) return r;
     }
-
-    // Gum first: everything else in the kit is worth more against an encased target.
-    if (!skipSpecials && bound !== 'r' && dist < 400 && !aiState.npcGumTargetEncased) {
-      if (this.castAbility('gum-gumball', buildContext(aimX, aimY))) return 'gum-gumball';
+    if (!skipSpecials && stacks >= 2 && dist < 380) {
+      const r = cast('savor-caring-share', this.leadX, this.leadY); if (r) return r;
     }
-
-    // Open up while there is still range to be shot across — swallowing a shot is worth more
-    // than swallowing a punch, and the swelling makes it an easier target either way.
-    if (!skipSpecials && bound !== 'f' && dist > 220 && !aiState.npcGumAbsorbArmed && hpRatio < 0.8) {
-      if (this.castAbility('gum-oozorbtion', buildContext(aimX, aimY))) return 'gum-oozorbtion';
+    if (!skipSpecials && !aiState.npcSavorTargetDrained && dist < 240) {
+      const r = cast('savor-sugar-diffusion'); if (r) return r;
     }
-
-    // Ammunition. Out of punching range the click is the throw, so an empty floor is a mute bot.
-    if (bound !== 'e' && (aiState.npcGumBalls ?? 0) < 2) {
-      if (this.castAbility('gum-surge', buildContext(aimX, aimY))) return 'gum-surge';
+    if (!skipSpecials && (aiState.npcSavorCandies ?? 0) < 3) {
+      const r = cast('savor-sweet-tooth'); if (r) return r;
     }
-
-    // The click: a punch up close, a hurled slimeball otherwise. GumKit decides which.
-    if (dist < 520) {
-      if (this.castAbility('gum-grab', buildContext(aimX, aimY))) return 'gum-grab';
-    }
+    if (dist < 440) return cast('savor-sugar-slam', this.leadX, this.leadY);
     return null;
   }
 

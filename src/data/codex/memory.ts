@@ -4,7 +4,8 @@ import { ElementCodex } from '../AbilityCodex';
  * Memory — the gentleman with a face of static.
  *
  * Verified against `src/elements/memory.ts` and `kits/MemoryKit.ts`. Every number below is a
- * constant at the top of the kit. No upgrades, no mastery, no perks yet.
+ * constant at the top of the kit. Four shop upgrades (E–Q, 2026-10-26) are constants in the kit's
+ * "Shop upgrades" block; Click+ is still to come. No mastery, no perks yet.
  */
 const memory: ElementCodex = {
   identity:
@@ -60,6 +61,17 @@ const memory: ElementCodex = {
         { tag: 'cost', label: 'Wind-up', detail: '2s spin at 40% speed. A stun or silence cancels it.' },
       ],
       notes: ['Ultimates are never snatched.'],
+      upgrade: {
+        basics:
+          'Shutdown: the snatch also steals ultimate charge from everyone it hits, and banks it as yours. A '
+          + 'slice takes a small bite plus a share of their bank; the beam takes a bigger bite and a bigger '
+          + 'share. The more they have banked, the more comes out — red-gold sparks pulled across into you.',
+        effects: [
+          { tag: 'debuff', label: 'Slice', detail: '−(6 + 15% of their bank) ultimate charge.', requiresUpgrade: 'e' },
+          { tag: 'debuff', label: 'Beam', detail: '−(14 + 30% of their bank) ultimate charge.', requiresUpgrade: 'e' },
+          { tag: 'buff', label: 'Banked', detail: 'Everything taken is added to your own ultimate charge.', requiresUpgrade: 'e' },
+        ],
+      },
     },
 
     'memory-rebirth': {
@@ -74,6 +86,16 @@ const memory: ElementCodex = {
         { tag: 'area', label: 'Sweep', detail: '≈0.75 turns/s round the cursor; auto-fires at 3s.' },
       ],
       notes: ['While the line sweeps, Click strikes it instead of throwing a shard.'],
+      upgrade: {
+        basics:
+          'Brain Drain: a strike also seals the passives of everyone it hits for 8s and drains part of '
+          + 'whatever their kit has built up — stacks, charges, banked resources. What goes is pulled out '
+          + 'of them in a stream of static, each thing by name, and swallowed by you.',
+        effects: [
+          { tag: 'debuff', label: 'Sealed', detail: 'Their passives are off for 8s.', requiresUpgrade: 'r' },
+          { tag: 'debuff', label: 'Drained', detail: 'Part of their built-up kit is lost (each element\'s own snowball).', requiresUpgrade: 'r' },
+        ],
+      },
     },
 
     'memory-repression': {
@@ -87,20 +109,43 @@ const memory: ElementCodex = {
         { tag: 'damage', label: 'Their click', detail: 'Their own click ability, cast from the copy at your cursor, at its own damage.' },
         { tag: 'utility', label: 'Clicks only', detail: 'E, R, F and Q are not copied. A held click is copied as a single tap.' },
       ],
+      upgrade: {
+        basics:
+          'Unforgettable: a static copy stays out for 8s — when the recording runs out it walks it back the '
+          + 'other way, clicking again as it goes. A recording also records every static copy on the field, '
+          + 'and when it ends a copy of each one steps out too, up to 10 at a time. When a recording ends, 7s '
+          + 'of Repression\'s cooldown come back so the next one can catch the copies still walking.',
+        effects: [
+          { tag: 'summon', label: 'Copy', detail: '8s, walking the 6s recording forward and then back.', requiresUpgrade: 'f' },
+          { tag: 'summon', label: 'Copies of copies', detail: 'Every copy out while recording is copied. 10 at most; the oldest goes first.', requiresUpgrade: 'f' },
+          { tag: 'utility', label: 'Refund', detail: '−7s cooldown when a recording ends (8s between casts).', requiresUpgrade: 'f' },
+        ],
+      },
     },
 
     'memory-trauma': {
       basics:
-        'Pulse with a red aura for 3s. When it ends, every enemy takes 5% of the damage they took in '
-        + 'those 3 seconds, every second, for the rest of the match. Casting it again replaces the old '
+        'Pulse with a red aura for 5s. When it ends, every enemy takes 5% of the damage they took in '
+        + 'those 5 seconds, every second, for the rest of the match. Casting it again replaces the old '
         + 'wound with the new one.',
       cast: 'Q. An ultimate: paid for in charge.',
       effects: [
-        { tag: 'area', label: 'Window', detail: '3s. Counts every point of damage they take, from anything.' },
+        { tag: 'area', label: 'Window', detail: '5s. Counts every point of damage they take, from anything.' },
         { tag: 'dot', label: 'Wound', detail: '5% of that total, every 1s, for the rest of the match.' },
         { tag: 'cost', label: 'One wound', detail: 'A new Trauma replaces your old wounds.' },
       ],
       notes: ['Every tick is a hit, so each one also adds a Guilt stack.'],
+      upgrade: {
+        basics:
+          'Salt in the Wound: for the 5 seconds of the window the walls of the arena are buried in red static, '
+          + 'and five phantoms — corrupted elements — stand in it. They shout at your enemies in speech bubbles '
+          + 'full of red static and throw fast balls of static at them, trailing afterimages. Every ball that '
+          + 'lands goes into the wound.',
+        effects: [
+          { tag: 'summon', label: 'Phantoms', detail: '5, spread round the walls, for the 5s window.', requiresUpgrade: 'q' },
+          { tag: 'damage', label: 'Static ball', detail: '12 damage. 950px/s, thrown where you are going, every 1.7s per phantom.', requiresUpgrade: 'q' },
+        ],
+      },
     },
   },
 };

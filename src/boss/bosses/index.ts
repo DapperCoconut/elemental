@@ -110,7 +110,18 @@ const WORLD_BOSSES: Record<string, WorldBossDef> = {
 
 export function getWorldBossDef(worldId: string): WorldBossDef | undefined {
   if (worldId === AMALGAM_WORLD_ID) return AMALGAM_BOSS;
-  return WORLD_BOSSES[worldId];
+  return WORLD_BOSSES[worldId] ?? extraBossResolver?.(worldId);
+}
+
+/**
+ * The Ten Isles' princes and monarchs (`isle:<id>`) live in their own registry and register a
+ * resolver here, rather than this file importing campaign content. Deliberately not part of
+ * `getAllWorldBossDefs()` — the Amalgam steals from the old Sovereigns only.
+ */
+let extraBossResolver: ((worldId: string) => WorldBossDef | undefined) | null = null;
+
+export function registerBossResolver(fn: (worldId: string) => WorldBossDef | undefined): void {
+  extraBossResolver = fn;
 }
 
 /**

@@ -4,8 +4,8 @@ import { Ability, CastContext } from '../Ability';
 import type { CustomStatus } from './StatusHudKit';
 import { Sfx } from '../../audio';
 import {
-  MEMORY, MemoryAvatar, MemoryColorFn, MemoryFx, latchedShard, rebirthLine, shardBody, staticDisc, staticEcho,
-  staticRect, woundMark,
+  MEMORY, MemoryAvatar, MemoryColorFn, MemoryFx, latchedShard, rebirthLine, saltBall, saltBorder, saltPhantom,
+  shardBody, staticBubble, staticDisc, staticEcho, staticRect, woundMark,
 } from './MemoryVisuals';
 
 type Owner = 'player' | 'npc';
@@ -58,11 +58,7 @@ const REBIRTH_W = 40;
 /** Practice's beam: the base, and what every strike adds for the rest of the match. */
 const REBIRTH_DMG = 24;
 const PRACTICE_DMG_PER_USE = 4;
-/**
- * The old Rebirth's seal + snowball drain. Parked, not deleted: it comes back later. While this is
- * false the beam only does damage — no `passivesSealedUntil`, no `rebirthDrain`, no `memory-reborn`.
- */
-const REBIRTH_STRIPS_KIT = false;
+/** Brain Drain (R+): the old Rebirth's seal on their passives, and how long it lasts. */
 const SEAL_MS = 8000;
 
 // ── F: Repression ────────────────────────────────────────────────────────────
@@ -77,9 +73,39 @@ const ECHO_CLICK_DMG = 7;
 const KIT_DRIVEN_CLICKS = new Set(['bash', 'light-lance']);
 
 // ── Q: Trauma ────────────────────────────────────────────────────────────────
-const TRAUMA_MS = 3000;
+const TRAUMA_MS = 5000;
 const TRAUMA_SHARE = 0.05;
 const WOUND_TICK_MS = 1000;
+
+// ── Shop upgrades ────────────────────────────────────────────────────────────
+// Click+: none yet.
+// E+ Shutdown: each snatch also steals ultimate charge — a flat bite plus a share of the bank,
+// so a fuller bank loses more. The beam takes more than a slice.
+const SHUTDOWN_MAIN_FLAT = 14;
+const SHUTDOWN_MAIN_SHARE = 0.3;
+const SHUTDOWN_SLICE_FLAT = 6;
+const SHUTDOWN_SLICE_SHARE = 0.15;
+// R+ Brain Drain: Practice's strike seals their passives and drains their snowball (`SEAL_MS`).
+// F+ Unforgettable: the copy lasts 8s, walking the recording back once it runs out; a recording
+// also copies every static copy on the field; up to 10 at once.
+const ECHO_UP_MS = 8000;
+const MAX_ECHOES = 10;
+/** Given back off Repression's cooldown when an Unforgettable recording ends, so the next one can catch the copy. */
+const UNFORGETTABLE_REFUND_MS = 7000;
+// Q+ Salt in the Wound: for the length of the window, red static along the walls and phantoms in
+// it that throw static balls.
+const SALT_PHANTOMS = 5;
+const SALT_INSET = 30;
+const SALT_BAND = 24;
+const SALT_THROW_MS = 1700;
+const SALT_SPEED = 950;
+const SALT_R = 7;
+const SALT_DMG = 12;
+const SALT_RANGE = 1300;
+const SALT_TRAIL = 7;
+const SALT_BUBBLE_MS = 900;
+/** What the phantoms used to be, before the static got them. */
+const SALT_COLORS = [0xff6a2a, 0x3a8cff, 0x55d66b, 0xffe24a, 0x9b6a3c, 0x8a5cff, 0x7fe0ff, 0xff4fb8];
 
 // ── Bot ──────────────────────────────────────────────────────────────────────
 const NPC_SNATCH_RANGE = 500;
@@ -120,16 +146,58 @@ interface Recording {
   casts: CastRec[];
   nextSample: number;
   hook: (abilityId: string) => void;
+  /** Unforgettable: the copies being recorded too. */
+  tracks: Track[];
+}
+
+/** Unforgettable: a static copy already on the field, recorded alongside the opponent. */
+interface Track {
+  echo: Echo;
+  color: number;
+  samples: Sample[];
+  casts: CastRec[];
 }
 
 interface Echo {
   start: number;
   color: number;
   samples: Sample[];
+  /** Every click it will cast, by time since `start` — Unforgettable's walk back included. */
   casts: CastRec[];
   next: number;
   x: number;
   y: number;
+  /** How long the recording runs, and how long the copy stays out. */
+  dur: number;
+  life: number;
+}
+
+interface Phantom {
+  x: number;
+  y: number;
+  color: number;
+  seed: number;
+  nextThrow: number;
+  throwAt: number;
+  aim: number;
+  nextBubble: number;
+  bubbleUntil: number;
+}
+
+interface Salt {
+  start: number;
+  until: number;
+  phantoms: Phantom[];
+}
+
+interface SaltBall {
+  owner: Owner;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  travelled: number;
+  trail: { x: number; y: number }[];
 }
 
 interface EchoBolt {
@@ -155,7 +223,9 @@ interface Side {
   spin: Spin | null;
   sweep: Sweep | null;
   rec: Recording | null;
-  echo: Echo | null;
+  echoes: Echo[];
+  /** Salt in the Wound: the phantoms in the walls, while the window is open. */
+  salt: Salt | null;
   /** Trauma: when the window shuts (0 = none), and what each enemy has taken in it so far. */
   traumaUntil: number;
   traumaTaken: Map<Fighter, number>;
@@ -171,7 +241,7 @@ interface Side {
 
 function makeSide(): Side {
   return {
-    aimX: 0, aimY: 0, spin: null, sweep: null, rec: null, echo: null, traumaUntil: 0,
+    aimX: 0, aimY: 0, spin: null, sweep: null, rec: null, echoes: [], salt: null, traumaUntil: 0,
     traumaTaken: new Map(), traumaLastHp: new Map(), traumaHooks: new Map(), wasLeft: false, practice: 0, botPivot: null,
   };
 }
@@ -207,6 +277,7 @@ export interface MemoryArenaApi {
   broadcast(id: string): void;
   /** Rebirth, the victim's half: drain that side's snowball. Returns labels of what went. */
   rebirthDrain(owner: Owner): string[];
+  hasUpgrade(owner: Owner, slot: string): boolean;
   /** The local player's HUD: the top health gauge and every ability card, in screen space. */
   hudRects(): { hpGauge: HudRect | null; cards: HudRect[] };
 }
@@ -226,12 +297,17 @@ export interface MemoryArenaApi {
  *   two slices sweeping out into a cone. The beam resets their ready abilities and gives Memory the
  *   time they sat idle; the slices lock theirs for 2s and give 2s back.
  * - **Practice** — a wall-to-wall line through the cursor that sweeps round; Click strikes along it.
- *   Every strike adds damage for the rest of the match. (The old Rebirth seal + snowball drain,
- *   ArenaScene.memoryRebirthDrain, is parked behind `REBIRTH_STRIPS_KIT`.)
+ *   Every strike adds damage for the rest of the match.
  * - **Repression** — six seconds of recording the opponent's steps and clicks, then a static copy
  *   walks the steps and casts each click again — their real click, aimed at Memory's cursor.
- * - **Trauma** — a three-second window; afterwards each enemy relives 5% of what it took in it,
+ * - **Trauma** — a five-second window; afterwards each enemy relives 5% of what it took in it,
  *   every second, for the rest of the match. A new window replaces the old wounds.
+ *
+ * Shop upgrades: **Shutdown** (E+) — the snatch robs their ultimate bank too. **Brain Drain** (R+) —
+ * Practice's strike seals their passives and drains their snowball (ArenaScene.memoryRebirthDrain),
+ * pulled across into Memory. **Unforgettable** (F+) — 8s copies that walk the recording back, and a
+ * recording copies the copies, up to 10. **Salt in the Wound** (Q+) — red static along the walls for
+ * the window, with phantoms in it that throw static balls. Click+ is still to come.
  *
  * Online, the owner's sim decides every hit. What lands on the *victim's* own body — the snatched
  * cooldowns and Rebirth's drain — is relayed as `memory-*` pseudo-casts for the victim to apply.
@@ -258,6 +334,7 @@ export class MemoryKit {
   private sides: Record<Owner, Side> = { player: makeSide(), npc: makeSide() };
   private shards: Shard[] = [];
   private echoBolts: EchoBolt[] = [];
+  private saltBalls: SaltBall[] = [];
   /** Which way each latched shard sits on a body, parallel to `Fighter.memoryShards`. */
   private latchAngles = new Map<Fighter, number[]>();
   private wounds = new Map<Fighter, Wound>();
@@ -286,6 +363,13 @@ export class MemoryKit {
   private isMemory(owner: Owner): boolean {
     return owner === 'player' ? this.api.elementId === 'memory' : this.api.npcElementId === 'memory';
   }
+
+  private up(owner: Owner, slot: string): boolean {
+    return this.isMemory(owner) && this.api.hasUpgrade(owner, slot);
+  }
+
+  /** Brain Drain: Practice's strike also seals their passives and drains their snowball. */
+  private stripsKit(owner: Owner): boolean { return this.up(owner, 'r'); }
 
   /**
    * Whether this sim decides what this side's attacks do. An online opponent (or a co-op ally in
@@ -398,6 +482,7 @@ export class MemoryKit {
     this.sides = { player: makeSide(), npc: makeSide() };
     this.shards = [];
     this.echoBolts = [];
+    this.saltBalls = [];
     this.latchAngles.clear();
     this.wounds.clear();
     for (const f of [...this.marked, ...this.allFighters()]) {
@@ -495,9 +580,17 @@ export class MemoryKit {
         this.castEchoClick('npc', ab, this.api.worldW - n(2), n(3), this.api.worldW - n(4), n(5), me.element.color);
       }
     } else if (head === 'memory-snatched') {
-      if (this.alive(me)) this.robVictim('npc', me, parts[1] === 'main');
+      if (!this.alive(me)) return;
+      // Shutdown's half lands here too: our bank is ours. Whatever it took goes back to them.
+      const took = this.robVictim('npc', me, parts[1] === 'main', parts[2] === '1');
+      if (took > 0 && this.api.isOnline) this.api.broadcast(`memory-ultgive:${Math.round(took)}`);
+    } else if (head === 'memory-ultgive') {
+      // Our snatch robbed their bank on their machine; this is what came out of it.
+      if (this.alive(me) && this.alive(f)) this.gainUlt('player', f, n(1), true);
     } else if (head === 'memory-reborn') {
-      if (REBIRTH_STRIPS_KIT && this.alive(me)) this.drain('npc', me, 'player');
+      if (this.alive(me)) this.drain('npc', me, 'player');
+    } else if (head === 'memory-salt') {
+      this.replaySaltThrow(Math.floor(n(1)), this.api.worldW - n(2), n(3), Math.PI - n(4) / 1000);
     }
   }
 
@@ -566,7 +659,12 @@ export class MemoryKit {
         const a = t.element.abilities.find((ab) => ab.id === abilityId);
         if (a?.displayKey === 'Click') rec.casts.push({ t: this.now - rec.start, ability: a });
       },
+      // Unforgettable: every copy already out is recorded too, and comes back as a copy of a copy.
+      tracks: this.up(owner, 'f')
+        ? s.echoes.map((e) => ({ echo: e, color: e.color, samples: [{ t: 0, x: e.x, y: e.y }], casts: [] }))
+        : [],
     };
+    for (const tr of rec.tracks) this.fx(owner).repressMark(tr.echo.x, tr.echo.y, true);
     t.on('cast', rec.hook);
     s.rec = rec;
     this.fx(owner).repressMark(f.x, f.y, true);
@@ -586,6 +684,7 @@ export class MemoryKit {
     this.hookTrauma(owner);
     this.fx(owner).traumaPulse(f.x, f.y);
     this.avatar(owner)?.play('raise', -Math.PI / 2, 520);
+    if (this.up(owner, 'q')) this.startSalt(owner);
   }
 
   // ── Forget ─────────────────────────────────────────────────────────────────
@@ -734,9 +833,14 @@ export class MemoryKit {
     } else {
       gain = SLICE_REFUND_MS;
     }
-    // The victim's half lands on whichever sim owns their body.
-    if (t.netGhost) this.relay(owner, `memory-snatched:${main ? 'main' : 'slice'}`);
-    else this.robVictim(owner, t, main);
+    // The victim's half lands on whichever sim owns their body. Shutdown's take comes back with
+    // it: here at once, or from their machine as `memory-ultgive`.
+    const shutdown = this.up(owner, 'e');
+    if (t.netGhost) this.relay(owner, `memory-snatched:${main ? 'main' : 'slice'}:${shutdown ? 1 : 0}`);
+    else {
+      const took = this.robVictim(owner, t, main, shutdown);
+      if (took > 0) this.gainUlt(owner, t, took, false);
+    }
     if (gain > 0) {
       f.reduceCooldowns(gain, ID.e);
       this.fx(owner).timeSteal(t.x, t.y, () => ({ x: f.x, y: f.y }), gain / 1000);
@@ -744,8 +848,11 @@ export class MemoryKit {
     }
   }
 
-  /** The victim's half of the snatch, on the sim that owns their body. */
-  private robVictim(thief: Owner, v: Fighter, main: boolean): void {
+  /**
+   * The victim's half of the snatch, on the sim that owns their body. With Shutdown it also robs
+   * their ultimate bank; returns the points taken.
+   */
+  private robVictim(thief: Owner, v: Fighter, main: boolean, shutdown: boolean): number {
     let taken = 0;
     for (const a of v.element.abilities) {
       if (a.isUltimate || a.displayKey === 'Q') continue;
@@ -755,7 +862,31 @@ export class MemoryKit {
       taken++;
     }
     if (taken > 0) this.announce(v.x, v.y - 48, main ? 'FORGOTTEN' : '+2s', MEMORY.staticMid, main ? 13 : 11);
-    void thief;
+    if (!shutdown || !v.ultChargeEnabled) return 0;
+    const bank = v.ultCharge;
+    const take = Math.min(bank, main
+      ? SHUTDOWN_MAIN_FLAT + bank * SHUTDOWN_MAIN_SHARE
+      : SHUTDOWN_SLICE_FLAT + bank * SHUTDOWN_SLICE_SHARE);
+    if (take < 1) return 0;
+    v.ultCharge = bank - take;
+    const thiefBody = this.fighter(thief);
+    this.fx(thief).ultSteal(v.x, v.y, () => ({ x: thiefBody.x, y: thiefBody.y }), take);
+    this.announce(v.x, v.y - 64, `-${Math.round(take)} ULT`, MEMORY.redHot, main ? 13 : 11);
+    return take;
+  }
+
+  /**
+   * Shutdown, the thief's half: bank what the snatch took. `motes` when the theft happened on the
+   * victim's machine, so the sparks have not been drawn here yet.
+   */
+  private gainUlt(owner: Owner, from: Fighter, points: number, motes: boolean): void {
+    if (!(points > 0)) return;
+    const f = this.fighter(owner);
+    f.addUltCharge(points);
+    if (motes) this.fx(owner).ultSteal(from.x, from.y, () => ({ x: f.x, y: f.y }), points);
+    this.api.scene.time.delayedCall(500, () => {
+      if (this.alive(f)) this.announce(f.x, f.y - 66, `+${Math.round(points)} ULT`, MEMORY.bandLit, 12);
+    });
   }
 
   // ── Rebirth ────────────────────────────────────────────────────────────────
@@ -807,12 +938,15 @@ export class MemoryKit {
       if (this.segDist(e.x0, e.y0, e.x1, e.y1, t.x, t.y) > REBIRTH_W / 2 + this.bodyR(t)) continue;
       this.fx(owner).rebirthHit(t.x, t.y);
       this.hit(owner, t, dmg);
-      if (!REBIRTH_STRIPS_KIT) continue;
+      if (!this.stripsKit(owner)) continue;
       t.passivesSealedUntil = Math.max(t.passivesSealedUntil, Date.now() + SEAL_MS);
-      if (t.netGhost) this.relay(owner, 'memory-reborn');
-      else if (t === this.api.npc) this.drain(owner, t, 'npc');
+      if (t.netGhost) {
+        // Their snowball is drained on their machine, which names what went; here it only goes.
+        this.relay(owner, 'memory-reborn');
+        this.fx(owner).brainDrain(t.x, t.y, () => ({ x: f.x, y: f.y }));
+      } else if (t === this.api.npc) this.drain(owner, t, 'npc');
       else if (t === this.api.player) this.drain(owner, t, 'player');
-      else this.announce(t.x, t.y - 50, 'REBORN', MEMORY.white, 12);
+      else this.drain(owner, t, null);
     }
   }
 
@@ -821,14 +955,41 @@ export class MemoryKit {
     return REBIRTH_DMG + PRACTICE_DMG_PER_USE * this.side(owner).practice;
   }
 
-  /** Rebirth's drain on a body this sim owns. */
-  private drain(owner: Owner, t: Fighter, victim: Owner): void {
-    const labels = this.api.rebirthDrain(victim);
-    this.announce(t.x, t.y - 50, 'REBORN', MEMORY.white, 13);
-    labels.slice(0, 3).forEach((l, i) => this.api.scene.time.delayedCall(180 * (i + 1), () => {
-      if (this.alive(t)) this.announce(t.x, t.y - 34 + i * 2, l, MEMORY.staticHi, 11);
+  /**
+   * Brain Drain on a body this sim owns (`victim` null for a husk, which has no snowball). What
+   * goes is pulled out of them and across into the Memory — the stream, and each label after it.
+   */
+  private drain(owner: Owner, t: Fighter, victim: Owner | null): void {
+    const labels = victim ? this.api.rebirthDrain(victim) : [];
+    const f = this.fighter(owner);
+    this.announce(t.x, t.y - 50, 'DRAINED', MEMORY.white, 13);
+    this.fx(owner).brainDrain(t.x, t.y, () => ({ x: f.x, y: f.y }));
+    labels.slice(0, 3).forEach((l, i) => this.api.scene.time.delayedCall(160 * (i + 1), () => {
+      if (this.alive(t)) this.suckLabel(owner, t.x, t.y - 34 + i * 12, l);
     }));
-    void owner;
+  }
+
+  /** One drained thing, as its label, dragged out of the victim and swallowed by the Memory. */
+  private suckLabel(owner: Owner, sx: number, sy: number, text: string): void {
+    const { scene } = this.api;
+    const f = this.fighter(owner);
+    const t = scene.add.text(sx, sy, text, {
+      fontSize: '11px', fontFamily: 'Arial Black', color: this.hex(MEMORY.staticHi),
+      stroke: '#0d0b12', strokeThickness: 3,
+    }).setOrigin(0.5).setDepth(18);
+    scene.tweens.addCounter({
+      from: 0, to: 1, duration: 950, ease: 'Cubic.easeIn',
+      onUpdate: (tw) => {
+        if (!t.active) return;
+        const k = Number(tw.getValue());
+        const dx = f.x;
+        const dy = f.y - 34;
+        t.setPosition(sx + (dx - sx) * k, sy + (dy - sy) * k - Math.sin(k * Math.PI) * 26);
+        t.setScale(1 - 0.65 * k);
+        t.setAlpha(k < 0.85 ? 1 : (1 - k) / 0.15);
+      },
+      onComplete: () => t.destroy(),
+    });
   }
 
   // ── Repression ─────────────────────────────────────────────────────────────
@@ -847,44 +1008,78 @@ export class MemoryKit {
     const f = this.fighter(owner);
     const t = rec.target;
     if (!this.alive(f)) { this.stopRecording(owner); return; }
-    if (this.alive(t) && this.now >= rec.nextSample) {
+    if (this.now >= rec.nextSample) {
       rec.nextSample += SAMPLE_MS;
-      rec.samples.push({ t: this.now - rec.start, x: t.x, y: t.y });
+      const at = this.now - rec.start;
+      if (this.alive(t)) rec.samples.push({ t: at, x: t.x, y: t.y });
+      // A copy that has gone stops being recorded where it went.
+      for (const tr of rec.tracks) if (s.echoes.includes(tr.echo)) tr.samples.push({ t: at, x: tr.echo.x, y: tr.echo.y });
     }
     if (this.now - rec.start < RECORD_MS) return;
-    // The recording ends; the copy steps out where they stood when it began.
-    const first = rec.samples[0];
-    s.echo = {
-      start: this.now, color: t.element.color, samples: rec.samples, casts: rec.casts, next: 0,
-      x: first.x, y: first.y,
-    };
+    // The recording ends; each copy steps out where its original stood when it began.
+    const tracks = rec.tracks;
     this.stopRecording(owner);
-    this.fx(owner).repressMark(first.x, first.y, false);
+    this.addEcho(owner, rec.samples, rec.casts, t.element.color);
+    for (const tr of tracks) this.addEcho(owner, tr.samples, tr.casts, tr.color);
+    // Unforgettable: most of the wait is given back, so the next recording catches these copies.
+    if (this.up(owner, 'f')) f.reduceCooldown(ID.f, UNFORGETTABLE_REFUND_MS);
   }
 
-  private updateEcho(owner: Owner): void {
+  /**
+   * A new static copy. Plain, it walks the recording once. Unforgettable keeps it out for 8s:
+   * when the recording runs out it walks it back the other way, clicking again as it goes.
+   */
+  private addEcho(owner: Owner, samples: Sample[], casts: CastRec[], color: number): void {
     const s = this.side(owner);
-    const e = s.echo;
-    if (!e) return;
-    const el = this.now - e.start;
-    const last = e.samples[e.samples.length - 1];
-    if (el > Math.max(RECORD_MS, last.t + 200) || !this.alive(this.fighter(owner))) {
-      this.fx(owner).echoFade(e.x, e.y, e.color);
-      s.echo = null;
-      return;
+    const first = samples[0];
+    const dur = samples[samples.length - 1].t;
+    const unforgettable = this.up(owner, 'f');
+    const life = unforgettable ? ECHO_UP_MS : Math.max(RECORD_MS, dur + 200);
+    let schedule: CastRec[] = casts.slice();
+    if (unforgettable && dur >= 300) {
+      schedule = [];
+      for (let pass = 0; pass * dur < life; pass++) {
+        for (const c of casts) {
+          const at = pass % 2 === 0 ? pass * dur + c.t : (pass + 1) * dur - c.t;
+          if (at <= life) schedule.push({ t: at, ability: c.ability });
+        }
+      }
+      schedule.sort((a, b) => a.t - b.t);
     }
-    // Where they were at this moment of the recording.
-    let i = 0;
-    while (i < e.samples.length - 1 && e.samples[i + 1].t <= el) i++;
-    const a = e.samples[i];
-    const b = e.samples[Math.min(i + 1, e.samples.length - 1)];
-    const k = b.t > a.t ? Phaser.Math.Clamp((el - a.t) / (b.t - a.t), 0, 1) : 0;
-    const p = this.clampToArena(a.x + (b.x - a.x) * k, a.y + (b.y - a.y) * k, 20);
-    e.x = p.x;
-    e.y = p.y;
-    while (e.next < e.casts.length && e.casts[e.next].t <= el) {
-      this.echoCast(owner, e, e.casts[e.next]);
-      e.next++;
+    s.echoes.push({ start: this.now, color, samples, casts: schedule, next: 0, x: first.x, y: first.y, dur, life });
+    this.fx(owner).repressMark(first.x, first.y, false);
+    while (s.echoes.length > MAX_ECHOES) {
+      const old = s.echoes.shift()!;
+      this.fx(owner).echoFade(old.x, old.y, old.color);
+    }
+  }
+
+  private updateEchoes(owner: Owner): void {
+    const s = this.side(owner);
+    if (!s.echoes.length) return;
+    const memoryAlive = this.alive(this.fighter(owner));
+    for (const e of s.echoes.slice()) {
+      const el = this.now - e.start;
+      if (el > e.life || !memoryAlive) {
+        this.fx(owner).echoFade(e.x, e.y, e.color);
+        s.echoes.splice(s.echoes.indexOf(e), 1);
+        continue;
+      }
+      // Where they were at this moment of the recording — walked back again once it runs out.
+      const phase = e.dur > 0 ? el % (2 * e.dur) : 0;
+      const r = phase <= e.dur ? phase : 2 * e.dur - phase;
+      let i = 0;
+      while (i < e.samples.length - 1 && e.samples[i + 1].t <= r) i++;
+      const a = e.samples[i];
+      const b = e.samples[Math.min(i + 1, e.samples.length - 1)];
+      const k = b.t > a.t ? Phaser.Math.Clamp((r - a.t) / (b.t - a.t), 0, 1) : 0;
+      const p = this.clampToArena(a.x + (b.x - a.x) * k, a.y + (b.y - a.y) * k, 20);
+      e.x = p.x;
+      e.y = p.y;
+      while (e.next < e.casts.length && e.casts[e.next].t <= el) {
+        this.echoCast(owner, e, e.casts[e.next]);
+        e.next++;
+      }
     }
   }
 
@@ -894,6 +1089,9 @@ export class MemoryKit {
    * Online the owner's sim casts it and relays `memory-click`; the receiver casts it there.
    */
   private echoCast(owner: Owner, e: Echo, c: CastRec): void {
+    // Unforgettable: a recording running now copies this click into the copy of this copy.
+    const rec = this.side(owner).rec;
+    rec?.tracks.find((tr) => tr.echo === e)?.casts.push({ t: this.now - rec.start, ability: c.ability });
     if (owner === 'npc' && this.api.isOnline) return;
     const aim = this.aimOf(owner);
     this.castEchoClick(owner, c.ability, e.x, e.y, aim.x, aim.y, e.color);
@@ -1027,6 +1225,114 @@ export class MemoryKit {
     }
   }
 
+  // ── Salt in the Wound (Q+) ─────────────────────────────────────────────────
+
+  /** A point `u` (0–1) of the way round the arena, just inside the walls. */
+  private perimeterPoint(u: number): { x: number; y: number } {
+    const b = this.api.bounds;
+    const x0 = b.left + SALT_INSET;
+    const y0 = b.top + SALT_INSET;
+    const w = b.width - SALT_INSET * 2;
+    const h = b.height - SALT_INSET * 2;
+    let d = (((u % 1) + 1) % 1) * 2 * (w + h);
+    if (d < w) return { x: x0 + d, y: y0 };
+    d -= w;
+    if (d < h) return { x: x0 + w, y: y0 + d };
+    d -= h;
+    if (d < w) return { x: x0 + w - d, y: y0 + h };
+    d -= w;
+    return { x: x0, y: y0 + h - d };
+  }
+
+  private startSalt(owner: Owner): void {
+    const s = this.side(owner);
+    const off = Math.random();
+    const colors = Phaser.Utils.Array.Shuffle(SALT_COLORS.slice());
+    const phantoms: Phantom[] = [];
+    for (let i = 0; i < SALT_PHANTOMS; i++) {
+      const p = this.perimeterPoint(off + i / SALT_PHANTOMS + (Math.random() - 0.5) * 0.06);
+      phantoms.push({
+        x: p.x, y: p.y, color: colors[i % colors.length], seed: i * 1.7 + Math.random(),
+        nextThrow: this.now + 450 + i * 240, throwAt: -1e9, aim: 0,
+        nextBubble: this.now + 150 + i * 330, bubbleUntil: 0,
+      });
+      this.fx(owner).phantomRise(p.x, p.y);
+    }
+    s.salt = { start: this.now, until: this.now + TRAUMA_MS, phantoms };
+  }
+
+  private updateSalt(owner: Owner): void {
+    const s = this.side(owner);
+    const salt = s.salt;
+    if (!salt) return;
+    if (this.now >= salt.until || !this.alive(this.fighter(owner))) {
+      for (const ph of salt.phantoms) this.fx(owner).phantomFade(ph.x, ph.y, ph.color);
+      s.salt = null;
+      return;
+    }
+    for (let i = 0; i < salt.phantoms.length; i++) {
+      const ph = salt.phantoms[i];
+      const t = this.nearestTarget(owner);
+      if (t) ph.aim = Math.atan2(t.y - ph.y, t.x - ph.x);
+      // The insults: a bubble of red static, every so often.
+      if (this.now >= ph.nextBubble) {
+        ph.bubbleUntil = this.now + SALT_BUBBLE_MS;
+        ph.nextBubble = this.now + SALT_BUBBLE_MS + 500 + Math.random() * 900;
+      }
+      if (!this.simulates(owner) || !t || this.now < ph.nextThrow) continue;
+      ph.nextThrow = this.now + SALT_THROW_MS;
+      // Thrown where they are going, not where they are.
+      const body = t.body as Phaser.Physics.Arcade.Body | null;
+      const lead = (Phaser.Math.Distance.Between(ph.x, ph.y, t.x, t.y) / SALT_SPEED) * 0.7;
+      const ang = Math.atan2(t.y + (body?.velocity.y ?? 0) * lead - ph.y, t.x + (body?.velocity.x ?? 0) * lead - ph.x);
+      this.throwSalt(owner, ph, ang);
+      this.relay(owner, `memory-salt:${i}:${Math.round(ph.x)}:${Math.round(ph.y)}:${Math.round(Phaser.Math.Angle.Wrap(ang) * 1000)}`);
+    }
+  }
+
+  private throwSalt(owner: Owner, ph: Phantom, ang: number): void {
+    ph.throwAt = this.now;
+    ph.aim = ang;
+    const x = ph.x + Math.cos(ang) * 22;
+    const y = ph.y + Math.sin(ang) * 22;
+    this.saltBalls.push({ owner, x, y, vx: Math.cos(ang) * SALT_SPEED, vy: Math.sin(ang) * SALT_SPEED, travelled: 0, trail: [] });
+    Sfx.playAt('glitch', x, { rate: 1.5, volume: 0.45 });
+  }
+
+  /** Online: a replica's phantom threw. Their phantoms stand where ours do not, so it moves to its throw. */
+  private replaySaltThrow(i: number, x: number, y: number, ang: number): void {
+    const salt = this.sides.npc.salt;
+    const ph = salt?.phantoms[i];
+    if (!ph) return;
+    ph.x = x;
+    ph.y = y;
+    this.throwSalt('npc', ph, ang);
+  }
+
+  private updateSaltBalls(dt: number): void {
+    for (let i = this.saltBalls.length - 1; i >= 0; i--) {
+      const b = this.saltBalls[i];
+      b.trail.push({ x: b.x, y: b.y });
+      if (b.trail.length > SALT_TRAIL) b.trail.shift();
+      const sx = b.vx * dt;
+      const sy = b.vy * dt;
+      b.x += sx;
+      b.y += sy;
+      b.travelled += Math.hypot(sx, sy);
+      let done = b.travelled > SALT_RANGE || !this.api.bounds.contains(b.x, b.y);
+      if (!done) {
+        for (const t of this.targetsOf(b.owner)) {
+          if (Phaser.Math.Distance.Between(b.x, b.y, t.x, t.y) > SALT_R + this.bodyR(t)) continue;
+          done = true;
+          this.fx(b.owner).saltBurst(b.x, b.y);
+          if (this.simulates(b.owner)) this.hit(b.owner, t, SALT_DMG);
+          break;
+        }
+      }
+      if (done) this.saltBalls.splice(i, 1);
+    }
+  }
+
   // ── Guilt ──────────────────────────────────────────────────────────────────
 
   /** Keep `guiltMarked` on exactly the bodies a Memory is fighting. */
@@ -1045,7 +1351,7 @@ export class MemoryKit {
     void time;
     const playerIs = this.isMemory('player');
     const npcIs = this.isMemory('npc');
-    const anyState = this.shards.length || this.echoBolts.length || this.wounds.size || this.playerAvatar
+    const anyState = this.shards.length || this.echoBolts.length || this.saltBalls.length || this.wounds.size || this.playerAvatar
       || this.api.player?.memoryShardCount() > 0;
     if (!playerIs && !npcIs && !anyState) {
       if (this.marked.size) this.updateGuilt();
@@ -1065,11 +1371,13 @@ export class MemoryKit {
       this.updateSpin(owner);
       this.updateSweep(owner, dt);
       this.updateRecording(owner);
-      this.updateEcho(owner);
+      this.updateEchoes(owner);
       this.updateTrauma(owner);
+      this.updateSalt(owner);
     }
     this.updateShards(dt);
     this.updateEchoBolts(dt);
+    this.updateSaltBalls(dt);
     this.updateLatches();
     this.updateWounds();
     this.paint();
@@ -1086,6 +1394,11 @@ export class MemoryKit {
     air.clear();
     line.clear();
     const t = this.vizT;
+    for (const owner of BOTH) {
+      const salt = this.isMemory(owner) ? this.side(owner).salt : null;
+      if (salt) this.paintSalt(air, owner, salt, t);
+    }
+    for (const b of this.saltBalls) saltBall(air, this.col(b.owner), b.x, b.y, b.trail, SALT_R, t);
     for (const sh of this.shards) shardBody(air, this.col(sh.owner), sh.x, sh.y, Math.atan2(sh.vy, sh.vx), 1, 1);
     for (const b of this.echoBolts) {
       air.fillStyle(b.color, 0.45);
@@ -1114,9 +1427,32 @@ export class MemoryKit {
         const e = this.chord(s.sweep.px, s.sweep.py, s.sweep.ang);
         rebirthLine(line, this.col(owner), s.sweep.px, s.sweep.py, e, s.sweep.trail, t, 1);
       }
-      if (s.echo) {
-        const aim = this.aimOf(owner);
-        staticEcho(air, this.col(owner), s.echo.x, s.echo.y, ECHO_R, s.echo.color, Math.atan2(aim.y - s.echo.y, aim.x - s.echo.x), t, 0.92);
+      const aim = this.aimOf(owner);
+      for (const e of s.echoes) {
+        staticEcho(air, this.col(owner), e.x, e.y, ECHO_R, e.color, Math.atan2(aim.y - e.y, aim.x - e.x), t, 0.92);
+      }
+    }
+  }
+
+  /** The walls in red static, the phantoms standing in it, and what they have to say. */
+  private paintSalt(g: Phaser.GameObjects.Graphics, owner: Owner, salt: Salt, t: number): void {
+    const tint = this.col(owner);
+    const b = this.api.bounds;
+    const fadeIn = Phaser.Math.Clamp((this.now - salt.start) / 300, 0, 1);
+    const fadeOut = Phaser.Math.Clamp((salt.until - this.now) / 300, 0, 1);
+    const a = Math.min(fadeIn, fadeOut);
+    saltBorder(g, tint, b.left, b.top, b.width, b.height, SALT_BAND, t, a * 0.85);
+    for (const ph of salt.phantoms) {
+      const throwK = (this.now - ph.throwAt) / 420;
+      saltPhantom(g, tint, ph.x, ph.y, ph.color, ph.aim, t, a, throwK >= 0 && throwK < 1 ? throwK : 0, ph.seed);
+      if (this.now < ph.bubbleUntil) {
+        // The bubble sits on the arena side of the phantom, so it never hangs off the wall.
+        const inX = Phaser.Math.Clamp(b.centerX - ph.x, -1, 1);
+        const inY = Phaser.Math.Clamp(b.centerY - ph.y, -1, 1);
+        const bx = Phaser.Math.Clamp(ph.x + Math.sign(inX) * 44, b.left + 40, b.right - 40);
+        const by = Phaser.Math.Clamp(ph.y + Math.sign(inY) * 36 - (Math.abs(inY) < 0.5 ? 34 : 0), b.top + 22, b.bottom - 22);
+        const pop = Phaser.Math.Clamp((ph.bubbleUntil - this.now) / 120, 0, 1) * Phaser.Math.Clamp((SALT_BUBBLE_MS - (ph.bubbleUntil - this.now)) / 120, 0, 1);
+        staticBubble(g, tint, bx, by, 62 * (0.6 + 0.4 * pop), 24 * (0.6 + 0.4 * pop), ph.x, ph.y, t, a * pop, ph.seed * 5);
       }
     }
   }
@@ -1193,10 +1529,13 @@ export class MemoryKit {
       description: 'Recording your opponent. Then a static copy of them replays it all at your cursor.',
       until: s.rec.start + RECORD_MS,
     } : null);
-    set('memory-replay', playerIs && s.echo ? {
+    set('memory-replay', playerIs && s.echoes.length ? {
       name: 'Replaying', emoji: '📼', color: MEMORY.grey, priority: 152,
-      description: 'The static copy is replaying their steps and casts at your cursor.',
-      until: s.echo.start + RECORD_MS,
+      description: s.echoes.length > 1
+        ? `${s.echoes.length} static copies are replaying steps and casts at your cursor.`
+        : 'The static copy is replaying their steps and casts at your cursor.',
+      count: s.echoes.length > 1 ? s.echoes.length : undefined,
+      until: Math.max(...s.echoes.map((e) => e.start + e.life)),
     } : null);
     set('memory-trauma', playerIs && s.traumaUntil > 0 ? {
       name: 'Trauma', emoji: '🩸', color: MEMORY.red, priority: 149,
@@ -1260,7 +1599,7 @@ export class MemoryKit {
   /** Practice is worth it: there is someone to strike (and, while it strips kits, their passives are live). */
   npcMemoryRebirthWorth(): boolean {
     const t = this.nearestTarget('npc');
-    return !!t && (!REBIRTH_STRIPS_KIT || !t.passivesSealed());
+    return !!t && (!this.stripsKit('npc') || !t.passivesSealed());
   }
 
   /**
@@ -1271,6 +1610,9 @@ export class MemoryKit {
     const f = this.api.npc;
     const t = this.nearestTarget('npc');
     if (!t || !this.alive(f)) return false;
+    // Unforgettable: copies on the field are copied too — record while they still have time to walk.
+    const s = this.sides.npc;
+    if (this.up('npc', 'f') && s.echoes.some((e) => e.life - (this.now - e.start) > 2500)) return true;
     return Phaser.Math.Distance.Between(f.x, f.y, t.x, t.y) < 420;
   }
 
@@ -1284,7 +1626,7 @@ export class MemoryKit {
     const t = this.nearestTarget('npc');
     if (!t || s.traumaUntil > 0) return false;
     if (s.spin && this.now - s.spin.start > SPIN_MS - 900) return true;
-    if (s.echo && s.echo.casts.length - s.echo.next >= 2) return true;
+    if (s.echoes.reduce((n, e) => n + e.casts.length - e.next, 0) >= 2) return true;
     if (s.rec && this.now - s.rec.start > RECORD_MS - 1200 && s.rec.casts.length >= 2) return true;
     return t.guiltStacks >= 40;
   }

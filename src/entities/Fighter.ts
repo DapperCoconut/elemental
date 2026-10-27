@@ -798,6 +798,19 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   /** 0–1+ probability that an incoming hit is dodged (can exceed 1.0, stacks). Each dodge subtracts 0.2. */
   public dodgeChance = 0;
   /**
+   * Savor's candy buffs, written every frame by SavorKit and handed back on reset:
+   * - `savorArmorMult`: self-granted Mint resistance (or a crash's vulnerability). Travels online in `dm`.
+   * - `savorIncomingMult`: the attacker's Cinnamon, and a drained attacker's repetition penalty.
+   * - `savorDodge`: Fruit Punch — the chance a hit misses outright. Rolled by the victim.
+   * - `savorCooldownMult`: Salted — every candy stack shortens cooldowns.
+   * - `savorNoDodgeUntil`: `scene.time.now` before which Space does nothing (low blood sugar).
+   */
+  public savorArmorMult = 1;
+  public savorIncomingMult = 1;
+  public savorDodge = 0;
+  public savorCooldownMult = 1;
+  public savorNoDodgeUntil = 0;
+  /**
    * Air's wind dodge: a second, independent evasion pool the dancer builds up over a match.
    * Deliberately separate from `dodgeChance` because it obeys different rules — it never decays
    * with time, only ever spends 0.1 on a dodge that actually saved you, and is allowed past
@@ -890,6 +903,11 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
    */
   public stringHexUntil = 0;
   public stringSnareUntil = 0;
+  /**
+   * String Q+ (Spinal Snap): Infested until this `Date.now()` stamp — 70% speed while spiders crawl out
+   * of them. StringKit spawns the spiders; this is only the slow and the status.
+   */
+  public stringInfestedUntil = 0;
   /** String F (Marionette): a puppet until this `Date.now()` stamp. StringKit does the steering. */
   public stringPuppetUntil = 0;
   /**
@@ -1219,11 +1237,12 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     return Date.now() < this.astraSlowUntil ? 0.35 : 1;
   }
 
-  /** String: brushing a Hexing Strand (60% speed), or snared by its snap (30%). */
+  /** String: brushing a Hexing Strand (60% speed), snared by its snap (30%), or Infested (70%). */
   stringSlowMult(): number {
     const now = Date.now();
     if (now < this.stringSnareUntil) return 0.3;
-    return now < this.stringHexUntil ? 0.6 : 1;
+    if (now < this.stringHexUntil) return 0.6;
+    return now < this.stringInfestedUntil ? 0.7 : 1;
   }
 
   /** Memory: the shards latched into this body right now (a victim's mirrored count included). */
@@ -1370,6 +1389,11 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   public cardDamageTakenMult = 1;
   /** Card: multiplies all outgoing damage from this fighter. Default 1 (Deadly card on player). */
   public cardOutgoingDamageMult = 1;
+  /**
+   * Ten Isles: incoming-damage multiplier rewritten every frame by IslesFightKit (a court rule
+   * favouring one side, a charm's damage window). Its own field so nothing else overwrites it.
+   */
+  public islesIncomingMult = 1;
   /** Card: HP regeneration per second (Regenerative card). Processed by ArenaScene update. */
   public regenPerSecond = 0;
   /** Accumulator (ms) for regen ticks. Managed by ArenaScene. */
@@ -1540,6 +1564,11 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       this.lastIncomingDamage = 0;
       return;
     }
+    // Savor's Fruit Punch. Same rules: the victim rolls.
+    if (!pierce && !opts?.selfInflicted && amount > 0 && this.savorDodge > 0 && Math.random() < this.savorDodge) {
+      this.lastIncomingDamage = 0;
+      return;
+    }
     // Dream E+ — a dreamer who has dreamt themselves quicker. Same rules: the victim rolls.
     if (!pierce && !opts?.selfInflicted && amount > 0 && this.dreamLucidDodge > 0 && Math.random() < this.dreamLucidDodge) {
       this.lastIncomingDamage = 0;
@@ -1577,7 +1606,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       // Tallied here: after the crit roll (a crit really is a bigger hit) but before every
       // mitigation multiplier on the line below, which is what "damage aimed at you" means.
       this.rawDamageTaken += amount;
-      let mitigation = trueDamage ? 1 : this.incomingDamageMultiplier * this.gauntletDamageTakenMult * this.bribeIncomingMult * this.smokeIncomingMult * this.cardDamageTakenMult * this.droneArmorMult * this.kineticShieldMult * this.steelShieldMult * this.empoweredIncomingMult * this.potionArmorMult * this.hopelessIncomingMult * this.justiceIncomingMult * this.magmaIncomingMult * this.waxIncomingMult * this.clayIncomingMult * this.conquestIncomingMult * this.passionIncomingMult * this.quantumIncomingMult * this.deathIncomingMult * this.journalIncomingMult * this.paperIncomingMult * this.psychicIncomingMult * this.bindIncomingMult * this.illusionIncomingMult * this.soundIncomingMult * this.artifactIncomingMult * this.clothIncomingMult * this.marrowIncomingMult * this.woodIncomingMult * this.orderIncomingMult * this.wardIncomingMult * this.soulTankIncomingMult * this.bossWardIncomingMult * this.fortuneIncomingMult * this.dreamIncomingMult * this.duneIncomingMult * this.radiationIncomingMult * this.lifeIncomingMult * this.magicIncomingMult * this.mutationIncomingMult * this.mapArmorMult * this.starIncomingMult * this.earthBiomeIncomingMult * this.perkIncomingMult * this.paintIncomingMult * this.toxinIncomingMult * this.netDefenseMult;
+      let mitigation = trueDamage ? 1 : this.incomingDamageMultiplier * this.gauntletDamageTakenMult * this.bribeIncomingMult * this.smokeIncomingMult * this.cardDamageTakenMult * this.droneArmorMult * this.kineticShieldMult * this.steelShieldMult * this.empoweredIncomingMult * this.potionArmorMult * this.hopelessIncomingMult * this.justiceIncomingMult * this.magmaIncomingMult * this.waxIncomingMult * this.clayIncomingMult * this.conquestIncomingMult * this.passionIncomingMult * this.quantumIncomingMult * this.deathIncomingMult * this.journalIncomingMult * this.paperIncomingMult * this.psychicIncomingMult * this.bindIncomingMult * this.illusionIncomingMult * this.soundIncomingMult * this.artifactIncomingMult * this.clothIncomingMult * this.marrowIncomingMult * this.woodIncomingMult * this.orderIncomingMult * this.wardIncomingMult * this.soulTankIncomingMult * this.bossWardIncomingMult * this.fortuneIncomingMult * this.dreamIncomingMult * this.duneIncomingMult * this.radiationIncomingMult * this.lifeIncomingMult * this.magicIncomingMult * this.mutationIncomingMult * this.mapArmorMult * this.starIncomingMult * this.earthBiomeIncomingMult * this.perkIncomingMult * this.paintIncomingMult * this.toxinIncomingMult * this.savorArmorMult * this.savorIncomingMult * this.netDefenseMult * this.islesIncomingMult;
       // Ruin's spikes turn armour inside out — 25% less damage taken comes back as 25% more.
       // Only a net *buff* is flipped; a fighter already taking extra damage is left alone.
       if (mitigation < 1 && this.scene.time.now < this.buffsInvertedUntil) mitigation = 2 - mitigation;
@@ -1994,7 +2023,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     const ultimateExtra = ability.isUltimate ? this.ultimateCooldownMult : 1;
     return ability.cooldown * (this.cooldownMult || 1) * this.netCooldownMult
       * this.amputationCooldownMult * this.deathDelayCooldownMult * this.dreamCooldownMult
-      * this.justiceCooldownMult * this.perkCooldownMult * this.psychicCooldownMult * this.clothCooldownMult * this.goldCooldownMult * this.bindCooldownMult * ultimateExtra;
+      * this.justiceCooldownMult * this.perkCooldownMult * this.psychicCooldownMult * this.clothCooldownMult * this.goldCooldownMult * this.bindCooldownMult * this.savorCooldownMult * ultimateExtra;
   }
 
   /** As {@link effectiveCooldown}, including whatever split was banked when this id was stamped. */

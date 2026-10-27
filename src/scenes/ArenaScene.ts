@@ -10,6 +10,8 @@ import { WorldBossKit, WorldBossArenaApi } from '../boss/framework/WorldBossKit'
 import { getWorldBossDef } from '../boss/bosses';
 import { CampaignFormatKit, CampaignFormatArenaApi } from '../elements/kits/CampaignFormatKit';
 import { GimmickKit, GimmickArenaApi } from '../elements/kits/GimmickKit';
+import { IslesFightKit, paintIslesFloor } from '../isles/fight/IslesFightKit';
+import type { IslesFightPayload } from '../isles/IslesTypes';
 import { SecretMapKit, SecretMapArenaApi } from '../elements/kits/SecretMapKit';
 import { SummonerKit, SummonerArenaApi } from '../elements/kits/SummonerKit';
 import { MutationKit, MutationArenaApi } from '../mutations/MutationKit';
@@ -123,7 +125,8 @@ import { MythKit, MythArenaApi } from '../elements/kits/MythKit';
 import { PsychicKit, PsychicArenaApi } from '../elements/kits/PsychicKit';
 import { RadiationKit, RadiationArenaApi } from '../elements/kits/RadiationKit';
 import { BindKit, BindArenaApi } from '../elements/kits/BindKit';
-import { GumKit, GumArenaApi } from '../elements/kits/GumKit';
+import { SavorKit, SavorArenaApi } from '../elements/kits/SavorKit';
+import type { SavorForm } from '../elements/kits/SavorVisuals';
 import { GluttonyKit, GluttonyArenaApi } from '../elements/kits/GluttonyKit';
 import { PressureKit, PressureArenaApi } from '../elements/kits/PressureKit';
 import { AstraKit, AstraArenaApi } from '../elements/kits/AstraKit';
@@ -418,6 +421,9 @@ export class ArenaScene extends Phaser.Scene {
   private formatKit: CampaignFormatKit | null = null;
   /** The campaign world's standing arena rule — see GimmickKit. */
   private gimmickKit: GimmickKit | null = null;
+  /** Ten Isles: the court rule, charm scripts and genome for an `isles` fight. */
+  private islesKit: IslesFightKit | null = null;
+  private isles: IslesFightPayload | null = null;
   /** Tag-team bout state; non-null only mid-run. */
   private tagTeam: TagTeamState | null = null;
   /** The create() payload, kept for tag-team scene restarts. */
@@ -762,8 +768,12 @@ export class ArenaScene extends Phaser.Scene {
   private radiationKit!: RadiationKit;
   /** Bind (test element) — managed by BindKit. The patron, its anger, and everything it charges. */
   private bindKit!: BindKit;
-  /** Slime (test element) — managed by GumKit. The hand that is also the legs. */
-  private gumKit!: GumKit;
+  /** Savor (id `gum`) — managed by SavorKit. Sugar and Salt on one body; Space flips them. */
+  private savorKit!: SavorKit;
+  private savorSugarHudCards: Phaser.GameObjects.GameObject[] = [];
+  private savorSaltHudCards: Phaser.GameObjects.GameObject[] = [];
+  private savorSugarFills: AbilityBarEntry[] = [];
+  private savorSaltFills: AbilityBarEntry[] = [];
   private justiceGroundHudCards: Phaser.GameObjects.GameObject[] = [];
   private justiceFlightHudCards: Phaser.GameObjects.GameObject[] = [];
   private justiceGroundFills: AbilityBarEntry[] = [];
@@ -975,7 +985,6 @@ export class ArenaScene extends Phaser.Scene {
   private tempestMasteryOn = false;
   private mythMasteryOn = false;
   private clayMasteryOn = false;
-  private gumMasteryOn = false;
   private gluttonyMasteryOn = false;
   private fortuneMasteryOn = false;
   private magnetMasteryOn = false;
@@ -1014,7 +1023,7 @@ export class ArenaScene extends Phaser.Scene {
     super({ key: 'ArenaScene' });
   }
 
-  create(data: { elementId: string; enemyElementId?: string; difficulty?: number; mutations?: string[]; starredMutations?: string[]; mode?: string; invasionDifficulty?: string; invasionMap?: 'city' | 'mansion'; invasionParty?: number; gauntlet?: import('../data/GauntletData').GauntletState; playerPerk?: string | null; npcPerk?: string | null; npcLoadout?: import('../data/NpcLoadout').NpcLoadout; campaign?: { slot: 0 | 1 | 2; worldId: string; fightId: string; isChallenge: boolean; hardMode?: boolean }; npcQuantumForms?: string[]; hpMult?: number; npcOutgoingDamageMult?: number; bounty?: { key: string; reward: number }; bossHard?: boolean; bossId?: string; tagTeam?: TagTeamState; secretMode?: string; secretMap?: string; duoEnemyElementId?: string; secretTag?: SecretTagState; stabilize?: { result: string }; reality?: RealityRunPayload; online?: { isHost: boolean; npcUpgrades?: string[]; npcMasteryBinds?: Record<string, string>; npcMasteryOn?: boolean; npcSkin?: string | null; mySlot?: number; npcSlot?: number; extraAllies?: CoopAllySpec[] }; ranked?: import('../data/RankedData').RankedSeries; npcDifficulty?: DifficultyConfig }): void {
+  create(data: { elementId: string; enemyElementId?: string; difficulty?: number; mutations?: string[]; starredMutations?: string[]; mode?: string; invasionDifficulty?: string; invasionMap?: 'city' | 'mansion'; invasionParty?: number; gauntlet?: import('../data/GauntletData').GauntletState; playerPerk?: string | null; npcPerk?: string | null; npcLoadout?: import('../data/NpcLoadout').NpcLoadout; campaign?: { slot: 0 | 1 | 2; worldId: string; fightId: string; isChallenge: boolean; hardMode?: boolean }; npcQuantumForms?: string[]; hpMult?: number; npcOutgoingDamageMult?: number; bounty?: { key: string; reward: number }; bossHard?: boolean; bossId?: string; isles?: IslesFightPayload; tagTeam?: TagTeamState; secretMode?: string; secretMap?: string; duoEnemyElementId?: string; secretTag?: SecretTagState; stabilize?: { result: string }; reality?: RealityRunPayload; online?: { isHost: boolean; npcUpgrades?: string[]; npcMasteryBinds?: Record<string, string>; npcMasteryOn?: boolean; npcSkin?: string | null; mySlot?: number; npcSlot?: number; extraAllies?: CoopAllySpec[] }; ranked?: import('../data/RankedData').RankedSeries; npcDifficulty?: DifficultyConfig }): void {
     this.selectedElementId = data.elementId ?? 'fire';
     // ── Secret modes ────────────────────────────────────────────────
     this.secretMode = data.secretMode ?? null;
@@ -1083,6 +1092,7 @@ export class ArenaScene extends Phaser.Scene {
     this.onlineEndReason = null;
     this.onlineForfeitArmedUntil = 0;
     this.campaign = data.campaign ?? null;
+    this.isles = data.isles ?? null;
     // Quantum carries abilities, not perks — a loadout starts and stays perkless.
     this.playerPerkId = this.cityRun || this.playerLoadout ? null : (data.playerPerk ?? null);
     this.npcPerkId = this.cityRun ? null : (data.npcPerk ?? null);
@@ -1213,6 +1223,7 @@ export class ArenaScene extends Phaser.Scene {
     if (this.playerBleedAura) { this.playerBleedAura.destroy(); this.playerBleedAura = null; }
     this.huntNormalHudCards = []; this.huntBeastHudCards = []; this.huntHybridHudCards = [];
     this.justiceGroundHudCards = []; this.justiceFlightHudCards = [];
+    this.savorSugarHudCards = []; this.savorSaltHudCards = []; this.savorSugarFills = []; this.savorSaltFills = [];
     this.justiceGroundFills = []; this.justiceFlightFills = [];
     this.huntNormalFills = []; this.huntBeastFills = []; this.huntHybridFills = [];
 
@@ -2778,6 +2789,7 @@ export class ArenaScene extends Phaser.Scene {
         setStatusIndicator: (id, status) => arena.statusHudKit.setCustom(id, status),
         broadcast: (id) => arena.broadcastMasteryCast(id),
         rebirthDrain: (owner) => arena.memoryRebirthDrain(owner),
+        hasUpgrade: (owner, slot) => (owner === 'player' ? arena.hasUpgradeFor('memory', slot) : arena.hasNpcUpgrade(slot)),
         hudRects: () => ({
           hpGauge: { x: arena.scale.width / 2 - arena.hpBarW / 2, y: arena.hpBarY - arena.hpBarH / 2, w: arena.hpBarW, h: arena.hpBarH },
           cards: arena.abilityBars.filter((b) => b.fill.visible).map((b) => ({
@@ -2815,10 +2827,12 @@ export class ArenaScene extends Phaser.Scene {
         get isInvasion() { return arena.isInvasion; },
         get worldW() { return arena.scale.width; },
         isTargetable: (f) => !arena.isInvasion || !(f instanceof Husk) || arena.invasionKit.isHuskTargetable(f),
+        hasUpgrade: (owner, slot) => (owner === 'player' ? arena.hasUpgradeFor('string', slot) : arena.hasNpcUpgrade(slot)),
         huskShots: () => (arena.isInvasion ? arena.invasionKit.liveShots() : []),
         stringColor: (owner, base) => arena.skinsKit.stringColor(owner, base),
         skinId: (owner) => arena.skinsKit.skinId(owner),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
+        buildNpcContext: (x, y) => arena.buildNpcContext(x, y),
         setStatusIndicator: (id, status) => arena.statusHudKit.setCustom(id, status),
         broadcast: (id) => arena.broadcastMasteryCast(id),
       };
@@ -3440,43 +3454,39 @@ export class ArenaScene extends Phaser.Scene {
       this.bindKit = new BindKit(bindApi);
     }
 
-    // ── Slime kit (test element, id `gum`) ────────────────────
-    if (this.gumKit) {
-      this.gumKit.reset();
+    // ── Savor kit (id `gum`) ──────────────────────────────────
+    if (this.savorKit) {
+      this.savorKit.reset();
     } else {
       const arena = this;
-      const gumApi: GumArenaApi = {
+      const savorApi: SavorArenaApi = {
         get scene(): Phaser.Scene { return arena; },
         get player() { return arena.player; },
         get npc() { return arena.npc; },
         get enemies() { return arena.reachableEnemies; },
-        get projectiles() { return arena.projectiles; },
-        get projectileRegistry() { return arena.techProjReg; },
         get eKey() { return arena.keyFor('gum', arena.eKey); },
         get rKey() { return arena.keyFor('gum', arena.rKey); },
         get fKey() { return arena.keyFor('gum', arena.fKey); },
         get qKey() { return arena.keyFor('gum', arena.qKey); },
         get elementId() { return arena.liveElementFor('gum'); },
         get npcElementId() { return arena.npcElement.id; },
-        get isDodging() { return arena.isDodging; },
+        get isOnline() { return arena.isOnline; },
+        get isInvasion() { return arena.isInvasion; },
+        get npcLevel() { return arena.npcDifficulty?.level ?? 3; },
+        isTargetable: (f) => !arena.isInvasion || !(f instanceof Husk) || arena.invasionKit.isHuskTargetable(f),
         get width() { return arena.scale.width; },
         get height() { return arena.scale.height; },
-        gumColor: (owner, base) => arena.skinsKit.gumColor(owner, base),
+        savorColor: (owner, base) => arena.skinsKit.gumColor(owner, base),
+        skinId: (owner) => arena.skinsKit.skinId(owner),
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
         showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
         setStatusIndicator: (id, status) => arena.statusHudKit.setCustom(id, status),
-        get masteryActive() { return arena.gumMasteryOn && arena.playerIs('gum'); },
-        get npcMasteryActive() { return arena.npcMasteryOn && arena.npcElement.id === 'gum'; },
-        masteryBindFor: (slot) => arena.masteryBindForElement('gum', slot),
-        npcMasteryBindFor: (slot) => arena.npcMasteryBindFor(slot),
-        recordMasteryStat: (key, amount) => {
-          if (arena.playerIs('gum')) PlayerData.addMasteryStat('gum', key, amount);
-        },
-        hasUpgrade: (slot) => arena.hasUpgradeFor('gum', slot),
-        hasNpcUpgrade: (slot) => arena.hasNpcUpgrade(slot),
+        broadcast: (id) => arena.broadcastMasteryCast(id),
+        setHudForm: (form) => arena.savorSetHudForm(form),
+        drainBars: (owner) => arena.memoryRebirthDrain(owner),
       };
-      this.gumKit = new GumKit(gumApi);
+      this.savorKit = new SavorKit(savorApi);
     }
 
     // ── Conquest kit (test element) ───────────────────────────
@@ -4001,7 +4011,9 @@ export class ArenaScene extends Phaser.Scene {
     const pad = 32;
 
     // ── Background ────────────────────────────────────────────────
-    if (this.campaign?.worldId) {
+    if (this.isles) {
+      paintIslesFloor(this, this.isles, W, H);
+    } else if (this.campaign?.worldId) {
       drawCampaignBackground(this, this.campaign.worldId, W, H).setDepth(-100);
     } else if (this.isBossFight) {
       // The Disgraced King fights in his own throne room — DisgracedKingKit
@@ -4912,7 +4924,7 @@ export class ArenaScene extends Phaser.Scene {
         // A pledge fight hands the body on: the Sovereign resumes on the phase and at the
         // HP the last element left it, rather than standing back up whole.
         this.worldBossKit.reset(
-          bossDef, this.campaign?.hardMode === true, this.tagTeam?.bossResume ?? null,
+          bossDef, this.campaign?.hardMode === true || this.isles?.hard === true, this.tagTeam?.bossResume ?? null,
         );
       }
     }
@@ -5024,6 +5036,28 @@ export class ArenaScene extends Phaser.Scene {
       this.gimmickKit.reset(
         this.campaign && !this.isInvasion && !this.gauntletState ? this.campaign.worldId : null,
       );
+
+      // ── Ten Isles ────────────────────────────────────────────────
+      if (!this.islesKit) {
+        this.islesKit = new IslesFightKit({
+          get scene() { return arena as Phaser.Scene; },
+          get player() { return arena.player; },
+          get npc() { return arena.npc; },
+          get width() { return arena.scale.width; },
+          get height() { return arena.scale.height; },
+          get elementId() { return arena.elementId; },
+          gameEnded: () => arena.gameEnded,
+          addEnemy: (f) => { arena.enemies.push(f); arena.enemyGroup.add(f, true); },
+          removeEnemy: (f) => {
+            arena.enemies = arena.enemies.filter((e) => e !== f);
+            arena.enemyGroup.remove(f, false, false);
+          },
+          showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
+          spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
+          victory: () => arena.endGame(true),
+        });
+      }
+      this.islesKit.reset(this.isles);
 
       // ── World Shift ──────────────────────────────────────────────
       // The kit is built against a roster rather than against the npc slot, so
@@ -5288,7 +5322,6 @@ export class ArenaScene extends Phaser.Scene {
     this.tempestMasteryOn = this.masteryOnFor('tempest');
     this.mythMasteryOn = this.masteryOnFor('myth');
     this.clayMasteryOn = this.masteryOnFor('clay');
-    this.gumMasteryOn = this.masteryOnFor('gum');
     // has its own requirements, so it also has to be earned.
     // The retired chef's and Harvest's masteries may have left `gluttony` switched on in an old
     // save; Wood has none yet, so this stays off until one is written and completed.
@@ -5389,6 +5422,7 @@ export class ArenaScene extends Phaser.Scene {
       ['growth', this.growthKit], ['marrow', this.marrowKit], ['justice', this.justiceKit],
       ['pressure', this.pressureKit], ['astra', this.astraKit], ['bind', this.bindKit],
       ['gluttony', this.gluttonyKit], ['magnet', this.magnetKit], ['myth', this.mythKit],
+      ['gum', this.savorKit],
     ];
     for (const [id, kit] of drains) {
       if (!kit || !is(id)) continue;
@@ -5459,14 +5493,20 @@ export class ArenaScene extends Phaser.Scene {
       this.stringKit.replayNet(enhId);
       return;
     }
-    // Memory: Rebirth's strike, and the snatch and the drain — which land on our own body.
+    // Memory: Rebirth's strike, and the snatch and the drain — which land on our own body — and
+    // `memory-ultgive`, what our own Shutdown took from their bank, which comes from whatever they play.
     if (enhId.startsWith('memory-') && !this.npcElement.abilities.some((a) => a.id === enhId)) {
-      if (this.npcElement.id === 'memory') this.memoryKit.replayNet(enhId);
+      if (this.npcElement.id === 'memory' || enhId.startsWith('memory-ultgive:')) this.memoryKit.replayNet(enhId);
       return;
     }
     // Bind: the curse, detonations, chains, souls, revenants, cultists, the ritual and the idol.
     if (enhId.startsWith('bind-') && !this.npcElement.abilities.some((a) => a.id === enhId)) {
       if (this.npcElement.id === 'bind') this.bindKit.replayNet(enhId);
+      return;
+    }
+    // Savor: forms, stacks, candies, loans, drains, the stalactite's release and the race.
+    if (enhId.startsWith('savor-') && !this.npcElement.abilities.some((a) => a.id === enhId)) {
+      this.savorKit.replayNet(enhId);
       return;
     }
     // Cloth: throws, wraps, carries, flings, the jacket's steering, cushion punches and the
@@ -5762,7 +5802,7 @@ export class ArenaScene extends Phaser.Scene {
     const cardH = 48;
     // Hunt, Silence, Gunpowder, Justice and Myth (its Final Destiny guns) have extra abilities
     // beyond the first 5; only show 5 at a time.
-    const MULTI_FORM_ELEMENTS = ['hunt', 'silence', 'gunpowder', 'justice', 'myth'];
+    const MULTI_FORM_ELEMENTS = ['hunt', 'silence', 'gunpowder', 'justice', 'myth', 'gum'];
     const trayAbilities = (id: string): Ability[] => {
       // The player's own element may carry an alternate ultimate, so read the fighter's copy.
       const el = id === this.elementId ? this.playerElement : ELEMENT_MAP[id];
@@ -5866,6 +5906,17 @@ export class ArenaScene extends Phaser.Scene {
       'fortune-midas':         0xffd34d,
       // …and the car is rust, which is the one thing in the element that is not worth anything.
       'drive-by-flex':         0x8c5c31,
+      // Savor: sugar white, candy pinks and the chocolate; then salt greys.
+      'savor-sugar-slam':      0xf6eefc,
+      'savor-sweet-tooth':     0xff5f9e,
+      'savor-sugar-diffusion': 0xfff2c4,
+      'savor-caring-share':    0x9a6a44,
+      'savor-sugar-rush':      0x8a6bff,
+      'savor-salt-slice':      0xe8eef2,
+      'savor-salt-shield':     0xaab7c2,
+      'savor-salt-infusion':   0x58e070,
+      'savor-salt-wounds':     0xff4a4a,
+      'savor-salt-crash':      0x5d6b77,
       // Cloth: the scarf's red, needle steel, undyed wool for the bola, the tomato cushion, and fire.
       'cloth-scarf-hand':     0xd1435c,
       'cloth-needle-nexus':   0xd8dfe8,
@@ -6213,6 +6264,8 @@ export class ArenaScene extends Phaser.Scene {
         this.huntNormalHudCards.push(bg, fill, ...face.objects());
       } else if (this.elementId === 'justice') {
         this.justiceGroundHudCards.push(bg, fill, ...face.objects());
+      } else if (this.elementId === 'gum') {
+        this.savorSugarHudCards.push(bg, fill, ...face.objects());
       }
     });
 
@@ -6264,6 +6317,9 @@ export class ArenaScene extends Phaser.Scene {
       // Vengeance is one ability sitting on one slot, and that slot exists in both stances.
       buildRow(this.playerElement.abilities.slice(5, 10), this.justiceFlightFills,
         this.justiceFlightHudCards, 0xa8ccff, 'justice');
+    } else if (this.elementId === 'gum' && !lo) {
+      this.savorSugarFills = [...this.abilityBars];
+      buildRow(this.playerElement.abilities.slice(5, 10), this.savorSaltFills, this.savorSaltHudCards, 0xc9d3db);
     }
 
     UI.drawDodgeKeycap(this.add.graphics().setDepth(21), W - 50, hudY, trayAccent);
@@ -6770,11 +6826,16 @@ export class ArenaScene extends Phaser.Scene {
       bindSiphon: (tx, ty) => this.bindKit.doSiphon('player', tx, ty),
       bindRitual: () => this.bindKit.doRitual('player'),
       // Slime
-      gumGrab: (tx, ty) => this.gumKit.doGrab('player', tx, ty),
-      gumSurge: (tx, ty) => this.gumKit.doSurge('player', tx, ty),
-      gumGumball: (tx, ty) => this.gumKit.doGumball('player', tx, ty),
-      gumOozorbtion: () => this.gumKit.doOozorbtion('player'),
-      gumSolidify: () => this.gumKit.doSolidify('player'),
+      savorSugarSlam: (tx, ty) => this.savorKit.doSugarSlam('player', tx, ty),
+      savorSweetTooth: (tx, ty) => this.savorKit.doSweetTooth('player', tx, ty),
+      savorSugarDiffusion: () => this.savorKit.doSugarDiffusion('player'),
+      savorCaringShare: (tx, ty) => this.savorKit.doCaringShare('player', tx, ty),
+      savorSugarRush: () => this.savorKit.doSugarRush('player'),
+      savorSaltSlice: (tx, ty) => this.savorKit.doSaltSlice('player', tx, ty),
+      savorSaltShield: () => this.savorKit.doSaltShield('player'),
+      savorSaltInfusion: (tx, ty) => this.savorKit.doSaltInfusion('player', tx, ty),
+      savorSaltWounds: (tx, ty) => this.savorKit.doSaltWounds('player', tx, ty),
+      savorSaltCrash: () => this.savorKit.doSaltCrash('player'),
       quantumSplicers: () => this.quantumCoreKit.doSplicers('player'),
       quantumAbilitySplit: () => this.quantumCoreKit.doAbilitySplit('player'),
       quantumArenaSplit: () => this.quantumCoreKit.doArenaSplit('player'),
@@ -7183,11 +7244,16 @@ export class ArenaScene extends Phaser.Scene {
       bindSiphon: (tx, ty) => this.bindKit.doSiphon('npc', tx, ty),
       bindRitual: () => this.bindKit.doRitual('npc'),
       // Slime
-      gumGrab: (tx, ty) => this.gumKit.doGrab('npc', tx, ty),
-      gumSurge: (tx, ty) => this.gumKit.doSurge('npc', tx, ty),
-      gumGumball: (tx, ty) => this.gumKit.doGumball('npc', tx, ty),
-      gumOozorbtion: () => this.gumKit.doOozorbtion('npc'),
-      gumSolidify: () => this.gumKit.doSolidify('npc'),
+      savorSugarSlam: (tx, ty) => this.savorKit.doSugarSlam('npc', tx, ty),
+      savorSweetTooth: (tx, ty) => this.savorKit.doSweetTooth('npc', tx, ty),
+      savorSugarDiffusion: () => this.savorKit.doSugarDiffusion('npc'),
+      savorCaringShare: (tx, ty) => this.savorKit.doCaringShare('npc', tx, ty),
+      savorSugarRush: () => this.savorKit.doSugarRush('npc'),
+      savorSaltSlice: (tx, ty) => this.savorKit.doSaltSlice('npc', tx, ty),
+      savorSaltShield: () => this.savorKit.doSaltShield('npc'),
+      savorSaltInfusion: (tx, ty) => this.savorKit.doSaltInfusion('npc', tx, ty),
+      savorSaltWounds: (tx, ty) => this.savorKit.doSaltWounds('npc', tx, ty),
+      savorSaltCrash: () => this.savorKit.doSaltCrash('npc'),
       quantumSplicers: () => this.quantumCoreKit.doSplicers('npc'),
       quantumAbilitySplit: () => this.quantumCoreKit.doAbilitySplit('npc'),
       quantumArenaSplit: () => this.quantumCoreKit.doArenaSplit('npc'),
@@ -7546,11 +7612,16 @@ export class ArenaScene extends Phaser.Scene {
       bindEyes: () => {},
       bindSiphon: () => {},
       bindRitual: () => {},
-      gumGrab: () => {},
-      gumSurge: () => {},
-      gumGumball: () => {},
-      gumOozorbtion: () => {},
-      gumSolidify: () => {},
+      savorSugarSlam: () => {},
+      savorSweetTooth: () => {},
+      savorSugarDiffusion: () => {},
+      savorCaringShare: () => {},
+      savorSugarRush: () => {},
+      savorSaltSlice: () => {},
+      savorSaltShield: () => {},
+      savorSaltInfusion: () => {},
+      savorSaltWounds: () => {},
+      savorSaltCrash: () => {},
       quantumSplicers: () => {},
       quantumAbilitySplit: () => {},
       quantumArenaSplit: () => {},
@@ -7843,6 +7914,8 @@ export class ArenaScene extends Phaser.Scene {
 
     // A teleport and a dash are different moves and should not share a sound.
     Sfx.playAt(this.cardPsychoActive ? 'teleport' : 'dash', this.player.x);
+    // Savor: every dodge flips between Sugar and Salt.
+    if (this.playerIs('gum')) this.savorKit.onDodge('player');
 
     // Death Mastery — Delay The Inevitable: three times as far for the eight seconds.
     const deathDash = this.playerIs('death') ? this.deathKit.getDodgeLengthMult() : 1;
@@ -10237,6 +10310,8 @@ export class ArenaScene extends Phaser.Scene {
             campaign: gs.campaignContext ? { slot: gs.campaignContext.slot, worldId: gs.campaignContext.worldId, fightId: gs.gauntletElement, isChallenge: false } : undefined,
           });
         }
+      } else if (this.isles) {
+        this.scene.start('IslesResultScene', { payload: this.isles, won: playerWon, element: this.elementId });
       } else if (this.isBossFight) {
         this.scene.start('GameOverScene', {
           playerWon,
@@ -10456,6 +10531,19 @@ export class ArenaScene extends Phaser.Scene {
     this.abilityBars = form === 'flight' ? this.justiceFlightFills : this.justiceGroundFills;
   }
 
+  // ── Savor helpers ────────────────────────────────────────────
+
+  /** Swap the ability tray between Savor's Sugar and Salt rows. */
+  private savorSetHudForm(form: SavorForm): void {
+    if (!this.savorSaltFills.length) return;
+    const show = (objs: Phaser.GameObjects.GameObject[], on: boolean) => {
+      for (const o of objs) (o as unknown as { setVisible: (v: boolean) => void }).setVisible(on);
+    };
+    show(this.savorSugarHudCards, form === 'sugar');
+    show(this.savorSaltHudCards, form === 'salt');
+    this.abilityBars = form === 'salt' ? this.savorSaltFills : this.savorSugarFills;
+  }
+
   // ── Dream helpers ────────────────────────────────────────────
 
   /**
@@ -10510,7 +10598,7 @@ export class ArenaScene extends Phaser.Scene {
    * and the player is not, so it is a well-worn path rather than a new one.
    *
    * Absent on purpose: elements whose main dispatch is unconditional (Illusion, Paper, Death,
-   * Fortune, Amber, Psychic, Radiation, Bind, Slime-as-`gum`, Crystal, Life). They are
+   * Fortune, Amber, Psychic, Radiation, Bind, Savor-as-`gum`, Crystal, Life). They are
    * already ticking every frame, and a second call would double-advance them.
    *
    * Every entry skips when the opponent is that element: the main dispatch already ran the
@@ -10712,9 +10800,11 @@ export class ArenaScene extends Phaser.Scene {
     }
     const click = this.playerElement.abilities.find((a) => a.displayKey === 'Click');
     // Clicks whose button is also a drag (press picks up, release drops) must never see a
-    // fake release: Conquest's board, and Technology's Web Drag while it is on.
+    // fake release: Conquest's board, Technology's Web Drag while it is on, and String's
+    // Metal Spool (a held click winds the spool; a pulsed release would throw plain strings).
     const dragClick = !click || click.id === 'conquest-banner'
-      || (this.elementId === 'technology' && this.techKit.isPlayerDragMode());
+      || (this.elementId === 'technology' && this.techKit.isPlayerDragMode())
+      || (this.elementId === 'string' && this.hasUpgradeFor('string', 'click'));
     if (dragClick || abilityTags(click.id).includes('hold')) {
       this.clickAutoFireArmed = false;
       return;
@@ -11213,10 +11303,10 @@ export class ArenaScene extends Phaser.Scene {
     this.npcSpeedMult *= this.radiationKit.getNpcSpeedMult();
     this.playerSpeedMult *= this.bindKit.getPlayerSpeedMult();
     this.npcSpeedMult *= this.bindKit.getNpcSpeedMult();
-    // Slime's slimeballs, gum and wall glue, plus the lurching haul that stands in for a bot
-    // dragging itself along the floor. Pulled here for the same reason the two above are.
-    this.playerSpeedMult *= this.gumKit.getPlayerSpeedMult();
-    this.npcSpeedMult *= this.gumKit.getNpcSpeedMult();
+    // Savor's Lemon candies, Diffusion, Sugar Rush, a drained body's slump and the Salt Crash
+    // spears. Pulled here for the same reason the two above are.
+    this.playerSpeedMult *= this.savorKit.getPlayerSpeedMult();
+    this.npcSpeedMult *= this.savorKit.getNpcSpeedMult();
     // Growth Mastery — Sickness/Carrier slows on whoever is carrying the plague
     if (this.playerIs('growth') || this.npcElement.id === 'growth') {
       this.playerSpeedMult *= this.growthKit.getSickSpeedMult(this.player);
@@ -11271,6 +11361,7 @@ export class ArenaScene extends Phaser.Scene {
     if (this.reality?.kind === 'boss' && this.realityBossKit) this.playerSpeedMult *= this.realityBossKit.getPlayerSpeedMult();
     // ── World Sovereigns hold their slows the same way ────────────────
     if (this.worldBossId && this.worldBossKit) this.playerSpeedMult *= this.worldBossKit.getPlayerSpeedMult();
+    if (this.isles && this.islesKit) this.playerSpeedMult *= this.islesKit.getPlayerSpeedMult();
 
     // ── World Shift: what the ground itself is doing to you ───────────
     // Pulled, like every other contribution on this chain — the whole value is
@@ -11366,10 +11457,9 @@ export class ArenaScene extends Phaser.Scene {
     if (this.playerIs('gravity') && this.gravityKit.drivesPlayerBody()) {
       // Anti-Grav flight, the Moon Rider orbit and the dismount finale all place the
       // body themselves — WASD must not fight them for it.
-    } else if ((this.playerIs('gum') || this.elementId === 'cloth') && !this.isDodging) {
-      // Slime has no legs, and Cloth walks on its scarf. WASD does nothing at all; GumKit and
-      // ClothKit set the velocity from the hand's grip in their own update, which runs later
-      // this frame and therefore wins.
+    } else if (this.elementId === 'cloth' && !this.isDodging) {
+      // Cloth walks on its scarf. WASD does nothing at all; ClothKit sets the velocity from the
+      // hand's grip in its own update, which runs later this frame and therefore wins.
       playerBody.setVelocity(0, 0);
     } else if (this.playerIs('rubber') && this.rubberKit.isSlingActive() && !this.isDodging) {
       this.rubberKit.applySlingMovement(mouseX, mouseY);
@@ -11649,7 +11739,7 @@ export class ArenaScene extends Phaser.Scene {
     } else if (this.elementId === 'bind') {
       this.bindKit.handleInput(time, pointer, mouseX, mouseY);
     } else if (this.elementId === 'gum') {
-      this.gumKit.handleInput(time, pointer, mouseX, mouseY);
+      this.savorKit.handleInput(time, pointer, mouseX, mouseY);
     } else if (this.elementId === 'conquest') {
       this.conquestKit.handleInput(time, pointer, mouseX, mouseY);
     } else if (this.elementId === 'passion') {
@@ -11840,7 +11930,9 @@ export class ArenaScene extends Phaser.Scene {
       // Clay's Slipstream (F+) banks dashes: a stored charge is the gate rather than the cooldown.
       && ((this.playerIs('clay') && this.hasUpgrade('f')) ? this.clayKit.hasSlipstreamCharge('player') : !this.dodgeOnCooldown)
       && !this.isDodging && !this.clayKit.isLeaping('player') && !this.nukeChanneling && !this.cardSluggishDisableDodge && !this.silenceKit.isPlayerControlLost() && time >= this.player.highGravityUntil
-      && time >= this.player.mobilityBlockedUntil) {
+      && time >= this.player.mobilityBlockedUntil
+      // Savor's Sugar Diffusion: low blood sugar takes the dodge away just after an ability.
+      && time >= this.player.savorNoDodgeUntil) {
       let dx = (this.dKey.isDown ? 1 : 0) - (this.aKey.isDown ? 1 : 0);
       let dy = (this.sKey.isDown ? 1 : 0) - (this.wKey.isDown ? 1 : 0);
       if (dx === 0 && dy === 0) {
@@ -12083,6 +12175,8 @@ export class ArenaScene extends Phaser.Scene {
       npcStringHexShot: this.stringKit.npcStringHexShot(),
       npcStringPuppetShot: this.stringKit.npcStringPuppetShot(),
       npcStringTombReady: this.stringKit.npcStringTombReady(),
+      npcStringSpooling: this.stringKit.npcStringSpooling(),
+      npcStringPuppetPlay: this.stringKit.npcStringPuppetPlay(),
       // Ink: busy hands, a helpless target to wind a long bounce or the anvil on, a peel lane,
       // where to walk (the hungry anvil, or out through the foam), and when Foux World is worth it.
       npcInkBusy: this.inkKit.npcBusy(),
@@ -12274,12 +12368,14 @@ export class ArenaScene extends Phaser.Scene {
       npcBindSiphonAim: this.bindKit.npcSiphonAim() ?? undefined,
       npcBindIdolSlot: this.bindKit.npcIdolSlot() ?? undefined,
       // Slime: the bot's whole decision surface is what its one hand is currently able to do.
-      npcGumHandless: this.gumKit.isHandless('npc'),
-      npcGumBalls: this.gumKit.ballsReady('npc'),
-      npcGumAbsorbArmed: this.gumKit.isAbsorbArmed('npc'),
-      npcGumTargetEncased: this.gumKit.isTargetEncased('npc'),
-      npcGumOobleckSlot: this.gumKit.npcOobleckSlot(),
-      npcGumSlabSoft: this.gumKit.npcSlabSoft(),
+      npcSavorForm: this.savorKit.npcForm(),
+      npcSavorAiming: this.savorKit.npcAiming(),
+      npcSavorRacing: this.savorKit.npcRacing(),
+      npcSavorLoanLive: this.savorKit.npcLoanLive(),
+      npcSavorWound: this.savorKit.npcWound(),
+      npcSavorStacks: this.savorKit.npcStacks(),
+      npcSavorCandies: this.savorKit.npcCandiesOut(),
+      npcSavorTargetDrained: this.savorKit.npcTargetDrained(),
     };
 
     // ── World Shift steering ──────────────────────────────────────
@@ -12288,7 +12384,7 @@ export class ArenaScene extends Phaser.Scene {
     // a lava river it belongs on. Written here, one line before the decision, so
     // it is always this frame's answer.
     if (this.secretMapKit.mapId) {
-      aiState.mapSeekPoint = this.secretMapKit.seekPointFor(this.npc);
+      aiState.mapSeekPoint = this.secretMapKit.seekPointFor(this.npc) ?? this.islesKit?.npcSeekPoint() ?? null;
       const band = this.secretMapKit.avoidBand();
       if (band) {
         aiState.mapAvoidBandX = band.x;
@@ -12533,6 +12629,7 @@ export class ArenaScene extends Phaser.Scene {
     // The opponent's half of the same pull. Split from the player's because the
     // two multipliers are consumed at different points in the frame.
     if (this.secretMapKit.mapId) this.npcSpeedMult *= this.secretMapKit.speedMultFor(this.npc);
+    if (this.isles && this.islesKit) this.npcSpeedMult *= this.islesKit.getNpcSpeedMult();
 
     // ── Post-AI NPC velocity multiplier ──────────────────────────
     if (this.npcNukeChanneling) {
@@ -12642,9 +12739,9 @@ export class ArenaScene extends Phaser.Scene {
     // only thing that hands any of them back. Both early-out themselves.
     this.radiationKit.update(time, delta);
     this.bindKit.update(time, delta);
-    // Unconditional for the same reason Bind is: gum shells, wall glue, a swallowed shot and a
+    // Unconditional for the same reason Bind is: candies, loans, drained bodies and a Salt Crash
     // pile of slimeballs all outlive the slime that made them. It early-outs itself.
-    this.gumKit.update(time, delta);
+    this.savorKit.update(time, delta);
     if (this.playerIs('conquest') || this.npcElement.id === 'conquest') {
       this.conquestKit.update(time, delta);
     }
@@ -12853,10 +12950,6 @@ export class ArenaScene extends Phaser.Scene {
       } else if (entry.abilityId === 'rags-to-riches') {
         // Paid for with the whole purse: the bar stops short of full until there are 20 gold.
         entry.fill.setSize(entry.maxWidth * this.fortuneKit.getRagsCooldownRatio(), entry.fill.height);
-      } else if (entry.abilityId === 'oobleck') {
-        // A slab that is standing counts its own life down — the cooldown is not what you are
-        // waiting on while you still have cover — so the kit decides what the bar is showing.
-        entry.fill.setSize(entry.maxWidth * this.gumKit.getOobleckCooldownRatio(time), entry.fill.height);
       } else if (entry.abilityId.startsWith('dream-')) {
         // Sandmen's card is the magazine (or the reload), not a 125ms cooldown — the kit owns it.
         entry.fill.setSize(entry.maxWidth * this.dreamKit.getBarRatio(entry.abilityId, time), entry.fill.height);
@@ -13027,6 +13120,7 @@ export class ArenaScene extends Phaser.Scene {
     if (!this.gameEnded) {
       this.formatKit?.update(time, delta);
       this.gimmickKit?.update(time, delta);
+      if (this.isles) this.islesKit?.update(time, delta);
     }
   }
 
@@ -13308,7 +13402,7 @@ export class ArenaScene extends Phaser.Scene {
     const kits: FormRevertTarget[] = [
       this.huntKit, this.justiceKit, this.earthKit, this.fireKit, this.clayKit,
       this.magnetKit, this.slimeKit, this.lightKit, this.silenceKit, this.magicKit,
-      this.sandKit, this.gumKit, this.creationKit, this.growthKit, this.illusionKit, this.psychicKit,
+      this.sandKit, this.creationKit, this.growthKit, this.illusionKit, this.psychicKit,
       this.clothKit,
     ];
     const broken: string[] = [];

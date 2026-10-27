@@ -313,11 +313,11 @@ export const ELEMENT_PROFILES: Record<string, ElementProfile> = {
     blurb: 'Turn grass, blood and floor into gold, then spend it ten at a time on making yourself stronger.',
     complexity: 4,
   },
-  // `gum` is Slime — Acid holds the `slime` id.
+  // `gum` is Savor — Acid/Venom holds the `slime` id.
   gum: {
-    archetype: 'Grabber',
-    blurb: 'Your hand is the hitbox. Grab them, ooze across the floor, and zip along your own trails.',
-    complexity: 3,
+    archetype: 'Shapeshifter',
+    blurb: 'Dodge to flip between Sugar and Salt. Eat candies for permanent buffs, lend them out, then salt the wound.',
+    complexity: 5,
   },
   gluttony: {
     archetype: 'Juggernaut',

@@ -231,6 +231,16 @@ export const ELEMENT_FORM_TABS: Record<string,
       hint: 'Hybrid form needs the Q+ upgrade. The beast seizes the controls every 10s.',
     },
   ],
+  gum: [
+    {
+      label: '🍬 SUGAR', accent: 0xff5f9e, text: '#ffb8d4',
+      hint: 'Every match starts in Sugar. Space dodges and flips you to Salt.',
+    },
+    {
+      label: '🧂 SALT', accent: 0xaab7c2, text: '#e8eef2',
+      hint: 'Space dodges and flips you back to Sugar. Candy buffs carry across both.',
+    },
+  ],
   justice: [
     {
       label: '⚖️ GROUND', accent: 0xc9a13a, text: '#f0d68a',
@@ -260,8 +270,8 @@ export const VAULT_ELEMENTS: ElementDef[] = [
   { id: 'passion', name: 'Devotion', emoji: '🙏', color: 0xf5e08a, available: true },
   { id: 'death', name: 'Death', emoji: '⚰️', color: 0x4a4468, available: true },
   { id: 'fortune', name: 'Gold', emoji: '🪙', color: 0xd8a531, available: true },
-  // Slime keeps the id `gum` — `slime` still belongs to Acid, which kept the old name's slot.
-  { id: 'gum', name: 'Slime', emoji: '🫠', color: 0x46b93f, available: true },
+  // Savor keeps the id `gum` (the slot was Slime's) — `slime` still belongs to Acid/Venom.
+  { id: 'gum', name: 'Savor', emoji: '🍬', color: 0xf7b2d0, available: true },
   { id: 'gluttony', name: 'Wood', emoji: '🌳', color: 0xd9d3c3, available: true },
 ];
 

@@ -1,0 +1,663 @@
+import type Phaser from 'phaser';
+import type { Fighter } from '../entities/Fighter';
+import type { BossToolkit } from '../boss/framework/BossToolkit';
+import type { ItemEffect } from '../data/Items';
+
+/**
+ * The Ten Isles — every shape the campaign's data is written in.
+ *
+ * Content (areas, courts, encounters, quests, items, fish) is pure data in these shapes, plus
+ * three kinds of code a def may carry: an area's painter, an encounter's gimmick factory and an
+ * item's script. The engine (`IsleWorldScene`, `IslesFightKit`) reads nothing else. See
+ * `docs/ten-isles.md` for the world itself.
+ */
+
+export interface Pt { x: number; y: number }
+export interface Rect { x: number; y: number; w: number; h: number }
+
+// ── World state queries ────────────────────────────────────────────────
+
+/**
+ * A question about the save, used to pick dialogue, gate exits and show/hide things. Every
+ * NPC line set, exit and POI may carry one; the engine answers it through `IslesSave.test`.
+ */
+export type Cond =
+  | { prince: string }
+  | { monarch: string }
+  | { encounter: string }
+  /** All five of a court's encounters won (the prince's gate opens). */
+  | { courtReady: string }
+  /** The quest has been accepted. With `stage`, it has reached at least that stage. */
+  | { quest: string; stage?: number }
+  | { questDone: string }
+  | { flag: string }
+  | { item: string; count?: number }
+  | { princesOfIsle: string; count: number }
+  | { not: Cond }
+  | { all: Cond[] }
+  | { any: Cond[] };
+
+// ── People ─────────────────────────────────────────────────────────────
+
+export type NpcHat =
+  | 'none' | 'cap' | 'tophat' | 'hood' | 'helmet' | 'crown' | 'bandana' | 'chef' | 'wizard'
+  | 'tricorn' | 'beanie' | 'veil' | 'goggles' | 'straw' | 'mitre' | 'candle'
+  /** A brass diving helmet with a round faceplate (the face shows through the glass). */
+  | 'diving'
+  /** An oilskin sou'wester — the fisher's rain hat, brim longer at the back. */
+  | 'souwester';
+
+export type NpcTrait =
+  | 'apron' | 'beard' | 'cane' | 'satchel' | 'pipe' | 'scarf' | 'glasses' | 'eyepatch'
+  | 'lantern' | 'pack' | 'brand' | 'bandage' | 'rod' | 'book' | 'tool' | 'mask';
+
+export interface NpcLook {
+  /** Body colour. */
+  body: number;
+  /** Clothes / hat colour. */
+  accent: number;
+  /** Hands + small details. Defaults to a darker body. */
+  hand?: number;
+  hat?: NpcHat;
+  traits?: NpcTrait[];
+  /** 0.7 (a child) – 1.4 (a big lad). Default 1. */
+  size?: number;
+  /** Eye colour — default near-white. */
+  eye?: number;
+}
+
+/** One block of dialogue, shown when `when` holds. A def lists them most-specific first. */
+export interface Talk {
+  when?: Cond;
+  lines: string[];
+  /** Set this save flag when the block finishes playing. */
+  sets?: string;
+}
+
+export type NpcRole = 'shop' | 'bakery' | 'dock' | 'tackle' | 'banker';
+
+export interface NpcDef {
+  id: string;
+  name: string;
+  /** "Ember Merchant", shown under the name plate. */
+  title?: string;
+  look: NpcLook;
+  at: Pt;
+  /** Strolls within this radius of `at`. 0 / absent: stands still. */
+  wander?: number;
+  /** Only present while this holds (e.g. hiding until their prince falls). */
+  present?: Cond;
+  talks: Talk[];
+  /** Counter this NPC keeps: E opens it after the talk. Id of the shop / bakery / dock. */
+  role?: { kind: NpcRole; id: string };
+  /** Ambient lines they mutter when you walk by, per state (first matching wins). */
+  barks?: Talk[];
+}
+
+/**
+ * The isle's wanderer — one character per isle who follows you from area to area with a large
+ * pool of state-keyed dialogue. Placed by the engine near the player's entry point.
+ */
+export interface WandererDef {
+  id: string;
+  name: string;
+  title: string;
+  look: NpcLook;
+  /** Lines per area id (and optional state). First matching block for the current area wins. */
+  byArea: Record<string, Talk[]>;
+  /** Fallback lines anywhere, by state. */
+  general: Talk[];
+}
+
+// ── Quests ─────────────────────────────────────────────────────────────
+
+export type QuestObjective =
+  /** Talk to an NPC; they say `lines`. */
+  | { kind: 'talk'; npc: string; lines: string[] }
+  | { kind: 'defeat'; encounter: string }
+  /**
+   * The quest's own fight: `foe` stands at `foe.at` in `area` only while this stage is live, and
+   * beating them moves the quest on. Not a court champion — it never counts toward the prince's
+   * gate. `foe.gimmick` may name any registered gimmick, or '' for a straight fight.
+   */
+  | { kind: 'duel'; area: string; foe: EncounterDef }
+  | { kind: 'prince'; prince: string }
+  /** Land `count` of a fish (any caught after the stage begins). */
+  | { kind: 'fish'; fish: string; count: number }
+  /** Hand `count` of an item to an NPC (taken from the inventory). */
+  | { kind: 'deliver'; npc: string; item: string; count: number; lines: string[] }
+  /** Pick up quest-only pickups the engine spawns at these spots while the stage is live. */
+  | { kind: 'collect'; area: string; spots: Pt[]; label: string; emoji: string; color: number }
+  /** Walk to a place. */
+  | { kind: 'visit'; area: string; at: Pt; r: number; label: string }
+  /** Have a bakery make this recipe. */
+  | { kind: 'cook'; recipe: string };
+
+export interface QuestStage {
+  objective: QuestObjective;
+  /** Tracker text, e.g. "Find 4 lost bellows-pins in the Boilerworks yard". */
+  hint: string;
+}
+
+export interface QuestDef {
+  id: string;
+  /** Area whose tracker groups it. */
+  area: string;
+  name: string;
+  giver: string;
+  /** Only offered while this holds. */
+  requires?: Cond;
+  /** Giver's pitch. The last line is followed by an Accept / Not now choice. */
+  offer: string[];
+  /** Said on accept. */
+  accept: string[];
+  stages: QuestStage[];
+  /** Said by the giver on turn-in (always the final beat). */
+  complete: string[];
+  reward: { orbs: number; coins?: number; item?: string; itemCount?: number };
+}
+
+// ── Places ─────────────────────────────────────────────────────────────
+
+export type Solid =
+  | { kind: 'rect'; x: number; y: number; w: number; h: number }
+  | { kind: 'circle'; x: number; y: number; r: number };
+
+export type Side = 'n' | 's' | 'e' | 'w';
+
+/**
+ * A road off the edge of the map. The engine draws the gate, makes the 140px strip at the edge
+ * walkable-into, and lands you at the *opposite* gate of `to` (its exit whose `to` is this area),
+ * so two areas only have to agree on which sides face each other.
+ */
+export interface AreaExit {
+  side: Side;
+  to: string;
+  /** Position along the edge, px from the top/left. Default: the middle. Keep it clear of solids. */
+  at?: number;
+  label: string;
+  /** Closed (a barricade + reason) unless this holds. */
+  open?: Cond;
+  lockedText?: string;
+}
+
+/** Everything placed in an area that you can walk up to and press E on. */
+export type Poi =
+  | { kind: 'encounter'; id: string }
+  | { kind: 'prince'; id: string; at: Pt }
+  | { kind: 'monarch'; id: string; at: Pt }
+  | { kind: 'waystone'; at: Pt }
+  | { kind: 'sign'; at: Pt; text: string }
+  | { kind: 'chest'; id: string; at: Pt; coins?: number; item?: string; orbs?: number; open?: Cond }
+  /** A door into another area that is not an edge exit (a dungeon, a cellar). */
+  | { kind: 'door'; at: Pt; to: string; arrive: Pt; label: string; open?: Cond; lockedText?: string }
+  /** Fishing water. Cast from anywhere within `reach` of the shape. */
+  | { kind: 'water'; id: string; shape: Rect; fishery: string }
+  /** The dock's mooring — where `SeaVoyageScene` starts from. */
+  | { kind: 'mooring'; at: Pt; isle: string }
+  /** Pull it to set `flag` (opens the gates that wait on it). One-way. */
+  | { kind: 'lever'; at: Pt; flag: string; label: string };
+
+/**
+ * Dungeon dangers in the walkable world. There is no health out here: a hazard that catches
+ * you throws you back to the last checkpoint you passed, scorched and a little embarrassed.
+ */
+export type WorldHazard =
+  /** A timed jet over a rect: lethal while on. `offsetMs` staggers rows of them. */
+  | { kind: 'jet'; rect: Rect; periodMs: number; onMs: number; offsetMs?: number; color?: number }
+  /** An arm of fire sweeping round a pivot. */
+  | { kind: 'sweeper'; x: number; y: number; length: number; radPerSec: number; phase?: number; color?: number }
+  /** Pushes you along while you stand on it. `look` 'current' draws moving water instead of a belt. */
+  | { kind: 'conveyor'; rect: Rect; vx: number; vy: number; look?: 'belt' | 'current' }
+  /** A floor that is safe only while `open` holds (e.g. a quenched channel). */
+  | { kind: 'floor'; rect: Rect; safeWhen: Cond; color?: number };
+
+/** A wall that disappears once `open` holds (a lever's flag, a key spent, a prince down). */
+export interface WorldGate {
+  rect: Rect;
+  open: Cond;
+  look: 'portcullis' | 'grate' | 'wax' | 'rubble' | 'barrier' | 'ice' | 'coral' | 'sluice';
+  label?: string;
+}
+
+/** Static and animated drawing for an area. Bespoke per area — this is where courts look different. */
+export interface AreaPainter {
+  /** Drawn once into a baked texture under everything. */
+  ground(g: Phaser.GameObjects.Graphics, rng: () => number): void;
+  /**
+   * Y-sorted set pieces (buildings, trees, machines): each one is drawn once into its own
+   * graphics at depth `y`, so the player walks in front of or behind it.
+   */
+  pieces?: { x: number; y: number; w: number; h: number; draw: (g: Phaser.GameObjects.Graphics, rng: () => number) => void }[];
+  /**
+   * Per-frame ambient animation in world space (lava glow, steam, candle flames). Called only
+   * for parts on screen: `view` is the camera rect. Drawn above the ground, below actors.
+   */
+  animate?(g: Phaser.GameObjects.Graphics, t: number, view: Rect): void;
+  /** Like `animate` but drawn over actors (smoke, falling ash, canopy). */
+  animateOver?(g: Phaser.GameObjects.Graphics, t: number, view: Rect): void;
+}
+
+/**
+ * Ambient particles over an area. `spray` is sea spray blown in off the breakers, `fog` slow
+ * banks of sea mist, `bubbles` rising air (underwater places), `ink` drifting black flecks.
+ */
+export type WeatherKind = 'none' | 'ash' | 'embers' | 'steam' | 'smoke' | 'sparks' | 'wax' | 'rain' | 'snow' | 'motes'
+  | 'spray' | 'fog' | 'bubbles' | 'ink';
+
+export interface AreaDef {
+  id: string;
+  isle: string;
+  /** Court this area belongs to, if any. */
+  court?: string;
+  name: string;
+  subtitle: string;
+  w: number;
+  h: number;
+  /** Ground colour — the camera background outside the painted world. */
+  bg: number;
+  /** Tint for the screen-edge grade + minimap accent. */
+  accent: number;
+  weather: WeatherKind;
+  music?: string;
+  spawn: Pt;
+  painter: AreaPainter;
+  solids: Solid[];
+  exits: AreaExit[];
+  pois: Poi[];
+  npcs: NpcDef[];
+  /** Wandering townsfolk with ambient chatter. */
+  crowd?: { count: number; looks: NpcLook[]; paths: Pt[][]; barks: Talk[] };
+  /** Darkness 0–1 over the whole area (dungeons). */
+  gloom?: number;
+  hazards?: WorldHazard[];
+  gates?: WorldGate[];
+  /** Respawn points for hazards; the last one you walked within 60px of is used. */
+  checkpoints?: Pt[];
+}
+
+// ── Fights ─────────────────────────────────────────────────────────────
+
+export interface EncounterDef {
+  id: string;
+  court: string;
+  /** The fight's name — "Ember Tithe". */
+  name: string;
+  foeName: string;
+  foeElement: string;
+  /** 1–5, the bot preset. */
+  difficulty: number;
+  /** Multiplier on the foe's HP. Default 1. */
+  hpMult?: number;
+  gimmick: string;
+  /** Where the champion stands in the court. */
+  at: Pt;
+  look: NpcLook;
+  /** Said when you walk up, before the fight card. */
+  challenge: string[];
+  /** Said after you beat them (in the world, next visit). */
+  beaten: string[];
+  coins: number;
+  /** Set by the registry on a quest's duel foe: the quest it belongs to. */
+  quest?: string;
+}
+
+/** What a gimmick may touch. Built per fight by `IslesFightKit`. */
+export interface GimmickCtx {
+  scene: Phaser.Scene;
+  W: number;
+  H: number;
+  /** Hazard engine with the foe as its "boss" — bullets, zones, lanes, rings, pools… */
+  tk: BossToolkit;
+  player: Fighter;
+  npc: Fighter;
+  /** Top of the playfield (the HUD owns the strip above). */
+  top: number;
+  hard: boolean;
+  /** Seeded per fight. */
+  rng: () => number;
+  /** Damage either fighter through the right chokepoint. */
+  hit(f: Fighter, amount: number, x?: number, y?: number): void;
+  heal(f: Fighter, amount: number): void;
+  /** Positional shove, clamped to the arena. Never a velocity write. */
+  nudge(f: Fighter, dx: number, dy: number): void;
+  /** A real stun: no moving, no casting, shown on the status tray. Unstoppable fighters shrug it off. */
+  stun(f: Fighter, ms: number): void;
+  /** Held in place, but free to cast. */
+  root(f: Fighter, ms: number): void;
+  /** Basic attack only — every other key is locked. */
+  silence(f: Fighter, ms: number): void;
+  float(x: number, y: number, text: string, color: string): void;
+  flash(x: number, y: number, color: number): void;
+  /** A banner across the middle of the arena for big moments ("DRAW!"). */
+  banner(text: string, color?: string): void;
+  sfx(name: string): void;
+  /** Win the fight outright (rare — survival-style rules). */
+  victory(): void;
+}
+
+export interface EncounterGimmick {
+  /** `time` is scene ms; `dt` is SECONDS. */
+  update(time: number, dt: number): void;
+  drawGround?(g: Phaser.GameObjects.Graphics, time: number): void;
+  drawAir?(g: Phaser.GameObjects.Graphics, time: number): void;
+  /** Screen-space HUD for the rule (meters, pips). Drawn above everything. */
+  drawHud?(g: Phaser.GameObjects.Graphics, time: number): void;
+  /** Multipliers pulled every frame (never written onto the fighters). */
+  playerSpeedMult?(): number;
+  npcSpeedMult?(): number;
+  /** Damage *taken* multiplier per side, pulled every frame. */
+  playerTakenMult?(): number;
+  npcTakenMult?(): number;
+  /** Where the bot should go to play the rule (a lamp to snuff, an ember to grab). */
+  npcSeek?(): Pt | null;
+  onPlayerHurt?(amount: number): void;
+  onNpcHurt?(amount: number): void;
+  destroy?(): void;
+}
+
+export interface GimmickDef {
+  id: string;
+  /** Short rule text on the fight card — what the player needs to know. */
+  rules: string;
+  make(ctx: GimmickCtx): EncounterGimmick;
+}
+
+/** The arena floor for a court's fights, painted once under everything. */
+export type ArenaFloor = (g: Phaser.GameObjects.Graphics, W: number, H: number, rng: () => number) => void;
+
+// ── Items ──────────────────────────────────────────────────────────────
+
+export type IsleItemKind = 'charm' | 'food' | 'artifact' | 'fish' | 'material' | 'rod' | 'key';
+
+export interface IsleItemDef {
+  id: string;
+  name: string;
+  emoji: string;
+  kind: IsleItemKind;
+  /** Shop price in coins (absent: not sold). */
+  price?: number;
+  /** What a shop pays you for one. */
+  sell?: number;
+  flavor: string;
+  /** Plain stats + generic triggered behaviours (see Items.ts). */
+  effect?: ItemEffect;
+  /** Bespoke runtime behaviour — id into `ITEM_SCRIPTS`. */
+  script?: string;
+  /** Hand-written lines for what the script does (stat lines are generated). */
+  scriptText?: string[];
+  /** Isle the item belongs to (journal grouping). */
+  isle: string;
+}
+
+export interface ItemScriptCtx {
+  scene: Phaser.Scene;
+  W: number;
+  H: number;
+  player: Fighter;
+  npc: Fighter;
+  rng: () => number;
+  hit(f: Fighter, amount: number, x?: number, y?: number): void;
+  heal(f: Fighter, amount: number): void;
+  float(x: number, y: number, text: string, color: string): void;
+  flash(x: number, y: number, color: number): void;
+  sfx(name: string): void;
+  /** Slot of an ability id for the player's element: 'click' | 'e' | 'r' | 'f' | 'q'. */
+  slotOf(abilityId: string): string | null;
+  /** Shave time off one of the player's cooldowns. */
+  refund(abilityId: string, ms: number): void;
+  /** Temporary multiplier on damage the *foe* takes (i.e. your damage), stacked by the kit. */
+  boostDamage(mult: number, ms: number): void;
+  /** Temporary multiplier on the player's speed. */
+  boostSpeed(mult: number, ms: number): void;
+}
+
+export interface ItemScript {
+  /** `time` is scene ms; `dt` is SECONDS. */
+  update?(time: number, dt: number): void;
+  onHitDealt?(amount: number): void;
+  onHitTaken?(amount: number): void;
+  onCast?(abilityId: string, slot: string | null): void;
+  drawGround?(g: Phaser.GameObjects.Graphics, time: number): void;
+  drawAir?(g: Phaser.GameObjects.Graphics, time: number): void;
+}
+
+export type ItemScriptFactory = (ctx: ItemScriptCtx) => ItemScript;
+
+export interface ShopDef {
+  id: string;
+  name: string;
+  stock: string[];
+  /** Buys fish / materials at their `sell` price. */
+  buys?: boolean;
+}
+
+export interface RecipeDef {
+  id: string;
+  name: string;
+  inputs: { item: string; count: number }[];
+  coins: number;
+  output: string;
+  /** How many the oven turns out. Default 1. */
+  makes?: number;
+}
+
+export interface BakeryDef {
+  id: string;
+  name: string;
+  recipes: RecipeDef[];
+}
+
+// ── Fishing ────────────────────────────────────────────────────────────
+
+export interface FishDef {
+  /** Item id — a fish is an `IsleItemDef` of kind 'fish' with the same id. */
+  id: string;
+  fisheries: string[];
+  /** Relative weight in its fisheries. */
+  weight: number;
+  /** 1 (lazy) – 5 (thrashing): how hard the reel is. */
+  fight: number;
+  /** Size range in cm for the log. */
+  size: [number, number];
+  /** Rod needed (by id). Absent: any rod. */
+  rod?: string;
+  /** Only bites at night / in the rain, etc. — flavour gating via a Cond. */
+  when?: Cond;
+}
+
+export interface FisheryDef {
+  id: string;
+  name: string;
+  /** Water look for the bobber splash. */
+  kind: 'sea' | 'lava' | 'pond' | 'wax' | 'steam' | 'oil' | 'ice' | 'ink' | 'abyss';
+}
+
+export interface RodDef {
+  id: string;
+  name: string;
+  /** Widens the catch bar. */
+  control: number;
+  /** Fisheries kinds it can survive. */
+  kinds: FisheryDef['kind'][];
+}
+
+// ── Genes ──────────────────────────────────────────────────────────────
+
+export type GeneSlot = 'click' | 'e' | 'r' | 'f' | 'q';
+
+/**
+ * What a gene grants per level. Stats ride the item engine; `onCast` rules are the gene's
+ * element-specific half — they fire when that slot's ability is cast.
+ */
+export interface GeneGrant {
+  effect?: ItemEffect;
+  onCast?: {
+    slot: GeneSlot;
+    /** Damage-taken multiplier on the foe for `ms` after the cast (your damage up). */
+    damageMult?: number;
+    speedMult?: number;
+    ms?: number;
+    heal?: number;
+    shield?: number;
+    /** Shave ms off every *other* slot's cooldown. */
+    refundOthers?: number;
+    /** Chance to refund this slot outright. */
+    refundSelfChance?: number;
+    /** Burst of damage around the player. */
+    burst?: { damage: number; radius: number };
+  };
+}
+
+export interface GeneNode {
+  id: string;
+  name: string;
+  /** Tier row 0..4; tier 4 is Enlightened. */
+  tier: number;
+  /** Column 0..2 within the row (layout). */
+  col: number;
+  /** Ids that must have ≥1 level first. */
+  needs: string[];
+  /** Plain-language line per level ("+4% damage"), generated if absent. */
+  text: string;
+  maxLevel: number;
+  /** Orb price for level n (1-based). */
+  cost(level: number): number;
+  /** What the node grants at a level. */
+  grant(level: number): GeneGrant;
+  /** Mastery: bought once after max level. */
+  mastery?: { name: string; text: string; cost: number; grant: GeneGrant };
+  /** Enlightened: levels forever. */
+  infinite?: boolean;
+}
+
+export interface GeneTree {
+  element: string;
+  /** The tree's name — "Hearthblood". */
+  name: string;
+  nodes: GeneNode[];
+}
+
+// ── Sea ────────────────────────────────────────────────────────────────
+
+export interface BoatDef {
+  id: string;
+  name: string;
+  price: number;
+  hull: number;
+  speed: number;
+  /** Turn rate. */
+  handling: number;
+  /** Cargo — loot multiplier. */
+  hold: number;
+  /** Simple silhouette params for the sea scene. */
+  len: number;
+  sails: number;
+  color: number;
+}
+
+export interface DockUpgradeDef {
+  id: string;
+  name: string;
+  text: string;
+  prices: number[];
+}
+
+export interface UberDef {
+  id: string;
+  isle: string;
+  name: string;
+  text: string;
+  /** Sea beast that drops it. */
+  beast: string;
+}
+
+// ── Registry entries ───────────────────────────────────────────────────
+
+export interface CourtDef {
+  id: string;
+  isle: string;
+  element: string;
+  name: string;
+  /** `artifact` is the item id the prince drops (kind 'artifact', defined in the court's items). */
+  prince: { id: string; name: string; title: string; artifact: string };
+  /** 1 (first court) – 4 (last): drives difficulty labels and the map's suggested order. */
+  tier: number;
+  /** Area id. */
+  area: string;
+  floor: ArenaFloor;
+  encounters: EncounterDef[];
+  quests: QuestDef[];
+  /** Hex accent for HUD and map. */
+  color: number;
+}
+
+export interface IsleDef {
+  id: string;
+  name: string;
+  element: string;
+  monarch: { id: string; name: string; title: string; artifact: string };
+  courts: string[];
+  /** Dock area id — where boats land. */
+  port: string;
+  color: number;
+  /** Position on the sea chart, 0–1. */
+  chart: Pt;
+}
+
+/** What rides ArenaScene's `isles` payload. */
+export interface IslesFightPayload {
+  slot: number;
+  kind: 'encounter' | 'prince' | 'monarch' | 'warden';
+  /** Encounter id, prince id or monarch id. */
+  id: string;
+  court?: string;
+  /** Where to put the player back. */
+  area: string;
+  pos: Pt;
+  hard: boolean;
+}
+
+/** Everything one court contributes. Each court folder exports one of these. */
+export interface CourtBundle {
+  court: CourtDef;
+  area: AreaDef;
+  gimmicks: GimmickDef[];
+  /** The prince. `worldId` must be `isle:<prince id>`. */
+  boss: import('../boss/framework/BossDefs').WorldBossDef;
+  items: IsleItemDef[];
+  scripts: Record<string, ItemScriptFactory>;
+  shops: ShopDef[];
+  bakeries?: BakeryDef[];
+  fish?: FishDef[];
+  fisheries?: FisheryDef[];
+}
+
+/** Everything one isle contributes. */
+export interface IsleBundle {
+  isle: IsleDef;
+  wanderer: WandererDef;
+  courts: CourtBundle[];
+  /** Non-court areas: the port, the dungeon. */
+  areas: AreaDef[];
+  /** Isle-level quests (port, dungeon). */
+  quests: QuestDef[];
+  /** Dungeon wardens and other non-court fights. */
+  encounters: EncounterDef[];
+  gimmicks: GimmickDef[];
+  /** Monarch (+ anything else). `worldId` = `isle:<id>`. */
+  bosses: import('../boss/framework/BossDefs').WorldBossDef[];
+  items: IsleItemDef[];
+  scripts: Record<string, ItemScriptFactory>;
+  shops: ShopDef[];
+  bakeries: BakeryDef[];
+  fish: FishDef[];
+  fisheries: FisheryDef[];
+  rods: RodDef[];
+  genes: GeneTree[];
+  ubers: UberDef[];
+  /** Floor for non-court fights (dungeon wardens, the monarch). */
+  floors: Record<string, ArenaFloor>;
+}
+
+export type { ItemEffect };

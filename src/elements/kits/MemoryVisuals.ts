@@ -39,6 +39,11 @@ export const MEMORY = {
 
 export type MemoryColorFn = ColorFn;
 
+/** The three tones a block of static is made of. Plain static is grey; Salt in the Wound's is red. */
+export interface StaticPalette { lo: number; mid: number; hi: number }
+export const GREY_STATIC: StaticPalette = { lo: MEMORY.staticLo, mid: MEMORY.staticMid, hi: MEMORY.staticHi };
+export const RED_STATIC: StaticPalette = { lo: MEMORY.redDark, mid: MEMORY.red, hi: MEMORY.redHot };
+
 /** A cheap seeded random, so a static pattern holds still for one flicker and then changes. */
 export function seeded(seed: number): () => number {
   let s = Math.floor(Math.abs(seed) * 9301 + 49297) % 233280;
@@ -61,10 +66,11 @@ function flick(t: number, seed: number): number {
 export function staticRect(
   g: Phaser.GameObjects.Graphics, tint: ColorFn,
   x: number, y: number, w: number, h: number, t: number, alpha: number, cell = 4, seed = 0,
+  pal: StaticPalette = GREY_STATIC,
 ): void {
   if (alpha <= 0.01 || w <= 0 || h <= 0) return;
   const rnd = seeded(flick(t, seed + x * 0.013 + y * 0.029));
-  g.fillStyle(tint(MEMORY.staticLo), alpha * 0.92);
+  g.fillStyle(tint(pal.lo), alpha * 0.92);
   g.fillRect(x, y, w, h);
   const cols = Math.max(1, Math.ceil(w / cell));
   const rows = Math.max(1, Math.ceil(h / cell));
@@ -74,7 +80,7 @@ export function staticRect(
       if (v < 0.42) continue;
       const cw = Math.min(cell, w - c * cell);
       const ch = Math.min(cell, h - r * cell);
-      g.fillStyle(tint(v > 0.8 ? MEMORY.staticHi : MEMORY.staticMid), alpha * (v > 0.8 ? 0.95 : 0.7));
+      g.fillStyle(tint(v > 0.8 ? pal.hi : pal.mid), alpha * (v > 0.8 ? 0.95 : 0.7));
       g.fillRect(x + c * cell, y + r * cell, cw, ch);
     }
   }
@@ -83,7 +89,7 @@ export function staticRect(
   const by0 = Math.max(y, barY);
   const by1 = Math.min(y + h, barY + Math.max(2, h * 0.18));
   if (by1 > by0) {
-    g.fillStyle(tint(MEMORY.staticHi), alpha * 0.35);
+    g.fillStyle(tint(pal.hi), alpha * 0.35);
     g.fillRect(x, by0, w, by1 - by0);
   }
 }
@@ -91,10 +97,11 @@ export function staticRect(
 /** Static in a disc — a body lost in it. */
 export function staticDisc(
   g: Phaser.GameObjects.Graphics, tint: ColorFn, x: number, y: number, r: number, t: number, alpha: number, cell = 4, seed = 0,
+  pal: StaticPalette = GREY_STATIC,
 ): void {
   if (alpha <= 0.01 || r <= 0) return;
   const rnd = seeded(flick(t, seed + 3.1));
-  g.fillStyle(tint(MEMORY.staticLo), alpha * 0.9);
+  g.fillStyle(tint(pal.lo), alpha * 0.9);
   g.fillCircle(x, y, r);
   const n = Math.ceil((2 * r) / cell);
   for (let i = 0; i < n; i++) {
@@ -104,7 +111,7 @@ export function staticDisc(
       if ((cx - x) * (cx - x) + (cy - y) * (cy - y) > (r - cell * 0.4) * (r - cell * 0.4)) continue;
       const v = rnd();
       if (v < 0.45) continue;
-      g.fillStyle(tint(v > 0.82 ? MEMORY.staticHi : MEMORY.staticMid), alpha * (v > 0.82 ? 0.9 : 0.65));
+      g.fillStyle(tint(v > 0.82 ? pal.hi : pal.mid), alpha * (v > 0.82 ? 0.9 : 0.65));
       g.fillRect(cx - cell / 2, cy - cell / 2, cell, cell);
     }
   }
@@ -112,7 +119,7 @@ export function staticDisc(
   for (let k = 0; k < 2; k++) {
     const ty = y - r + ((t * (0.7 + k * 0.45) + k * 0.5 + seed * 0.1) % 1) * 2 * r;
     const half = Math.sqrt(Math.max(0, r * r - (ty - y) * (ty - y)));
-    g.fillStyle(tint(MEMORY.staticHi), alpha * 0.4);
+    g.fillStyle(tint(pal.hi), alpha * 0.4);
     g.fillRect(x - half, ty, half * 2, 1.6);
   }
 }
@@ -315,6 +322,126 @@ export function staticEcho(
     g.fillStyle(tint(MEMORY.white), alpha * 0.9);
     g.fillEllipse(ex, ey, 6, 3.4);
   }
+}
+
+// ── Salt in the Wound (Q+) ───────────────────────────────────────────────────
+
+/** The arena's edge buried in red static: four bands along the walls, ragged on their inner side. */
+export function saltBorder(
+  g: Phaser.GameObjects.Graphics, tint: ColorFn,
+  left: number, top: number, w: number, h: number, band: number, t: number, alpha: number,
+): void {
+  if (alpha <= 0.01) return;
+  const cell = 8;
+  staticRect(g, tint, left, top, w, band, t, alpha, cell, 61, RED_STATIC);
+  staticRect(g, tint, left, top + h - band, w, band, t, alpha, cell, 62, RED_STATIC);
+  staticRect(g, tint, left, top + band, band, h - band * 2, t, alpha, cell, 63, RED_STATIC);
+  staticRect(g, tint, left + w - band, top + band, band, h - band * 2, t, alpha, cell, 64, RED_STATIC);
+  // The inner edge frays: torn red blocks reaching a little way into the floor.
+  const rnd = seeded(flick(t, 71));
+  const tear = (x: number, y: number, tw: number, th: number): void => {
+    g.fillStyle(tint(rnd() > 0.5 ? MEMORY.red : MEMORY.redDark), alpha * 0.6);
+    g.fillRect(x, y, tw, th);
+  };
+  for (let x = left + band; x < left + w - band; x += cell * 2) {
+    if (rnd() > 0.55) tear(x, top + band, cell, cell * (1 + Math.floor(rnd() * 2)));
+    if (rnd() > 0.55) { const d = cell * (1 + Math.floor(rnd() * 2)); tear(x, top + h - band - d, cell, d); }
+  }
+  for (let y = top + band; y < top + h - band; y += cell * 2) {
+    if (rnd() > 0.55) tear(left + band, y, cell * (1 + Math.floor(rnd() * 2)), cell);
+    if (rnd() > 0.55) { const d = cell * (1 + Math.floor(rnd() * 2)); tear(left + w - band - d, y, d, cell); }
+  }
+  g.lineStyle(2, tint(MEMORY.redHot), alpha * 0.5);
+  g.strokeRect(left + band, top + band, w - band * 2, h - band * 2);
+}
+
+/**
+ * A phantom: a corrupted element standing in the static. A red-static body with a ring of the
+ * element it used to be, broken into arcs that slip out of place; hollow white eyes on its
+ * target; one glove pulled back to throw (`throwK` 0→1 over the throw).
+ */
+export function saltPhantom(
+  g: Phaser.GameObjects.Graphics, tint: ColorFn,
+  x: number, y: number, color: number, aim: number, t: number, alpha: number, throwK: number, seed: number,
+): void {
+  if (alpha <= 0.01) return;
+  const r = 17;
+  // The body wavers: every so often the whole phantom tears sideways.
+  const slip = Math.sin(t * 29 + seed * 3) > 0.9 ? (Math.sin(seed * 7) > 0 ? 5 : -5) : 0;
+  const bx = x + slip;
+  g.fillStyle(tint(MEMORY.redDark), alpha * 0.35);
+  g.fillCircle(bx, y, r + 7);
+  staticDisc(g, tint, bx, y, r, t, alpha * 0.95, 4, 40 + seed, RED_STATIC);
+  // What is left of its element: arcs of its colour, each a little out of place.
+  const rnd = seeded(flick(t, 80 + seed));
+  for (let i = 0; i < 4; i++) {
+    const a0 = (i / 4) * TAU + t * 1.3 + seed;
+    const off = (rnd() - 0.5) * 6;
+    g.lineStyle(3, color, alpha * (0.55 + rnd() * 0.4));
+    g.beginPath();
+    g.arc(bx + off, y + (rnd() - 0.5) * 3, r + 2, a0, a0 + 1.0, false);
+    g.strokePath();
+  }
+  // Hollow eyes.
+  for (const side of [-1, 1]) {
+    const ex = bx + side * 6 + Math.cos(aim) * 2.5;
+    const ey = y - 4 + Math.sin(aim) * 2;
+    g.fillStyle(tint(MEMORY.white), alpha * 0.92);
+    g.fillEllipse(ex, ey, 6, 3.6);
+    g.fillStyle(tint(MEMORY.redDark), alpha);
+    g.fillCircle(ex + Math.cos(aim), ey, 1.1);
+  }
+  // The throwing glove: back over the shoulder, then whipped forward.
+  const k = Phaser.Math.Clamp(throwK, 0, 1);
+  const reach = k < 0.4 ? -10 * (k / 0.4) : -10 + 34 * easeOut((k - 0.4) / 0.6);
+  const hx = bx + Math.cos(aim + 0.6) * 12 + Math.cos(aim) * (k > 0 ? reach : 4);
+  const hy = y + Math.sin(aim + 0.6) * 12 + Math.sin(aim) * (k > 0 ? reach : 4);
+  g.fillStyle(tint(MEMORY.redDark), alpha);
+  g.fillCircle(hx, hy, 6);
+  g.fillStyle(tint(MEMORY.red), alpha);
+  g.fillCircle(hx, hy, 4.6);
+  if (k > 0 && k < 0.45) {
+    // The ball, forming in the glove.
+    staticDisc(g, tint, hx, hy, 5 + k * 6, t, alpha, 2, 90 + seed, RED_STATIC);
+  }
+}
+
+/** A speech bubble with nothing to say: a white outline, a tail, and red static where the words go. */
+export function staticBubble(
+  g: Phaser.GameObjects.Graphics, tint: ColorFn,
+  x: number, y: number, w: number, h: number, tailX: number, tailY: number, t: number, alpha: number, seed: number,
+): void {
+  if (alpha <= 0.01) return;
+  g.fillStyle(tint(MEMORY.ink), alpha * 0.9);
+  g.fillRoundedRect(x - w / 2, y - h / 2, w, h, 6);
+  // The tail, pointing back at whoever is speaking.
+  const bx = Phaser.Math.Clamp(tailX, x - w / 2 + 8, x + w / 2 - 8);
+  const by = tailY > y ? y + h / 2 : y - h / 2;
+  g.fillTriangle(bx - 6, by, bx + 6, by, tailX, tailY);
+  staticRect(g, tint, x - w / 2 + 4, y - h / 2 + 4, w - 8, h - 8, t, alpha, 3, seed, RED_STATIC);
+  g.lineStyle(2, tint(MEMORY.white), alpha * 0.95);
+  g.strokeRoundedRect(x - w / 2, y - h / 2, w, h, 6);
+  g.lineBetween(bx - 6, by, tailX, tailY);
+  g.lineBetween(bx + 6, by, tailX, tailY);
+}
+
+/** A ball of red static, thrown hard: a hot core and a string of afterimages fading behind it. */
+export function saltBall(
+  g: Phaser.GameObjects.Graphics, tint: ColorFn,
+  x: number, y: number, trail: ReadonlyArray<{ x: number; y: number }>, r: number, t: number,
+): void {
+  for (let i = 0; i < trail.length; i++) {
+    const k = (i + 1) / (trail.length + 1);
+    const p = trail[i];
+    g.fillStyle(tint(MEMORY.red), 0.12 + k * 0.22);
+    g.fillCircle(p.x, p.y, r * (0.5 + k * 0.5) + 2);
+    staticDisc(g, tint, p.x, p.y, r * (0.45 + k * 0.45), t, 0.2 + k * 0.45, 2, 100 + i, RED_STATIC);
+  }
+  g.fillStyle(tint(MEMORY.red), 0.4);
+  g.fillCircle(x, y, r + 5);
+  staticDisc(g, tint, x, y, r, t, 1, 2, 120, RED_STATIC);
+  g.fillStyle(tint(MEMORY.white), 0.9);
+  g.fillCircle(x, y, r * 0.35);
 }
 
 // ── Fx ───────────────────────────────────────────────────────────────────────
@@ -520,6 +647,96 @@ export class MemoryFx extends FxBase {
       g.fillCircle(x, y, 8 + t * 10);
       g.lineStyle(1.5, this.tint(MEMORY.redHot), 1 - t);
       g.strokeCircle(x, y, 14 + t * 10);
+    });
+  }
+
+  /**
+   * Shutdown: stolen ultimate charge — red-gold sparks, one per ten points, torn off the victim
+   * and pulled into the caster. `to` is read every frame.
+   */
+  ultSteal(fx: number, fy: number, to: () => { x: number; y: number }, points: number): void {
+    const n = Phaser.Math.Clamp(Math.round(points / 10), 2, 14);
+    this.anim(9.2, 800, (g, t) => {
+      const d = to();
+      const perp = Math.atan2(d.y - fy, d.x - fx) + Math.PI / 2;
+      for (let i = 0; i < n; i++) {
+        const k = Phaser.Math.Clamp(t * 1.35 - i * 0.025, 0, 1);
+        if (k <= 0 || k >= 1) continue;
+        const e = easeIn(k);
+        const wob = Math.sin(k * Math.PI) * (18 + (i % 4) * 7) * (i % 2 ? 1 : -1);
+        const x = fx + (d.x - fx) * e + Math.cos(perp) * wob;
+        const y = fy + (d.y - 10 - fy) * e + Math.sin(perp) * wob;
+        g.fillStyle(this.tint(MEMORY.redHot), 0.35 * (1 - k));
+        g.fillCircle(x, y, 7);
+        g.fillStyle(this.tint(i % 3 ? MEMORY.bandLit : 0xffd36a), 1 - k * 0.4);
+        g.fillTriangle(x, y - 4, x + 3, y, x, y + 4);
+        g.fillTriangle(x, y - 4, x - 3, y, x, y + 4);
+      }
+      // The tear in the victim, where it came out of.
+      if (t < 0.5) {
+        g.lineStyle(2, this.tint(MEMORY.redHot), 1 - t * 2);
+        g.strokeCircle(fx, fy, 16 + t * 30);
+      }
+    });
+  }
+
+  /**
+   * Brain Drain: what Rebirth takes is pulled out of the victim in a stream of static — snow and
+   * torn white cells dragged across the gap into the caster's hat. `to` is read every frame.
+   */
+  brainDrain(fx: number, fy: number, to: () => { x: number; y: number }): void {
+    this.anim(9.3, 1000, (g, t) => {
+      const d = to();
+      const tx = d.x;
+      const ty = d.y - 30;
+      // The tether: a faint static beam that thins as the last of it goes across.
+      if (t < 0.85) staticBeam(g, this.tint, fx, fy - 6, tx, ty, 10 * (1 - t), t * 3, 0.7 * (1 - t), 7);
+      const perp = Math.atan2(ty - fy, tx - fx) + Math.PI / 2;
+      for (let i = 0; i < 16; i++) {
+        const k = Phaser.Math.Clamp(t * 1.5 - i * 0.03, 0, 1);
+        if (k <= 0 || k >= 1) continue;
+        const e = easeIn(k);
+        const wob = Math.sin(k * Math.PI * 2 + i) * (8 + (i % 3) * 6);
+        const x = fx + (tx - fx) * e + Math.cos(perp) * wob;
+        const y = fy - 6 + (ty - fy + 6) * e + Math.sin(perp) * wob;
+        const s = 5 - k * 2;
+        g.fillStyle(this.tint(i % 2 ? MEMORY.staticHi : MEMORY.white), 1 - k * 0.5);
+        g.fillRect(x - s / 2, y - s / 2, s, s);
+      }
+      // The victim's head is emptied: a white crown of static lifting off it.
+      staticDisc(g, this.tint, fx, fy - 8, 14 * (1 - t) + 2, t * 4, (1 - t) * 0.8, 3, 17);
+    });
+  }
+
+  /** A phantom rises out of the red static. */
+  phantomRise(x: number, y: number): void {
+    this.anim(9, 420, (g, t) => {
+      staticDisc(g, this.tint, x, y, 6 + easeOut(t) * 20, t * 3, 1 - t, 4, 51, RED_STATIC);
+      g.lineStyle(2, this.tint(MEMORY.redHot), 1 - t);
+      g.strokeCircle(x, y, 10 + easeOut(t) * 30);
+    });
+  }
+
+  /** A phantom sinks back into the static: torn red rows sliding apart. */
+  phantomFade(x: number, y: number, color: number): void {
+    this.anim(9, 500, (g, t) => {
+      for (let i = 0; i < 7; i++) {
+        const yy = y - 18 + i * 6;
+        const shift = (i % 2 ? 1 : -1) * easeOut(t) * (8 + i * 3);
+        g.fillStyle(i % 3 === 0 ? color : this.tint(MEMORY.red), (1 - t) * 0.8);
+        g.fillRect(x - 16 + shift, yy, 32 * (1 - t), 4);
+      }
+    });
+  }
+
+  /** A static ball strikes: a red burst of static. */
+  saltBurst(x: number, y: number): void {
+    this.anim(9.1, 360, (g, t) => {
+      g.fillStyle(this.tint(MEMORY.redHot), (1 - t) * 0.5);
+      g.fillCircle(x, y, 8 + easeOut(t) * 18);
+      staticDisc(g, this.tint, x, y, 6 + easeOut(t) * 14, t * 2, 1 - t, 3, 57, RED_STATIC);
+      g.lineStyle(3 * (1 - t) + 0.5, this.tint(MEMORY.red), 1 - t);
+      g.strokeCircle(x, y, 12 + easeOut(t) * 26);
     });
   }
 }

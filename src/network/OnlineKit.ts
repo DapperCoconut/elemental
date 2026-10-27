@@ -312,7 +312,9 @@ export class OnlineKit {
         // Sound's Smooth soul song, likewise self-granted.
         * p.soundIncomingMult
         // Wood's Oakbrew, likewise self-granted.
-        * p.woodIncomingMult * 1000) / 1000,
+        * p.woodIncomingMult
+        // Savor's Mint candies, likewise self-granted.
+        * p.savorArmorMult * 1000) / 1000,
       fr: p.flatDamageReduction,
       dc: p.hardDamageCap,
       sap: Math.round(p.sapHp),

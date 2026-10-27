@@ -96,12 +96,6 @@ const NPC_MASTERY_BINDS: Record<string, { enhId: string; slot: MasterySlot }> = 
   // creature Give Life wakes is a summon the bot plays perfectly by standing still. The golem,
   // the shield and the fuse all survive.
   clay: { enhId: 'give-life', slot: 'f' },
-  // Slime gives up Oozorbtion. The slab is the same trade made continuous — one swallowed shot
-  // versus a pane that keeps five of them out of the air — and it does not ask the bot to guess
-  // *when* it is about to be shot at, which is the whole skill of the F. It also hands the
-  // rotation a real reason to press Solidify up close, which it otherwise never has. Q is refused
-  // by `excludeSlots`, and the balls and the gum barrage are the two the bot already wins with.
-  gum: { enhId: 'oobleck', slot: 'f' },
   // Marrow gives up Mastacre. The mast cells' value is a fever bar the Cellular Defense wall
   // already feeds every time a brick dies, and Brainstem — fired by the kit when the bot is losing
   // and has a macrophage or killer worth riding — turns the board it builds into an invincible

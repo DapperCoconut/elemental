@@ -2,12 +2,13 @@ import Phaser from 'phaser';
 import { Fighter } from '../../entities/Fighter';
 import { Projectile } from '../../combat/Projectile';
 import type { ProjectileRegistry } from '../../combat/ProjectileRegistry';
-import { CastContext } from '../Ability';
+import { Ability, CastContext } from '../Ability';
 import type { CustomStatus } from './StatusHudKit';
 import { Sfx } from '../../audio';
 import {
-  Pt, STRING, StringAvatar, StringColorFn, StringFx, cocoon, hitKnot, controlBar, hexRope, hookTip,
-  pointAlong, polyLength, puppetRig, ropeLine, silkLine, spiderBody, tombBar, wallTack,
+  Pt, STRING, StringAvatar, StringColorFn, StringFx, bewitchedHalo, cocoon, corpseWrap, hitKnot, controlBar, hexRope,
+  hookTip, metalLine, pointAlong, polyLength, puppetRig, ropeLine, silkLine, spiderBody, spoolCharge, tombBar, wallTack,
+  webBar, webCover, webWad,
 } from './StringVisuals';
 import { BaseAvatar } from './ElementVisuals';
 import { makeSkinAvatar } from './skins/SkinAvatars';
@@ -108,6 +109,65 @@ const NPC_HEX_RANGE = 640;
 const NPC_HEX_MIN_AGE_MS = 900;
 const NPC_STEER_ARRIVE = 14;
 
+// ── Shop upgrades ────────────────────────────────────────────────────────────
+// Click+ Metal Spool: hold click this long and a metal string fires on its own.
+const SPOOL_MS = 2000;
+const METAL_MS = 20000;
+const METAL_SHOTS = 12;
+/** About four times a string's strain — and no single shove, however hard, snaps it. */
+const METAL_SNAP_STRAIN = 1040;
+const METAL_HARD_PUSH = Infinity;
+const METAL_SNAP_DMG = 34;
+// E+ Bewitched Spiders: the ones that land on the hex strand.
+const BEWITCHED_SCALE = 1.45;
+const BEWITCHED_MS = 20000;
+const SPIT_MS = 1600;
+const SPIT_JITTER_MS = 400;
+const WAD_RANGE = 560;
+const WAD_SPEED = 480;
+const WAD_R = 6;
+const WAD_DMG = 7;
+const WAD_SLOW_MS = 1200;
+// R+ Spider Swing.
+const SWING_SPEED = 1100;
+const SWING_MIN_MS = 220;
+const SWING_MAX_MS = 560;
+/** How far the swing's arc dips below the straight line, as a share of its length. */
+const SWING_BOW = 0.22;
+/** A bot in trouble swings away on a wall-tied hex strand: below this health, with the target this close… */
+const NPC_SWING_HP = 0.35;
+const NPC_SWING_THREAT = 220;
+/** …and the far end at least this far from the target. */
+const NPC_SWING_AWAY = 300;
+// F+ Puppet Play. The puppet's real ability is cast at it from just in front of it, on the spider's side.
+const PUPPET_CAST_OFFSET = 40;
+/** The stand-in hit, by key, for an ability whose `cast()` is empty (its kit drives it) or throws. */
+const BACKFIRE_DMG: Record<string, number> = { Click: 6, E: 16, R: 16, F: 16, Q: 30 };
+// Q+ Spinal Snap.
+const WEB_HP = 200;
+/** A web nobody fights under fades after this, with no payoff. */
+const WEB_MAX_MS = 30000;
+/** What one attack takes out of the web, by key — anyone's: the spider's or its enemy's. */
+const WEB_CAST_HIT: Record<string, number> = { Click: 6, E: 15, R: 15, F: 15, Q: 30 };
+const WEB_BREAK_DMG = 35;
+const INFEST_MS = 8000;
+const BROOD_EVERY_MS = 1800;
+const BROOD_JITTER_MS = 900;
+const BROOD_MS = 5000;
+const BROOD_SCALE = 1.25;
+const BROOD_R = 16;
+const BROOD_DMG = 5;
+const BROOD_SPEED = 200;
+/** A brood spider this close to one of the spider's strands climbs onto it. */
+const BROOD_HOP = 26;
+/** A spider just out of its host does not bite it straight away. */
+const BROOD_HOST_GRACE_MS = 900;
+/** The bodies hanging in the web: whose sprites they wear, and where along the top they hang. */
+const CORPSE_IDS = ['fire', 'water', 'earth', 'air', 'life', 'ice', 'metal', 'light', 'shadow', 'crystal'];
+const CORPSE_AT = [0.17, 0.38, 0.62, 0.83];
+const CORPSE_DROP = [74, 128, 96, 146];
+const CORPSE_R = 17;
+
 // ── Types ────────────────────────────────────────────────────────────────────
 
 type StrandKind = 'snag' | 'hex' | 'tomb';
@@ -129,11 +189,13 @@ interface Strand {
   len: number;
   dies: number;
   strain: number;
-  /** Hexing Strand: shots it has eaten. */
+  /** Hexing Strand (or a metal string): shots it has eaten. */
   shots: number;
   born: number;
   nodes: Node[];
   seed: number;
+  /** Click+ Metal Spool: a steel string — 12 shots, far more strain, a harder lash. */
+  metal: boolean;
 }
 
 interface Hook {
@@ -146,6 +208,7 @@ interface Hook {
   travelled: number;
   /** Online: a picture of the other machine's throw. Where it lands arrives as `string-tie`. */
   visual: boolean;
+  metal: boolean;
 }
 
 interface Bar {
@@ -177,6 +240,56 @@ interface Spider {
   nextTurn: number;
   gate: Map<Fighter, number>;
   visual: boolean;
+  scale: number;
+  /** E+ on the hex strand: small, spits web, never bites; perches when its strand is gone. */
+  bewitched: boolean;
+  nextSpit: number;
+  /** Q+ Infested: crawled out of a host, scuttles about and climbs any of its owner's strands. */
+  brood: boolean;
+  nextHop: number;
+}
+
+/** E+ a wad of web a Bewitched spider spat. */
+interface Wad {
+  owner: Owner;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  travelled: number;
+  visual: boolean;
+}
+
+/** R+ Spider Swing: an arc from where the spider was to the hex strand's far end. */
+interface Swing {
+  fromX: number;
+  fromY: number;
+  toX: number;
+  toY: number;
+  /** The arc's control point. */
+  cx: number;
+  cy: number;
+  /** Where the strand was anchored — the dragline is drawn to it. */
+  ax: number;
+  ay: number;
+  start: number;
+  dur: number;
+  /** Online: the other machine's swing. Its body moves there; here we only draw the line. */
+  visual: boolean;
+}
+
+interface Corpse { img: Phaser.GameObjects.Image | null; ax: number; ay: number; len: number; phase: number }
+
+/** Q+ Spinal Snap: the web over the whole arena. */
+interface Web {
+  owner: Owner;
+  hp: number;
+  until: number;
+  flash: number;
+  /** Redraw the lattice next frame (it is only repainted when it changes). */
+  dirty: boolean;
+  hooks: { f: Fighter; ev: string; fn: (...args: unknown[]) => void }[];
+  corpses: Corpse[];
 }
 
 interface Puppet { owner: Owner; until: number }
@@ -204,10 +317,18 @@ interface Side {
   sentSteer: string;
   nextId: number;
   tomb: Tomb | null;
+  /** Click+: when the held click started winding the spool (0 = not winding). */
+  spoolSince: number;
+  wasLeft: boolean;
+  swing: Swing | null;
+  web: Web | null;
 }
 
 function makeSide(): Side {
-  return { aimX: 0, aimY: 0, steerX: 0, steerY: 0, sentSteer: '0:0', nextId: 1, tomb: null };
+  return {
+    aimX: 0, aimY: 0, steerX: 0, steerY: 0, sentSteer: '0:0', nextId: 1, tomb: null,
+    spoolSince: 0, wasLeft: false, swing: null, web: null,
+  };
 }
 
 // ── Arena API ────────────────────────────────────────────────────────────────
@@ -252,10 +373,14 @@ export interface StringArenaApi {
   /** Mirror an x across the arena — positions online are seen from the other side. */
   get worldW(): number;
   isTargetable(f: Fighter): boolean;
+  /** Shop upgrades: the player's own (Quantum-aware), or the opponent's from the handshake / loadout. */
+  hasUpgrade(owner: Owner, slot: string): boolean;
   stringColor(owner: Owner, base: number): number;
   /** Skins: the equipped skin id for that side, or null. */
   skinId(owner: Owner): string | null;
   buildPlayerContext(x: number, y: number): CastContext;
+  /** F+ Puppet Play, a bot's (or the online opponent's) puppet: the cast aimed at our own body. */
+  buildNpcContext(x: number, y: number): CastContext;
   setStatusIndicator(id: string, status: CustomStatus | null): void;
   /** Online: relay something only one sim decides as a pseudo-cast. */
   broadcast(id: string): void;
@@ -286,6 +411,20 @@ export interface StringArenaApi {
  * (`string-steer`) and the tomb (`string-tomb` / `string-untomb`); the victim's sim leashes,
  * blocks and pins its own body against those strings and reports a string it broke by force
  * (`string-yank`), which the spider's sim then snaps — and lashes — for real.
+ *
+ * Shop upgrades (2026-10-26), all in this kit:
+ * - **Click+ Metal Spool** — holding click winds a spool; at 2s a metal string fires (`Strand.metal`:
+ *   20s, 12 shots, ~4× strain, 34 lash). Online `string-spool` draws the hook; `string-tie` kind 2.
+ * - **E+ Bewitched Spiders** — spiders put on the hex strand are small and spit `Wad`s (slow via
+ *   `stringHexUntil`), 20s; when the strand goes they hop to another, or perch.
+ * - **R+ Spider Swing** — `recastHex` snaps, then `startSwing` flies the body along an arc to the far
+ *   end. Online the body moves on its own machine; `string-swing` only draws the line.
+ * - **F+ Puppet Play** — each cast entry point calls `puppetPlay(key)`: every live puppet's own
+ *   ability on that key is really cast at it as the spider's (`castPuppet`, Memory's Repression trick),
+ *   relayed as `string-puppetcast`; an empty or throwing cast falls back to a fixed `backfire` hit.
+ * - **Q+ Spinal Snap** — `hangWeb` with the tomb: listens to everyone's `cast` (and husk damage in
+ *   Invasion), breaks at 0 on the spider's sim (`string-webbreak`): 35 + `stringInfestedUntil`, and
+ *   `infest` spawns brood spiders (`string-brood` pictures them on the other machine).
  */
 export class StringKit {
   private api: StringArenaApi;
@@ -302,6 +441,8 @@ export class StringKit {
   private ropeGfx: Phaser.GameObjects.Graphics | null = null;
   /** The cocoon and the puppet's bar — over everything else this kit draws. */
   private topGfx: Phaser.GameObjects.Graphics | null = null;
+  /** Q+ Spinal Snap's web over the floor; repainted only when it changes. */
+  private webGfx: Phaser.GameObjects.Graphics | null = null;
   private vizT = 0;
 
   private sides: Record<Owner, Side> = { player: makeSide(), npc: makeSide() };
@@ -309,9 +450,14 @@ export class StringKit {
   private hooks: Hook[] = [];
   private bars: Bar[] = [];
   private spiders: Spider[] = [];
+  private wads: Wad[] = [];
   private puppets = new Map<Fighter, Puppet>();
+  /** Q+ the hosts this sim breeds spiders out of, and whose they are. */
+  private infest = new Map<Fighter, { owner: Owner; next: number }>();
   /** Everything this kit has written a status onto, so `reset` can hand it back clean. */
   private touched = new Set<Fighter>();
+  /** F+ inside a puppet's cast: a String puppet's strings must not pull a puppet of their own. */
+  private puppetCasting = false;
 
   constructor(api: StringArenaApi) {
     this.api = api;
@@ -340,6 +486,11 @@ export class StringKit {
 
   private isString(owner: Owner): boolean {
     return owner === 'player' ? this.api.elementId === 'string' : this.api.npcElementId === 'string';
+  }
+
+  /** A shop upgrade, on a side that is actually String. */
+  private up(owner: Owner, slot: string): boolean {
+    return this.isString(owner) && this.api.hasUpgrade(owner, slot);
   }
 
   /** An online opponent (or a co-op ally in the npc slot) is simulated on its own machine. */
@@ -507,6 +658,7 @@ export class StringKit {
   /** Tie a new strand off. The owner's sim calls this; the other machine hears it as `string-tie`. */
   private tie(
     owner: Owner, kind: 'snag' | 'hex', tied: Fighter | null, ax: number, ay: number, id?: number, ox = 0, oy = 0,
+    metal = false,
   ): Strand | null {
     const f = this.fighter(owner);
     if (!this.alive(f)) return null;
@@ -518,7 +670,9 @@ export class StringKit {
     } else {
       const mine = this.strandsOf(owner, 'snag');
       while (mine.length >= MAX_SNAGS) {
-        const old = mine.shift();
+        // A metal string outlasts the plain ones: they are let go first.
+        const at = mine.findIndex((x) => !x.metal);
+        const old = mine.splice(at < 0 ? 0 : at, 1)[0];
         if (!old) break;
         this.removeStrand(old);
         if (this.simulates(owner)) this.relay(owner, `string-snap:${old.id}:0`);
@@ -530,18 +684,20 @@ export class StringKit {
     const s: Strand = {
       id: id ?? side.nextId++, owner, kind, tied, ox: tied ? ox : 0, oy: tied ? oy : 0, ax, ay,
       len: Phaser.Math.Clamp(chord + TIE_SLACK, TIE_MIN, TIE_MAX),
-      dies: this.now + (kind === 'hex' ? HEX_MS : STRING_MS),
-      strain: 0, shots: 0, born: this.now, nodes: this.makeNodes(start, end), seed: Math.random() * 999,
+      dies: this.now + (kind === 'hex' ? HEX_MS : metal ? METAL_MS : STRING_MS),
+      strain: 0, shots: 0, born: this.now, nodes: this.makeNodes(start, end), seed: Math.random() * 999, metal,
     };
     this.strands.push(s);
     this.fx(owner).bite(end.x, end.y, !tied, kind === 'hex');
+    if (metal) this.fx(owner).clang(end.x, end.y);
     Sfx.playAt(tied ? 'grapple' : 'nail', end.x, { rate: kind === 'hex' ? 0.8 : 1.3, volume: 0.6 });
     if (tied && tied.active) {
-      this.announce(tied.x, tied.y - 40, kind === 'hex' ? '🟣 HEXED' : '🧵 TIED', kind === 'hex' ? STRING.hexGlow : STRING.silk, 11);
+      this.announce(tied.x, tied.y - 40, kind === 'hex' ? '🟣 HEXED' : metal ? '⛓️ CHAINED' : '🧵 TIED',
+        kind === 'hex' ? STRING.hexGlow : metal ? STRING.steelLit : STRING.silk, 11);
     }
     if (this.simulates(owner) && owner === 'player' && this.api.isOnline) {
       const onThem = tied === this.api.npc ? 1 : 0;
-      this.relay(owner, `string-tie:${s.id}:${kind === 'hex' ? 1 : 0}:${onThem}:${Math.round(this.mx(ax))}:${Math.round(ay)}:${Math.round(s.len)}:${Math.round(-s.ox)}:${Math.round(s.oy)}`);
+      this.relay(owner, `string-tie:${s.id}:${kind === 'hex' ? 1 : metal ? 2 : 0}:${onThem}:${Math.round(this.mx(ax))}:${Math.round(ay)}:${Math.round(s.len)}:${Math.round(-s.ox)}:${Math.round(s.oy)}`);
     }
     return s;
   }
@@ -571,8 +727,9 @@ export class StringKit {
       this.fx(s.owner).snap(a.x, a.y, b.x, b.y, bx, by, false);
       Sfx.playAt('whip', bx, { rate: 1.2, volume: 0.85 });
       Sfx.playAt('snap-back', bx, { rate: 1.1, volume: 0.6 });
+      if (s.metal) this.fx(s.owner).clang(bx, by);
       if (this.simulates(s.owner) && breaker && this.alive(breaker)) {
-        this.hurt(s.owner, breaker, SNAP_DMG);
+        this.hurt(s.owner, breaker, s.metal ? METAL_SNAP_DMG : SNAP_DMG);
         this.fx(s.owner).lash(breaker.x, breaker.y);
         this.announce(breaker.x, breaker.y - 42, '💥 SNAP', STRING.snap, 12);
       }
@@ -604,11 +761,15 @@ export class StringKit {
 
   reset(): void {
     // `reset()` runs before the new fighters exist: plain fields only on whatever is still here.
-    for (const owner of BOTH) this.unhookTomb(this.sides[owner].tomb);
+    for (const owner of BOTH) {
+      this.unhookTomb(this.sides[owner].tomb);
+      this.dropWeb(this.sides[owner].web);
+    }
     for (const f of [...this.touched, ...this.allFighters()]) {
       if (!f) continue;
       f.stringHexUntil = 0;
       f.stringSnareUntil = 0;
+      f.stringInfestedUntil = 0;
       f.stringPuppetUntil = 0;
       f.stringTombedUntil = 0;
       f.stringWardFrom = null;
@@ -621,13 +782,15 @@ export class StringKit {
     this.hooks = [];
     this.bars = [];
     this.spiders = [];
+    this.wads = [];
     this.puppets.clear();
+    this.infest.clear();
     this.vizT = 0;
     this.playerAvatar?.destroy(); this.playerAvatar = null;
     this.npcAvatar?.destroy(); this.npcAvatar = null;
-    for (const g of [this.groundGfx, this.ropeGfx, this.topGfx]) g?.destroy();
-    this.groundGfx = this.ropeGfx = this.topGfx = null;
-    for (const id of ['string-hex-out', 'string-spider', 'string-tomb-hold', 'string-spiders']) this.api.setStatusIndicator(id, null);
+    for (const g of [this.groundGfx, this.ropeGfx, this.topGfx, this.webGfx]) g?.destroy();
+    this.groundGfx = this.ropeGfx = this.topGfx = this.webGfx = null;
+    for (const id of ['string-hex-out', 'string-spider', 'string-tomb-hold', 'string-spiders', 'string-web']) this.api.setStatusIndicator(id, null);
   }
 
   private ensureLayers(): void {
@@ -635,6 +798,7 @@ export class StringKit {
     if (!this.groundGfx) this.groundGfx = scene.add.graphics().setDepth(4.5);
     if (!this.ropeGfx) this.ropeGfx = scene.add.graphics().setDepth(9);
     if (!this.topGfx) this.topGfx = scene.add.graphics().setDepth(9.6);
+    if (!this.webGfx) this.webGfx = scene.add.graphics().setDepth(4.4);
   }
 
   private makeAvatar(owner: Owner): BaseAvatar {
@@ -662,16 +826,24 @@ export class StringKit {
     s.steerY = (this.api.downKey.isDown ? 1 : 0) - (this.api.upKey.isDown ? 1 : 0);
     const p = this.api.player;
     const left = pointer.leftButtonDown();
-    if (!this.alive(p)) return;
+    const pressed = left && !s.wasLeft;
+    s.wasLeft = left;
+    if (!this.alive(p)) { s.spoolSince = 0; return; }
 
     const ctx = (): CastContext => this.api.buildPlayerContext(mouseX, mouseY);
-    if (left && this.canAct(p, 'click')) p.castAbility(ID.click, ctx());
+    if (this.up('player', 'click')) {
+      // Metal Spool: a click is one string; holding it winds the spool instead of throwing more.
+      if (pressed && this.canAct(p, 'click')) p.castAbility(ID.click, ctx());
+      this.windSpool('player', left && this.canAct(p, 'click'), mouseX, mouseY);
+    } else if (left && this.canAct(p, 'click')) {
+      p.castAbility(ID.click, ctx());
+    }
     if (Phaser.Input.Keyboard.JustDown(this.api.eKey)) p.castAbility(ID.e, ctx());
     if (Phaser.Input.Keyboard.JustDown(this.api.rKey)) {
       // R again while the hex strand is out snaps it — free, the cooldown already ran from the throw.
       const hx = this.hexOf('player');
       if (hx) {
-        if (this.canAct(p, 'other')) this.snap(hx, null, (this.startOf(hx).x + this.endOf(hx).x) / 2, (this.startOf(hx).y + this.endOf(hx).y) / 2);
+        if (this.canAct(p, 'other')) this.recastHex('player', hx);
       } else {
         p.castAbility(ID.r, ctx());
       }
@@ -697,11 +869,41 @@ export class StringKit {
       case 'string-tie': {
         if (!this.alive(them)) break;
         // Their throw's picture already flew; this is where it actually landed.
-        this.hooks = this.hooks.filter((h) => !(h.owner === 'npc' && h.kind === (n(2) === 1 ? 'hex' : 'snag')));
-        const s = this.tie('npc', n(2) === 1 ? 'hex' : 'snag', n(3) === 1 ? me : null, this.mx(n(4)), n(5), n(1), n(7), n(8));
+        const kind = n(2) === 1 ? 'hex' : 'snag';
+        const metal = n(2) === 2;
+        this.hooks = this.hooks.filter((h) => !(h.owner === 'npc' && h.kind === kind && h.metal === metal));
+        const s = this.tie('npc', kind, n(3) === 1 ? me : null, this.mx(n(4)), n(5), n(1), n(7), n(8), metal);
         if (s) s.len = n(6) || s.len;
         break;
       }
+      case 'string-spool':
+        // Their spool let go: a picture of the metal hook, until `string-tie` says where it bit.
+        if (this.alive(them)) {
+          this.throwHook('npc', 'snag', this.mx(n(1)), n(2), true);
+          this.fx('npc').spoolFire(them.x, them.y - 4, Math.atan2(n(2) - them.y, this.mx(n(1)) - them.x));
+        }
+        break;
+      case 'string-swing':
+        if (this.alive(them)) this.startSwing('npc', { x: this.mx(n(1)), y: n(2) }, { x: this.mx(n(3)), y: n(4) }, true);
+        break;
+      case 'string-puppetcast': {
+        // Our own ability, cast at us by their puppet strings: run it here as theirs, aimed at us.
+        const ab = me.element.abilities.find((a) => a.id === parts[1]);
+        if (ab && this.alive(me) && this.alive(them)) {
+          this.castPuppet('npc', me, ab, this.mx(n(2)), n(3), this.mx(n(4)), n(5));
+        }
+        break;
+      }
+      case 'string-backfire':
+        // Our own ability, turned on us by their puppet strings. The hit itself arrives as damage.
+        if (this.alive(me)) this.backfire('npc', me, parts[1] ?? 'E', false);
+        break;
+      case 'string-brood':
+        this.spawnBrood('npc', this.mx(n(1)), n(2), me, true);
+        break;
+      case 'string-webbreak':
+        this.breakWeb('npc', true);
+        break;
       case 'string-snap': {
         const s = this.strands.find((x) => x.owner === 'npc' && x.id === n(1));
         if (!s) break;
@@ -741,14 +943,16 @@ export class StringKit {
   /** Click — Tension Snag. One heavy string, hook first. */
   doSnag(owner: Owner, tx: number, ty: number): void {
     this.throwHook(owner, 'snag', tx, ty);
+    this.puppetPlay(owner, 'Click');
   }
 
   /** R — Hexing Strand. The purple one. */
   doHex(owner: Owner, tx: number, ty: number): void {
     this.throwHook(owner, 'hex', tx, ty);
+    this.puppetPlay(owner, 'R');
   }
 
-  private throwHook(owner: Owner, kind: 'snag' | 'hex', tx: number, ty: number): void {
+  private throwHook(owner: Owner, kind: 'snag' | 'hex', tx: number, ty: number, metal = false): void {
     const f = this.fighter(owner);
     if (!this.alive(f)) return;
     this.ensureLayers();
@@ -757,7 +961,7 @@ export class StringKit {
     const sp = kind === 'hex' ? HEX_SPEED : HOOK_SPEED;
     const x = f.x + Math.cos(ang) * 18;
     const y = f.y - 4 + Math.sin(ang) * 18;
-    this.hooks.push({ owner, kind, x, y, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp, travelled: 0, visual: !this.simulates(owner) });
+    this.hooks.push({ owner, kind, x, y, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp, travelled: 0, visual: !this.simulates(owner), metal });
     this.fx(owner).throwString(x, y, ang, kind === 'hex');
     this.avatar(owner)?.play('punch', ang);
     this.rig(owner)?.jerk(ang);
@@ -781,16 +985,20 @@ export class StringKit {
       const s = list[i % list.length];
       perStrand.set(s, (perStrand.get(s) ?? 0) + 1);
     }
+    // E+ Bewitched Spiders: the ones that land on the hex strand.
+    const bewitch = this.up(owner, 'e');
     let i = 0;
     for (const [s, count] of perStrand) {
       const L = polyLength(s.nodes);
+      const bew = bewitch && s.kind === 'hex';
       for (let k = 0; k < count; k++) {
         const d = L * ((k + 1) / (count + 1));
         const p = pointAlong(s.nodes, d);
         this.spiders.push({
           owner, strand: s, d, dir: (i + k) % 2 ? 1 : -1, x: p.x, y: p.y, ang: p.ang, phase: Math.random() * TAU,
-          until: this.now + SPIDER_MS, looseUntil: 0, vx: 0, vy: 0, nextTurn: 0, gate: new Map(),
-          visual: !this.simulates(owner),
+          until: this.now + (bew ? BEWITCHED_MS : SPIDER_MS), looseUntil: 0, vx: 0, vy: 0, nextTurn: 0, gate: new Map(),
+          visual: !this.simulates(owner), scale: bew ? BEWITCHED_SCALE : SPIDER_SCALE,
+          bewitched: bew, nextSpit: this.now + 350 + k * 260, brood: false, nextHop: 0,
         });
         this.fx(owner).spiderDrop(p.x, p.y);
       }
@@ -798,6 +1006,7 @@ export class StringKit {
     }
     this.avatar(owner)?.play('flex');
     Sfx.playAt('tentacle', f.x, { rate: 1.6, volume: 0.6 });
+    this.puppetPlay(owner, 'E');
   }
 
   /** F — Marionette. The control bar goes down the aim. */
@@ -814,6 +1023,7 @@ export class StringKit {
     });
     this.avatar(owner)?.play('sweep', ang);
     this.rig(owner)?.jerk(ang);
+    this.puppetPlay(owner, 'F');
   }
 
   /** Q — Linen Tomb. The enemy nearest the cursor (a bot's: its target) goes into the silk. */
@@ -823,12 +1033,18 @@ export class StringKit {
     this.ensureLayers();
     this.ensureAvatars();
     this.avatar(owner)?.play('raise', -Math.PI / 2, 700);
-    // Online, the other machine picks the victim and tells us (`string-tomb`).
-    if (!this.simulates(owner)) return;
+    // Online, the other machine picks the victim and tells us (`string-tomb`). Their web we hang here.
+    if (!this.simulates(owner)) {
+      if (this.up(owner, 'q')) this.hangWeb(owner);
+      return;
+    }
     const t = owner === 'player' ? this.nearestTarget(owner, tx, ty) : this.nearestTarget(owner, f.x, f.y);
     if (!t) { this.refund(f, ID.q); return; }
+    // Puppet Play before the silk takes them: the tomb ends the puppet.
+    this.puppetPlay(owner, 'Q');
     const b = this.api.bounds;
     this.entomb(owner, t, b.centerX, b.centerY);
+    if (this.up(owner, 'q')) this.hangWeb(owner);
   }
 
   // ── Hooks ──────────────────────────────────────────────────────────────────
@@ -853,7 +1069,7 @@ export class StringKit {
             // The hook bites the skin where it struck, not the middle of the body.
             const a = Math.atan2(h.y - t.y, h.x - t.x);
             const r = this.bodyR(t) * 0.9;
-            this.tie(h.owner, h.kind, t, t.x, t.y, undefined, Math.cos(a) * r, Math.sin(a) * r);
+            this.tie(h.owner, h.kind, t, t.x, t.y, undefined, Math.cos(a) * r, Math.sin(a) * r, h.metal);
           }
           break;
         }
@@ -862,7 +1078,7 @@ export class StringKit {
         done = true;
         if (!h.visual) {
           const w = this.wallPoint(h.x, h.y);
-          this.tie(h.owner, h.kind, null, w.x, w.y);
+          this.tie(h.owner, h.kind, null, w.x, w.y, undefined, 0, 0, h.metal);
         }
       }
       if (!done && h.travelled > HOOK_RANGE) done = true;
@@ -948,6 +1164,8 @@ export class StringKit {
       let breaker: Fighter | null = null;
       const a = this.startOf(s);
       const b = this.endOf(s);
+      const snapAt = s.metal ? METAL_SNAP_STRAIN : SNAP_STRAIN;
+      const hard = s.metal ? METAL_HARD_PUSH : HARD_PUSH;
       for (const f of this.bodiesAgainst(s.owner)) {
         const body = f.body as Phaser.Physics.Arcade.Body | null;
         if (!body) continue;
@@ -964,7 +1182,7 @@ export class StringKit {
             const out = vx * ux + vy * uy;
             if (out > 0) {
               s.strain += out * dt;
-              if (out > HARD_PUSH) s.strain = SNAP_STRAIN;
+              if (out > hard) s.strain = snapAt;
               vx -= ux * out;
               vy -= uy * out;
             }
@@ -993,7 +1211,7 @@ export class StringKit {
             const into = -(vx * nx + vy * ny);
             if (into > 0) {
               s.strain += into * dt;
-              if (into > HARD_PUSH) s.strain = SNAP_STRAIN;
+              if (into > hard) s.strain = snapAt;
               vx += nx * into;
               vy += ny * into;
             }
@@ -1005,7 +1223,7 @@ export class StringKit {
         if (touched) {
           body.setVelocity(vx, vy);
           loaded = true;
-          if (s.strain >= SNAP_STRAIN) { breaker = f; break; }
+          if (s.strain >= snapAt) { breaker = f; break; }
         }
       }
       if (breaker) {
@@ -1053,6 +1271,9 @@ export class StringKit {
       const a = this.startOf(s);
       const b = this.endOf(s);
       const enemySide: Owner = s.owner === 'player' ? 'npc' : 'player';
+      // A plain string goes on the first shot; the hex strand takes 3, a metal string 12.
+      const cap = s.kind === 'hex' ? HEX_SHOTS : s.metal ? METAL_SHOTS : 1;
+      const multi = cap > 1;
       const caught: { x: number; y: number; kill: () => void; from?: Fighter | null }[] = [];
       for (const obj of this.api.projectiles.getChildren()) {
         const p = obj as Projectile;
@@ -1066,10 +1287,10 @@ export class StringKit {
         }
         if (u < NEAR_END || (s.tied && u > 1 - NEAR_END * 1.25)) continue;
         caught.push({ x: p.x, y: p.y, kill: () => p.destroy() });
-        if (s.kind !== 'hex') break;
+        if (!multi) break;
       }
       // Invasion: the husks' shots are the director's, not the arena's.
-      if (s.owner === 'player' && (s.kind === 'hex' || !caught.length)) {
+      if (s.owner === 'player' && (multi || !caught.length)) {
         for (const h of this.api.huskShots()) {
           let u = this.crossAt({ x: h.x - h.vx * dt, y: h.y - h.vy * dt }, { x: h.x, y: h.y }, a, b);
           if (u < 0) {
@@ -1078,29 +1299,34 @@ export class StringKit {
           }
           if (u < NEAR_END || (s.tied && u > 1 - NEAR_END * 1.25)) continue;
           caught.push({ x: h.x, y: h.y, kill: h.kill, from: h.from });
-          if (s.kind !== 'hex') break;
+          if (!multi) break;
         }
       }
-      if (s.kind === 'hex' || !caught.length) {
+      if (multi || !caught.length) {
         const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
         const half = Math.hypot(b.x - a.x, b.y - a.y) / 2 + 12;
         for (const r of this.api.projectileRegistry.within(enemySide, mid.x, mid.y, half)) {
           const near = this.segNear(a.x, a.y, b.x, b.y, r.getX(), r.getY());
           if (near.d > 10 || near.u < NEAR_END || (s.tied && near.u > 1 - NEAR_END * 1.25)) continue;
           caught.push({ x: r.getX(), y: r.getY(), kill: () => this.api.projectileRegistry.steal(r) });
-          if (s.kind !== 'hex') break;
+          if (!multi) break;
         }
       }
       if (!caught.length) continue;
-      if (s.kind === 'hex') {
+      if (multi) {
         for (const c of caught) {
           c.kill();
           s.shots++;
-          this.fx(s.owner).bite(c.x, c.y, false, true);
-          Sfx.playAt('stretch', c.x, { rate: 0.7, volume: 0.6 });
-          if (s.shots >= HEX_SHOTS) break;
+          if (s.metal) {
+            this.fx(s.owner).clang(c.x, c.y);
+            Sfx.playAt('clang', c.x, { rate: 1.5, volume: 0.4 });
+          } else {
+            this.fx(s.owner).bite(c.x, c.y, false, true);
+            Sfx.playAt('stretch', c.x, { rate: 0.7, volume: 0.6 });
+          }
+          if (s.shots >= cap) break;
         }
-        if (s.shots < HEX_SHOTS) continue;
+        if (s.shots < cap) continue;
       } else {
         caught[0].kill();
       }
@@ -1133,9 +1359,43 @@ export class StringKit {
 
   private loosen(sp: Spider): void {
     if (!sp.strand) return;
+    const old = sp.strand;
     sp.strand = null;
-    sp.looseUntil = this.now + LOOSE_MS;
     sp.nextTurn = 0;
+    if (sp.bewitched) {
+      // A Bewitched spider hops to another of its owner's strands, or sits where it fell and spits.
+      const next = this.nearestStrandFor(sp, old);
+      if (next) { this.board(sp, next); return; }
+      sp.looseUntil = sp.until;
+      sp.vx = sp.vy = 0;
+      return;
+    }
+    sp.looseUntil = sp.brood ? sp.until : this.now + LOOSE_MS;
+  }
+
+  /** The owner's strand nearest a spider, measured to its straight chord. */
+  private nearestStrandFor(sp: Spider, not: Strand | null, max = Infinity): Strand | null {
+    let best: Strand | null = null;
+    let bestD = max;
+    for (const s of this.strands) {
+      if (s === not || s.owner !== sp.owner) continue;
+      const a = this.startOf(s);
+      const b = this.endOf(s);
+      const d = this.segNear(a.x, a.y, b.x, b.y, sp.x, sp.y).d;
+      if (d < bestD) { bestD = d; best = s; }
+    }
+    return best;
+  }
+
+  /** Put a spider on a strand at the point of it nearest the spider. */
+  private board(sp: Spider, s: Strand): void {
+    const a = this.startOf(s);
+    const b = this.endOf(s);
+    const near = this.segNear(a.x, a.y, b.x, b.y, sp.x, sp.y);
+    sp.strand = s;
+    sp.d = polyLength(s.nodes) * near.u;
+    sp.dir = Math.random() < 0.5 ? 1 : -1;
+    this.fx(sp.owner).spiderDrop(near.x, near.y);
   }
 
   private updateSpiders(dt: number): void {
@@ -1153,11 +1413,17 @@ export class StringKit {
         sp.y = p.y;
         sp.ang = p.ang + (sp.dir < 0 ? Math.PI : 0);
         sp.phase += dt * 14;
+      } else if (sp.bewitched) {
+        // Perched: it stays put and keeps spitting until its time is up.
+        if (this.now > sp.looseUntil) { this.spiders.splice(i, 1); this.fx(sp.owner).spiderDrop(sp.x, sp.y); continue; }
+        const t = this.nearestTarget(sp.owner, sp.x, sp.y);
+        if (t) sp.ang = Math.atan2(t.y - sp.y, t.x - sp.x);
+        sp.phase += dt * 3;
       } else {
         if (this.now > sp.looseUntil) { this.spiders.splice(i, 1); continue; }
         if (this.now >= sp.nextTurn) {
           const a = Math.random() * TAU;
-          const v = LOOSE_SPEED * (0.6 + Math.random() * 0.7);
+          const v = (sp.brood ? BROOD_SPEED : LOOSE_SPEED) * (0.6 + Math.random() * 0.7);
           sp.vx = Math.cos(a) * v;
           sp.vy = Math.sin(a) * v;
           sp.nextTurn = this.now + 120 + Math.random() * 200;
@@ -1168,17 +1434,383 @@ export class StringKit {
         if (sp.y < b.top + 30 || sp.y > b.bottom - 30) { sp.vy = -sp.vy; sp.y = Phaser.Math.Clamp(sp.y, b.top + 30, b.bottom - 30); }
         sp.ang = Math.atan2(sp.vy, sp.vx);
         sp.phase += dt * 24;
+        // Q+ a brood spider climbs onto any of its owner's strings it scuttles across.
+        if (sp.brood && this.now >= sp.nextHop) {
+          sp.nextHop = this.now + 150;
+          const s = this.nearestStrandFor(sp, null, BROOD_HOP);
+          if (s) this.board(sp, s);
+        }
+      }
+      if (sp.bewitched) {
+        if (this.now >= sp.nextSpit) this.spit(sp);
+        continue;
       }
       if (sp.visual) continue;
+      const reach = sp.brood ? BROOD_R : SPIDER_R;
+      const dmg = sp.brood ? BROOD_DMG : SPIDER_DMG;
       for (const t of this.targetsOf(sp.owner)) {
-        if (Phaser.Math.Distance.Between(sp.x, sp.y, t.x, t.y) > SPIDER_R + this.bodyR(t)) continue;
+        if (Phaser.Math.Distance.Between(sp.x, sp.y, t.x, t.y) > reach + this.bodyR(t)) continue;
         if (this.now < (sp.gate.get(t) ?? 0)) continue;
         sp.gate.set(t, this.now + SPIDER_GATE_MS);
-        this.hurt(sp.owner, t, SPIDER_DMG);
+        this.hurt(sp.owner, t, dmg);
         this.fx(sp.owner).spiderBite(t.x, t.y - 6);
-        Sfx.playAt('stab', t.x, { rate: 1.6, volume: 0.45 });
+        Sfx.playAt('stab', t.x, { rate: sp.brood ? 2 : 1.6, volume: sp.brood ? 0.3 : 0.45 });
       }
     }
+  }
+
+  // ── E+ Bewitched Spiders: web wads ─────────────────────────────────────────
+
+  private spit(sp: Spider): void {
+    sp.nextSpit = this.now + SPIT_MS + Math.random() * SPIT_JITTER_MS;
+    const t = this.nearestTarget(sp.owner, sp.x, sp.y, WAD_RANGE);
+    if (!t) return;
+    const ang = Math.atan2(t.y - sp.y, t.x - sp.x);
+    this.wads.push({
+      owner: sp.owner, x: sp.x + Math.cos(ang) * 8, y: sp.y + Math.sin(ang) * 8,
+      vx: Math.cos(ang) * WAD_SPEED, vy: Math.sin(ang) * WAD_SPEED, travelled: 0, visual: sp.visual,
+    });
+    sp.ang = ang;
+    Sfx.playAt('stretch', sp.x, { rate: 1.9, volume: 0.25 });
+  }
+
+  private updateWads(dt: number): void {
+    const b = this.api.bounds;
+    for (let i = this.wads.length - 1; i >= 0; i--) {
+      const w = this.wads[i];
+      const sx = w.vx * dt;
+      const sy = w.vy * dt;
+      w.x += sx;
+      w.y += sy;
+      w.travelled += Math.hypot(sx, sy);
+      let done = w.travelled > WAD_RANGE * 1.15 || !b.contains(w.x, w.y) || !this.aliveSpider(w.owner);
+      if (!done) {
+        for (const t of this.targetsOf(w.owner)) {
+          if (Phaser.Math.Distance.Between(w.x, w.y, t.x, t.y) > WAD_R + this.bodyR(t)) continue;
+          done = true;
+          this.fx(w.owner).wadSplat(w.x, w.y);
+          if (!w.visual) {
+            this.hurt(w.owner, t, WAD_DMG);
+            t.stringHexUntil = Math.max(t.stringHexUntil, Date.now() + WAD_SLOW_MS);
+            this.touched.add(t);
+          }
+          break;
+        }
+      }
+      if (done) this.wads.splice(i, 1);
+    }
+  }
+
+  // ── Click+ Metal Spool ─────────────────────────────────────────────────────
+
+  /** A held click winds the spool; at two seconds it fires a metal string and starts on the next. */
+  private windSpool(owner: Owner, holding: boolean, tx: number, ty: number): void {
+    const s = this.side(owner);
+    if (!holding) { s.spoolSince = 0; return; }
+    if (!s.spoolSince) { s.spoolSince = this.now; return; }
+    if (this.now - s.spoolSince < SPOOL_MS) return;
+    s.spoolSince = this.now;
+    const f = this.fighter(owner);
+    this.throwHook(owner, 'snag', tx, ty, true);
+    this.fx(owner).spoolFire(f.x, f.y - 4, Math.atan2(ty - f.y, tx - f.x));
+    Sfx.playAt('clang', f.x, { rate: 0.8, volume: 0.6 });
+    this.relay(owner, `string-spool:${Math.round(this.mx(tx))}:${Math.round(ty)}`);
+  }
+
+  /** The bot's hand on the spool: wound while a target is in reach and it has no metal string out. */
+  private botSpool(): void {
+    if (!this.isString('npc') || !this.simulates('npc')) return;
+    const bot = this.api.npc;
+    const s = this.sides.npc;
+    if (!this.up('npc', 'click') || !this.alive(bot)) { s.spoolSince = 0; return; }
+    const t = this.targetsOf('npc')[0];
+    const want = !!t && this.canAct(bot, 'click') && Date.now() >= bot.stringTombedUntil
+      && Phaser.Math.Distance.Between(bot.x, bot.y, t.x, t.y) < 700
+      && !this.strands.some((x) => x.owner === 'npc' && x.metal);
+    this.windSpool('npc', want, t?.x ?? 0, t?.y ?? 0);
+  }
+
+  // ── R+ Spider Swing ────────────────────────────────────────────────────────
+
+  /** R again: snap the hex strand — and with Spider Swing, ride it to its far end. */
+  private recastHex(owner: Owner, s: Strand): void {
+    const a = this.startOf(s);
+    const b = this.endOf(s);
+    const swingTo = this.up(owner, 'r') ? this.swingGoal(owner, s) : null;
+    this.snap(s, null, (a.x + b.x) / 2, (a.y + b.y) / 2);
+    if (swingTo) this.startSwing(owner, swingTo, b, false);
+  }
+
+  /** Where the swing ends: the wall it bit, or just short of the body it is tied to. */
+  private swingGoal(owner: Owner, s: Strand): Pt {
+    const f = this.fighter(owner);
+    const e = this.endOf(s);
+    const r = this.bodyR(f) + 6;
+    if (s.tied) {
+      const back = this.bodyR(s.tied) + r;
+      const a = Math.atan2(f.y - s.tied.y, f.x - s.tied.x);
+      return this.inside(s.tied.x + Math.cos(a) * back, s.tied.y + Math.sin(a) * back, r);
+    }
+    return this.inside(e.x, e.y, r);
+  }
+
+  private inside(x: number, y: number, pad: number): Pt {
+    const b = this.api.bounds;
+    return { x: Phaser.Math.Clamp(x, b.left + pad, b.right - pad), y: Phaser.Math.Clamp(y, b.top + pad, b.bottom - pad) };
+  }
+
+  private startSwing(owner: Owner, to: Pt, anchor: Pt, visual: boolean): void {
+    const f = this.fighter(owner);
+    if (!this.alive(f)) return;
+    const dist = Phaser.Math.Distance.Between(f.x, f.y, to.x, to.y);
+    if (dist < 24 && !visual) return;
+    const mx = (f.x + to.x) / 2;
+    const my = (f.y + to.y) / 2;
+    this.side(owner).swing = {
+      fromX: f.x, fromY: f.y, toX: to.x, toY: to.y, cx: mx, cy: my + dist * SWING_BOW,
+      ax: anchor.x, ay: anchor.y, start: this.now,
+      dur: Phaser.Math.Clamp((dist / SWING_SPEED) * 1000, SWING_MIN_MS, SWING_MAX_MS), visual,
+    };
+    this.avatar(owner)?.play('raise', Math.atan2(anchor.y - f.y, anchor.x - f.x), 300);
+    Sfx.playAt('grapple', f.x, { rate: 1.4, volume: 0.6 });
+    if (!visual) {
+      this.relay(owner, `string-swing:${Math.round(this.mx(to.x))}:${Math.round(to.y)}:${Math.round(this.mx(anchor.x))}:${Math.round(anchor.y)}`);
+    }
+  }
+
+  /** Fly the arc. The body is only moved on its own machine; the other one just draws the line. */
+  private updateSwing(owner: Owner): void {
+    const side = this.side(owner);
+    const sw = side.swing;
+    if (!sw) return;
+    const f = this.fighter(owner);
+    const k = Math.min(1, (this.now - sw.start) / sw.dur);
+    const moves = !sw.visual && !this.isRemoteBody(f) && this.alive(f);
+    if (moves) {
+      const e = k * k * (3 - 2 * k);
+      const u = 1 - e;
+      const x = u * u * sw.fromX + 2 * u * e * sw.cx + e * e * sw.toX;
+      const y = u * u * sw.fromY + 2 * u * e * sw.cy + e * e * sw.toY;
+      (f.body as Phaser.Physics.Arcade.Body).reset(x, y);
+    }
+    if (k >= 1 || !this.alive(f)) {
+      side.swing = null;
+      if (this.alive(f)) this.fx(owner).swingLand(f.x, f.y);
+    }
+  }
+
+  // ── F+ Puppet Play ─────────────────────────────────────────────────────────
+
+  /** One of the spider's casts: every puppet it holds uses its own ability on that key, on itself. */
+  private puppetPlay(owner: Owner, key: string): void {
+    if (this.puppetCasting || !this.simulates(owner) || !this.up(owner, 'f')) return;
+    for (const [victim, p] of [...this.puppets]) {
+      if (p.owner !== owner || this.now > p.until || !this.alive(victim)) continue;
+      const ab = victim.element?.abilities.find((a) => a.displayKey === key);
+      // Empty casts are driven by their kit's input, so there is nothing here to run: the stand-in hit.
+      if (!ab || /\{\s*\}\s*$/.test(ab.cast.toString())) { this.backfire(owner, victim, key, true); continue; }
+      const f = this.fighter(owner);
+      const a = Math.atan2(f.y - victim.y, f.x - victim.x);
+      const x = victim.x + Math.cos(a) * PUPPET_CAST_OFFSET;
+      const y = victim.y + Math.sin(a) * PUPPET_CAST_OFFSET;
+      if (!this.castPuppet(owner, victim, ab, x, y, victim.x, victim.y)) { this.backfire(owner, victim, key, true); continue; }
+      if (victim === this.api.npc) {
+        this.relay(owner, `string-puppetcast:${ab.id}:${Math.round(this.mx(x))}:${Math.round(y)}:${Math.round(this.mx(victim.x))}:${Math.round(victim.y)}`);
+      }
+    }
+  }
+
+  /**
+   * The puppet's real ability, cast as the spider's: the spider's body steps to (x, y) for the length
+   * of the cast and aims at (ax, ay) — the puppet — so whatever it spawns is the spider's and hits the
+   * puppet. Anything the cast does to its caster's position is undone, and everything it put on screen
+   * right away is tinted red. Returns false when the cast threw.
+   *
+   * Edge cases are left as they fall: a self-buff or heal lands on the spider, a form or stance it
+   * starts belongs to a kit that is not running for the spider and may do nothing, and effects a kit
+   * spawns later (off a timer or its own update) are not tinted.
+   */
+  private castPuppet(owner: Owner, victim: Fighter, ab: Ability, x: number, y: number, ax: number, ay: number): boolean {
+    const f = this.fighter(owner);
+    if (!this.alive(f)) return false;
+    const { scene } = this.api;
+    const body = f.body as Phaser.Physics.Arcade.Body | null;
+    const ox = f.x;
+    const oy = f.y;
+    const vx = body?.velocity.x ?? 0;
+    const vy = body?.velocity.y ?? 0;
+    const tweens = scene.tweens;
+    const beforeTweens = new Set(tweens.getTweensOf(f));
+    const beforeObjs = new Set(scene.children.list);
+    let ok = true;
+    f.x = x;
+    f.y = y;
+    this.puppetCasting = true;
+    try {
+      ab.cast(owner === 'player' ? this.api.buildPlayerContext(ax, ay) : this.api.buildNpcContext(ax, ay));
+    } catch (err) {
+      ok = false;
+      console.warn(`Puppet Play: ${ab.id} could not be cast`, err);
+    } finally {
+      this.puppetCasting = false;
+      for (const tw of tweens.getTweensOf(f)) if (!beforeTweens.has(tw)) tw.remove();
+      f.x = ox;
+      f.y = oy;
+      body?.velocity.set(vx, vy);
+    }
+    for (const obj of scene.children.list) {
+      if (beforeObjs.has(obj)) continue;
+      const tintable = obj as unknown as { setTint?: (c: number) => unknown };
+      if (typeof tintable.setTint === 'function') tintable.setTint(STRING.backfire);
+    }
+    this.fx(owner).backfire(victim.x, victim.y, this.bodyR(victim), victim.element?.color ?? STRING.backfire, ab.displayKey === 'Q');
+    this.announce(victim.x, victim.y - 54, `↩ ${ab.name.toUpperCase()}`, STRING.backfire, ab.displayKey === 'Q' ? 14 : 12);
+    return ok;
+  }
+
+  /**
+   * The stand-in for a puppet ability that cannot be run (an empty, kit-driven cast, or one that
+   * threw): a hit in its name and colour. `real` on the spider's sim, which deals the hit and tells
+   * the victim's machine (`string-backfire`) so it can show it on their body.
+   */
+  private backfire(owner: Owner, victim: Fighter, key: string, real: boolean): void {
+    const ab = victim.element?.abilities.find((a) => a.displayKey === key);
+    this.fx(owner).backfire(victim.x, victim.y, this.bodyR(victim), victim.element?.color ?? STRING.backfire, key === 'Q');
+    this.announce(victim.x, victim.y - 54, `↩ ${(ab?.name ?? key).toUpperCase()}`, STRING.backfire, key === 'Q' ? 14 : 12);
+    Sfx.playAt('curse-cast', victim.x, { rate: 1.3, volume: 0.6 });
+    if (!real) return;
+    this.hurt(owner, victim, BACKFIRE_DMG[key] ?? 16);
+    if (victim === this.api.npc) this.relay(owner, `string-backfire:${key}`);
+  }
+
+  // ── Q+ Spinal Snap ─────────────────────────────────────────────────────────
+
+  /**
+   * Hang the web over the arena. Every attack — the spider's or its enemy's — tears at it; in an
+   * Invasion, where husks never cast, what they do to the spider tears it instead.
+   */
+  private hangWeb(owner: Owner): void {
+    const side = this.side(owner);
+    this.dropWeb(side.web);
+    const web: Web = { owner, hp: WEB_HP, until: this.now + WEB_MAX_MS, flash: 1, dirty: true, hooks: [], corpses: [] };
+    const listen = (f: Fighter, ev: string, fn: (...args: unknown[]) => void): void => {
+      f.on(ev, fn);
+      web.hooks.push({ f, ev, fn });
+    };
+    for (const f of [this.fighter(owner), ...this.targetsOf(owner)]) {
+      if (!f) continue;
+      listen(f, 'cast', (abilityId: unknown) => {
+        const ab = f.element?.abilities.find((a) => a.id === abilityId);
+        this.tearWeb(web, WEB_CAST_HIT[ab?.displayKey ?? 'Click'] ?? 15);
+      });
+    }
+    if (this.api.isInvasion && owner === 'player') {
+      listen(this.api.player, 'damaged', (amount: unknown) => {
+        if (typeof amount === 'number' && amount > 0) this.tearWeb(web, amount);
+      });
+    }
+    // The dead: grey, bloodless bodies of other elements, hanging from the top of the web.
+    const { scene } = this.api;
+    const b = this.api.bounds;
+    const ids = [...CORPSE_IDS].sort(() => Math.random() - 0.5);
+    CORPSE_AT.forEach((at, i) => {
+      const key = `elem-${ids[i]}`;
+      const img = scene.textures.exists(key)
+        ? scene.add.image(0, 0, key).setDisplaySize(CORPSE_R * 2, CORPSE_R * 2).setTint(STRING.corpse).setAlpha(0.92).setDepth(9.4)
+        : null;
+      web.corpses.push({ img, ax: b.left + (b.right - b.left) * at, ay: b.top + 2, len: CORPSE_DROP[i], phase: Math.random() * TAU });
+    });
+    side.web = web;
+    this.fx(owner).tombWrap(b.centerX, b.top + 40, 60);
+    this.announce(b.centerX, b.top + 60, '🕸️ SPINAL SNAP', STRING.silkShade, 14);
+    Sfx.playAt('tentacle', b.centerX, { rate: 0.6, volume: 0.8 });
+  }
+
+  private tearWeb(web: Web, amount: number): void {
+    if (this.side(web.owner).web !== web) return;
+    // Only the spider's sim lets it break; the other machine holds it at a thread until told.
+    web.hp = Math.max(this.simulates(web.owner) ? 0 : 1, web.hp - amount);
+    web.flash = 1;
+    web.dirty = true;
+    if (web.hp <= 0) this.breakWeb(web.owner, true);
+  }
+
+  /** Unhook the web's listeners and take its dead down. */
+  private dropWeb(web: Web | null): void {
+    if (!web) return;
+    for (const h of web.hooks) h.f.off(h.ev, h.fn);
+    web.hooks = [];
+    for (const c of web.corpses) c.img?.destroy();
+    web.corpses = [];
+  }
+
+  /**
+   * The web goes. Broken (`payoff`), every enemy takes the hit and is Infested; faded out unfought,
+   * it just comes down.
+   */
+  private breakWeb(owner: Owner, payoff: boolean): void {
+    const side = this.side(owner);
+    const web = side.web;
+    if (!web) return;
+    side.web = null;
+    // The dead fall out of it.
+    for (const c of web.corpses) {
+      if (!c.img) continue;
+      const img = c.img;
+      c.img = null;
+      this.api.scene.tweens.add({
+        targets: img, y: img.y + 260, angle: (Math.random() - 0.5) * 120, alpha: 0, duration: 800, ease: 'Quad.easeIn',
+        onComplete: () => img.destroy(),
+      });
+    }
+    this.dropWeb(web);
+    this.webGfx?.clear();
+    const other = this.side(owner === 'player' ? 'npc' : 'player').web;
+    if (other) other.dirty = true;
+    const b = this.api.bounds;
+    this.fx(owner).webBreak(b);
+    Sfx.playAt('whip', b.centerX, { rate: 0.6, volume: 0.9 });
+    if (!payoff || !this.simulates(owner)) return;
+    Sfx.playAt('slash', b.centerX, { rate: 0.6, volume: 0.9 });
+    for (const t of this.targetsOf(owner)) {
+      this.hurt(owner, t, WEB_BREAK_DMG);
+      t.stringInfestedUntil = Math.max(t.stringInfestedUntil, Date.now() + INFEST_MS);
+      this.touched.add(t);
+      this.infest.set(t, { owner, next: this.now + 500 });
+      this.announce(t.x, t.y - 50, '🕷️ INFESTED', STRING.silkShade, 12);
+    }
+    this.relay(owner, 'string-webbreak');
+  }
+
+  private updateWeb(owner: Owner, dt: number): void {
+    const web = this.side(owner).web;
+    if (!web) return;
+    if (this.now > web.until || !this.aliveSpider(owner)) { this.breakWeb(owner, false); return; }
+    if (web.flash > 0) { web.flash = Math.max(0, web.flash - dt * 4); web.dirty = true; }
+  }
+
+  /** Infested hosts on this sim: every couple of seconds a spider crawls out of them. */
+  private updateInfest(): void {
+    for (const [f, inf] of [...this.infest]) {
+      if (!this.alive(f) || Date.now() >= f.stringInfestedUntil) { this.infest.delete(f); continue; }
+      if (this.now < inf.next) continue;
+      inf.next = this.now + BROOD_EVERY_MS + Math.random() * BROOD_JITTER_MS;
+      this.spawnBrood(inf.owner, f.x, f.y, f, false);
+      if (f === this.api.npc) this.relay(inf.owner, `string-brood:${Math.round(this.mx(f.x))}:${Math.round(f.y)}`);
+    }
+  }
+
+  private spawnBrood(owner: Owner, x: number, y: number, host: Fighter | null, visual: boolean): void {
+    this.ensureLayers();
+    const gate = new Map<Fighter, number>();
+    if (host) gate.set(host, this.now + BROOD_HOST_GRACE_MS);
+    this.spiders.push({
+      owner, strand: null, d: 0, dir: 1, x, y, ang: Math.random() * TAU, phase: Math.random() * TAU,
+      until: this.now + BROOD_MS, looseUntil: this.now + BROOD_MS, vx: 0, vy: 0, nextTurn: 0, gate,
+      visual, scale: BROOD_SCALE, bewitched: false, nextSpit: 0, brood: true, nextHop: this.now + 300,
+    });
+    this.fx(owner).broodBurst(x, y);
+    Sfx.playAt('stab', x, { rate: 2.2, volume: 0.25 });
   }
 
   // ── Marionette ─────────────────────────────────────────────────────────────
@@ -1324,7 +1956,7 @@ export class StringKit {
     for (const [ax, ay] of [[b.left + 4, b.top + 4], [b.right - 4, b.top + 4], [b.left + 4, b.bottom - 4], [b.right - 4, b.bottom - 4]]) {
       const s: Strand = {
         id: -1, owner, kind: 'tomb', tied: null, ox: 0, oy: 0, ax, ay, len: 0, dies: Infinity, strain: 0, shots: 0,
-        born: this.now, nodes: this.makeNodes({ x: cx, y: cy }, { x: ax, y: ay }), seed: Math.random() * 999,
+        born: this.now, nodes: this.makeNodes({ x: cx, y: cy }, { x: ax, y: ay }), seed: Math.random() * 999, metal: false,
       };
       tomb.strands.push(s);
       this.strands.push(s);
@@ -1453,7 +2085,9 @@ export class StringKit {
     const playerIs = this.isString('player');
     const npcIs = this.isString('npc');
     const anyState = this.strands.length || this.hooks.length || this.bars.length || this.spiders.length
-      || this.puppets.size || this.sides.player.tomb || this.sides.npc.tomb || this.playerAvatar;
+      || this.puppets.size || this.sides.player.tomb || this.sides.npc.tomb || this.playerAvatar
+      || this.wads.length || this.infest.size || this.sides.player.web || this.sides.npc.web
+      || this.sides.player.swing || this.sides.npc.swing;
     if (!playerIs && !npcIs && !anyState) return;
     this.ensureLayers();
     this.ensureAvatars();
@@ -1467,27 +2101,45 @@ export class StringKit {
     this.updateHexTouch();
     this.updateShots(dt);
     this.updateSteering();
-    for (const owner of BOTH) this.updateTomb(owner, dt);
+    for (const owner of BOTH) {
+      this.updateTomb(owner, dt);
+      this.updateSwing(owner);
+      this.updateWeb(owner, dt);
+    }
     this.botHexSnap();
+    this.botSpool();
+    this.updateInfest();
     const bodies = this.allFighters().filter((f) => this.alive(f));
     for (const s of this.strands) this.stepRope(s, dt, bodies);
     this.updateSpiders(dt);
+    this.updateWads(dt);
     this.paint();
     this.updateAvatars(delta);
     this.pushStatuses(playerIs);
   }
 
-  /** The bot snaps its own hex strand once someone is caught in it and it has had time to slow them. */
+  /**
+   * The bot snaps its own hex strand once someone is caught in it and it has had time to slow them.
+   * With Spider Swing it also snaps a wall-tied one to get away: low, the target close, and the far
+   * end well clear of them.
+   */
   private botHexSnap(): void {
     if (!this.isString('npc') || !this.simulates('npc')) return;
     const s = this.hexOf('npc');
     const bot = this.api.npc;
     if (!s || !this.alive(bot) || this.now - s.born < NPC_HEX_MIN_AGE_MS) return;
     if (!this.canAct(bot, 'other')) return;
-    if (!this.npcHexCaught(s)) return;
-    const a = this.startOf(s);
-    const b = this.endOf(s);
-    this.snap(s, null, (a.x + b.x) / 2, (a.y + b.y) / 2);
+    if (this.npcHexCaught(s) || this.npcSwingAway(s)) this.recastHex('npc', s);
+  }
+
+  private npcSwingAway(s: Strand): boolean {
+    if (!this.up('npc', 'r') || s.tied) return false;
+    const bot = this.api.npc;
+    const t = this.targetsOf('npc')[0];
+    if (!t || bot.hp / bot.maxHp >= NPC_SWING_HP) return false;
+    if (Phaser.Math.Distance.Between(bot.x, bot.y, t.x, t.y) > NPC_SWING_THREAT) return false;
+    const e = this.endOf(s);
+    return Phaser.Math.Distance.Between(e.x, e.y, t.x, t.y) > NPC_SWING_AWAY;
   }
 
   private npcHexCaught(s: Strand): boolean {
@@ -1518,6 +2170,8 @@ export class StringKit {
         hexRope(rope, tint, pts, t + s.seed, 1, s.shots);
       } else if (s.kind === 'tomb') {
         silkLine(rope, tint, pts, 0.95);
+      } else if (s.metal) {
+        metalLine(rope, tint, pts, t + s.seed, 1, s.strain / METAL_SNAP_STRAIN, s.shots);
       } else {
         ropeLine(rope, tint, pts, 3, 1, s.strain / SNAP_STRAIN);
       }
@@ -1536,14 +2190,18 @@ export class StringKit {
       // The line paying out behind the hook, with a little whip in it.
       const mid = { x: (from.x + h.x) / 2 + Math.sin(t * 30) * 1.5, y: (from.y + h.y) / 2 + 1.5 };
       if (h.kind === 'hex') hexRope(rope, tint, [from, mid, { x: h.x, y: h.y }], t, 0.9, 0);
+      else if (h.metal) metalLine(rope, tint, [from, mid, { x: h.x, y: h.y }], t, 0.95, 0, 0);
       else ropeLine(rope, tint, [from, mid, { x: h.x, y: h.y }], 2.4, 0.95);
       hookTip(rope, tint, h.x, h.y, Math.atan2(h.vy, h.vx), 1, h.kind === 'hex');
     }
     for (const b of this.bars) controlBar(rope, this.col(b.owner), b.x, b.y, b.spin, 1.15, 1);
     for (const sp of this.spiders) {
       const fade = sp.strand ? Math.min(1, (sp.until - this.now) / 300) : Math.min(1, (sp.looseUntil - this.now) / 400);
-      spiderBody(rope, this.col(sp.owner), sp.x, sp.y, sp.ang, sp.phase, SPIDER_SCALE, Math.max(0, fade), !sp.strand);
+      if (sp.bewitched) bewitchedHalo(rope, this.col(sp.owner), sp.x, sp.y, t + sp.phase, Math.max(0, fade));
+      spiderBody(rope, this.col(sp.owner), sp.x, sp.y, sp.ang, sp.phase, sp.scale, Math.max(0, fade), !sp.strand && !sp.bewitched);
     }
+    for (const w of this.wads) webWad(rope, this.col(w.owner), w.x, w.y, Math.atan2(w.vy, w.vx), t, 1);
+    this.paintUpgrades(rope, top, t);
     for (const [victim, p] of this.puppets) {
       if (!this.alive(victim)) continue;
       const s = this.side(p.owner);
@@ -1560,6 +2218,57 @@ export class StringKit {
     }
   }
 
+  /** Spool, swing line, the arena web and its dead, and the spiders on Infested hosts. */
+  private paintUpgrades(rope: Phaser.GameObjects.Graphics, top: Phaser.GameObjects.Graphics, t: number): void {
+    // The lattice is one layer for both sides' webs, repainted only when one of them changed.
+    const webs = BOTH.map((o) => this.side(o).web).filter((w): w is Web => !!w);
+    if (this.webGfx && webs.some((w) => w.dirty)) {
+      this.webGfx.clear();
+      for (const w of webs) {
+        w.dirty = false;
+        webCover(this.webGfx, this.col(w.owner), this.api.bounds, 1 - w.hp / WEB_HP, w.flash, 1);
+      }
+    }
+    for (const owner of BOTH) {
+      const side = this.side(owner);
+      const f = this.fighter(owner);
+      const tint = this.col(owner);
+      if (side.spoolSince && this.alive(f)) {
+        const aim = this.aimOf(owner);
+        const a = Math.atan2(aim.y - f.y, aim.x - f.x);
+        spoolCharge(top, tint, f.x + Math.cos(a) * 22, f.y - 4 + Math.sin(a) * 22, Math.min(1, (this.now - side.spoolSince) / SPOOL_MS), t, 1);
+      }
+      if (side.swing && this.alive(f)) {
+        silkLine(rope, tint, [{ x: f.x, y: f.y - 4 }, { x: side.swing.ax, y: side.swing.ay }], 1);
+        hitKnot(rope, tint, side.swing.ax, side.swing.ay, Math.atan2(f.y - side.swing.ay, f.x - side.swing.ax), 1, true);
+      }
+      const web = side.web;
+      if (!web) continue;
+      const b = this.api.bounds;
+      web.corpses.forEach((c, i) => {
+        const sway = Math.sin(t * 0.9 + c.phase) * 0.16 + Math.sin(t * 2.3 + i) * 0.03 * web.flash * 4;
+        const x = c.ax + Math.sin(sway) * c.len;
+        const y = c.ay + Math.cos(sway) * c.len;
+        c.img?.setPosition(x, y).setRotation(-sway * 0.8);
+        corpseWrap(top, tint, c.ax, c.ay, x, y, CORPSE_R, -sway * 0.8, 1);
+      });
+      webBar(top, tint, b.centerX, b.top + 30, web.hp / WEB_HP, 0.9);
+    }
+    // Infested: small spiders crawling over the host.
+    const wall = Date.now();
+    for (const f of this.allFighters()) {
+      if (!this.alive(f) || wall >= f.stringInfestedUntil) continue;
+      const owner = this.infest.get(f)?.owner ?? (f === this.api.player ? 'npc' : 'player');
+      const r = this.bodyR(f);
+      for (let i = 0; i < 3; i++) {
+        const a = t * (1.4 + i * 0.3) + i * 2.1;
+        const x = f.x + Math.cos(a) * r * 0.8;
+        const y = f.y + Math.sin(a) * r * 0.7;
+        spiderBody(top, this.col(owner), x, y, a + Math.PI / 2, t * 20 + i, 0.75, f.alpha * 0.95, true);
+      }
+    }
+  }
+
   private updateAvatars(delta: number): void {
     for (const owner of BOTH) {
       const av = this.avatar(owner);
@@ -1570,7 +2279,7 @@ export class StringKit {
       av.setFacing(Math.atan2(aim.y - f.y, aim.x - f.x));
       const rig = this.rig(owner);
       rig?.setWeave(this.side(owner).tomb ? 1 : 0);
-      av.setHold(this.spidering(owner) ? 'draw' : null, Math.atan2(aim.y - f.y, aim.x - f.x));
+      av.setHold(this.spidering(owner) || this.side(owner).spoolSince ? 'draw' : null, Math.atan2(aim.y - f.y, aim.x - f.x));
       av.setMastered(false);
       av.update(delta, f.x, f.y, f.alpha);
     }
@@ -1607,6 +2316,13 @@ export class StringKit {
       description: `They are wrapped in silk: they cannot move or hurt you until they cut through it. ${Math.ceil(tb.hp)} HP left.`,
       count: Math.ceil(tb.hp),
       until: tb.until,
+    } : null);
+    const web = this.sides.player.web;
+    set('string-web', playerIs && web ? {
+      name: 'Spinal Snap', emoji: '🕸️', color: STRING.silkShade, priority: 154,
+      description: `Your web hangs over the arena. Every attack anyone makes tears it; when it breaks every enemy takes ${WEB_BREAK_DMG} and is Infested. ${Math.ceil(web.hp)} HP left.`,
+      count: Math.ceil(web.hp),
+      until: web.until,
     } : null);
     const mine = this.spiders.filter((sp) => sp.owner === 'player');
     set('string-spiders', playerIs && mine.length ? {
@@ -1660,6 +2376,18 @@ export class StringKit {
     if (this.puppets.has(t) || Date.now() < t.stringTombedUntil) return false;
     if (Phaser.Math.Distance.Between(f.x, f.y, t.x, t.y) > BAR_RANGE * 0.85) return false;
     return this.spiders.some((sp) => sp.owner === 'npc') || this.strandsOf('npc').length >= 2;
+  }
+
+  /** Click+: the kit is winding the bot's metal string; it holds its plain throws until it fires. */
+  npcStringSpooling(): boolean {
+    return this.sides.npc.spoolSince > 0;
+  }
+
+  /** F+: the target is the bot's puppet, so every cast is also their own ability turned on them. */
+  npcStringPuppetPlay(): boolean {
+    if (!this.up('npc', 'f')) return false;
+    for (const [v, p] of this.puppets) if (p.owner === 'npc' && this.alive(v) && this.now <= p.until) return true;
+    return false;
   }
 
   /** Linen Tomb is worth it: Spider Dance is ready to walk the guy-lines, or the target is low. */

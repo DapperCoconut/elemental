@@ -387,12 +387,17 @@ export interface CastContext {
   bindEyes: () => void;
   bindSiphon: (tx: number, ty: number) => void;
   bindRitual: () => void;
-  // Slime (test element: cheat mode only for now; id is `gum`, since `slime` is Acid's)
-  gumGrab: (tx: number, ty: number) => void;
-  gumSurge: (tx: number, ty: number) => void;
-  gumGumball: (tx: number, ty: number) => void;
-  gumOozorbtion: () => void;
-  gumSolidify: () => void;
+  // Savor (id `gum`): Sugar row, then Salt row. Every one delegates to SavorKit.
+  savorSugarSlam: (tx: number, ty: number) => void;
+  savorSweetTooth: (tx: number, ty: number) => void;
+  savorSugarDiffusion: () => void;
+  savorCaringShare: (tx: number, ty: number) => void;
+  savorSugarRush: () => void;
+  savorSaltSlice: (tx: number, ty: number) => void;
+  savorSaltShield: () => void;
+  savorSaltInfusion: (tx: number, ty: number) => void;
+  savorSaltWounds: (tx: number, ty: number) => void;
+  savorSaltCrash: () => void;
 
   // Quantum's Third State — the kit the bond's third stop supplies (QuantumCoreKit)
   quantumSplicers: () => void;

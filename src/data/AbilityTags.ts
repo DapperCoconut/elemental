@@ -131,8 +131,8 @@ export const ABILITY_TAGS: Record<string, readonly AbilityTag[]> = {
   'bind-daggers': ['rmb', 'hold'],
   'bind-chain': ['recast'],
   'bind-siphon': ['recast'],
-  // Slime
-  'gum-grab': ['hold'],
+  // Savor (id gum)
+  'savor-salt-infusion': ['recast'],
   // Wood
   'wood-carverang': ['rmb'],
   // Pressure: everything is held to charge. Release banks its charge and fires on a tap.

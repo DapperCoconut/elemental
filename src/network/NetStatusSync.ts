@@ -42,7 +42,7 @@ const MIRRORED_TIMERS = new Set([
   'rad-mutated', 'over-radiated', 'devotion-slow', 'gold-hex', 'gold-statue', 'wood-slow',
   'pain-lock', 'pressure-slow', 'grounded', 'astra-slow',
   'memory-sealed',
-  'string-hexed', 'string-snared',
+  'string-hexed', 'string-snared', 'string-infested',
   'ink-slip', 'ink-flat',
   'sound-dance', 'sound-dissonant', 'dream-nightmare', 'dream-clawed', 'dream-paralysis', 'turned-around',
 ]);

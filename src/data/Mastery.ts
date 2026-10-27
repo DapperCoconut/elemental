@@ -1841,56 +1841,6 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
       },
     ],
   },
-  // Slime. The element id is `gum`; everything the player sees says Slime.
-  gum: {
-    elementId: 'gum',
-    name: 'Slime Mastery',
-    enhancedEmoji: '🟩',
-    enhancedColor: 0x2b8b76,
-    requirements: [
-      {
-        key: 'bodyThrows',
-        label: 'Somebody Else\'s Problem',
-        howTo: 'Gum an entity with the Gumball barrage (R), pick the body up with the hand and throw it',
-        target: 50,
-      },
-      {
-        key: 'bombHits',
-        label: 'Splash Damage',
-        howTo: 'Catch entities in a Slime Bomb blast (needs the E+ Slime Splash corrupt upgrade)',
-        target: 60,
-      },
-      {
-        key: 'absorbs',
-        label: 'Everything Goes Down',
-        howTo: 'Swallow an incoming attack with Oozorbtion (F) — a shot plucked out of the air or a hit taken on the open body both count',
-        target: 50,
-      },
-      {
-        key: 'clawKills',
-        label: 'The Hand That Set',
-        howTo: 'Land the killing blow with the hand of stone — a punch or a passing smack while the Q+ claw is up (needs the Q+ Hand of Stone corrupt upgrade)',
-        target: 1,
-      },
-    ],
-    enhancements: [
-      {
-        id: 'slime-split',
-        name: 'Slime Split',
-        description: 'Passive: a slime does not die when it is killed. It comes apart.\n\nThe hit that would have finished you instead splits the body into **three slimelings of 50 HP each**, much smaller than the thing they came out of, and the fight simply carries on. Damage is taken by the hindmost one first, so they are peeled off one at a time; you are only truly dead when the last of the three is gone.\n\nThey are not pets and they are not a summon — they are you. Their three little arms come together into the one hand you have always had, so you grip, drag, punch, carry and throw exactly as before, from a body that is now a cluster instead of a blob. What changes is that **each slimeling can swallow its own projectile**: one Oozorbtion opens all three at once, and each of them digests what it caught into its own health.\n\nThe cost is that the pool is 150 and not whatever you had. Splitting is not a heal — it is a second life at a third of the size, with three separate things left to kill.',
-      },
-      {
-        id: 'oobleck',
-        name: 'Oobleck',
-        bindable: true,
-        // Solidify is what turns the slab into a real wall — binding over Q would delete the
-        // upgrade path written into the ability's own description.
-        excludeSlots: ['q'],
-        hudDescription: 'Summon a slimy slab and carry it like a shield. Projectiles stick in it, enemies who walk through it are slowed harder and harder for 12s. Solidify turns it into a wall',
-        description: 'A slab of half-set slime, summoned straight into the hand and held broadside-on like a shield — the long edge facing you, because it is your cover and not your weapon. It is never thrown. Let go and it is simply set down where it stands, and it can be picked back up again whenever you want to move it.\n\nIt is not a wall. Anyone can walk straight through it, you included; what it stops is **shots**. Up to five stick in it at once, hanging in the goo, each dissolving away after five seconds to leave room for the next. Feed it a sixth while all five are still in there and the slab gives up: it bursts into **two slime puddles** on the floor where it stood.\n\nAnything that walks through it comes out wearing **Oobleck** for 12 seconds — a slow that starts as almost nothing and gets worse the whole time it is on, until in the last second before it ends they are moving at 30% speed. It is a debt, not a hit: the further it runs the more it costs.\n\nAnd then there is Solidify. **Q sets the slab hard**, and a hard slab stops being a filter and becomes a wall: it blocks *every* projectile, with no limit at all, and neither fighter can walk through it any more. The thing you were hiding behind becomes the thing that divides the room.',
-      },
-    ],
-  },
   paper: {
     elementId: 'paper',
     name: 'Paper Mastery',

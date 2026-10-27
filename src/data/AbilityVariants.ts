@@ -93,15 +93,6 @@ const ABILITY_VARIANTS: Record<string, Partial<Record<string, AbilityVariantSet>
       ],
     },
   },
-  gum: {
-    q: {
-      label: 'Slime beacons (Solidify sets any puddle you have laid — pick one up, shake it, put it down)',
-      variants: [
-        { emoji: '🟢', name: 'Green Beacon — Slowing Aura', description: 'Set from a Slime Splash puddle. Anyone standing inside its aura moves at half speed for as long as it runs.', requiresUpgrade: 'e' },
-        { emoji: '🩷', name: 'Pink Beacon — Healing Aura', description: 'Set from an Emesis puddle. Heals you 8 HP a second while you are inside its aura.', requiresUpgrade: 'f' },
-      ],
-    },
-  },
   sound: {
     f: {
       label: 'Soul Songs (F cycles them — Staccato is the one a match starts on)',

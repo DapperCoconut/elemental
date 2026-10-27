@@ -16,6 +16,13 @@ import { CampaignFightMenuScene } from './scenes/CampaignFightMenuScene';
 import { CampaignShopScene } from './scenes/CampaignShopScene';
 import { CampaignPortalScene } from './scenes/CampaignPortalScene';
 import { CampaignElementSelectScene } from './scenes/CampaignElementSelectScene';
+import { IslesSlotScene } from './isles/scenes/IslesSlotScene';
+import { IsleWorldScene } from './isles/world/IsleWorldScene';
+import { IslesResultScene } from './isles/scenes/IslesResultScene';
+import { IslesInventoryScene } from './isles/scenes/IslesInventoryScene';
+import { IslesGeneScene } from './isles/scenes/IslesGeneScene';
+import { IslesMapScene } from './isles/scenes/IslesMapScene';
+import { SeaVoyageScene } from './isles/sea/SeaVoyageScene';
 import { GauntletElementSelectScene } from './scenes/GauntletElementSelectScene';
 import { InventoryScene } from './scenes/InventoryScene';
 import { VaultScene } from './scenes/VaultScene';
@@ -55,7 +62,7 @@ const config: Phaser.Types.Core.GameConfig = {
       debug: false,
     },
   },
-  scene: [BootScene, TitleScene, MenuScene, ShopScene, LabScene, ArenaScene, GameOverScene, GauntletSelectScene, GauntletIntermediaryScene, PauseMenuScene, CampaignSlotSelectScene, CampaignWorldMapScene, CampaignWorldScene, CampaignFightMenuScene, CampaignShopScene, CampaignPortalScene, CampaignElementSelectScene, GauntletElementSelectScene, InventoryScene, VaultScene, OnlineLobbyScene, AchievementsScene, DisgracedLabScene, QuantumLabScene, AudioSettingsScene, ConquestMenuScene, DialogueScene, StrongholdSetupScene, StrongholdScene, StrongholdJournalScene, RankedScene, RankedBanScene, RankedSelectScene, RankedIntermissionScene],
+  scene: [BootScene, TitleScene, MenuScene, ShopScene, LabScene, ArenaScene, GameOverScene, GauntletSelectScene, GauntletIntermediaryScene, PauseMenuScene, CampaignSlotSelectScene, CampaignWorldMapScene, CampaignWorldScene, CampaignFightMenuScene, CampaignShopScene, CampaignPortalScene, CampaignElementSelectScene, GauntletElementSelectScene, InventoryScene, VaultScene, OnlineLobbyScene, AchievementsScene, DisgracedLabScene, QuantumLabScene, AudioSettingsScene, ConquestMenuScene, DialogueScene, StrongholdSetupScene, StrongholdScene, StrongholdJournalScene, RankedScene, RankedBanScene, RankedSelectScene, RankedIntermissionScene, IslesSlotScene, IsleWorldScene, IslesResultScene, IslesInventoryScene, IslesGeneScene, IslesMapScene, SeaVoyageScene],
 };
 
 const game = new Phaser.Game(config);

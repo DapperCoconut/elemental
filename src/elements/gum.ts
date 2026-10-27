@@ -2,77 +2,124 @@ import { Element } from './Element';
 import { Ability, CastContext } from './Ability';
 
 /**
- * Slime — a test element, reachable only from a cheat-mode save for now.
+ * Savor — two characters on one body, and Space swaps them.
  *
- * The id is `gum` rather than `slime` because `slime` already belongs to Acid, which kept the old
- * name's slot when it was reworked. Everything the player ever sees says Slime.
+ * The id is still `gum` (this slot used to be Slime; `slime` is Acid's), so saves, campaign
+ * worlds and husk tables keep working. Everything the player sees says Savor.
  *
- * This is the only element in the game that cannot walk. There are no legs under the blob; there
- * is one enormous gummy arm, and every inch of ground the player covers is covered by throwing
- * that arm at the floor, gripping, and hauling the body in after it. That single decision is what
- * the whole kit is built around: the hand is the movement, the hand is the weapon, and the hand is
- * the inventory — so anything that occupies it (carrying a slimeball, carrying a person, or having
- * been shattered by the ultimate) is also a decision to stand still.
+ * **Sugar** is soft and generous: candy bombs that leave sweet trails, a bag of sweets thrown on
+ * the floor to be picked up for small permanent buffs, a loop round the enemy that steals their
+ * blood sugar, a chocolate ball that *lends* them your buffs (and then takes it back with a
+ * crash), and a Sugar Rush ultimate.
  *
- * The abilities all feed the hand rather than replacing it. Slime Surge leaves ammunition on the
- * floor that only the hand can pick up. Gumball turns a person into ammunition. Oozorbtion is the
- * one thing the body does on its own — it swells, eats a shot out of the air and digests it into
- * health. And Solidify is the drastic one: it throws the hand away as a wall of shards, freezing
- * the player where they stand for three seconds while everything sticky on the field goes glassy.
+ * **Salt** is hard and mean: a fast shard that bites harder into bigger health pools, a crust of
+ * shield that builds over time, a stalactite fired off a timing bar that soaks up the colour of
+ * whatever buffs it passes through, a cone that stings for half of what you just dealt, and a
+ * Salt Crash ultimate that lifts everyone onto spears for a race.
  *
- * Every `cast` below is a one-line delegate; the whole simulation lives in GumKit.
+ * Abilities 0–4 are Sugar's row, 5–9 Salt's — the tray swaps rows like Justice's stances. Every
+ * `cast` is a one-line delegate into SavorKit.
  */
 
-const grab: Ability = {
-  id: 'gum-grab',
-  name: 'Grab',
-  description: 'Hold to grip. On the floor or a wall it takes your weight — drag the mouse and the arm hauls you the other way, which is the only way you move. On a slimeball, a gummed enemy or an enemy shot it picks the thing up to be thrown. On an enemy it is a 20-damage punch instead, and simply whipping the hand over someone smacks them for 15.',
+const sugarSlam: Ability = {
+  id: 'savor-sugar-slam',
+  name: 'Sugar Slam',
+  description: 'Lob a sugar bomb to the cursor. It bursts for 22 damage, leaves a sugar cloud where it lands and a trail of sugar along the way it flew — both sting anyone standing in them.',
   displayKey: 'Click',
-  cooldown: 420,
-  cast(ctx: CastContext) { ctx.gumGrab(ctx.targetX, ctx.targetY); },
+  cooldown: 700,
+  cast(ctx: CastContext) { ctx.savorSugarSlam(ctx.targetX, ctx.targetY); },
 };
 
-const surge: Ability = {
-  id: 'gum-surge',
-  name: 'Slime Surge',
-  description: 'Spit three slimeballs onto the floor in front of you. They just sit there until the hand picks one up; released at the right moment it flies, and a hit is 30 damage and a 50% slow for 3 seconds. A ball that misses lands and can be used again.',
+const sweetTooth: Ability = {
+  id: 'savor-sweet-tooth',
+  name: 'Sweet Tooth',
+  description: 'Tear open a bag of candies and scatter five around you. Walk over one to eat it for a small buff that lasts the whole match: Cinnamon (damage), Mint (resistance), Lemon (speed), Fruit Punch (dodge chance). Rainbow Lollipops raise all four — Black Licorice lowers all four.',
   displayKey: 'E',
-  cooldown: 7000,
-  cast(ctx: CastContext) { ctx.gumSurge(ctx.targetX, ctx.targetY); },
+  cooldown: 5000,
+  cast(ctx: CastContext) { ctx.savorSweetTooth(ctx.targetX, ctx.targetY); },
 };
 
-const gumball: Ability = {
-  id: 'gum-gumball',
-  name: 'Gumball',
-  description: 'A barrage of bubble gum forward. Anyone hit takes 5 a bubble and is encased for 5 seconds — badly slowed, and now something the hand can pick up. Thrown into a wall an encased body takes 30 and stays stuck to it for 5 more seconds.',
+const sugarDiffusion: Ability = {
+  id: 'savor-sugar-diffusion',
+  name: 'Sugar Diffusion',
+  description: '+50% speed for 5 seconds. Run a full loop round an enemy and you drain their blood sugar into a cube over your head: they are slower for the rest of the match, sluggish and unable to dodge just after using an ability, and weaker every time they repeat the same attack. While it lasts it also drains their bars.',
   displayKey: 'R',
-  cooldown: 9000,
-  cast(ctx: CastContext) { ctx.gumGumball(ctx.targetX, ctx.targetY); },
+  cooldown: 15000,
+  cast(ctx: CastContext) { ctx.savorSugarDiffusion(); },
 };
 
-const oozorbtion: Ability = {
-  id: 'gum-oozorbtion',
-  name: 'Oozorbtion',
-  description: 'Swell by 20% and open up. The next attack that reaches you is swallowed whole instead of landing — it sits in your body for 3 seconds while it digests, then heals you for exactly what it would have done. The swelling goes as soon as something is caught.',
+const caringShare: Ability = {
+  id: 'savor-caring-share',
+  name: 'Caring Share',
+  description: 'Throw a ball of chocolate. It hits for 16 and lends the target 150% of your candy buffs for 5 seconds — then they crash for 5 seconds with the same amount as penalties, and drop 3 candies for you to pick up.',
   displayKey: 'F',
   cooldown: 12000,
-  cast(ctx: CastContext) { ctx.gumOozorbtion(); },
+  cast(ctx: CastContext) { ctx.savorCaringShare(ctx.targetX, ctx.targetY); },
 };
 
-const solidify: Ability = {
-  id: 'gum-solidify',
-  name: 'Solidify',
-  description: 'Every scrap of your slime on the field goes glassy at once. Your hand bursts into shards in all directions for 8 damage each and takes 3 seconds to grow back — you cannot move at all until it does. Your slimeballs harden to 45 damage and shatter on walls, anyone you have gummed is sealed for 5 seconds longer and bursts when they are thrown, and any slime puddles you have laid set into beacons: pick one up, shake it, and it emits an aura for as long as you shook it.',
+const sugarRush: Ability = {
+  id: 'savor-sugar-rush',
+  name: 'Sugar Rush!',
+  description: 'For 12 seconds: triple speed, and every candy buff you have counts double. The screen goes wide and rainbow.',
   displayKey: 'Q',
   isUltimate: true,
-  cooldown: 22000,
-  cast(ctx: CastContext) { ctx.gumSolidify(); },
+  cooldown: 40000,
+  cast(ctx: CastContext) { ctx.savorSugarRush(); },
+};
+
+const saltSlice: Ability = {
+  id: 'savor-salt-slice',
+  name: 'Salt Slice',
+  description: 'Fire a fast shard of salt: 12 damage plus 3% of the target\'s max health, so bigger health pools bleed faster. It stops at the first body it hits.',
+  displayKey: 'Click',
+  cooldown: 500,
+  cast(ctx: CastContext) { ctx.savorSaltSlice(ctx.targetX, ctx.targetY); },
+};
+
+const saltShield: Ability = {
+  id: 'savor-salt-shield',
+  name: 'Salt Shield',
+  description: 'Salt crusts over you as shield, 2 a second and climbing to 5 a second. It stops once you reach 75 shield — or the moment your shield is knocked down to nothing.',
+  displayKey: 'E',
+  cooldown: 12000,
+  cast(ctx: CastContext) { ctx.savorSaltShield(); },
+};
+
+const saltInfusion: Ability = {
+  id: 'savor-salt-infusion',
+  name: 'Salt Infusion',
+  description: 'Grow a stalactite in front of you with a timing bar underneath. Press R again to fire it: 48 damage in the green, 32 in the yellow, 18 in the red. It pierces, soaks up the colour of every buff on whoever it passes through, and drops where it stops — pick the coated crystal up for permanent candy stacks to match.',
+  displayKey: 'R',
+  cooldown: 10000,
+  cast(ctx: CastContext) { ctx.savorSaltInfusion(ctx.targetX, ctx.targetY); },
+};
+
+const saltWounds: Ability = {
+  id: 'savor-salt-wounds',
+  name: 'Salt in the Wounds',
+  description: 'Spray a cone of stinging salt. Each enemy in it takes half of all the damage you dealt them in the last 2 seconds.',
+  displayKey: 'F',
+  cooldown: 9000,
+  cast(ctx: CastContext) { ctx.savorSaltWounds(ctx.targetX, ctx.targetY); },
+};
+
+const saltCrash: Ability = {
+  id: 'savor-salt-crash',
+  name: 'Salt Crash',
+  description: 'Salt spears burst up under every enemy for 30 and hold them in the air. Nobody can attack while a race plays out: press the salt crystals that pop up on screen. Out-press them and they take 40 more and your candies turn Salted — every stack also cuts your cooldowns for 10 seconds.',
+  displayKey: 'Q',
+  isUltimate: true,
+  cooldown: 40000,
+  cast(ctx: CastContext) { ctx.savorSaltCrash(); },
 };
 
 export const gumElement: Element = {
   id: 'gum',
-  name: 'Slime',
-  color: 0x46b93f,
-  emoji: '🫠',
-  abilities: [grab, surge, gumball, oozorbtion, solidify],
+  name: 'Savor',
+  color: 0xf7b2d0,
+  emoji: '🍬',
+  abilities: [
+    sugarSlam, sweetTooth, sugarDiffusion, caringShare, sugarRush,
+    saltSlice, saltShield, saltInfusion, saltWounds, saltCrash,
+  ],
 };

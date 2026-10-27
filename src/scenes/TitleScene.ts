@@ -194,7 +194,14 @@ export class TitleScene extends Phaser.Scene {
         blurb: 'Worlds to cross and trials to survive.',
         modes: [
           {
-            label: 'CAMPAIGN', kicker: 'Journey', icon: 'map', accent: C.ember,
+            label: 'CAMPAIGN', kicker: 'The Ten Isles', icon: 'map', accent: C.ember,
+            blurb: 'Ten tyrants, sixty courts, one sea. Walk ashore at Emberport.',
+            status: '▶  SET SAIL',
+            action: () => this.scene.start('IslesSlotScene'),
+          },
+          {
+            // Kept reachable until every isle of the new campaign is charted, then retired.
+            label: 'CLASSIC', kicker: 'Old campaign', icon: 'map', accent: C.steel,
             blurb: 'Forty-seven Sovereigns, world by world.',
             status: '▶  TRAVEL',
             action: () => this.scene.start('CampaignSlotSelectScene'),
