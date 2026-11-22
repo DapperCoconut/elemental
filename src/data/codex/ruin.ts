@@ -296,35 +296,27 @@ const ruin: ElementCodex = {
         'The one thing it is not is a cleanse. Everything already on the board when Ruin walks in stays exactly where it is.',
       ],
     },
-    'second-skin': {
+    'screeching-steel': {
       basics:
-        'A bindable burst of 25 plates thrown in an even circle at 540 px/s for 0.82s — about 440px of '
-        + 'reach in every direction at once — dealing 15 damage on a shared hit list, so standing in the '
-        + 'middle is 15 damage and one revert rather than 25 of either. Anything a plate touches is put '
-        + 'back into the body it started the match in: Hunt\'s beast and hybrid, Justice\'s flight, '
-        + 'Earth\'s titan, Fire\'s flame body, Magnet\'s board, Acid\'s burrow, Speed \'O\' '
-        + 'Light, a Silence possession, a Magic chicken, a tempered Sand, a gum zip-line, a Creation '
-        + 'mech, a Growth body swap and an Illusion fold. It is not a pause: the form does not come back, '
-        + 'everything spent getting into it is spent, and even a permanent one like a Give In beast ends '
-        + 'anyway — this is the only thing in the game that ends one early. Every cast shrinks you ×0.8 '
-        + 'in size and hitbox, permanently, so five layers is 32.8% of the size you started at and '
-        + 'nothing hands any of it back. There are exactly five casts in the whole match; a sixth press '
-        + 'prints 🦎 NOTHING LEFT TO SHED and does nothing. 14s cooldown.',
-      cast: 'The bound key (R, F or Q). Instant, no aim — the burst is a full circle centred on you. 14 second cooldown, and five casts in the entire match.',
+        'A bindable shriek with three halves. Everybody within 190px is thrown straight away from you '
+        + 'at up to 640 px/s, bleeding off over 0.38s — a full throw at point blank, about half of one '
+        + 'at the edge — while anybody threaded on your skewer stays on it. Whatever had hold of you '
+        + 'lets go, and for 3 seconds nothing can stun, freeze, root or slow you; it can be cast out of '
+        + 'a stun. Then the rust it shook loose settles on you for 10 seconds: every enemy within 150px '
+        + 'wears a rotting blade, and while any of them is inside 90px of you, you take 40% less. '
+        + '16s cooldown.',
+      cast: 'The bound key (R, F or Q). Instant, no aim — the shriek is a full circle centred on you. Usable while stunned. 16 second cooldown.',
       effects: [
-        { tag: 'damage', label: 'The plates', detail: '25 shards at 15 damage, thrown in an even circle at 540 px/s for 0.82s — about 440px of reach in every direction at once.' },
-        { tag: 'utility', label: 'One plate per body', detail: 'All 25 share a single hit list, so standing in the middle of the burst is 15 damage and one revert, never 25 of either.' },
-        { tag: 'control', label: 'Back to base form', detail: 'Anything a plate touches is put back in the body it started the match in: Hunt\'s beast and hybrid, Justice\'s flight, Earth\'s titan, Fire\'s flame body, Magnet\'s board, Acid\'s burrow, Speed \'O\' Light, a Silence possession, a Magic chicken, a tempered Sand, a gum zip-line, a Creation mech, a Growth body swap and an Illusion fold.' },
-        { tag: 'control', label: 'It is not a duration', detail: 'The form does not pause and it does not come back. Everything spent getting into it is spent, and a permanent one — a Give In beast — ends anyway. This is the only thing in the game that ends one early.' },
-        { tag: 'cost', label: 'You shrink', detail: '×0.8 size and hitbox, permanently, on every cast. Five layers is 32.8% of the size you started at, and nothing in the game hands any of it back.' },
-        { tag: 'cost', label: 'Five, and then never', detail: 'The card empties on the fifth cast and stays empty for the rest of the match. A sixth press prints 🦎 NOTHING LEFT TO SHED and does nothing at all.' },
+        { tag: 'control', label: 'The throw', detail: 'Everybody within 190px is shoved straight away from you at up to 640 px/s, decaying to nothing over 0.38s — half of that at the edge of the shriek. Skewer riders stay on the skewer.' },
+        { tag: 'shield', label: 'Shake loose', detail: 'Clears a stun and a disarm on cast, then 3s immune to every stun, freeze, root and slow.' },
+        { tag: 'debuff', label: 'Rusty aura', detail: '10s. Enemies within 150px have their weapons visibly rot; while any of them is within 90px of you, you take 40% less from everything.' },
+        { tag: 'utility', label: 'Availability', detail: '16s cooldown on its own clock — the slot it is bound over keeps its own.' },
       ],
       notes: [
-        'The shrink is a gift and a wound in the same line. A third-size body is a nightmare to hit — and it is also a body that has to physically be somewhere for half of Ruin\'s own kit, since the skewer, the ring and the crystals are all placed relative to it.',
-        'The five are the design. There is no regeneration, no cooldown reduction and no upgrade that adds a sixth, so every cast is a decision about whether *this* transformation is the one worth a layer.',
-        'The reverting half is worth nothing at all against an element with no form to break — the plates still land and still hurt, but half the card is dead weight. Against Hunt, Earth or Justice it is close to a full counter to their strongest button.',
-        'Ending a form is not the same as razing a structure. Spikes of Ruin destroys what somebody *built*; this ends what somebody *became*. A Creation pilot is thrown clear of their mech and the mech is left standing.',
-        'The bot spends its five deliberately: it will not shed at range, and it prefers the two moments the kit itself set up — somebody threaded onto its skewer, or somebody caught inside a spike ring that is about to erupt.',
+        'It is an escape first: the throw makes room, the immunity means nothing can pin you while you use it, and it works from inside a stun.',
+        'The rust is felt on your end of the fight. A hit has no attacker attached to it, so the aura cuts what you take while a rusted enemy is close enough to be swinging — a shot from a rusted enemy standing that close is blunted too.',
+        'Knockback-immune and Unstoppable bodies are not thrown, but they still rust.',
+        'The bot screams when something has hold of it with an enemy close, or when an enemy is pressed into melee reach — the throw buys room and the aura rusts whoever walks back in.',
       ],
     },
   },

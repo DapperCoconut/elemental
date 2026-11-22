@@ -8,6 +8,8 @@ import {
 import { BossPalette, BossToolkit, BossToolkitHost } from './BossToolkit';
 import { HARASS_MOVES, LIB_MOVES, LIB_STYLE, LibStyle } from './AttackLibrary';
 import { BossHold, BossLook, BossRig, mixColor, shade } from './BossRig';
+import { makeStrikeTarget } from './StrikeTargets';
+import type { ShotHandle } from '../../combat/ShotHandles';
 
 /**
  * The engine every world Sovereign fights through.
@@ -47,6 +49,8 @@ export interface WorldBossArenaApi {
   showFloatingText(x: number, y: number, text: string, color: string): void;
   spawnHitFlash(x: number, y: number, color: number): void;
   bossVictory(): void;
+  /** Fighters' shots in flight (see ShotHandles) — optional; without it signatures see none. */
+  shotsNear?(x: number, y: number, r: number): ShotHandle[];
 }
 
 const INTRO_MS = 2600;
@@ -249,6 +253,8 @@ export class WorldBossKit {
       },
       spawnHitFlash: (x, y, c) => this.arena.spawnHitFlash(x, y, c),
       showFloatingText: (x, y, t, c) => this.arena.showFloatingText(x, y, t, c),
+      spawnTarget: (def) => makeStrikeTarget(scene, def, (f) => this.arena.addEnemy(f), (f) => this.arena.removeEnemy(f)),
+      shotsNear: (x, y, r) => this.arena.shotsNear?.(x, y, r) ?? [],
     };
     this.tk = new BossToolkit(host, this.palette, hard);
     this.tk.damageScale = (def.damageMult ?? 1) * LETHALITY
@@ -289,7 +295,9 @@ export class WorldBossKit {
     body.reset(this.bx, this.by);
 
     npc.on('damaged', (amount: number) => {
-      if (amount > 0) this.hurtFlashUntil = scene.time.now + 120;
+      if (amount <= 0) return;
+      this.hurtFlashUntil = scene.time.now + 120;
+      for (const sig of this.signatures.values()) sig.onBossHurt?.(amount);
     });
     npc.on('defeated', () => this.onBodyDefeated());
 
@@ -388,7 +396,7 @@ export class WorldBossKit {
     this.tk?.destroy();
     this.tk = null;
     const npc = this.arena.npc;
-    if (npc) npc.bossWardIncomingMult = 1;
+    if (npc) { npc.bossWardIncomingMult = 1; npc.bossSigIncomingMult = 1; }
   }
 
   // ── Phase styling ──────────────────────────────────────────────────
@@ -422,6 +430,7 @@ export class WorldBossKit {
     this.anchorX = this.arena.width / 2;
     this.anchorY = this.arena.height * 0.34;
     this.gimmick = this.style.gimmick ?? 'none';
+    if (this.tk) this.tk.dark = this.gimmick === 'gloom';
     this.gimmickClock = time + 2600;
     this.shrinkR = Math.hypot(this.arena.width, this.arena.height) * 0.52;
     this.shrinkHitAt = 0;
@@ -473,6 +482,9 @@ export class WorldBossKit {
 
     this.tk.update(time, delta);
     for (const sig of this.signatures.values()) sig.update?.(time, dt);
+    let taken = 1;
+    if (this.flow === 'fight') for (const sig of this.signatures.values()) taken *= sig.takenMult?.() ?? 1;
+    this.arena.npc.bossSigIncomingMult = Phaser.Math.Clamp(taken, 0, 4);
     this.rig.update(delta, this.bx, this.by, this.facingAngle(), this.look, this.vx, this.vy);
     this.draw(time);
     this.drawBossBar();
@@ -1219,19 +1231,20 @@ export class WorldBossKit {
       }
     }
 
-    if (this.def.drawDecor) {
-      const state: BossBodyState = {
-        x: this.bx, y: this.by, t: time, hpRatio, enraged, hurt,
-        phaseIdx: this.phaseIdx, hard: this.hard, facing, castGlow,
-        radius: this.look.torsoR ?? 34,
-        palette: this.palette,
-        look: this.look,
-        hands: [0, 1, 2, 3].slice(0, this.look.arms ?? 2).map((i) => this.rig.handAt(i)),
-      };
-      this.def.drawDecor(bG, state);
-    }
+    const state: BossBodyState | null = this.def.drawDecor || this.def.drawLit ? {
+      x: this.bx, y: this.by, t: time, hpRatio, enraged, hurt,
+      phaseIdx: this.phaseIdx, hard: this.hard, facing, castGlow,
+      radius: this.look.torsoR ?? 34,
+      palette: this.palette,
+      look: this.look,
+      hands: [0, 1, 2, 3].slice(0, this.look.arms ?? 2).map((i) => this.rig.handAt(i)),
+      inGloom: this.gimmick === 'gloom',
+    } : null;
+    if (state) this.def.drawDecor?.(bG, state);
 
     this.drawGloom(time);
+    // Over the dark: the projectile layer sits above the gloom, so what is lit goes there.
+    if (state) this.def.drawLit?.(pG, state);
   }
 
   private drawBossBar(): void {

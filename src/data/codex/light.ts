@@ -81,13 +81,13 @@ const light: ElementCodex = {
         'Snaps your heading straight to the cursor with no speed lost — the one turn the meter does not '
         + 'charge you for — plus 600ms with your speed floored at 207 px/s, so it is also a small push '
         + 'out of a stall. Two charges, each refilling 5 seconds after it is spent, and it refuses to '
-        + 'fire while Speed \'O\' Light is running.',
+        + 'fire while a Supernova is open.',
       cast: 'E. Instant. Spends one charge; charges refill independently.',
       effects: [
         { tag: 'movement', label: 'Free corner', detail: 'Heading snaps straight to the cursor with no speed loss — the one turn the acceleration meter does not charge you for.' },
         { tag: 'resource', label: 'Charges', detail: '2 charges held, each refilling 5s after it was spent. Two hard corners back to back, then a wait.' },
         { tag: 'buff', label: 'Blink boost', detail: '600ms with your speed floored at 207 px/s, so blinking out of a stall is also a small push.' },
-        { tag: 'cost', label: 'Not during Q', detail: 'Blink refuses to fire while Speed \'O\' Light is running.' },
+        { tag: 'cost', label: 'Not during Q', detail: 'Blink refuses to fire while a Supernova is open.' },
       ],
       upgrade: {
         basics:
@@ -177,36 +177,42 @@ const light: ElementCodex = {
       ],
     },
 
-    'speed-o-light': {
+    'light-supernova': {
       basics:
-        '125 teleports to random points on the arena walls, one every 60ms — 7.5 seconds in total, with '
-        + 'no aim and no control. Each hop leaves a lit line for 900ms dealing 15 damage to anything '
-        + 'within 40px of it, once per target per streak, and you hold +100% dodge chance for the whole '
-        + 'duration, dropped the moment the last bounce lands. 45s cooldown, so one and maybe two in a '
-        + 'long fight.',
-      cast: 'Q. No aim and no control — the destinations are random points on the arena walls.',
+        'Stop on a dime and let the speed out as light. Whatever you were moving at the moment you '
+        + 'press it — the car\'s speed while driving, your walking speed on foot — becomes the beam\'s '
+        + 'length in time: the stock top speed of 620 px/s buys 6 seconds, Redline\'s doubled top end '
+        + 'up to the 9-second ceiling, and anything under 40 px/s is refused rather than spent. You are '
+        + 'rooted for the whole beam. It runs from your palms all the way to the arena wall, deals 9 '
+        + 'damage every 0.2s (45 a second) to anything within 34px of its line, and turns after your '
+        + 'cursor at Fire\'s Supernova rate of 0.85 radians a second. Q again lets go early. No heat, '
+        + 'no self-burn and no detonation — the only cost is that you are standing still with no speed '
+        + 'banked when it ends.',
+      cast: 'Q. Aimed at the cursor on the press, then steered by it. Q again stops it. Ult charge, 30s-equivalent cost.',
       effects: [
-        { tag: 'movement', label: 'The bounces', detail: '125 teleports to random wall positions, one every 60ms — 7.5 seconds of it in total.' },
-        { tag: 'damage', label: 'Streaks', detail: 'Each hop leaves a lit line for 900ms that deals 15 damage to anything within 40px of it, once per target per streak.' },
-        { tag: 'shield', label: 'Untouchable', detail: '+100% dodge chance for the whole duration, removed the moment the last bounce lands.' },
-        { tag: 'utility', label: 'Availability', detail: '45s cooldown — one, maybe two, in a long fight.' },
+        { tag: 'resource', label: 'Speed into time', detail: '6s of beam at 620 px/s (the stock top speed), scaling linearly, capped at 9s. Under 40 px/s the press is refused and no charge is spent.' },
+        { tag: 'damage', label: 'The beam', detail: '9 damage every 0.2s — 45 a second — to anything within 34px of the line, from your palms to the wall.' },
+        { tag: 'utility', label: 'Infinite range', detail: 'The beam always runs to the arena wall. Distance does not matter, only the line.' },
+        { tag: 'movement', label: 'Rooted', detail: 'Your speed drops to 0 on the cast and stays there. The beam turns toward the cursor at 0.85 rad/s.' },
+        { tag: 'cost', label: 'Broken by control', detail: 'A stun or a freeze ends the beam early — unless Unstoppable (mastery) is on.' },
       ],
       upgrade: {
         basics:
-          'Every 10th teleport leaves a beam behind — 12 across a full cast — each lasting 35 seconds, '
-          + 'with no cap on how many can exist. Standing within 40px of one of your own raises your '
-          + 'acceleration from 175 to 525 px/s². They do no damage and have no effect on enemies at all: '
-          + 'they are pure road surface.',
+          'Every half second the beam is open it burns its current line into the floor: a strip of '
+          + 'scorched earth 52px wide from you to the wall, lasting 14 seconds, up to 14 of yours at once '
+          + '(the oldest cools first). Driving over one of your own adds 240 px/s of speed every second '
+          + 'on top of everything else — on a straightaway or in the middle of a drift — so the beam '
+          + 'refunds the speed it spent. Enemies are unaffected by it.',
         effects: [
-          { tag: 'summon', label: 'Beams laid', detail: 'Every 10th teleport leaves a beam — 12 of them over a full 125-bounce cast — each lasting 35s. There is no cap on how many can exist.', requiresUpgrade: 'q' },
-          { tag: 'buff', label: 'Triple acceleration', detail: 'Standing within 40px of one of your own beams raises the acceleration rate from 175 to 525 px/s².', requiresUpgrade: 'q' },
-          { tag: 'utility', label: 'Yours alone', detail: 'Beams do no damage and have no effect on enemies whatsoever. They are pure road surface.', requiresUpgrade: 'q' },
+          { tag: 'summon', label: 'Scorched earth', detail: 'A 52px-wide strip along the beam every 0.5s, lasting 14s. Up to 14 of yours at once.', requiresUpgrade: 'q' },
+          { tag: 'buff', label: 'Gradual speed', detail: '+240 px/s of speed per second while driving over your own scorch, turning or not.', requiresUpgrade: 'q' },
+          { tag: 'utility', label: 'Yours alone', detail: 'Scorch does no damage and has no effect on enemies. It is road surface.', requiresUpgrade: 'q' },
         ],
       },
       notes: [
-        'The ability card says 25 bounces at 10 damage each; the kit runs 125 bounces at 15 damage. The figures above are the kit\'s.',
-        'Killing somebody with a streak is the mastery\'s Hit and Run requirement — 5 of them.',
-        'The destinations are uniformly random along the walls, so the damage output against a fighter hugging one edge is wildly higher than against one standing dead centre.',
+        'The beam\'s length is decided the moment you press Q. Prism Ramps, Light Trick and Blink boosts all feed the speed you will be converting.',
+        'Killing somebody with the beam is the mastery\'s Hit and Run requirement — 5 of them.',
+        'With Solar Dynamo, a sweeping beam leaves a fan of lanes behind it — drive them and the next Supernova is already half paid for.',
       ],
     },
   },

@@ -16,29 +16,48 @@ import type { BoatDef, IsleDef, Pt } from '../IslesTypes';
  * beasts surfacing in the deep. Turn for home (H) any time to keep what is in the hold.
  *
  * Any other `dest` is an isle id: a *crossing* — the same sea, kept to the upper two bands, that
- * ends in landfall at that isle's port once `CROSSING_M` metres are behind you.
+ * ends in landfall at that isle's port once `CROSSING_M` metres are behind you. A crossing to one
+ * of the abstract isles (`IsleDef.outer`) runs the Outer Sea instead: longer, in black water, with a
+ * swell that shoves the boat about, storm flashes, and breakers rolling in to thread.
  */
 
 /** How long a crossing between two isles is. */
 const CROSSING_M = 2600;
 /** Hazards stop spawning this far from landfall, so the coast comes up clear. */
 const COAST_M = 480;
+/** A crossing of the Outer Sea, out to the abstract isles beyond the Breakwater. */
+const OUTER_CROSSING_M = 3800;
+/** Seconds a venom glob is in the air before it lands as a slick, and how long the slick lasts after. */
+const SLICK_FLIGHT = 0.9;
+const SLICK_LIFE = 7.5;
+/** The Hydra Prow: seconds a head takes to grow back after it bites, and how far each one reaches. */
+const PROW_REGROW = 8;
+const PROW_REACH = 120;
+/** Half the width of the trough a breaker leaves to slip through. */
+const BREAKER_GAP = 78;
 
 /**
  * Sea beasts, by the `beast` id an isle's `UberDef` names. Each guards its isle's Uber-upgrade
  * and only surfaces once you have landed on that isle. `shot` tints its spit; `spawn` is what
  * its third attack throws on the water.
  */
-const BEASTS: Record<string, { name: string; shot: number; bar: number; spawn: 'driftwall' | 'whirls' | 'brambles' | 'gusts' }> = {
+const BEASTS: Record<string, { name: string; shot: number; bar: number; spawn: 'driftwall' | 'whirls' | 'brambles' | 'gusts' | 'rockfall' | 'arcs' | 'slicks' }> = {
   magmaw: { name: 'THE MAGMAW', shot: 0xff5a1a, bar: 0xff6a2a, spawn: 'driftwall' },
   wyrm: { name: 'THE MAELSTROM WYRM', shot: 0x6ad8ff, bar: 0x4ab8ff, spawn: 'whirls' },
   brambleback: { name: 'THE BRAMBLEBACK', shot: 0x9ad84a, bar: 0x7ac83a, spawn: 'brambles' },
   skyray: { name: 'THE SKYRAY', shot: 0xe8f8ff, bar: 0x9ad8ff, spawn: 'gusts' },
+  cragjaw: { name: 'THE CRAGJAW', shot: 0xc8b090, bar: 0xb89a6a, spawn: 'rockfall' },
+  galvaneel: { name: 'THE GALVANEEL', shot: 0x8ad8ff, bar: 0x5ab8ff, spawn: 'arcs' },
+  hydra: { name: 'THE MIRE HYDRA', shot: 0x8ae03a, bar: 0x6ac82a, spawn: 'slicks' },
 };
 
 /** `bramble`: a floating mat of thorn-vine the Brambleback sheds; it snags (stops your drift) and scratches, but can be shot apart. */
 /** `gust`: a gust front the Skyray's wake throws across the water — a band the width of the sea that shoves the boat toward `seed`'s sign; it cannot be shot. */
-type HazardKind = 'rock' | 'reef' | 'mine' | 'whirl' | 'drift' | 'tentacle' | 'spout' | 'bramble' | 'gust';
+/** `arc`: a live line the Galvaneel strings across the water between two charged floats (`x - r` to `x + r`); it crackles on a beat (live while `armed` > 0) and shocks a boat crossing it while live; it cannot be shot. */
+/** `breaker`: an Outer Sea roller — a wall of white water the width of the sea rolling in faster than the swell, with one trough (`seed` = its x) to steer through; it cannot be shot or rammed. */
+/** `boulder`: a boulder the Cragjaw shrugs off its back — a shadow on the water first; when it lands it smashes whatever is under it and settles as a rock. */
+/** `slick`: a glob of venom the Mire Hydra spits — in the air for `SLICK_FLIGHT` s (its shadow on the water), then a sheen of venom spreading on the sea; crossing it corrodes the hull once (`armed` 2 once it has) and drags the boat while you are in it; it thins and fades over `SLICK_LIFE` s; it cannot be shot. `seed` is the x it was spat from. */
+type HazardKind = 'rock' | 'reef' | 'mine' | 'whirl' | 'drift' | 'tentacle' | 'spout' | 'bramble' | 'gust' | 'boulder' | 'breaker' | 'arc' | 'slick';
 interface Hazard { kind: HazardKind; x: number; y: number; r: number; hp: number; maxHp: number; t: number; seed: number; dead: boolean; armed?: number }
 interface Loot { kind: 'crate' | 'barrel' | 'orb' | 'bottle'; x: number; y: number; t: number; taken: boolean }
 interface Shot { x: number; y: number; vx: number; vy: number; dmg: number; life: number; big?: boolean; foe?: boolean }
@@ -55,6 +74,13 @@ const BANDS = [
   { at: 900, name: 'The Grey Reach', sea: 0x1a3448, deep: 0x0e2234, foam: 0x7ab8d8 },
   { at: 2000, name: 'The Drowned Dark', sea: 0x10202e, deep: 0x08121c, foam: 0x5a8aa8 },
   { at: 3400, name: 'The Abyssal Line', sea: 0x080e18, deep: 0x04060c, foam: 0x4a6aa0 },
+];
+
+/** The Outer Sea's bands: darker, colder blues with bright whitecaps; a crossing goes all three deep. */
+const OUTER_BANDS = [
+  { at: 0, name: 'The Outer Swell', sea: 0x0b2240, deep: 0x07162c, foam: 0xbfe2ff },
+  { at: 1200, name: 'The Breakers', sea: 0x081a34, deep: 0x050f22, foam: 0xd4eeff },
+  { at: 2600, name: 'The Black Rollers', sea: 0x05112a, deep: 0x030918, foam: 0xe4f4ff },
 ];
 
 export class SeaVoyageScene extends Phaser.Scene {
@@ -98,6 +124,17 @@ export class SeaVoyageScene extends Phaser.Scene {
   private crossing: IsleDef | null = null;
   /** Seconds since the Figurehead last threw its bow wave (drawn as a spreading arc). */
   private bowWaveT = 9;
+  /** True on an Outer Sea crossing. */
+  private rough = false;
+  /** Seconds of swell; drives the sideways heave. */
+  private swellT = 0;
+  /** Pixels of sea until the next breaker rolls in. */
+  private nextBreaker = 0;
+  /** Seconds until the next storm flash. */
+  private nextFlash = 0;
+  /** Seconds since the last storm flash (drawn as the fork of lightning). */
+  private flashT = 9;
+  private flashX = 480;
 
   constructor() { super({ key: 'SeaVoyageScene' }); }
 
@@ -107,7 +144,10 @@ export class SeaVoyageScene extends Phaser.Scene {
     this.fromPos = data?.pos ?? { x: -1, y: -1 };
     this.crossing = this.dest === 'wastes' ? null : getIsle(this.dest) ?? null;
     if (!this.crossing) this.dest = 'wastes';
+    this.rough = !!this.crossing?.outer;
+    this.swellT = 0; this.nextBreaker = 1400; this.nextFlash = 4; this.flashT = 9;
     this.bowWaveT = 9;
+    this.slickDrag = 0; this.prowReady = [0, 0, 0];
     this.over = false;
     this.hazards = []; this.loot = []; this.shots = []; this.wake = [];
     this.beast = null;
@@ -141,15 +181,17 @@ export class SeaVoyageScene extends Phaser.Scene {
     this.cameras.main.fadeIn(400, 0, 0, 0);
   }
 
+  private bands(): typeof BANDS { return this.rough ? OUTER_BANDS : BANDS; }
+
   private band(): number {
     let b = 0;
-    BANDS.forEach((x, i) => { if (this.dist >= x.at) b = i; });
-    // A crossing keeps to the charted lanes: never deeper than the Grey Reach.
-    return this.crossing ? Math.min(b, 1) : b;
+    this.bands().forEach((x, i) => { if (this.dist >= x.at) b = i; });
+    // A crossing keeps to the charted lanes: never deeper than the Grey Reach. The Outer Sea has no lanes.
+    return this.crossing && !this.rough ? Math.min(b, 1) : b;
   }
 
   /** Metres left to landfall on a crossing (Infinity in the Wastes). */
-  private toLand(): number { return this.crossing ? CROSSING_M - this.dist : Infinity; }
+  private toLand(): number { return this.crossing ? (this.rough ? OUTER_CROSSING_M : CROSSING_M) - this.dist : Infinity; }
 
   update(time: number, deltaRaw: number): void {
     const dt = Math.min(deltaRaw, 40) / 1000;
@@ -163,7 +205,8 @@ export class SeaVoyageScene extends Phaser.Scene {
     this.bx = Phaser.Math.Clamp(this.bx + this.bvx * dt, 40, 920);
     this.heading = Phaser.Math.Clamp(this.bvx / 400, -0.5, 0.5);
     this.sailT += dt;
-    const fwd = this.speed * (1 + trim * 0.25) * (this.sailT < 1.1 ? 1.7 : 1);
+    this.slickDrag = Math.max(0, this.slickDrag - dt);
+    const fwd = this.speed * (1 + trim * 0.25) * (this.sailT < 1.1 ? 1.7 : 1) * (this.slickDrag > 0 ? 0.55 : 1);
     this.by = Phaser.Math.Linear(this.by, 500 - trim * 40, 0.04);
     this.dist += fwd * dt / 10;
 
@@ -171,7 +214,7 @@ export class SeaVoyageScene extends Phaser.Scene {
     const bi = this.band();
     if (bi !== this.lastBand) {
       this.lastBand = bi;
-      this.bandText.setText(BANDS[bi].name.toUpperCase()).setAlpha(1);
+      this.bandText.setText(this.bands()[bi].name.toUpperCase()).setAlpha(1);
       this.tweens.add({ targets: this.bandText, alpha: 0, delay: 1800, duration: 700 });
       if (bi > 0) Sfx.play('boss-phase');
     }
@@ -188,8 +231,9 @@ export class SeaVoyageScene extends Phaser.Scene {
     this.nextSpawn -= scroll;
     if (this.nextSpawn <= 0 && !(this.beast && this.beast.phase !== 'sink') && this.toLand() > COAST_M) {
       this.spawnRow(bi);
-      this.nextSpawn = Math.max(90, 260 - bi * 45 - this.dist * 0.01) * (0.7 + this.rng() * 0.6);
+      this.nextSpawn = Math.max(90, 260 - bi * 45 - this.dist * 0.01) * (0.7 + this.rng() * 0.6) * (this.rough ? 0.8 : 1);
     }
+    if (this.rough) this.roughWater(dt, scroll, bi);
     this.nextLoot -= scroll;
     if (this.nextLoot <= 0) {
       const r = this.rng();
@@ -220,7 +264,7 @@ export class SeaVoyageScene extends Phaser.Scene {
       this.cameras.main.shake(200, 0.006);
       const ring = this.add.circle(this.bx, this.by, 170, this.elementColor, 0.25).setScale(0.2);
       this.tweens.add({ targets: ring, scale: 1, alpha: 0, duration: 380, onComplete: () => ring.destroy() });
-      for (const h of this.hazards) if (Math.hypot(h.x - this.bx, h.y - this.by) < 170 && h.kind !== 'reef' && h.kind !== 'gust') this.damageHazard(h, 4);
+      for (const h of this.hazards) if (Math.hypot(h.x - this.bx, h.y - this.by) < 170 && h.kind !== 'reef' && h.kind !== 'gust' && h.kind !== 'breaker' && h.kind !== 'arc' && h.kind !== 'slick') this.damageHazard(h, 4);
       if (this.beast && Math.hypot(this.beast.x - this.bx, this.beast.y - this.by) < 230) this.hitBeast(6);
     }
     this.bowWaveT += dt;
@@ -234,7 +278,7 @@ export class SeaVoyageScene extends Phaser.Scene {
         continue;
       }
       for (const h of this.hazards) {
-        if (h.dead || h.kind === 'whirl' || h.kind === 'reef' || h.kind === 'gust') continue;
+        if (h.dead || h.kind === 'whirl' || h.kind === 'reef' || h.kind === 'gust' || h.kind === 'boulder' || h.kind === 'breaker' || h.kind === 'arc' || h.kind === 'slick') continue;
         if (Math.hypot(sh.x - h.x, sh.y - h.y) < h.r + 6) { this.damageHazard(h, sh.dmg); sh.life = 0; break; }
       }
       if (this.beast && sh.life > 0 && this.beast.phase === 'fight' && Math.hypot(sh.x - this.beast.x, sh.y - this.beast.y) < 56) { this.hitBeast(sh.dmg); sh.life = 0; }
@@ -266,10 +310,62 @@ export class SeaVoyageScene extends Phaser.Scene {
         if (h.t > 6) h.dead = true;
         continue;
       }
+      if (h.kind === 'arc') {
+        // Live for 1.1 s, guttering for 0.7 s: cross while it is dark.
+        const live = (h.t + h.seed) % 1.8 < 1.1;
+        h.armed = live ? 1 : 0;
+        if (live && Math.abs(h.y - this.by) < 14 && Math.abs(this.bx - h.x) < h.r) { this.damageBoat(1); Sfx.play('zap'); }
+        continue;
+      }
+      if (h.kind === 'slick') {
+        if (h.t < SLICK_FLIGHT) continue;
+        if (!h.armed) {
+          // Splash down: a burst of venom, and the sheen starts to spread.
+          h.armed = 1; this.explode(h.x, h.y, h.r * 0.7); Sfx.play('splash');
+        }
+        if (h.t > SLICK_FLIGHT + SLICK_LIFE) { h.dead = true; continue; }
+        const thin = this.slickStrength(h), rr = this.slickRadius(h);
+        const ex = (this.bx - h.x) / rr, ey = (this.by - h.y) / (rr * 0.55);
+        if (ex * ex + ey * ey < 1 && thin > 0.15) {
+          // In the venom: the boat wallows (sideways way bleeds off, forward speed drops), and the
+          // first touch of a fresh slick eats into the hull.
+          this.slickDrag = 0.25;
+          this.bvx *= Math.pow(0.2, dt);
+          if (h.armed === 1 && thin > 0.35) { h.armed = 2; this.damageBoat(1); this.float(this.bx, this.by - 36, 'the hull corrodes', '#9af05a'); Sfx.play('status-poison'); }
+        }
+        continue;
+      }
+      if (h.kind === 'breaker') {
+        // It rolls in faster than the sea; caught outside the trough, it breaks over the boat.
+        h.y += (90 + this.band() * 25) * dt;
+        if (!h.armed && Math.abs(h.y - this.by) < h.r + 12) {
+          h.armed = 1;
+          if (Math.abs(this.bx - h.seed) > BREAKER_GAP) {
+            this.damageBoat(1);
+            this.bvx += Math.sign(this.bx - h.seed || 1) * 520;
+            this.float(this.bx, this.by - 36, 'swamped!', '#d4eeff'); Sfx.play('splash');
+          } else this.float(this.bx, this.by - 36, 'through the trough', '#9dd8ff');
+        }
+        continue;
+      }
+      if (h.kind === 'boulder') {
+        if (h.t < 1.2) continue;
+        // Down it comes: a smash where it lands, then it sits in the sea as an ordinary rock.
+        this.explode(h.x, h.y, h.r + 24); this.cameras.main.shake(120, 0.005); Sfx.play('stone-slam');
+        if (d < h.r + 22) this.damageBoat(2);
+        h.kind = 'rock'; h.hp = h.maxHp = 3;
+        continue;
+      }
       if (h.kind === 'mine' && d < 90 && h.armed === undefined) h.armed = 0.6;
       if (h.kind === 'mine' && h.armed !== undefined) {
         h.armed -= dt;
         if (h.armed <= 0) { this.explode(h.x, h.y, 80); h.dead = true; if (d < 80) this.damageBoat(2); continue; }
+      }
+      if (d < h.r + 16 && h.kind !== 'reef' && Save.S().boat.uber === 'uber-cragplate') {
+        // The Cragplate Ram: the stone prow smashes rocks, drift and mines aside unharmed.
+        h.dead = true; this.explode(h.x, h.y, 34); Sfx.play('rock-throw');
+        if (h.kind === 'rock' && this.rng() < 0.3) this.loot.push({ kind: 'crate', x: h.x, y: h.y, t: 0, taken: false });
+        continue;
       }
       if (d < h.r + 16) {
         this.damageBoat(h.kind === 'drift' ? 1 : h.kind === 'reef' ? 2 : 1);
@@ -312,6 +408,30 @@ export class SeaVoyageScene extends Phaser.Scene {
 
   private pumpT = 0;
 
+  /**
+   * The Outer Sea: a swell that heaves the boat side to side (stronger the deeper the band),
+   * breakers rolling in with one trough to thread, and the storm overhead flashing.
+   */
+  private roughWater(dt: number, scroll: number, bi: number): void {
+    this.swellT += dt;
+    const heave = Math.sin(this.swellT * 0.62) * 0.7 + Math.sin(this.swellT * 1.37 + 1.1) * 0.3;
+    this.bvx += heave * (150 + bi * 60) * dt;
+    this.nextBreaker -= scroll;
+    if (this.nextBreaker <= 0 && this.toLand() > COAST_M && !(this.beast && this.beast.phase !== 'sink')) {
+      const gap = 110 + this.rng() * 740;
+      this.hazards.push({ kind: 'breaker', x: 480, y: -70, r: 20, hp: 999, maxHp: 999, t: 0, seed: gap, dead: false });
+      this.nextBreaker = (1250 - bi * 220) * (0.75 + this.rng() * 0.5);
+    }
+    this.flashT += dt;
+    this.nextFlash -= dt;
+    if (this.nextFlash <= 0) {
+      this.nextFlash = 5 + this.rng() * 7;
+      this.flashT = 0; this.flashX = 80 + this.rng() * 800;
+      this.cameras.main.flash(140, 200, 220, 255);
+      Sfx.play('thunder');
+    }
+  }
+
   private spawnRow(bi: number): void {
     const r = this.rng;
     const n = 1 + Math.floor(r() * (2 + bi));
@@ -343,6 +463,11 @@ export class SeaVoyageScene extends Phaser.Scene {
 
   private damageBoat(n: number): void {
     if (this.invuln > 0 || this.over) return;
+    if (this.plateReady && Save.S().boat.uber === 'uber-cragplate') {
+      this.plateReady = false; this.invuln = 0.9; this.turretCd = 8;
+      this.float(this.bx, this.by - 34, 'the cragplate holds', '#e0c8a0'); Sfx.play('shield-block');
+      return;
+    }
     this.hull -= n;
     this.invuln = 0.9;
     this.cameras.main.shake(180, 0.008);
@@ -368,7 +493,101 @@ export class SeaVoyageScene extends Phaser.Scene {
     else if (uber === 'uber-figurehead') this.uberBowWave();
     else if (uber === 'uber-greenwood') this.uberRegrow();
     else if (uber === 'uber-windcatcher') this.uberSail();
+    else if (uber === 'uber-cragplate') this.uberPlate();
+    else if (uber === 'uber-stormmast') this.uberMast();
+    else if (uber === 'uber-hydraprow') this.uberProw();
     else this.turretCd = 99;
+  }
+
+  /** Where the Stormglass Mast's last bolt forked to (drawn while `mastT` < 0.3). */
+  private mastBolts: Pt[] = [];
+  private mastT = 9;
+
+  /**
+   * The Stormglass Mast takes the storm every six seconds and forks a bolt to the three nearest
+   * hazards ahead: rocks, drift, mines and bramble mats are smashed, and a beast close by is scorched.
+   */
+  private uberMast(): void {
+    const ahead = this.hazards
+      .filter((h) => !h.dead && h.y < this.by && h.y > -20 && (h.kind === 'rock' || h.kind === 'drift' || h.kind === 'mine' || h.kind === 'bramble'))
+      .sort((a, b) => Math.hypot(a.x - this.bx, a.y - this.by) - Math.hypot(b.x - this.bx, b.y - this.by))
+      .slice(0, 3);
+    this.mastBolts = ahead.map((h) => ({ x: h.x, y: h.y }));
+    for (const h of ahead) { h.dead = true; this.explode(h.x, h.y, 30); }
+    if (this.beast?.phase === 'fight' && Math.hypot(this.beast.x - this.bx, this.beast.y - this.by) < 420) {
+      this.hitBeast(3); this.mastBolts.push({ x: this.beast.x, y: this.beast.y });
+    }
+    if (!this.mastBolts.length) { this.turretCd = 0.5; return; }
+    this.turretCd = 6;
+    this.mastT = 0;
+    Sfx.play('thunder');
+  }
+
+  /** Seconds the boat is still wallowing in a venom slick (forward speed cut while > 0). */
+  private slickDrag = 0;
+
+  /** How much venom is left in a slick, 1 fresh to 0 gone: it thins out over its life. */
+  private slickStrength(h: Hazard): number {
+    return Phaser.Math.Clamp(1 - (h.t - SLICK_FLIGHT) / SLICK_LIFE, 0, 1);
+  }
+
+  /** A slick's spread: it runs out fast on landing, then thins (and shrinks a little) as it fades. */
+  private slickRadius(h: Hazard): number {
+    const age = h.t - SLICK_FLIGHT;
+    return h.r * Math.min(1, 0.3 + age / 0.6) * (0.75 + 0.25 * this.slickStrength(h));
+  }
+
+  /** The Hydra Prow's three heads (left, centre, right): scene-seconds each grows back at. */
+  private prowReady = [0, 0, 0];
+  /** Each head's last bite — where it struck and when (drawn as a lunge). */
+  private prowBite: { x: number; y: number; at: number }[] = [{ x: 0, y: 0, at: -9 }, { x: 0, y: 0, at: -9 }, { x: 0, y: 0, at: -9 }];
+
+  /** Where the prow's head `i` (0 left, 1 centre, 2 right) sits on the bow, in boat-local units. */
+  private prowMount(i: number): Pt {
+    const L = this.boat.len;
+    return i === 1 ? { x: 0, y: -L / 2 - 10 } : { x: (i - 1) * L * 0.26, y: -L * 0.36 };
+  }
+
+  /**
+   * The Hydra Prow: each of the three carved heads bites the first hazard to come into reach on its
+   * own side — left, centre or right — and smashes it (rocks, drift, mines, bramble mats, tentacles),
+   * then needs eight seconds to grow back.
+   */
+  private uberProw(): void {
+    this.turretCd = 0.05;
+    const now = this.time.now / 1000;
+    for (let i = 0; i < 3; i++) {
+      if (now < this.prowReady[i]) continue;
+      const m = this.prowMount(i), hx = this.bx + m.x, hy = this.by + m.y;
+      let best: Hazard | null = null, bd = PROW_REACH;
+      for (const h of this.hazards) {
+        if (h.dead || !(h.kind === 'rock' || h.kind === 'drift' || h.kind === 'mine' || h.kind === 'bramble' || h.kind === 'tentacle')) continue;
+        const dx = h.x - this.bx;
+        const side = dx < -34 ? 0 : dx > 34 ? 2 : 1;
+        if (side !== i || h.y > this.by + 10) continue;
+        const d = Math.hypot(h.x - hx, h.y - hy) - h.r;
+        if (d < bd) { bd = d; best = h; }
+      }
+      if (!best) continue;
+      best.dead = true;
+      this.explode(best.x, best.y, best.r + 14);
+      if (best.kind === 'rock' && this.rng() < 0.3) this.loot.push({ kind: 'crate', x: best.x, y: best.y, t: 0, taken: false });
+      this.prowBite[i] = { x: best.x, y: best.y, at: now };
+      this.prowReady[i] = now + PROW_REGROW;
+      Sfx.play(best.kind === 'mine' ? 'explosion-large' : 'rock-throw');
+    }
+  }
+
+  /** The Cragplate has hardened: the next hit on the hull is shrugged off. */
+  private plateReady = false;
+
+  /** The Cragplate Ram hardens again eight seconds after it last took a blow. */
+  private uberPlate(): void {
+    this.turretCd = 8;
+    if (this.plateReady) return;
+    this.plateReady = true;
+    this.float(this.bx, this.by - 30, 'the cragplate hardens', '#e0c8a0');
+    Sfx.play('stone-rise');
   }
 
   /** Seconds since the Windcatcher Sail last filled (speed burst while < 1.1; drawn as a billow). */
@@ -406,7 +625,7 @@ export class SeaVoyageScene extends Phaser.Scene {
   private thornBurst(): void {
     const R = 150;
     for (const h of this.hazards) {
-      if (h.dead || h.kind === 'whirl' || h.kind === 'reef' || h.kind === 'tentacle' || h.kind === 'spout' || h.kind === 'gust') continue;
+      if (h.dead || h.kind === 'whirl' || h.kind === 'reef' || h.kind === 'tentacle' || h.kind === 'spout' || h.kind === 'gust' || h.kind === 'boulder' || h.kind === 'breaker' || h.kind === 'arc' || h.kind === 'slick') continue;
       if (Math.hypot(h.x - this.bx, h.y - this.by) < R + h.r) this.damageHazard(h, 3);
     }
     if (this.beast?.phase === 'fight' && Math.hypot(this.beast.x - this.bx, this.beast.y - this.by) < 260) this.hitBeast(4);
@@ -430,7 +649,7 @@ export class SeaVoyageScene extends Phaser.Scene {
       if (dy > -20 || dy < -reach || Math.abs(dx) > 70 + (-dy) * 0.45) continue;
       any = true;
       if (h.kind === 'whirl') { h.dead = true; this.explode(h.x, h.y, h.r * 1.6); continue; }
-      if (h.kind === 'reef' || h.kind === 'tentacle' || h.kind === 'spout' || h.kind === 'gust') continue;
+      if (h.kind === 'reef' || h.kind === 'tentacle' || h.kind === 'spout' || h.kind === 'gust' || h.kind === 'boulder' || h.kind === 'breaker' || h.kind === 'arc' || h.kind === 'slick') continue;
       h.x = Phaser.Math.Clamp(h.x + (Math.sign(dx) || 1) * 70, 30, 930);
       this.damageHazard(h, 2);
     }
@@ -447,7 +666,7 @@ export class SeaVoyageScene extends Phaser.Scene {
   private uberTurret(): void {
     let best: { x: number; y: number } | null = null, bd = 380;
     for (const h of this.hazards) {
-      if (h.dead || h.kind === 'whirl' || h.kind === 'reef' || h.kind === 'spout' || h.kind === 'tentacle' || h.kind === 'gust' || h.y > this.by) continue;
+      if (h.dead || h.kind === 'whirl' || h.kind === 'reef' || h.kind === 'spout' || h.kind === 'tentacle' || h.kind === 'gust' || h.kind === 'boulder' || h.kind === 'breaker' || h.kind === 'arc' || h.kind === 'slick' || h.y > this.by) continue;
       const d = Math.hypot(h.x - this.bx, h.y - this.by);
       if (d < bd) { bd = d; best = h; }
     }
@@ -526,12 +745,37 @@ export class SeaVoyageScene extends Phaser.Scene {
           const a = Math.atan2(this.by - b.y, this.bx - b.x) + i * 0.22;
           this.shots.push({ x: b.x, y: b.y + 30, vx: Math.cos(a) * 240, vy: Math.sin(a) * 240, dmg: 1, life: 3, foe: true });
         }
-        Sfx.play(b.kind === 'wyrm' ? 'water-jet' : b.kind === 'brambleback' ? 'thorn' : b.kind === 'skyray' ? 'whoosh' : 'fireball');
+        Sfx.play(b.kind === 'wyrm' ? 'water-jet' : b.kind === 'brambleback' ? 'thorn' : b.kind === 'skyray' ? 'whoosh' : b.kind === 'cragjaw' ? 'rock-throw' : b.kind === 'galvaneel' ? 'zap' : b.kind === 'hydra' ? 'status-poison' : 'fireball');
       }
       if (b.attack === 'slam' && b.attackT > 1.0 && b.attackT - dt <= 1.0) {
         for (let i = 0; i < 3; i++) this.hazards.push({ kind: 'tentacle', x: Phaser.Math.Clamp(this.bx + (i - 1) * 110, 60, 900), y: this.by - 20, r: 26, hp: 999, maxHp: 999, t: 0, seed: i, dead: false });
       }
-      if (b.attack === 'wave' && b.attackT > 0.8 && b.attackT - dt <= 0.8 && BEASTS[b.kind]?.spawn === 'gusts') {
+      if (b.attack === 'wave' && b.attackT > 0.8 && b.attackT - dt <= 0.8 && BEASTS[b.kind]?.spawn === 'rockfall') {
+        // The Cragjaw heaves its back: boulders shrug off the basalt pillars and arc down at the
+        // boat — one aimed where it is, two either side; read the shadows and slip between.
+        for (const off of [0, -150, 150]) {
+          const x = Phaser.Math.Clamp(this.bx + off + (this.rng() - 0.5) * 40, 50, 910);
+          this.hazards.push({ kind: 'boulder', x, y: this.by - 150 - this.rng() * 60, r: 26, hp: 999, maxHp: 999, t: 0, seed: off, dead: false });
+        }
+        Sfx.play('quake');
+      } else if (b.attack === 'wave' && b.attackT > 0.8 && b.attackT - dt <= 0.8 && BEASTS[b.kind]?.spawn === 'arcs') {
+        // The Galvaneel lights its cells and strings three arcs across the water, staggered so their
+        // dark beats differ: read each one and cross it while it gutters.
+        for (let i = 0; i < 3; i++) {
+          const span = 220 + this.rng() * 160, cx = Phaser.Math.Clamp(this.bx + (this.rng() - 0.5) * 360, span / 2, 960 - span / 2);
+          this.hazards.push({ kind: 'arc', x: cx, y: -40 - i * 150, r: span / 2, hp: 999, maxHp: 999, t: 0, seed: i * 0.6, dead: false, armed: 1 });
+        }
+        Sfx.play('electric-charge');
+      } else if (b.attack === 'wave' && b.attackT > 0.8 && b.attackT - dt <= 0.8 && BEASTS[b.kind]?.spawn === 'slicks') {
+        // The Hydra's heads spit globs of venom in a ragged volley — one at the boat, the rest either
+        // side and further up the sea — that land as slicks; the gaps between them are the way through.
+        const offs = [0, -170, 170, (this.rng() < 0.5 ? -1 : 1) * 320];
+        offs.forEach((off, i) => {
+          const x = Phaser.Math.Clamp(this.bx + off + (this.rng() - 0.5) * 50, 50, 910);
+          this.hazards.push({ kind: 'slick', x, y: this.by - 170 - i * 70 - this.rng() * 40, r: 58 + this.rng() * 18, hp: 999, maxHp: 999, t: -i * 0.18, seed: b.x + (i - 1.5) * 50, dead: false });
+        });
+        Sfx.play('acid-spray');
+      } else if (b.attack === 'wave' && b.attackT > 0.8 && b.attackT - dt <= 0.8 && BEASTS[b.kind]?.spawn === 'gusts') {
         // The Skyray's wake: two gust fronts rolling down the sea, each shoving the other way —
         // ride them out by steering against the push.
         const dir = this.rng() < 0.5 ? -1 : 1;
@@ -636,8 +880,9 @@ export class SeaVoyageScene extends Phaser.Scene {
     const g = this.g;
     g.clear();
     const bi = this.band();
-    const B = BANDS[bi], N = BANDS[Math.min(BANDS.length - 1, bi + 1)];
-    const k = bi < BANDS.length - 1 ? Phaser.Math.Clamp((this.dist - B.at) / (N.at - B.at), 0, 1) : 0;
+    const bands = this.bands();
+    const B = bands[bi], N = bands[Math.min(bands.length - 1, bi + 1)];
+    const k = bi < bands.length - 1 ? Phaser.Math.Clamp((this.dist - B.at) / (N.at - B.at), 0, 1) : 0;
     const sea = Phaser.Display.Color.Interpolate.ColorWithColor(Phaser.Display.Color.ValueToColor(B.sea), Phaser.Display.Color.ValueToColor(N.sea), 100, k * 100);
     const seaC = Phaser.Display.Color.GetColor(sea.r, sea.g, sea.b);
     g.fillStyle(seaC, 1); g.fillRect(0, 0, W, H);
@@ -653,6 +898,7 @@ export class SeaVoyageScene extends Phaser.Scene {
       const x = (i * 211) % W, y = ((i * 97 + this.dist * 10) % (H + 20)) - 10;
       g.fillStyle(B.foam, 0.18); g.fillEllipse(x, y, 14, 3);
     }
+    if (this.rough) this.drawRoughWater(g, t, B);
     // Wake
     for (let i = 1; i < this.wake.length; i++) {
       const a = this.wake[i - 1], b = this.wake[i];
@@ -666,6 +912,9 @@ export class SeaVoyageScene extends Phaser.Scene {
       if (this.beast.kind === 'wyrm') this.drawWyrm(g, this.beast, t);
       else if (this.beast.kind === 'brambleback') this.drawBrambleback(g, this.beast, t);
       else if (this.beast.kind === 'skyray') this.drawSkyray(g, this.beast, t);
+      else if (this.beast.kind === 'cragjaw') this.drawCragjaw(g, this.beast, t);
+      else if (this.beast.kind === 'galvaneel') this.drawGalvaneel(g, this.beast, t);
+      else if (this.beast.kind === 'hydra') this.drawHydra(g, this.beast, t);
       else this.drawBeast(g, this.beast, t);
     }
     if (this.thornT < 0.45) {
@@ -685,6 +934,17 @@ export class SeaVoyageScene extends Phaser.Scene {
         g.lineStyle(2, 0xffffff, 0.6 * (1 - k)); g.lineBetween(sx, sy, sx, sy + 40);
       }
     }
+    if (this.mastT < 0.3) {
+      this.mastT += 1 / 60;
+      const a = 1 - this.mastT / 0.3;
+      for (const p of this.mastBolts) {
+        for (const [w, c] of [[4, 0x6ab8ff], [1.5, 0xffffff]] as const) {
+          g.lineStyle(w, c, a); g.beginPath(); g.moveTo(this.bx, this.by - 30);
+          for (let k = 1; k <= 6; k++) { const u = k / 6; g.lineTo(Phaser.Math.Linear(this.bx, p.x, u) + (k < 6 ? Math.sin(p.x + k * 4.1) * 12 : 0), Phaser.Math.Linear(this.by - 30, p.y, u)); }
+          g.strokePath();
+        }
+      }
+    }
     if (this.bowWaveT < 0.6) {
       const k = this.bowWaveT / 0.6;
       g.lineStyle(6 * (1 - k) + 2, 0xd8f4ff, 0.7 * (1 - k));
@@ -701,6 +961,43 @@ export class SeaVoyageScene extends Phaser.Scene {
       for (let r = 0; r < 6; r++) { g.lineStyle(60, 0x000000, 0.08 + bi * 0.03); g.strokeCircle(this.bx, this.by, 360 + r * 60 - bi * 30); }
     }
     this.drawHud();
+  }
+
+  /**
+   * The Outer Sea under the boat: deep swell troughs rolling down in dark bands, whitecaps tearing
+   * off their crests, slanting rain, and a fork of lightning on each storm flash.
+   */
+  private drawRoughWater(g: Phaser.GameObjects.Graphics, t: number, B: (typeof BANDS)[number]): void {
+    const W = this.scale.width, H = this.scale.height;
+    const off = (this.dist * 10 * 0.8) % 150;
+    for (let y = -150 + off; y < H + 150; y += 150) {
+      g.fillStyle(B.deep, 0.55);
+      g.beginPath(); g.moveTo(0, y + 60);
+      for (let x = 0; x <= W; x += 32) g.lineTo(x, y + Math.sin(x * 0.008 + t * 0.9 + y * 0.02) * 16);
+      g.lineTo(W, y + 60); g.closePath(); g.fillPath();
+      g.lineStyle(3, B.foam, 0.3);
+      g.beginPath();
+      for (let x = 0; x <= W; x += 24) { const yy = y + Math.sin(x * 0.008 + t * 0.9 + y * 0.02) * 16; if (x === 0) g.moveTo(x, yy); else g.lineTo(x, yy); }
+      g.strokePath();
+      for (let i = 0; i < 9; i++) {
+        const cx = ((i * 137 + y * 3.1) % W + W) % W, cy = y + Math.sin(cx * 0.008 + t * 0.9 + y * 0.02) * 16;
+        const tear = (t * 1.6 + i * 0.37) % 1;
+        g.fillStyle(0xffffff, 0.55 * (1 - tear)); g.fillEllipse(cx + tear * 14, cy - 2 - tear * 6, 18 - tear * 8, 4);
+      }
+    }
+    for (let i = 0; i < 70; i++) {
+      const rx = ((i * 173 + t * 260) % (W + 80)) - 40, ry = ((i * 89 + t * 900) % (H + 60)) - 30;
+      g.lineStyle(1, 0xc8dcf0, 0.28); g.lineBetween(rx, ry, rx - 7, ry + 18);
+    }
+    if (this.flashT < 0.25) {
+      const a = 1 - this.flashT / 0.25;
+      let lx = this.flashX, ly = -10;
+      g.lineStyle(3, 0xeaf4ff, a);
+      g.beginPath(); g.moveTo(lx, ly);
+      for (let i = 0; i < 7; i++) { lx += (Math.sin(this.flashX + i * 7.3) * 34); ly += 26 + (i % 2) * 10; g.lineTo(lx, ly); }
+      g.strokePath();
+      g.fillStyle(0xd8e8ff, 0.12 * a); g.fillRect(0, 0, W, H);
+    }
   }
 
   private drawBoat(g: Phaser.GameObjects.Graphics, t: number): void {
@@ -760,6 +1057,47 @@ export class SeaVoyageScene extends Phaser.Scene {
       g.fillStyle(0x8aa0b8, 0.75); g.fillTriangle(l.x, l.y, tip.x, tip.y, tail.x, tail.y); g.fillTriangle(r.x, r.y, tip.x, tip.y, tail.x, tail.y);
       g.lineStyle(1.5, 0xe8f4ff, 0.8 + fill * 0.2); g.lineBetween(l.x, l.y, tip.x, tip.y); g.lineBetween(r.x, r.y, tip.x, tip.y);
       g.fillStyle(0xffffff, 0.8); g.fillCircle(pt(-L * 0.18, -L * 0.06).x, pt(-L * 0.18, -L * 0.06).y, 1.6); g.fillCircle(pt(L * 0.18, -L * 0.06).x, pt(L * 0.18, -L * 0.06).y, 1.6);
+    }
+    if (Save.S().boat.uber === 'uber-cragplate') {
+      // A ram of the Cragjaw's jaw-stone bolted over the bow; it glints amber while hardened.
+      const tip = pt(0, -L / 2 - 12), l = pt(-L * 0.24, -L * 0.3), r = pt(L * 0.24, -L * 0.3);
+      g.fillStyle(0x5a5048, 1); g.fillTriangle(tip.x, tip.y, l.x, l.y, r.x, r.y);
+      g.fillStyle(0x8a7c6a, 1); g.fillTriangle(tip.x, tip.y, l.x, l.y, pt(0, -L * 0.3).x, pt(0, -L * 0.3).y);
+      g.lineStyle(2, this.plateReady ? 0xffc870 : 0x3a322a, this.plateReady ? 0.6 + Math.sin(t * 6) * 0.3 : 1);
+      g.strokeTriangle(tip.x, tip.y, l.x, l.y, r.x, r.y);
+    }
+    if (Save.S().boat.uber === 'uber-hydraprow') {
+      // Three carved serpent heads on the bow — left, centre and right — on short necks of dark
+      // green-stained wood with yellow-painted eyes. One that has bitten lunges at its target and
+      // snaps back; while it grows back it is a stump with a new head budding out of it.
+      const now = this.time.now / 1000;
+      for (let i = 0; i < 3; i++) {
+        const m = this.prowMount(i), base = pt(m.x * 0.85, m.y + 10);
+        const regrow = this.prowReady[i] > now ? 1 - (this.prowReady[i] - now) / PROW_REGROW : 1;
+        const bite = this.prowBite[i], since = now - bite.at;
+        let hx = pt(m.x, m.y).x, hy = pt(m.x, m.y).y;
+        if (since < 0.3) {
+          const k = Math.sin((since / 0.3) * Math.PI);
+          hx = Phaser.Math.Linear(hx, bite.x, k * 0.85); hy = Phaser.Math.Linear(hy, bite.y, k * 0.85);
+        }
+        const grown = since < 0.3 ? 1 : regrow;
+        const ang = Math.atan2(hy - base.y, hx - base.x);
+        // Neck.
+        g.lineStyle(6, 0x1a2a14, 1); g.lineBetween(base.x, base.y, Phaser.Math.Linear(base.x, hx, grown), Phaser.Math.Linear(base.y, hy, grown));
+        g.lineStyle(3, 0x3a5a2a, 1); g.lineBetween(base.x, base.y, Phaser.Math.Linear(base.x, hx, grown), Phaser.Math.Linear(base.y, hy, grown));
+        if (grown < 1) {
+          // A splintered stump with a green bud swelling out of it.
+          g.fillStyle(0x5a3a1e, 1); g.fillCircle(base.x, base.y, 4);
+          g.fillStyle(0x8ad84a, 0.4 + grown * 0.6); g.fillCircle(Phaser.Math.Linear(base.x, hx, grown), Phaser.Math.Linear(base.y, hy, grown), 1.5 + grown * 4);
+          continue;
+        }
+        const ca = Math.cos(ang), sa = Math.sin(ang), gape = since < 0.3 ? Math.sin((since / 0.3) * Math.PI) : 0;
+        g.fillStyle(0x1a2a14, 1); g.fillEllipse(hx, hy, 11, 11);
+        g.fillStyle(0x3a5a2a, 1); g.fillEllipse(hx - ca * 1, hy - sa * 1, 9, 9);
+        g.fillStyle(0x2a1a0a, 1); g.fillTriangle(hx + ca * 3 - sa * 2 * gape, hy + sa * 3 + ca * 2 * gape, hx + ca * 3 + sa * 2 * gape, hy + sa * 3 - ca * 2 * gape, hx + ca * (7 + gape * 3), hy + sa * (7 + gape * 3));
+        g.fillStyle(0xffd83a, 1); g.fillCircle(hx - sa * 2.5, hy + ca * 2.5, 1.2); g.fillCircle(hx + sa * 2.5, hy - ca * 2.5, 1.2);
+        if (gape > 0.3) { g.fillStyle(0xf4eedc, 1); g.fillCircle(hx + ca * 6, hy + sa * 6, 1); }
+      }
     }
     // The captain: a dot of your element at the tiller.
     const cap = pt(0, L * 0.4);
@@ -829,6 +1167,15 @@ export class SeaVoyageScene extends Phaser.Scene {
         if (h.hp < h.maxHp) { g.fillStyle(0x8ad84a, 0.6); g.fillCircle(x + Math.sin(t * 9) * 6, y, 3); }
         break;
       }
+      case 'boulder': {
+        // In the air: a shadow swelling on the water under a boulder dropping in from above.
+        const k = Math.min(1, h.t / 1.2), fall = (1 - k) * 260;
+        g.fillStyle(0x000000, 0.15 + k * 0.3); g.fillEllipse(x, y + 6, r * (1 + k) * 1.4, r * (0.5 + k * 0.4));
+        g.lineStyle(2, 0xffd0a0, 0.3 + k * 0.5); g.strokeCircle(x, y, r + 22);
+        g.fillStyle(0x5a4a3a, 1); g.fillCircle(x, y - fall, r * (0.7 + k * 0.3));
+        g.fillStyle(0x7a6a58, 1); g.fillCircle(x - r * 0.2, y - fall - r * 0.2, r * 0.5);
+        break;
+      }
       case 'gust': {
         // A gust front: a band of flattened, ruffled water racing across, streaks showing the push.
         const dir = h.seed;
@@ -838,6 +1185,107 @@ export class SeaVoyageScene extends Phaser.Scene {
           const sx = ((i * 83 + h.t * 520 * dir) % 1000 + 1000) % 1000 - 20, sy = y - r + 6 + ((i * 37) % (r * 2 - 12));
           g.lineStyle(2, 0xffffff, 0.55); g.lineBetween(sx, sy, sx - dir * 34, sy);
           g.lineBetween(sx, sy, sx - dir * 7, sy - 4); g.lineBetween(sx, sy, sx - dir * 7, sy + 4);
+        }
+        break;
+      }
+      case 'arc': {
+        // Two charged floats bobbing, the line between them a jagged double fork while live,
+        // a dim sagging wire with the odd spark while it gutters.
+        const live = !!h.armed, x0 = x - r, x1 = x + r;
+        for (const fx of [x0, x1]) {
+          g.fillStyle(0x1a2a3a, 1); g.fillCircle(fx, y + 2, 10);
+          g.fillStyle(0xd8e0e8, 1); g.fillRect(fx - 3, y - 16, 6, 16);
+          g.fillStyle(live ? 0xbfe8ff : 0x4a6a8a, 1); g.fillCircle(fx, y - 18, 5);
+          if (live) { g.fillStyle(0x8ad8ff, 0.3); g.fillCircle(fx, y - 18, 12); }
+        }
+        if (live) {
+          for (const [w, c, a] of [[6, 0x4a9aff, 0.35], [3, 0x9ad8ff, 0.8], [1.2, 0xffffff, 1]] as const) {
+            g.lineStyle(w, c, a); g.beginPath(); g.moveTo(x0, y - 18);
+            for (let k = 1; k < 14; k++) g.lineTo(x0 + (x1 - x0) * (k / 14), y - 18 + Math.sin(t * 40 + k * 2.3 + h.seed) * 9);
+            g.lineTo(x1, y - 18); g.strokePath();
+          }
+        } else {
+          g.lineStyle(1.5, 0x4a6a8a, 0.8); g.beginPath(); g.moveTo(x0, y - 18);
+          for (let k = 1; k <= 10; k++) g.lineTo(x0 + (x1 - x0) * (k / 10), y - 18 + Math.sin((k / 10) * Math.PI) * 10);
+          g.strokePath();
+          const sk = (t * 3) % 1; g.fillStyle(0xbfe8ff, 1 - sk); g.fillCircle(x0 + (x1 - x0) * sk, y - 18 + Math.sin(sk * Math.PI) * 10, 2.5);
+        }
+        break;
+      }
+      case 'breaker': {
+        // A rolling wall of white water across the whole sea: a dark face, a curling crest throwing
+        // spray, and one glassy trough (marked by its calm, darker water) to steer through.
+        const gap = h.seed, spent = !!h.armed;
+        const edge = (x0: number, x1: number) => {
+          if (x1 <= x0) return;
+          g.fillStyle(0x041024, 0.55); g.fillRect(x0, y - r * 1.6, x1 - x0, r * 1.6);
+          g.fillStyle(0xbfe2ff, spent ? 0.35 : 0.75);
+          g.beginPath(); g.moveTo(x0, y);
+          for (let x = x0; x <= x1; x += 16) g.lineTo(x, y - r * 0.6 + Math.sin(x * 0.05 + t * 6) * 4);
+          g.lineTo(x1, y + r * 0.5); g.lineTo(x0, y + r * 0.5); g.closePath(); g.fillPath();
+          for (let x = x0 + 8; x < x1; x += 22) {
+            const k = (t * 2 + x * 0.013) % 1;
+            g.fillStyle(0xffffff, (spent ? 0.3 : 0.8) * (1 - k)); g.fillCircle(x + k * 6, y - r * 0.7 - k * 14, 3 + k * 3);
+          }
+        };
+        edge(0, gap - BREAKER_GAP);
+        edge(gap + BREAKER_GAP, 960);
+        if (!spent) {
+          g.lineStyle(2, 0x9dd8ff, 0.5 + Math.sin(t * 8) * 0.25);
+          g.lineBetween(gap - BREAKER_GAP + 6, y + r, gap - BREAKER_GAP + 6, y - r * 1.4);
+          g.lineBetween(gap + BREAKER_GAP - 6, y + r, gap + BREAKER_GAP - 6, y - r * 1.4);
+        }
+        break;
+      }
+      case 'slick': {
+        if (h.t < 0) break;
+        if (h.t < SLICK_FLIGHT) {
+          // In the air: a glob of venom lobbed in a high arc from the Hydra, a shadow swelling on the
+          // water where it will land, and a faint ring marking the spot.
+          const k = h.t / SLICK_FLIGHT, gx = Phaser.Math.Linear(h.seed, x, k), gy = Phaser.Math.Linear(170, y, k) - Math.sin(k * Math.PI) * 150;
+          g.fillStyle(0x0a1a08, 0.12 + k * 0.3); g.fillEllipse(x, y, r * (0.4 + k * 0.8), r * (0.2 + k * 0.35));
+          g.lineStyle(1.5, 0x9af05a, 0.2 + k * 0.4); g.strokeEllipse(x, y, r * 2, r * 1.1);
+          for (let i = 1; i <= 4; i++) {
+            const kk = Math.max(0, k - i * 0.04), tx = Phaser.Math.Linear(h.seed, x, kk), ty = Phaser.Math.Linear(170, y, kk) - Math.sin(kk * Math.PI) * 150;
+            g.fillStyle(0x7ad83a, 0.5 - i * 0.1); g.fillCircle(tx, ty, 5 - i);
+          }
+          g.fillStyle(0x3a7a1a, 1); g.fillEllipse(gx, gy, 16, 13 + Math.sin(t * 20) * 2);
+          g.fillStyle(0x8ae03a, 1); g.fillEllipse(gx - 1, gy - 1, 12, 9);
+          g.fillStyle(0xe8ffc0, 0.9); g.fillCircle(gx - 3, gy - 3, 2.2);
+          break;
+        }
+        // On the water: a spreading sheen of venom with a ragged, creeping edge — dark green in the
+        // middle, oily rainbow bands round it, bubbles rising and popping; it thins as it fades.
+        const st = this.slickStrength(h), rr = this.slickRadius(h), age = h.t - SLICK_FLIGHT;
+        const edge = (sc: number, wob: number) => {
+          const pts: Phaser.Geom.Point[] = [];
+          for (let i = 0; i < 18; i++) {
+            const a = (i / 18) * Math.PI * 2, k = sc * (1 + Math.sin(a * 3 + h.seed + t * 0.8) * wob + Math.sin(a * 5 - t * 1.1) * wob * 0.5);
+            pts.push(new Phaser.Geom.Point(x + Math.cos(a) * rr * k, y + Math.sin(a) * rr * 0.55 * k));
+          }
+          return pts;
+        };
+        g.fillStyle(0x1a3a0e, 0.45 * st); g.fillPoints(edge(1, 0.08), true, true);
+        g.fillStyle(0x3a7a1a, 0.45 * st); g.fillPoints(edge(0.78, 0.07), true, true);
+        g.fillStyle(0x6ab82a, 0.35 * st); g.fillPoints(edge(0.5, 0.06), true, true);
+        for (const [sc, c] of [[0.95, 0xc8ff6a], [0.85, 0xb88aff], [0.68, 0xffe86a]] as const) {
+          g.lineStyle(1.5, c, 0.35 * st); g.strokePoints(edge(sc, 0.08), true, true);
+        }
+        for (let i = 0; i < 6; i++) {
+          const k = (t * 0.9 + i / 6 + h.seed * 0.01) % 1, a = i * 1.9 + h.seed;
+          const bx = x + Math.cos(a) * rr * 0.55 * ((i % 3) / 3 + 0.2), by = y + Math.sin(a) * rr * 0.3 * ((i % 3) / 3 + 0.2);
+          if (k < 0.8) { g.lineStyle(1, 0xc8ff8a, 0.7 * st); g.strokeCircle(bx, by, 1.5 + k * 3); }
+          else { g.lineStyle(1, 0xe8ffc0, 0.6 * st * (1 - (k - 0.8) / 0.2)); g.strokeCircle(bx, by, 6 + (k - 0.8) * 30); }
+        }
+        g.fillStyle(0xffffff, 0.25 * st); g.fillEllipse(x - rr * 0.3, y - rr * 0.12, rr * 0.5, rr * 0.08);
+        if (age < 0.5) {
+          // The splash: a crown of venom thrown up and falling back.
+          const k = age / 0.5;
+          for (let i = 0; i < 10; i++) {
+            const a = (i / 10) * Math.PI * 2, d = 10 + k * rr * 0.6;
+            g.fillStyle(0x9af05a, 0.9 * (1 - k)); g.fillCircle(x + Math.cos(a) * d, y + Math.sin(a) * d * 0.5 - Math.sin(k * Math.PI) * 26, 3 - k * 1.5);
+          }
+          g.lineStyle(3 * (1 - k) + 1, 0xc8ff8a, 0.8 * (1 - k)); g.strokeEllipse(x, y, rr * 2 * k, rr * 1.1 * k);
         }
         break;
       }
@@ -981,6 +1429,178 @@ export class SeaVoyageScene extends Phaser.Scene {
     if (b.phase === 'fight') {
       g.fillStyle(0x000000, 0.6); g.fillRect(280, 70, 400, 12);
       g.fillStyle(BEASTS.skyray.bar, 1); g.fillRect(282, 72, 396 * Math.max(0, b.hp / b.maxHp), 8);
+    }
+  }
+
+  /**
+   * The Cragjaw: a living sea-stack — a leviathan whose back is a crag of basalt pillars, gulls
+   * wheeling over it, surf breaking round its flanks; a slab-toothed jaw grinds at the front.
+   */
+  /**
+   * The Galvaneel: a blue-black eel as long as a harbour wall, coiling through the swell — rows of
+   * glowing cells down its flanks that brighten as it charges, a lantern-lure on its brow, a fanged jaw.
+   */
+  private drawGalvaneel(g: Phaser.GameObjects.Graphics, b: Beast, t: number): void {
+    const { x, y } = b;
+    const body = 0x101c2e, belly = 0x2a3e5a;
+    const charge = b.attack === 'wave' ? Math.min(1, b.attackT / 0.8) : b.attack === 'spit' ? Math.min(1, b.attackT / 0.6) : 0.25 + Math.sin(t * 3) * 0.1;
+    const seg = (i: number) => ({ sx: x - 150 + i * 22, sy: y + Math.sin(t * 2.4 - i * 0.55) * 22 });
+    g.fillStyle(0xffffff, 0.15); g.fillEllipse(x, y + 34, 360, 40);
+    for (let i = 0; i < 14; i++) {
+      const { sx, sy } = seg(i), rr = 14 + Math.sin((i / 13) * Math.PI) * 12;
+      g.fillStyle(body, 1); g.fillCircle(sx, sy, rr);
+      g.fillStyle(belly, 1); g.fillEllipse(sx, sy + rr * 0.45, rr * 1.4, rr * 0.6);
+      g.fillStyle(0x8ad8ff, 0.35 + charge * 0.6); g.fillCircle(sx, sy - rr * 0.35, 3 + charge * 2);
+      if (charge > 0.8) { g.fillStyle(0xbfe8ff, 0.25); g.fillCircle(sx, sy - rr * 0.35, 9); }
+    }
+    // Tail fin trailing off the last segment.
+    const tl = seg(0);
+    g.fillStyle(body, 1); g.fillTriangle(tl.sx, tl.sy, tl.sx - 34, tl.sy - 18, tl.sx - 30, tl.sy + 16);
+    // Head: a wedge with a lantern-lure on its brow and a fanged jaw that gapes when it spits.
+    const hd = seg(13), hx = hd.sx + 26, hy = hd.sy;
+    g.fillStyle(body, 1); g.fillEllipse(hx, hy, 64, 40);
+    const open = b.attack === 'spit' ? Math.min(1, b.attackT * 2) : 0.1;
+    g.fillStyle(0x05080e, 1); g.fillTriangle(hx + 8, hy + 2, hx + 34, hy - 4 - open * 6, hx + 34, hy + 8 + open * 10);
+    g.fillStyle(0xe8f4ff, 1);
+    for (let k = 0; k < 3; k++) { const fx = hx + 14 + k * 7; g.fillTriangle(fx, hy - 2 - open * 2, fx + 3, hy - 2 - open * 2, fx + 1.5, hy + 4); }
+    g.fillStyle(0xffd04a, 1); g.fillCircle(hx + 4, hy - 8, 4); g.fillStyle(0x101010, 1); g.fillCircle(hx + 5, hy - 8, 1.6);
+    g.lineStyle(2, 0x3a4a5a, 1); g.beginPath(); g.moveTo(hx - 6, hy - 18); g.lineTo(hx + 4, hy - 40); g.lineTo(hx + 18, hy - 44); g.strokePath();
+    g.fillStyle(0xbfe8ff, 0.6 + 0.4 * Math.sin(t * 6)); g.fillCircle(hx + 18, hy - 44, 6);
+    g.fillStyle(0x8ad8ff, 0.2); g.fillCircle(hx + 18, hy - 44, 16);
+    if (charge > 0.6) {
+      g.lineStyle(1.5, 0xffffff, charge);
+      for (let i = 2; i < 13; i += 3) { const a2 = seg(i), b2 = seg(i + 1); g.lineBetween(a2.sx, a2.sy - 20, b2.sx + Math.sin(t * 30 + i) * 6, b2.sy - 26); }
+    }
+    if (b.phase === 'fight') {
+      g.fillStyle(0x000000, 0.6); g.fillRect(280, 70, 400, 12);
+      g.fillStyle(BEASTS.galvaneel.bar, 1); g.fillRect(282, 72, 396 * Math.max(0, b.hp / b.maxHp), 8);
+    }
+  }
+
+  /**
+   * The Mire Hydra: one sunken body under a scum of weed, and five heads rising out of it on necks
+   * like mangrove trunks — gnarled, rooted where they meet the water — black-green scales, yellow
+   * eyes, and each head hooded differently: a cobra hood, a frill, a crest of horns, a fin-sail,
+   * and a bare viper's head with horned brows. They sway out of step, gape when they spit, and rear
+   * back before a volley of venom.
+   */
+  private drawHydra(g: Phaser.GameObjects.Graphics, b: Beast, t: number): void {
+    const { x, y } = b;
+    const scale = 0x14241a, bark = 0x2a3020, lit = 0x3a5a2e, dark = 0x08100a;
+    const rear = b.attack === 'wave' ? Math.sin(Math.min(1, b.attackT / 0.8) * Math.PI * 0.5) * (b.attackT > 0.8 ? Math.max(0, 1 - (b.attackT - 0.8) * 3) : 1) : 0;
+    const open = b.attack === 'spit' ? Math.min(1, b.attackT * 2) : b.attack === 'wave' && b.attackT > 0.75 ? 1 : 0.1 + Math.sin(t * 1.8) * 0.06;
+    // The sunken body: a dark mound in a ring of ripples and floating weed.
+    g.fillStyle(0xffffff, 0.14); g.fillEllipse(x, y + 40, 300 + Math.sin(t * 2) * 10, 54);
+    for (let i = 0; i < 3; i++) { const k = (t * 0.4 + i / 3) % 1; g.lineStyle(2, 0xc8e8d0, 0.3 * (1 - k)); g.strokeEllipse(x, y + 34, 220 + k * 160, 40 + k * 30); }
+    g.fillStyle(dark, 0.6); g.fillEllipse(x, y + 32, 250, 66);
+    g.fillStyle(scale, 1); g.fillEllipse(x, y + 22, 220, 54);
+    g.fillStyle(lit, 1); for (let i = -4; i <= 4; i++) g.fillEllipse(x + i * 22, y + 12 + Math.abs(i) * 2, 14, 7);
+    for (let i = 0; i < 8; i++) { g.fillStyle(i % 2 ? 0x4a6a2a : 0x6a8a3a, 0.8); g.fillEllipse(x - 120 + i * 34 + Math.sin(t + i) * 4, y + 44 + (i % 3) * 4, 18, 5); }
+    // The five necks, outer ones first so the middle one stands in front.
+    const hoods = ['frill', 'horns', 'cobra', 'fin', 'viper'] as const;
+    for (const i of [0, 4, 1, 3, 2]) {
+      const bx0 = x + (i - 2) * 44, by0 = y + 20;
+      const lean = (i - 2) * 22, sway = Math.sin(t * (1.1 + i * 0.17) + i * 1.9) * 16;
+      const hgt = 72 + (2 - Math.abs(i - 2)) * 16 + rear * 20;
+      const hx = bx0 + lean + sway - (i - 2) * rear * 6, hy = by0 - hgt;
+      const neck = (u: number) => ({ px: bx0 + (lean + sway) * u * u + Math.sin(u * Math.PI * 2 + t * 1.5 + i) * 6 * (1 - u), py: by0 - hgt * u });
+      // Root-flare where the neck meets the water: gnarled buttresses like a mangrove's.
+      for (const d of [-1, 1]) {
+        g.lineStyle(6, bark, 1); g.beginPath(); g.moveTo(bx0, by0 - 18);
+        g.lineTo(bx0 + d * 10, by0 - 6); g.lineTo(bx0 + d * 20, by0 + 6); g.strokePath();
+      }
+      // The trunk: thick at the root, tapering to the head, bark-ridged.
+      for (let k = 0; k <= 12; k++) {
+        const u = k / 12, { px, py } = neck(u), w = 15 - u * 6;
+        g.fillStyle(k % 3 === 0 ? bark : scale, 1); g.fillCircle(px, py, w);
+        g.fillStyle(lit, 0.8); g.fillEllipse(px - w * 0.35, py, w * 0.5, w * 0.9);
+        if (k % 2 === 0) { g.lineStyle(1, dark, 0.8); g.lineBetween(px - w * 0.8, py + 2, px + w * 0.6, py - 2); }
+      }
+      g.fillStyle(0x6a8a3a, 0.7); g.fillEllipse(neck(0.12).px + 8, neck(0.12).py, 7, 12);
+      // The hood, behind the head.
+      const hood = hoods[i];
+      if (hood === 'cobra') {
+        g.fillStyle(scale, 1); g.fillEllipse(hx, hy + 8, 58, 54);
+        g.fillStyle(0x2a4a24, 1); g.fillEllipse(hx, hy + 10, 44, 42);
+        g.lineStyle(2, 0xd8c84a, 0.9); g.strokeCircle(hx - 10, hy + 12, 5); g.strokeCircle(hx + 10, hy + 12, 5);
+        g.lineBetween(hx - 5, hy + 12, hx + 5, hy + 12);
+      } else if (hood === 'frill') {
+        for (let k = 0; k < 9; k++) {
+          const a = Math.PI + 0.1 + (k / 8) * (Math.PI - 0.2), fx = hx + Math.cos(a) * 34, fy = hy + 4 + Math.sin(a) * 26;
+          g.lineStyle(2, dark, 1); g.lineBetween(hx, hy + 4, fx, fy);
+          g.fillStyle(k % 2 ? 0x8a2a3a : 0xb83a4a, 0.85); g.fillTriangle(hx, hy + 4, fx, fy, hx + Math.cos(a + 0.18) * 32, hy + 4 + Math.sin(a + 0.18) * 24);
+        }
+      } else if (hood === 'horns') {
+        for (let k = -2; k <= 2; k++) {
+          g.fillStyle(0xd8ccb0, 1); g.fillTriangle(hx + k * 8 - 3, hy - 6, hx + k * 8 + 3, hy - 6, hx + k * 11, hy - 26 + Math.abs(k) * 4);
+          g.fillStyle(0x8a7a5a, 1); g.fillRect(hx + k * 8 - 3, hy - 8, 6, 3);
+        }
+      } else if (hood === 'fin') {
+        g.fillStyle(0x2a5a6a, 0.9);
+        g.beginPath(); g.moveTo(hx - 14, hy - 2);
+        for (let k = 0; k <= 6; k++) g.lineTo(hx - 14 + k * 5, hy - 22 - Math.sin((k / 6) * Math.PI) * 12 + (k % 2) * 5);
+        g.lineTo(hx + 16, hy - 2); g.closePath(); g.fillPath();
+        g.lineStyle(1, 0x8ac8c8, 0.8); for (let k = 1; k < 6; k++) g.lineBetween(hx - 14 + k * 5, hy - 2, hx - 14 + k * 5, hy - 22 - Math.sin((k / 6) * Math.PI) * 10);
+      }
+      // The head: a wedge with a heavy jaw that gapes when it spits.
+      g.fillStyle(scale, 1); g.fillEllipse(hx, hy, 34, 26);
+      g.fillStyle(lit, 1); g.fillEllipse(hx, hy - 4, 24, 12);
+      g.fillStyle(scale, 1); g.fillEllipse(hx, hy + 12 + open * 8, 24, 12);
+      if (open > 0.2) {
+        g.fillStyle(0x3a0a14, 1); g.fillEllipse(hx, hy + 8 + open * 3, 20, 4 + open * 10);
+        g.fillStyle(0xf4eedc, 1); g.fillTriangle(hx - 7, hy + 6, hx - 4, hy + 6, hx - 5.5, hy + 12 + open * 3); g.fillTriangle(hx + 4, hy + 6, hx + 7, hy + 6, hx + 5.5, hy + 12 + open * 3);
+        g.fillStyle(0x8ae03a, 0.8); g.fillCircle(hx, hy + 12 + open * 6, 3);
+      }
+      if (hood === 'viper') {
+        for (const d of [-1, 1]) { g.fillStyle(0xd8ccb0, 1); g.fillTriangle(hx + d * 8, hy - 8, hx + d * 13, hy - 8, hx + d * 15, hy - 20); }
+      }
+      // Yellow slit eyes.
+      for (const d of [-1, 1]) {
+        g.fillStyle(0xffd83a, 1); g.fillEllipse(hx + d * 8, hy - 4, 7, 5);
+        g.fillStyle(0x0a0a0a, 1); g.fillRect(hx + d * 8 - 0.8, hy - 6.5, 1.6, 5);
+        if (rear > 0.3) { g.fillStyle(0xffe86a, 0.3 * rear); g.fillCircle(hx + d * 8, hy - 4, 7); }
+      }
+      // A drip of venom off the jaw.
+      const dk = (t * 0.7 + i * 0.23) % 1;
+      g.fillStyle(0x8ae03a, 0.8 * (1 - dk)); g.fillEllipse(hx + 2, hy + 16 + open * 8 + dk * 30, 3, 4);
+    }
+    if (b.attack === 'slam') { g.lineStyle(3, 0x8ae03a, 0.6); g.strokeCircle(this.bx, this.by - 20, 60 + Math.sin(t * 20) * 6); }
+    if (b.phase === 'fight') {
+      g.fillStyle(0x000000, 0.6); g.fillRect(280, 70, 400, 12);
+      g.fillStyle(BEASTS.hydra.bar, 1); g.fillRect(282, 72, 396 * Math.max(0, b.hp / b.maxHp), 8);
+    }
+  }
+
+  private drawCragjaw(g: Phaser.GameObjects.Graphics, b: Beast, t: number): void {
+    const { x, y } = b;
+    const stone = 0x5a5048, lit = 0x8a7c6a, dark = 0x2e2824;
+    const heave = b.attack === 'wave' ? Math.sin(Math.min(1, b.attackT / 0.8) * Math.PI) * 10 : 0;
+    g.fillStyle(0xffffff, 0.2); g.fillEllipse(x, y + 40, 260 + Math.sin(t * 2) * 8, 46);
+    g.fillStyle(0x000000, 0.3); g.fillEllipse(x, y + 28, 240, 70);
+    g.fillStyle(dark, 1); g.fillEllipse(x, y + 4 - heave, 220, 110);
+    g.fillStyle(stone, 1); g.fillEllipse(x, y - 4 - heave, 200, 92);
+    // Basalt pillars crowding its back, tallest in the middle.
+    for (let i = 0; i < 11; i++) {
+      const px = x - 80 + i * 16, hgt = 26 + (5 - Math.abs(i - 5)) * 9 + ((i * 7) % 3) * 4, top = y - 20 - heave - hgt;
+      g.fillStyle(i % 2 ? stone : 0x4a423a, 1); g.fillRect(px - 7, top, 14, hgt + 14);
+      g.fillStyle(lit, 1); g.fillRect(px - 7, top, 14, 4);
+      g.lineStyle(1, dark, 0.8); g.lineBetween(px - 7, top, px - 7, top + hgt + 14);
+    }
+    // Gulls wheeling over the crag.
+    for (let i = 0; i < 3; i++) {
+      const a = t * (0.9 + i * 0.2) + i * 2, gx = x + Math.cos(a) * (60 + i * 20), gy = y - 110 - heave + Math.sin(a) * 18;
+      g.lineStyle(1.5, 0xf4f4f0, 0.9); g.lineBetween(gx - 6, gy - 2 + Math.sin(t * 8 + i) * 2, gx, gy); g.lineBetween(gx, gy, gx + 6, gy - 2 + Math.sin(t * 8 + i) * 2);
+    }
+    // The jaw: a slab-toothed underbite, grinding open when it spits.
+    const open = b.attack === 'spit' ? Math.min(1, b.attackT * 2) : 0.1 + Math.sin(t * 1.6) * 0.06;
+    g.fillStyle(dark, 1); g.fillRoundedRect(x - 56, y + 30 - heave, 112, 22 + open * 22, 8);
+    g.fillStyle(0x1a0e0a, 1); g.fillRect(x - 46, y + 34 - heave, 92, 4 + open * 18);
+    g.fillStyle(0xd8ccb0, 1);
+    for (let k = -2; k <= 2; k++) { g.fillRect(x + k * 18 - 5, y + 30 - heave, 10, 8); g.fillRect(x + k * 18 - 5, y + 44 + open * 18 - heave, 10, 8); }
+    for (const side of [-1, 1]) { g.fillStyle(0xffb040, 0.9); g.fillCircle(x + side * 40, y + 18 - heave, 5); g.fillStyle(0x2a1a0a, 1); g.fillCircle(x + side * 40, y + 19 - heave, 2); }
+    if (b.phase === 'fight') {
+      g.fillStyle(0x000000, 0.6); g.fillRect(280, 70, 400, 12);
+      g.fillStyle(BEASTS.cragjaw.bar, 1); g.fillRect(282, 72, 396 * Math.max(0, b.hp / b.maxHp), 8);
     }
   }
 

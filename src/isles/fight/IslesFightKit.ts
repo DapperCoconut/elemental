@@ -12,6 +12,9 @@ import type {
   EncounterGimmick, GimmickCtx, IslesFightPayload, ItemScript, ItemScriptCtx, GeneGrant,
 } from '../IslesTypes';
 import { genomeCastRules } from '../systems/Genome';
+import { makeStrikeTarget } from '../../boss/framework/StrikeTargets';
+import type { ProjectileRegistry } from '../../combat/ProjectileRegistry';
+import { shotsNear, type ShotHandle } from '../../combat/ShotHandles';
 
 /**
  * The Ten Isles' half of a fight: the encounter's gimmick, the charm / artifact / meal scripts,
@@ -30,6 +33,10 @@ export interface IslesArenaApi {
   readonly width: number;
   readonly height: number;
   readonly elementId: string;
+  /** The arena's shared physics projectiles (both sides). */
+  readonly projectiles: Phaser.Physics.Arcade.Group;
+  /** Kit-local projectiles that register themselves (stealable, not bounceable). */
+  readonly projectileRegistry: ProjectileRegistry;
   gameEnded(): boolean;
   addEnemy(f: Fighter): void;
   removeEnemy(f: Fighter): void;
@@ -59,6 +66,10 @@ export class IslesFightKit {
   private bannerText: Phaser.GameObjects.Text | null = null;
   private slotMap = new Map<string, string>();
   private rng: () => number = Math.random;
+  /** Airborne fighters: scene-clock end, and whether the kit set their `projectilePhase`. */
+  private aloft = new Map<Fighter, { until: number; ownPhase: boolean }>();
+  /** Last heading of each fighter as it walked, and where it was last frame. */
+  private heading = new Map<Fighter, { a: number; x: number; y: number }>();
 
   constructor(private api: IslesArenaApi) {}
 
@@ -75,6 +86,9 @@ export class IslesFightKit {
     this.dmgWindows = [];
     this.spdWindows = [];
     this.holds.clear();
+    for (const [f, a] of this.aloft) if (a.ownPhase) f.projectilePhase = false;
+    this.aloft.clear();
+    this.heading.clear();
     this.gGround = this.gAir = this.gHud = null;
     this.bannerText = null;
     if (!payload) return;
@@ -85,11 +99,19 @@ export class IslesFightKit {
     this.gAir = scene.add.graphics().setDepth(30);
     this.gHud = scene.add.graphics().setDepth(40).setScrollFactor(0);
 
+    // The element the genes were bought for is the save's, not whatever the body carries right
+    // now: Quantum starts the fight as its Click slot's element and shifts all match long.
+    const geneElement = Save.hasActive() ? Save.S().element : this.api.elementId;
     this.slotMap.clear();
-    const el = ELEMENT_DATA_MAP[this.api.elementId];
-    for (const a of el?.abilities ?? []) {
-      const k = a.displayKey.toLowerCase();
-      this.slotMap.set(a.id, k === 'click' ? 'click' : k);
+    // Slots by key for every ability in the game (own element first), so a carried ability —
+    // Quantum casting Fire's E — still reads as an E press.
+    const own = [ELEMENT_DATA_MAP[geneElement], ELEMENT_DATA_MAP[this.api.elementId]];
+    for (const el of [...own, ...Object.values(ELEMENT_DATA_MAP)]) {
+      for (const a of el?.abilities ?? []) {
+        if (this.slotMap.has(a.id)) continue;
+        const k = a.displayKey.toLowerCase();
+        this.slotMap.set(a.id, k === 'click' ? 'click' : k);
+      }
     }
 
     if (payload.kind === 'encounter' || payload.kind === 'warden') {
@@ -135,18 +157,41 @@ export class IslesFightKit {
         if (!make) continue;
         try { this.scripts.push(make(ctx)); } catch (e) { console.error('[isles] item script failed', id, e); }
       }
-      this.rules = genomeCastRules(this.api.elementId);
+      this.rules = genomeCastRules(geneElement);
     }
 
     // Hooks — chained, never replaced.
+    const castWent = (abilityId: string) => {
+      if (!this.payload) return;
+      const slot = this.slotMap.get(abilityId) ?? null;
+      this.gimmick?.onPlayerCast?.(abilityId, slot);
+      for (const sc of this.scripts) sc.onCast?.(abilityId, slot);
+      this.applyCastRules(abilityId, slot);
+    };
     const prevCast = player.onCastStamp;
     player.onCastStamp = (abilityId, aim) => {
       prevCast?.(abilityId, aim);
       if (!this.payload) return;
-      const slot = this.slotMap.get(abilityId) ?? null;
-      for (const sc of this.scripts) sc.onCast?.(abilityId, slot);
-      this.applyCastRules(abilityId, slot);
+      // A kit that refuses a cast inside `cast()` hands the cooldown straight back — and the
+      // stamp has already happened by then. Look again a beat later: a cast whose stamp was
+      // handed back never went off, so nothing that pays out per cast should see it.
+      scene.time.delayedCall(90, () => {
+        if (!this.payload || player.wasRefunded(abilityId)) return;
+        castWent(abilityId);
+      });
     };
+    const prevKitCast = player.onKitCast;
+    player.onKitCast = (abilityId) => { prevKitCast?.(abilityId); castWent(abilityId); };
+    const npcCastWent = (abilityId: string) => {
+      if (!this.payload) return;
+      this.gimmick?.onNpcCast?.(abilityId);
+      // The bot swings at whatever it is standing over: a cast in reach strikes it.
+      this.tk?.strikeTargetsNear(npc.x, npc.y, 60, 'npc', 10);
+    };
+    const prevNpcCast = npc.onCastStamp;
+    npc.onCastStamp = (abilityId, aim) => { prevNpcCast?.(abilityId, aim); npcCastWent(abilityId); };
+    const prevNpcKitCast = npc.onKitCast;
+    npc.onKitCast = (abilityId) => { prevNpcKitCast?.(abilityId); npcCastWent(abilityId); };
     const prevP = player.onDamaged;
     player.onDamaged = (amount) => {
       prevP?.(amount);
@@ -187,8 +232,43 @@ export class IslesFightKit {
       healBoss: (n) => api.npc.heal(n),
       spawnHitFlash: (x, y, c) => api.spawnHitFlash(x, y, c),
       showFloatingText: (x, y, t, c) => api.showFloatingText(x, y, t, c),
+      spawnTarget: (def) => makeStrikeTarget(api.scene, def, (f) => api.addEnemy(f), (f) => api.removeEnemy(f)),
+      shotsNear: (x, y, r) => this.shotsNear(x, y, r),
     };
   }
+
+  /** See GimmickCtx.facing. */
+  private facing = (f: Fighter): number => {
+    const other = f === this.api.player ? this.api.npc : this.api.player;
+    if (f === this.api.player) {
+      const p = this.api.scene.input?.activePointer;
+      if (p) return Math.atan2(p.worldY - f.y, p.worldX - f.x);
+    }
+    const h = this.heading.get(f);
+    return h ? h.a : Math.atan2(other.y - f.y, other.x - f.x);
+  };
+
+  private airborne = (f: Fighter, ms: number): void => {
+    if (!f.active || f.hp <= 0 || ms <= 0) return;
+    const until = this.api.scene.time.now + ms;
+    const cur = this.aloft.get(f);
+    if (cur) { cur.until = Math.max(cur.until, until); return; }
+    const ownPhase = !f.projectilePhase;
+    if (ownPhase) f.projectilePhase = true;
+    this.aloft.set(f, { until, ownPhase });
+  };
+
+  private isAirborne = (f: Fighter): boolean => (this.aloft.get(f)?.until ?? 0) > this.api.scene.time.now;
+
+  /** See GimmickCtx.shotsNear. */
+  private shotsNear = (x: number, y: number, r: number): ShotHandle[] =>
+    shotsNear(this.api.projectiles, this.api.projectileRegistry, x, y, r);
+
+  private nudge = (f: Fighter, dx: number, dy: number): void => {
+    if (!f.active || f.hp <= 0) return;
+    f.x += dx; f.y += dy;
+    this.clampPos(f);
+  };
 
   private clampPos(f: Fighter): void {
     f.x = Phaser.Math.Clamp(f.x, FIELD_PAD, this.api.width - FIELD_PAD);
@@ -249,11 +329,7 @@ export class IslesFightKit {
       rng: this.rng,
       hit: this.hit,
       heal: this.heal,
-      nudge: (f, dx, dy) => {
-        if (!f.active || f.hp <= 0) return;
-        f.x += dx; f.y += dy;
-        kit.clampPos(f);
-      },
+      nudge: this.nudge,
       stun: this.stun,
       root: this.root,
       silence: this.silence,
@@ -262,6 +338,11 @@ export class IslesFightKit {
       banner: (t, c) => kit.banner(t, c ?? '#ffe2a8'),
       sfx: (n) => Sfx.playAt(n, api.width / 2),
       victory: () => api.victory(),
+      target: (def) => kit.tk!.spawnTarget(def),
+      facing: this.facing,
+      airborne: this.airborne,
+      isAirborne: this.isAirborne,
+      shotsNear: this.shotsNear,
     };
   }
 
@@ -284,6 +365,9 @@ export class IslesFightKit {
       refund: (id, ms) => api.player.reduceCooldown(id, ms),
       boostDamage: (mult, ms) => { kit.dmgWindows.push({ mult, until: api.scene.time.now + ms }); },
       boostSpeed: (mult, ms) => { kit.spdWindows.push({ mult, until: api.scene.time.now + ms }); },
+      nudge: this.nudge,
+      stun: this.stun,
+      facing: this.facing,
     };
   }
 
@@ -349,6 +433,27 @@ export class IslesFightKit {
     }
     for (const sc of this.scripts) sc.update?.(time, dt);
 
+    // Headings: where each fighter last walked (the bot's gaze; the player's is the mouse).
+    for (const f of [player, npc]) {
+      const h = this.heading.get(f);
+      if (!h) { this.heading.set(f, { a: Math.atan2(npc.y - player.y, npc.x - player.x) + (f === npc ? Math.PI : 0), x: f.x, y: f.y }); continue; }
+      const dx = f.x - h.x, dy = f.y - h.y;
+      if (dx * dx + dy * dy > 0.25) h.a = Math.atan2(dy, dx);
+      else if (f === npc) h.a = Math.atan2(player.y - f.y, player.x - f.x);
+      h.x = f.x; h.y = f.y;
+    }
+
+    // Cooldown speed the rule asks for.
+    this.coolRate(player, this.gimmick?.playerCooldownRate?.() ?? 1, delta);
+    this.coolRate(npc, this.gimmick?.npcCooldownRate?.() ?? 1, delta);
+
+    // Airborne fighters come down.
+    for (const [f, a] of this.aloft) {
+      if (a.until > time && f.active && f.hp > 0) continue;
+      if (a.ownPhase) f.projectilePhase = false;
+      this.aloft.delete(f);
+    }
+
     // Holds: this update runs last in ArenaScene's frame, so a zeroed body stays put through the
     // next physics step whatever input or AI wrote earlier.
     for (const [f, until] of this.holds) {
@@ -363,6 +468,9 @@ export class IslesFightKit {
     for (const w of this.dmgWindows) foeTaken *= w.mult;
     npc.islesIncomingMult = Phaser.Math.Clamp(foeTaken, 0.2, 4);
     player.islesIncomingMult = Phaser.Math.Clamp(this.gimmick?.playerTakenMult?.() ?? 1, 0.2, 4);
+    // Nothing reaches a fighter in the air.
+    if (this.isAirborne(npc)) npc.islesIncomingMult = 0;
+    if (this.isAirborne(player)) player.islesIncomingMult = 0;
 
     const gG = this.gGround, gA = this.gAir, gH = this.gHud;
     if (gG && gA && gH) {
@@ -375,6 +483,12 @@ export class IslesFightKit {
       for (const sc of this.scripts) sc.drawAir?.(gA, time);
       this.gimmick?.drawHud?.(gH, time);
     }
+  }
+
+  private coolRate(f: Fighter, rate: number, deltaMs: number): void {
+    const r = Phaser.Math.Clamp(rate, 0.25, 4);
+    if (r > 1) f.reduceCooldowns(deltaMs * (r - 1));
+    else if (r < 1) f.delayCooldowns(deltaMs * (1 - r));
   }
 
   getPlayerSpeedMult(): number {

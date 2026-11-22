@@ -298,6 +298,8 @@ export class MetalKit {
   // ── Blood Transfusion (R, hold) — smooth per-frame drain → heal ────────
   private transfusionActiveUntil: Record<'player' | 'npc', number> = { player: 0, npc: 0 };
   private transfusionDripAccum: Record<'player' | 'npc', number> = { player: 0, npc: 0 };
+  /** When the last fresh Transfusion hold was reported as a cast (debounces taps). */
+  private transfusionReportedAt = -Infinity;
   /** Conduit: fractional max HP burned away by transfusing, batched so the pop-up shows whole numbers. */
   private transfusionBurnAccum: Record<'player' | 'npc', number> = { player: 0, npc: 0 };
 
@@ -517,6 +519,7 @@ export class MetalKit {
     // Transfusion
     this.transfusionActiveUntil = { player: 0, npc: 0 };
     this.transfusionDripAccum = { player: 0, npc: 0 };
+    this.transfusionReportedAt = -Infinity;
     this.transfusionBurnAccum = { player: 0, npc: 0 };
 
     // Clot armor
@@ -650,6 +653,12 @@ export class MetalKit {
 
     // ── R: Blood Transfusion (hold) — drain runs per-frame in updateTransfusion ──
     if (steelSlot !== 'r' && rKey.isDown && this.blood.player > 0) {
+      // A fresh hold is the cast, as far as anything counting casts is concerned.
+      // At most one per 1.5 s: Transfusion has no cooldown, so taps must not read as fresh casts.
+      if (time >= this.transfusionActiveUntil.player && time - this.transfusionReportedAt >= 1500) {
+        this.transfusionReportedAt = time;
+        player.onKitCast?.('metal-blood-transfusion');
+      }
       this.transfusionActiveUntil.player = time + 120;
     }
 

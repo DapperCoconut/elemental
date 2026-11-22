@@ -1090,6 +1090,8 @@ export class ElectricityKit {
     } else if (this.painBatteryHolding) {
       this.painBatteryHolding = false;
       const holdDuration = time - this.painBatteryHoldStart;
+      // A tap with nothing banked is not a cast (and Pain Battery has no cooldown to stop spam).
+      if (this.painBatterySelfDmgDealt > 0 || (this.arena.hasUpgrade('f') && holdDuration < 200)) player.onKitCast?.('pain-battery');
 
       if (this.arena.hasUpgrade('f') && holdDuration < 200) {
         // Tap F: Jumpstart — 20 dmg to nearest enemy, 5 HP/s regen for 6s

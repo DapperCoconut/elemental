@@ -750,17 +750,8 @@ export class GrowthKit {
     }
   }
 
-  /** Every Growth floating text goes through here, so the Monkey skin can speak its own nouns. */
-  private floatText(x: number, y: number, text: string, color: string): void {
-    if (this.monkey('player')) {
-      // Longest name first, so "More Teeth" is never caught as "Teeth".
-      for (const n of NODES_LONGEST_FIRST) {
-        const m = MONKEY_NODES[n.id];
-        if (m && text.includes(n.name)) { text = text.replace(n.name, m.name); break; }
-      }
-      text = text.replace(/DNA/g, 'Bloontonium').replace(/\u{1F9EC}|🧬/gu, '🧪');
-    }
-    this.arena.showFloatingText(x, y, text, color);
+  private floatText(_x: number, _y: number, _text: string, _color: string): void {
+    // Battle text pop-ups are disabled — they cluttered every attack.
   }
 
   private bodyFor(owner: Owner): BodyState { return owner === 'player' ? this.fighterBody : this.npcBody; }

@@ -466,6 +466,11 @@ export interface NpcAiState {
   /** Light (F+ Javelin Burst): a ramp sits inside Light Trick's radius — popping it fires 12 javelins. */
   npcLightTrickRamp?: boolean;
   /**
+   * Light: the car has banked enough speed that stopping dead into a Supernova buys a beam worth
+   * the charge. Ramps, tricks, blinks and its own Solar Dynamo scorch are what fill it.
+   */
+  npcLightNovaReady?: boolean;
+  /**
    * Magma Mastery: a saw is out. The kit runs the whole thing off its own timer, so all the
    * routine has to do is stop layering casts on top of a tool it is already holding.
    */
@@ -629,11 +634,11 @@ export interface NpcAiState {
   /** The target has actually used something that isn't already locked. */
   npcRuinCanLock?: boolean;
   /**
-   * Mastery: the slot Second Skin was bound over, so the rotation stops casting an ability that
-   * is no longer on the tray. The kit fires the shed itself off its own timer — see
-   * `RuinKit.updateNpcSecondSkin` — because the burst has no aim to pass through here.
+   * Mastery: the slot Screeching Steel was bound over, so the rotation stops casting an ability
+   * that is no longer on the tray. The kit fires the shriek itself off its own timer — see
+   * `RuinKit.updateNpcSteel` — because it has no aim to pass through here.
    */
-  npcRuinSkinSlot?: 'e' | 'r' | 'f' | 'q' | null;
+  npcRuinSteelSlot?: 'e' | 'r' | 'f' | 'q' | null;
 
   // Sand (element id `dune`)
   /** A course is standing and unclaimed — the kit is flying the body up it, so stay off the keys. */
@@ -3116,8 +3121,8 @@ export class NpcOpponent extends Fighter {
     void time;
     void hpRatio;
     const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
-    // Mastery: whichever key Second Skin was dropped on no longer holds the ability below it.
-    const skin = aiState.npcRuinSkinSlot ?? null;
+    // Mastery: whichever key Screeching Steel was dropped on no longer holds the ability below it.
+    const skin = aiState.npcRuinSteelSlot ?? null;
 
     // Permanent, stacking and never wasted — the first thing off cooldown every time.
     if (skin !== 'q' && (aiState.npcRuinDecayStacks ?? 0) < 10) {
@@ -4323,18 +4328,18 @@ export class NpcOpponent extends Fighter {
     if (aiState.npcLightTrickRamp && this.castAbility('light-trick', buildContext(aimX, aimY))) return 'light-trick';
     const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
 
+    // Synergy (Q): the speed the kit banked is the beam's length — spend it the moment it's worth it.
+    if (aiState.npcLightNovaReady && this.castAbility('light-supernova', buildContext(aimX, aimY))) return 'light-supernova';
+    void hpRatio;
+
     if (!skipSpecials) {
-      // 1. Speed 'O' Light — ultimate escape/burst when hurt
-      if (hpRatio < 0.5) {
-        if (this.castAbility('speed-o-light', buildContext(aimX, aimY))) return 'speed-o-light';
-      }
-      // 2. Light Trick — close-range burst
+      // 1. Light Trick — close-range burst
       if (dist < 90) {
         if (this.castAbility('light-trick', buildContext(aimX, aimY))) return 'light-trick';
       }
-      // 3. Prism Ramp — lay down hazards opportunistically
+      // 2. Prism Ramp — lay down hazards opportunistically
       if (this.castAbility('prism-ramp', buildContext(aimX, aimY))) return 'prism-ramp';
-      // 4. Blink — reposition toward the target when not already close
+      // 3. Blink — reposition toward the target when not already close
       if (dist > 150) {
         if (this.castAbility('blink', buildContext(aimX, aimY))) return 'blink';
       }

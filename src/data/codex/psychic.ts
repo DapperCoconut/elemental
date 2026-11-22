@@ -198,12 +198,11 @@ const psychic: ElementCodex = {
           + 'the crown is stripped from you.',
         effects: [
           { tag: 'damage', label: 'Checkmate', detail: 'At the end of the reign, every enemy under 15% health takes true damage equal to all of it. Only invincibility stops it.', requiresUpgrade: 'q' },
-          { tag: 'utility', label: 'Only a full reign', detail: 'Dying while crowned, or having the form ended early (Ruin\'s Second Skin), checkmates nobody.', requiresUpgrade: 'q' },
+          { tag: 'utility', label: 'Only a full reign', detail: 'Dying while crowned, checkmates nobody.', requiresUpgrade: 'q' },
         ],
       },
       notes: [
         'Crown yourself with pieces already on the board: the ×3 multiplies whatever the auras are already giving you.',
-        'Ruin\'s Second Skin ends the crown like any other form.',
       ],
     },
   },

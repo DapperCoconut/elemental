@@ -780,8 +780,8 @@ export const ALL_UPGRADES: ElementUpgrades[] = [
       {
         slot: 'q',
         displayKey: 'Q',
-        name: 'Flare-Stream',
-        description: "Every 10th teleport during Speed 'O' Light leaves behind a lasting orange beam (35s, uncapped). Standing on one triples your acceleration rate. Enemies are unaffected by it.",
+        name: 'Solar Dynamo',
+        description: "Supernova burns its line into the floor every half second, leaving scorched earth for 14s (up to 14 strips). Driving over your own scorch keeps feeding you speed (+240/s), even mid-drift. Enemies are unaffected by it.",
         price: 750,
         currency: 'corrupt',
       },

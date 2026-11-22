@@ -370,10 +370,14 @@ export function openDock(p: LedgerPanel, accent: number, here: string, setSail: 
       const open = routeOpen(isle.id);
       const prev = getIsle(ALL_ISLE_IDS[ALL_ISLE_IDS.indexOf(isle.id) - 1] ?? '');
       rows.push({
-        icon: '🧭', name: isle.name, right: !open ? 'NO CHART' : has ? 'CROSSING' : 'NO BOAT',
-        rightColor: open && has ? '#9dd8ff' : '#8a6a4a',
+        icon: isle.outer ? '⛈️' : '🧭', name: isle.name, right: !open ? 'NO CHART' : has ? (isle.outer ? 'ROUGH SEAS' : 'CROSSING') : 'NO BOAT',
+        rightColor: open && has ? (isle.outer ? '#ffb07a' : '#9dd8ff') : '#8a6a4a',
         detail: open
-          ? [`Held by ${isle.monarch.name}, ${isle.monarch.title}.`, '', 'A crossing: open sea until landfall. Sink and you wash up back here.', s().waystones.includes(isle.port) ? 'You have landed there before.' : 'You have never set foot there.']
+          ? [`Held by ${isle.monarch.name}, ${isle.monarch.title}.`, '',
+            ...(isle.outer
+              ? ['Beyond the Breakwater: the Outer Sea. A long crossing in black water;', 'the swell throws the boat about and breakers roll in. Thread their gaps.', 'Sink and you wash up back here.']
+              : ['A crossing: open sea until landfall. Sink and you wash up back here.']),
+            s().waystones.includes(isle.port) ? 'You have landed there before.' : 'You have never set foot there.']
           : [`Held by ${isle.monarch.name}, ${isle.monarch.title}.`, '', `No pilot will chart the way while ${prev ? prev.monarch.name : 'the tyrant here'} still reigns.`],
         verb: open && has ? 'SET SAIL' : null,
         dim: !open,

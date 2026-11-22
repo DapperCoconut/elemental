@@ -525,11 +525,6 @@ export class ArtifactsKit {
     const scene = this.api.scene;
     const spark = scene.add.circle(p.x, p.y, 8, 0x8fd8ff, 0.85).setDepth(FX_DEPTH);
     scene.tweens.add({ targets: spark, scale: 2.4, alpha: 0, duration: 200, onComplete: () => spark.destroy() });
-    const tag = scene.add.text(p.x, p.y - 14, `${count}`, {
-      fontSize: '11px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
-      color: '#a8e4ff', stroke: '#04121a', strokeThickness: 3,
-    }).setOrigin(0.5).setDepth(FX_DEPTH + 1);
-    scene.tweens.add({ targets: tag, y: p.y - 30, alpha: 0, duration: 420, onComplete: () => tag.destroy() });
   }
 
   /** Two forks at ±20°, half strength, and barred from forking again. */

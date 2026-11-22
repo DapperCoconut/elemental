@@ -2,6 +2,10 @@ import type Phaser from 'phaser';
 import type { Fighter } from '../entities/Fighter';
 import type { BossToolkit } from '../boss/framework/BossToolkit';
 import type { ItemEffect } from '../data/Items';
+import type { StrikeTarget, StrikeTargetDef } from '../boss/framework/StrikeTargets';
+export type { StrikeTarget, StrikeTargetDef, Striker } from '../boss/framework/StrikeTargets';
+import type { ShotHandle } from '../combat/ShotHandles';
+export type { ShotHandle } from '../combat/ShotHandles';
 
 /**
  * The Ten Isles — every shape the campaign's data is written in.
@@ -57,7 +61,25 @@ export type NpcHat =
   /** A long floppy nightcap with a pompom at the tip (sleepers, dreamers). */
   | 'nightcap'
   /** A soft cap with one long feather swept back from it (bards, storytellers, heralds). */
-  | 'plume';
+  | 'plume'
+  /** A miner's hard hat with a brass lamp on the brow, lit (miners, quarrymen, delvers). */
+  | 'miner'
+  /** A desert headwrap wound round the head, its tail hanging behind (dune-folk, caravaners). */
+  | 'headwrap'
+  /** A smith's leather coif, laced, with smoked welding goggles on the brow (forge-hands, founders). */
+  | 'coif'
+  /** A snug skullcap with a coiled antenna sprung from the crown, a spark at its tip (linesmen, radio-hams, tinkers). */
+  | 'antenna'
+  /** A lead-lined hazard hood with a round glass visor over the face (reactor hands, pit-workers). */
+  | 'hazmat'
+  /** A striped beanie with a little propeller on top that turns (toymakers, children, acrobats). */
+  | 'propeller'
+  /** A deep cowl that hides the face, only two eye-glints in the dark of it (spies, informers, shadow-folk). */
+  | 'cowl'
+  /** A plague-doctor's beaked mask under a wide-brimmed hat (apothecaries, gravediggers, milkers). */
+  | 'plague'
+  /** A live serpent coiled round the head like a turban, its head raised and tongue flicking (venom-priests, charmers). */
+  | 'snake';
 
 export type NpcTrait =
   | 'apron' | 'beard' | 'cane' | 'satchel' | 'pipe' | 'scarf' | 'glasses' | 'eyepatch'
@@ -230,7 +252,12 @@ export interface WorldGate {
   open: Cond;
   look: 'portcullis' | 'grate' | 'wax' | 'rubble' | 'barrier' | 'ice' | 'coral' | 'sluice'
     | 'thorn' | 'roots' | 'bone' | 'candy'
-    | 'cloud' | 'lightning' | 'orrery' | 'veil' | 'book';
+    | 'cloud' | 'lightning' | 'orrery' | 'veil' | 'book'
+    | 'boulder' | 'crystal' | 'kiln' | 'dune' | 'iron' | 'tomb'
+    | 'cable' | 'magnet' | 'lead' | 'rubber' | 'phase'
+    /** `fang` two great curved white fangs crossed, dripping; `web` a spider-web strung across with a spider in it;
+     * `chain` hanging curtains of heavy chain; `shadow` a wall of moving darkness; `lychgate` a roofed churchyard gate. */
+    | 'fang' | 'web' | 'chain' | 'shadow' | 'lychgate';
   label?: string;
 }
 
@@ -242,14 +269,29 @@ export interface AreaPainter {
    * Y-sorted set pieces (buildings, trees, machines): each one is drawn once into its own
    * graphics at depth `y`, so the player walks in front of or behind it.
    */
-  pieces?: { x: number; y: number; w: number; h: number; draw: (g: Phaser.GameObjects.Graphics, rng: () => number) => void }[];
+  pieces?: {
+    x: number; y: number; w: number; h: number;
+    draw: (g: Phaser.GameObjects.Graphics, rng: () => number) => void;
+    /**
+     * Only shown while this holds (re-checked twice a second) — the lit lighthouse after the
+     * Empress falls, the scaffold that comes down once a quest is done. Pair two pieces with
+     * opposite conditions to swap a building between its states.
+     */
+    when?: Cond;
+  }[];
   /**
    * Per-frame ambient animation in world space (lava glow, steam, candle flames). Called only
    * for parts on screen: `view` is the camera rect. Drawn above the ground, below actors.
+   * `world.test(cond)` reads the save, so an animation can change with the story.
    */
-  animate?(g: Phaser.GameObjects.Graphics, t: number, view: Rect): void;
+  animate?(g: Phaser.GameObjects.Graphics, t: number, view: Rect, world: PainterWorld): void;
   /** Like `animate` but drawn over actors (smoke, falling ash, canopy). */
-  animateOver?(g: Phaser.GameObjects.Graphics, t: number, view: Rect): void;
+  animateOver?(g: Phaser.GameObjects.Graphics, t: number, view: Rect, world: PainterWorld): void;
+}
+
+/** What a painter may read about the story — the same conditions NPC talks and exits use. */
+export interface PainterWorld {
+  test(c: Cond): boolean;
 }
 
 /**
@@ -261,11 +303,24 @@ export interface AreaPainter {
  * down-feathers, `stars` a twinkling night sky with the odd shooting star (an overlay — best for
  * places under permanent night), `storm` slanting rain with lightning flashes, `dreams` slow rising
  * soap-bubble dreams and drifting zzz.
+ * `dust` slow hanging dust motes in a warm haze, `sandstorm` driving sheets of sand blown sideways,
+ * `grit` pebbles and grit trickling down from crumbling stone (ruins, quarries), `glints` coloured
+ * crystal flecks winking in the light (caverns).
+ * `static` crackling arcs jumping between points and a faint flicker in the air (power towns), `aurora`
+ * ribbons of green and violet light rippling overhead (an overlay), `glow` green radioactive motes rising
+ * in a faint haze, `flicker` double-exposure ghosts and scan-bands (things not quite in one state),
+ * `balloons` loose balloons drifting up on their strings.
+ * `miasma` green marsh-gas bubbles rising and popping in a low sickly haze, `drip` venom drops falling from
+ * above and splashing, `gossamer` loose web strands drifting and glinting, `murk` wisps of living shadow
+ * crawling in a dimmed light (an overlay), `wisps` pale will-o'-wisps bobbing and fading (graveyards).
  */
 export type WeatherKind = 'none' | 'ash' | 'embers' | 'steam' | 'smoke' | 'sparks' | 'wax' | 'rain' | 'snow' | 'motes'
   | 'spray' | 'fog' | 'bubbles' | 'ink'
   | 'pollen' | 'spores' | 'petals' | 'leaves' | 'sugar' | 'fireflies'
-  | 'wind' | 'clouds' | 'feathers' | 'stars' | 'storm' | 'dreams';
+  | 'wind' | 'clouds' | 'feathers' | 'stars' | 'storm' | 'dreams'
+  | 'dust' | 'sandstorm' | 'grit' | 'glints'
+  | 'static' | 'aurora' | 'glow' | 'flicker' | 'balloons'
+  | 'miasma' | 'drip' | 'gossamer' | 'murk' | 'wisps';
 
 export interface AreaDef {
   id: string;
@@ -358,7 +413,35 @@ export interface GimmickCtx {
   sfx(name: string): void;
   /** Win the fight outright (rare — survival-style rules). */
   victory(): void;
+  /**
+   * Put something on the floor that either fighter can *strike* — a lever, a rod, a prism, a
+   * balloon. Every damage path in the arena reaches it (shots from both sides, AoE, melee, kit
+   * abilities; the bot also strikes whatever is in reach when it casts). Each blow calls
+   * `onStruck(by, amount)`; the thing never breaks on its own — `remove()` it when it should go.
+   * Auto-aim and homing ignore it. `passThrough` lets shots fly on after striking it.
+   */
+  target(def: StrikeTargetDef): StrikeTarget;
+  /**
+   * Where a fighter is looking, in radians: the player's aim (toward the mouse), the bot's
+   * heading as it walks (toward its foe while it stands still).
+   */
+  facing(f: Fighter): number;
+  /**
+   * Up in the air for `ms` (a trampoline throw, a blast that lifts): nothing can hit them — shots
+   * pass under and damage is refused. Movement is untouched; `root` them too if they should fly
+   * where they were thrown.
+   */
+  airborne(f: Fighter, ms: number): void;
+  /** True while `airborne` holds. */
+  isAirborne(f: Fighter): boolean;
+  /**
+   * Shots in flight inside a circle — both sides', the arena's shared projectiles and the
+   * kit-local ones that register. Each handle can `block()` it (gone, no hit) or `reflect()` it
+   * (shared projectiles only: bounced off a wall normal and turned against its owner).
+   */
+  shotsNear(x: number, y: number, r: number): ShotHandle[];
 }
+
 
 export interface EncounterGimmick {
   /** `time` is scene ms; `dt` is SECONDS. */
@@ -377,6 +460,16 @@ export interface EncounterGimmick {
   npcSeek?(): Pt | null;
   onPlayerHurt?(amount: number): void;
   onNpcHurt?(amount: number): void;
+  /** Every ability the player casts (after it went off — a refused cast is not reported). */
+  onPlayerCast?(abilityId: string, slot: string | null): void;
+  /** Every ability the bot casts. */
+  onNpcCast?(abilityId: string): void;
+  /**
+   * Cooldown speed per side, pulled every frame: 1 normal, 2 charges twice as fast, 0.5 half
+   * speed (clamped 0.25–4). Charged ultimates gain charge at the same rate.
+   */
+  playerCooldownRate?(): number;
+  npcCooldownRate?(): number;
   destroy?(): void;
 }
 
@@ -434,6 +527,12 @@ export interface ItemScriptCtx {
   boostDamage(mult: number, ms: number): void;
   /** Temporary multiplier on the player's speed. */
   boostSpeed(mult: number, ms: number): void;
+  /** Positional shove, clamped to the arena — a charm that knocks the foe back. */
+  nudge(f: Fighter, dx: number, dy: number): void;
+  /** A real stun (see GimmickCtx.stun). */
+  stun(f: Fighter, ms: number): void;
+  /** Where a fighter is looking (see GimmickCtx.facing). */
+  facing(f: Fighter): number;
 }
 
 export interface ItemScript {
@@ -496,7 +595,13 @@ export interface FisheryDef {
   /** Water look for the bobber splash. */
   kind: 'sea' | 'lava' | 'pond' | 'wax' | 'steam' | 'oil' | 'ice' | 'ink' | 'abyss' | 'bog' | 'syrup'
     /** Fishing off a cliff edge down into the cloud sea; `aurora` a pool of cooling starlight. Both need the skyline rod. */
-    | 'cloud' | 'aurora';
+    | 'cloud' | 'aurora'
+    /** `sand` fishing the dune-sea's sand-swimmers; `cavern` a black lake at the foot of a deep shaft. Both need the delver rod. */
+    | 'sand' | 'cavern'
+    /** `charged` a storm-fed mill race fizzing with current; `coolant` a reactor's glowing cooling pond; `quantum` a well whose fish are and are not there. All need the insulated rod. */
+    | 'charged' | 'coolant' | 'quantum'
+    /** `venom` a steaming green venom fen; `blackwater` still black water whose fish are shadows. Both need the antivenin rod. */
+    | 'venom' | 'blackwater';
 }
 
 export interface RodDef {
@@ -629,6 +734,11 @@ export interface IsleDef {
   color: number;
   /** Position on the sea chart, 0–1. */
   chart: Pt;
+  /**
+   * One of the five abstract isles beyond the Breakwater. Crossings to it run the Outer Sea:
+   * longer, darker water, a swell that shoves the boat about, and breakers to thread.
+   */
+  outer?: boolean;
 }
 
 /** What rides ArenaScene's `isles` payload. */

@@ -37,14 +37,14 @@ const lightTrick: Ability = {
   cast(ctx) { void ctx; }, // Handled in ArenaScene
 };
 
-const speedOLight: Ability = {
-  id: 'speed-o-light',
-  name: "Speed 'O' Light",
-  description: 'Bounce between the arena walls 25 times in an instant, leaving behind damaging light streaks (10 dmg each)',
+const supernova: Ability = {
+  id: 'light-supernova',
+  name: 'Supernova',
+  description: 'Stop on a dime and pour the speed you had into a beam that reaches the wall (45 dmg/s). Top speed buys 6s of it; the beam turns slowly after your cursor. Q again to stop early',
   displayKey: 'Q',
   isUltimate: true,
-  cooldown: 45000,
-  cast(ctx) { void ctx; }, // Handled in ArenaScene
+  cooldown: 30000,
+  cast(ctx) { void ctx; }, // Handled in LightKit
 };
 
 export const lightElement: Element = {
@@ -52,5 +52,5 @@ export const lightElement: Element = {
   name: 'Light',
   color: 0xfff4a8,
   emoji: '✨',
-  abilities: [lightLance, blink, prismRamp, lightTrick, speedOLight],
+  abilities: [lightLance, blink, prismRamp, lightTrick, supernova],
 };

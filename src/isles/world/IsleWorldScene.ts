@@ -11,7 +11,7 @@ import {
   allQuests, getIsle, allAreas, getIsleItem, courtOfArea, getCourt,
 } from '../IslesRegistry';
 import type {
-  AreaDef, AreaExit, EncounterDef, NpcDef, NpcLook, Poi, Pt, Rect, Talk, IslesFightPayload, WorldHazard,
+  AreaDef, AreaExit, EncounterDef, NpcDef, NpcLook, Poi, Pt, Rect, Talk, IslesFightPayload, WorldHazard, Cond, PainterWorld,
 } from '../IslesTypes';
 import { mulberry, hashStr, motes, dim, lit } from '../art/IsleArt';
 import { drawNpc } from './NpcArt';
@@ -98,11 +98,17 @@ interface Interactable {
 const TALKS = new Map<string, number>();
 
 /** How each isle's dungeon hazards throw you back to the last checkpoint. */
+/** Painters read the story through this — see `PainterWorld`. */
+const PAINTER_WORLD: PainterWorld = { test: (c) => Save.test(c) };
+
 const DUNGEON_CATCH: Record<string, { flash: [number, number, number]; sfx: string; text: string }> = {
   fire: { flash: [255, 90, 20], sfx: 'status-burn', text: '🔥 Scorched!' },
   water: { flash: [90, 180, 255], sfx: 'splash', text: '🌊 Swept under!' },
   life: { flash: [120, 220, 90], sfx: 'thorn', text: '🌿 Snared!' },
   air: { flash: [230, 245, 255], sfx: 'gust', text: '💨 Blown off your feet!' },
+  earth: { flash: [150, 120, 80], sfx: 'quake', text: '🪨 Buried!' },
+  electricity: { flash: [170, 215, 255], sfx: 'zap', text: '⚡ Shocked!' },
+  slime: { flash: [120, 230, 60], sfx: 'status-poison', text: '🐍 Bitten!' },
 };
 
 export class IsleWorldScene extends Phaser.Scene {
@@ -120,7 +126,8 @@ export class IsleWorldScene extends Phaser.Scene {
   private crowd: CrowdWalker[] = [];
   private champions: Champion[] = [];
   private bosses: BossStand[] = [];
-  private pieces: { g: Phaser.GameObjects.Graphics; x0: number; y0: number; x1: number; y1: number }[] = [];
+  private pieces: { g: Phaser.GameObjects.Graphics; x0: number; y0: number; x1: number; y1: number; when?: Cond; ok: boolean }[] = [];
+  private piecesCheckAt = 0;
   private gAnim!: Phaser.GameObjects.Graphics;
   private gOver!: Phaser.GameObjects.Graphics;
   private gPoi!: Phaser.GameObjects.Graphics;
@@ -260,7 +267,7 @@ export class IsleWorldScene extends Phaser.Scene {
     for (const p of this.def.painter.pieces ?? []) {
       const g = this.add.graphics().setDepth(p.y);
       try { p.draw(g, r); } catch (e) { console.error('[isles] piece failed', this.def.id, e); }
-      this.pieces.push({ g, x0: p.x - p.w / 2 - 20, y0: p.y - p.h - 20, x1: p.x + p.w / 2 + 20, y1: p.y + 40 });
+      this.pieces.push({ g, x0: p.x - p.w / 2 - 20, y0: p.y - p.h - 20, x1: p.x + p.w / 2 + 20, y1: p.y + 40, when: p.when, ok: !p.when || Save.test(p.when) });
     }
   }
 
@@ -893,11 +900,15 @@ export class IsleWorldScene extends Phaser.Scene {
     this.walker.update(dt, this.px, this.py, live && this.moving, this.facing);
     this.updateCamera(false);
 
-    for (const p of this.pieces) p.g.setVisible(!(p.x1 < view.x || p.x0 > view.x + view.w || p.y1 < view.y || p.y0 > view.y + view.h));
+    if (now >= this.piecesCheckAt) {
+      this.piecesCheckAt = now + 500;
+      for (const p of this.pieces) if (p.when) p.ok = Save.test(p.when);
+    }
+    for (const p of this.pieces) p.g.setVisible(p.ok && !(p.x1 < view.x || p.x0 > view.x + view.w || p.y1 < view.y || p.y0 > view.y + view.h));
 
     this.gAnim.clear(); this.gOver.clear();
-    try { this.def.painter.animate?.(this.gAnim, t, view); } catch (e) { console.error(e); this.def.painter.animate = undefined; }
-    try { this.def.painter.animateOver?.(this.gOver, t, view); } catch (e) { console.error(e); this.def.painter.animateOver = undefined; }
+    try { this.def.painter.animate?.(this.gAnim, t, view, PAINTER_WORLD); } catch (e) { console.error(e); this.def.painter.animate = undefined; }
+    try { this.def.painter.animateOver?.(this.gOver, t, view, PAINTER_WORLD); } catch (e) { console.error(e); this.def.painter.animateOver = undefined; }
     this.drawWeather(t, view);
     this.drawPois(t, view);
     this.drawHazards(now, view);
@@ -1144,6 +1155,276 @@ export class IsleWorldScene extends Phaser.Scene {
           g.lineBetween(x, y, x + z, y); g.lineBetween(x + z, y, x, y + z); g.lineBetween(x, y + z, x + z, y + z);
         }
         break;
+      case 'dust':
+        // A warm haze with motes hanging in it, turning over slowly as they drift.
+        g.fillStyle(0xd8b888, 0.05); g.fillRect(view.x, view.y, view.w, view.h);
+        for (let i = 0; i < 40; i++) {
+          const x = view.x + ((i * 173 + t * (6 + (i % 4) * 3)) % view.w) + Math.sin(t * 0.7 + i * 2.1) * 14;
+          const y = view.y + ((i * 113 + Math.sin(t * 0.4 + i) * 30 + view.h) % view.h);
+          const tw = 0.4 + 0.6 * Math.max(0, Math.sin(t * 1.3 + i * 1.7));
+          g.fillStyle(i % 5 ? 0xf0dcb0 : 0xfff4d8, 0.5 * tw); g.fillCircle(x, y, 1 + (i % 3) * 0.6);
+        }
+        break;
+      case 'sandstorm':
+        // Driving sand: a tinted pall, long low streaks racing sideways and gusting sheets.
+        g.fillStyle(0xc8a060, 0.1 + Math.sin(t * 0.8) * 0.04); g.fillRect(view.x, view.y, view.w, view.h);
+        for (let i = 0; i < 90; i++) {
+          const x = view.x + ((i * 131 + t * (420 + (i % 5) * 60)) % (view.w + 80)) - 40, y = view.y + ((i * 59 + Math.sin(t + i) * 6) % view.h);
+          g.lineStyle(1, i % 3 ? 0xe0c080 : 0xf4dca8, 0.45); g.lineBetween(x, y, x - 18 - (i % 4) * 6, y + 1.5);
+        }
+        for (let i = 0; i < 3; i++) {
+          const x = view.x + ((i * 521 + t * 260) % (view.w + 600)) - 300, y = view.y + view.h * (0.25 + i * 0.25);
+          g.fillStyle(0xd8b070, 0.08); g.fillEllipse(x, y, 520, 90); g.fillEllipse(x - 140, y + 10, 300, 60);
+        }
+        break;
+      case 'grit':
+        // Pebbles and grit trickling down in thin falls, a puff where each lands.
+        for (let i = 0; i < 9; i++) {
+          const cx = view.x + ((i * 307) % view.w), y0 = view.y + ((i * 181) % (view.h * 0.6));
+          const on = Math.sin(t * 0.5 + i * 2.7) > 0.2;
+          if (!on) continue;
+          for (let k = 0; k < 6; k++) {
+            const y = y0 + ((t * 160 + k * 22 + i * 13) % 130);
+            g.fillStyle(k % 2 ? 0x8a7a68 : 0x6a5a4a, 0.75); g.fillRect(cx + Math.sin(k + i) * 3, y, 2, 2);
+          }
+          g.fillStyle(0xb8a890, 0.25); g.fillEllipse(cx, y0 + 134, 18 + Math.sin(t * 6 + i) * 3, 5);
+        }
+        for (let i = 0; i < 24; i++) {
+          const x = view.x + ((i * 149 + t * 4) % view.w), y = view.y + ((i * 97 + t * (40 + (i % 4) * 12)) % view.h);
+          g.fillStyle(0x7a6a5a, 0.5); g.fillRect(x, y, 1.5, 1.5);
+        }
+        break;
+      case 'glints':
+        // Crystal flecks winking in and out, each with a four-point star at its brightest.
+        for (let i = 0; i < 46; i++) {
+          const x = view.x + ((i * 211 + Math.sin(t * 0.3 + i) * 20 + view.w) % view.w), y = view.y + ((i * 127 + t * 5) % view.h);
+          const tw = Math.max(0, Math.sin(t * (1.1 + (i % 6) * 0.35) + i * 2.9));
+          const col = [0xd8a8ff, 0x9ae8ff, 0xffb8d8, 0xb8ffd0][i % 4];
+          g.fillStyle(col, 0.7 * tw); g.fillRect(x - 1, y - 1, 2, 2);
+          if (tw > 0.8) { g.lineStyle(1, 0xffffff, (tw - 0.8) * 4); g.lineBetween(x - 5, y, x + 5, y); g.lineBetween(x, y - 5, x, y + 5); }
+        }
+        break;
+      case 'static': {
+        // Crackling arcs jumping between points in the air, each a jagged two-tone fork that lasts a
+        // blink, over a faint blue flicker; the odd loose spark drifting.
+        if (Math.sin(t * 23) > 0.6) { g.fillStyle(0xa8d8ff, 0.035); g.fillRect(view.x, view.y, view.w, view.h); }
+        for (let i = 0; i < 5; i++) {
+          const ph = (t * (0.9 + i * 0.23) + i * 0.37) % 1;
+          if (ph > 0.12) continue;
+          const seed = Math.floor(t * (0.9 + i * 0.23) + i * 0.37) * 7.13 + i * 3.1;
+          const x0 = view.x + ((Math.abs(Math.sin(seed)) * 9973) % view.w), y0 = view.y + ((Math.abs(Math.cos(seed)) * 7919) % view.h);
+          const ang = seed % (Math.PI * 2), len = 60 + (i % 3) * 30;
+          for (const [w, c, a] of [[3, 0x6ab8ff, 0.5], [1.2, 0xffffff, 0.95]] as const) {
+            g.lineStyle(w, c, a * (1 - ph / 0.12));
+            g.beginPath(); g.moveTo(x0, y0);
+            for (let k = 1; k <= 6; k++) {
+              const u = k / 6, jx = Math.sin(seed * 3 + k * 5.7) * 9, jy = Math.cos(seed * 2 + k * 4.3) * 9;
+              g.lineTo(x0 + Math.cos(ang) * len * u + jx, y0 + Math.sin(ang) * len * u + jy);
+            }
+            g.strokePath();
+          }
+        }
+        for (let i = 0; i < 18; i++) {
+          const x = view.x + ((i * 191 + Math.sin(t * 2 + i) * 20 + view.w) % view.w), y = view.y + ((i * 113 - t * 30 + view.h * 9) % view.h);
+          g.fillStyle(i % 3 ? 0xbfe4ff : 0xffffff, 0.4 + 0.5 * Math.max(0, Math.sin(t * 9 + i * 1.3))); g.fillRect(x, y, 1.5, 1.5);
+        }
+        break;
+      }
+      case 'aurora':
+        // Curtains of green and violet light rippling across the top of the sky, folding as they move.
+        for (let band = 0; band < 3; band++) {
+          const col = [0x6aff9a, 0x8ae8d8, 0xc08aff][band], baseY = view.y + 40 + band * 46;
+          for (let x = view.x - 20; x < view.x + view.w + 20; x += 14) {
+            const wave = Math.sin(x * 0.006 + t * (0.4 + band * 0.13) + band) * 30 + Math.sin(x * 0.017 - t * 0.7) * 10;
+            const hgt = 70 + Math.sin(x * 0.011 + t * 0.9 + band * 2) * 34;
+            const a = 0.06 + 0.05 * Math.max(0, Math.sin(x * 0.009 + t * 1.3 + band));
+            g.fillStyle(col, a); g.fillRect(x, baseY + wave, 12, hgt);
+            g.fillStyle(0xffffff, a * 0.6); g.fillRect(x, baseY + wave + hgt - 4, 12, 3);
+          }
+        }
+        break;
+      case 'glow':
+        // A faint green haze with motes rising out of the ground, each pulsing as it climbs.
+        g.fillStyle(0x7aff6a, 0.035 + Math.sin(t * 0.6) * 0.015); g.fillRect(view.x, view.y, view.w, view.h);
+        for (let i = 0; i < 36; i++) {
+          const x = view.x + ((i * 167) % view.w) + Math.sin(t * 0.8 + i * 1.9) * 12;
+          const y = view.y + view.h - ((i * 89 + t * (12 + (i % 5) * 5)) % view.h);
+          const p = 0.5 + 0.5 * Math.sin(t * 3 + i * 2.3);
+          g.fillStyle(0x9aff7a, 0.15 * p); g.fillCircle(x, y, 5);
+          g.fillStyle(0xd8ffc0, 0.6 * p); g.fillCircle(x, y, 1.6);
+        }
+        break;
+      case 'flicker': {
+        // Not quite one state: faint scan-bands sliding down, and now and then a ghost double of the
+        // whole view slipped a few pixels aside in violet and teal.
+        for (let i = 0; i < 4; i++) {
+          const y = view.y + ((t * (60 + i * 25) + i * 157) % view.h);
+          g.fillStyle(i % 2 ? 0xc8a8ff : 0x8ae8e8, 0.05); g.fillRect(view.x, y, view.w, 6 + i * 3);
+        }
+        const ph = t % 3.7;
+        if (ph < 0.18) {
+          const off = 6 * Math.sin(t * 40);
+          g.lineStyle(2, 0xb88aff, 0.18); g.strokeRect(view.x + off, view.y, view.w, view.h);
+          g.fillStyle(0x8ae8e8, 0.05); g.fillRect(view.x - off, view.y, view.w, view.h);
+        }
+        for (let i = 0; i < 20; i++) {
+          const on = Math.sin(t * 5 + i * 2.1) > 0.85;
+          if (!on) continue;
+          const x = view.x + ((i * 233) % view.w), y = view.y + ((i * 151) % view.h);
+          g.lineStyle(1, 0xd8c8ff, 0.6); g.strokeRect(x - 4, y - 4, 8, 8);
+          g.lineStyle(1, 0x8ae8e8, 0.5); g.strokeRect(x - 1, y - 1, 8, 8);
+        }
+        break;
+      }
+      case 'balloons':
+        // Loose balloons rising on wavering strings, a shine on each.
+        for (let i = 0; i < 12; i++) {
+          const col = [0xff5a6a, 0xffd04a, 0x5ac8ff, 0x8aff7a, 0xd88aff, 0xff9a4a][i % 6];
+          const x = view.x + ((i * 241) % view.w) + Math.sin(t * 0.7 + i * 1.3) * 18;
+          const y = view.y + view.h + 40 - ((i * 131 + t * (22 + (i % 4) * 6)) % (view.h + 120));
+          const r = 7 + (i % 3) * 1.5;
+          g.lineStyle(1, 0xe8e0d0, 0.7);
+          g.beginPath(); g.moveTo(x, y + r);
+          for (let k = 1; k <= 4; k++) g.lineTo(x + Math.sin(t * 2 + i + k) * 3, y + r + k * 7);
+          g.strokePath();
+          g.fillStyle(col, 0.85); g.fillEllipse(x, y, r * 1.7, r * 2);
+          g.fillTriangle(x - 2, y + r + 1, x + 2, y + r + 1, x, y + r - 2);
+          g.fillStyle(0xffffff, 0.55); g.fillEllipse(x - r * 0.3, y - r * 0.4, r * 0.4, r * 0.6);
+        }
+        break;
+      case 'miasma':
+        // A low sickly haze banked along the ground, marsh-gas bubbles wobbling up out of it, each
+        // swelling then popping in a ring and a little green puff.
+        g.fillStyle(0x7ab84a, 0.04 + Math.sin(t * 0.5) * 0.015); g.fillRect(view.x, view.y, view.w, view.h);
+        for (let i = 0; i < 4; i++) {
+          const x = view.x + ((i * 397 + t * 12) % (view.w + 500)) - 250, y = view.y + view.h * (0.3 + i * 0.2);
+          g.fillStyle(0x8ac85a, 0.06); g.fillEllipse(x, y, 460, 70); g.fillEllipse(x + 160, y + 14, 260, 44);
+        }
+        for (let i = 0; i < 26; i++) {
+          const life = 3 + (i % 4) * 0.8, k = ((t + i * 0.73) % life) / life;
+          const n = Math.floor((t + i * 0.73) / life);
+          const x = view.x + ((i * 173 + n * 311) % view.w) + Math.sin(t * 1.6 + i) * 4;
+          const y = view.y + ((i * 107 + n * 89) % view.h) - k * 70;
+          if (k < 0.88) {
+            const r = 2 + k * (4 + (i % 3) * 1.5);
+            g.fillStyle(0x6aa83a, 0.28); g.fillCircle(x, y, r);
+            g.lineStyle(1, 0xb8f07a, 0.6); g.strokeCircle(x, y, r);
+            g.fillStyle(0xe8ffc8, 0.7); g.fillCircle(x - r * 0.35, y - r * 0.4, Math.max(0.6, r * 0.22));
+          } else {
+            const p = (k - 0.88) / 0.12, r = 6 + p * 10;
+            g.lineStyle(1, 0xc8ff8a, 0.6 * (1 - p)); g.strokeCircle(x, y, r);
+            g.fillStyle(0x9ad86a, 0.18 * (1 - p)); g.fillCircle(x, y - p * 6, r * 0.8);
+            for (let s = 0; s < 4; s++) {
+              const a = s * 1.57 + i; g.fillStyle(0xc8ff8a, 0.7 * (1 - p)); g.fillRect(x + Math.cos(a) * r, y + Math.sin(a) * r, 1.5, 1.5);
+            }
+          }
+        }
+        break;
+      case 'drip':
+        // Venom drops gathering, falling and splashing: each drop hangs and swells a moment, drops with
+        // a short streak, then lands in a crown of droplets and a spreading green ring.
+        for (let i = 0; i < 18; i++) {
+          const cyc = 2.2 + (i % 5) * 0.35, ph = (t + i * 0.61) % cyc, n = Math.floor((t + i * 0.61) / cyc);
+          const x = view.x + ((i * 211 + n * 157) % view.w), y0 = view.y + ((i * 83 + n * 41) % (view.h * 0.5));
+          const fall = 90 + (i % 4) * 40;
+          if (ph < 0.7) {
+            const sw = ph / 0.7;
+            g.fillStyle(0x7ad83a, 0.75); g.fillEllipse(x, y0 + sw * 2, 2 + sw * 2, 3 + sw * 3);
+            g.fillStyle(0xe8ffc0, 0.8); g.fillRect(x - 0.6, y0 + sw * 2 - 1, 1, 1);
+          } else if (ph < 1.1) {
+            const k = (ph - 0.7) / 0.4, y = y0 + 4 + k * k * fall;
+            g.lineStyle(1, 0x9af05a, 0.35); g.lineBetween(x, y - 8 - k * 6, x, y - 2);
+            g.fillStyle(0x6ac82a, 0.85); g.fillEllipse(x, y, 3.6, 5.4);
+            g.fillStyle(0xe8ffc0, 0.85); g.fillRect(x - 1, y - 1.5, 1, 1);
+          } else if (ph < 1.7) {
+            const k = (ph - 1.1) / 0.6, y = y0 + 4 + fall;
+            g.lineStyle(1, 0x8ae04a, 0.6 * (1 - k)); g.strokeEllipse(x, y, 6 + k * 22, 2 + k * 7);
+            g.fillStyle(0x5aa82a, 0.3 * (1 - k)); g.fillEllipse(x, y, 4 + k * 12, 1.5 + k * 4);
+            for (let s = 0; s < 5; s++) {
+              const a = Math.PI + (s + 0.5) * (Math.PI / 5), d = k * 10;
+              g.fillStyle(0xb8ff7a, 0.8 * (1 - k)); g.fillCircle(x + Math.cos(a) * d * 1.3, y + Math.sin(a) * d * 1.4 + k * k * 12, 1.1);
+            }
+          }
+        }
+        break;
+      case 'gossamer':
+        // Loose strands of web drifting on the air, each a sagging bowed thread with a bead of dew,
+        // catching the light in a glint that runs along it.
+        for (let i = 0; i < 14; i++) {
+          const x = view.x + ((i * 263 + t * (10 + (i % 4) * 4)) % (view.w + 120)) - 60 + Math.sin(t * 0.6 + i) * 20;
+          const y = view.y + ((i * 149 + Math.sin(t * 0.35 + i * 1.7) * 40 + view.h) % view.h);
+          const len = 30 + (i % 4) * 14, ang = Math.sin(t * 0.5 + i * 2.3) * 0.6 + 0.3;
+          const ex = x + Math.cos(ang) * len, ey = y + Math.sin(ang) * len;
+          const sag = 6 + Math.sin(t * 1.4 + i) * 4;
+          const pts: [number, number][] = [];
+          for (let k = 0; k <= 8; k++) {
+            const u = k / 8, bow = Math.sin(u * Math.PI) * sag;
+            pts.push([x + (ex - x) * u - Math.sin(ang) * bow, y + (ey - y) * u + Math.cos(ang) * bow]);
+          }
+          g.lineStyle(1, 0xe8ecf0, 0.35);
+          g.beginPath(); g.moveTo(pts[0][0], pts[0][1]); for (const [px, py] of pts) g.lineTo(px, py); g.strokePath();
+          const gl = ((t * 0.7 + i * 0.29) % 1.6);
+          if (gl < 1) {
+            const p = pts[Math.floor(gl * 8)];
+            g.fillStyle(0xffffff, 0.8 * Math.sin(gl * Math.PI)); g.fillCircle(p[0], p[1], 1.3);
+            g.lineStyle(1, 0xffffff, 0.4 * Math.sin(gl * Math.PI)); g.lineBetween(p[0] - 4, p[1], p[0] + 4, p[1]); g.lineBetween(p[0], p[1] - 4, p[0], p[1] + 4);
+          }
+          if (i % 3 === 0) { const p = pts[5]; g.fillStyle(0xd8f0ff, 0.6); g.fillCircle(p[0], p[1], 1.4); }
+        }
+        break;
+      case 'murk': {
+        // Light dimmed under a pall, darkest at the edges, and wisps of living shadow crawling across
+        // the ground: fingered smears that reach, curl and pull back, the odd pair of pale eyes in one.
+        g.fillStyle(0x0a0614, 0.22); g.fillRect(view.x, view.y, view.w, view.h);
+        for (let e = 0; e < 4; e++) {
+          const d = 26 + e * 22; g.fillStyle(0x06040c, 0.08);
+          g.fillRect(view.x, view.y, view.w, d); g.fillRect(view.x, view.y + view.h - d, view.w, d);
+          g.fillRect(view.x, view.y, d, view.h); g.fillRect(view.x + view.w - d, view.y, d, view.h);
+        }
+        for (let i = 0; i < 9; i++) {
+          const x = view.x + ((i * 311 + t * (14 + (i % 3) * 6) * (i % 2 ? 1 : -1) + view.w * 9) % view.w);
+          const y = view.y + ((i * 173) % view.h) + Math.sin(t * 0.4 + i) * 20;
+          const dir = i % 2 ? 1 : -1;
+          g.fillStyle(0x08040e, 0.32); g.fillEllipse(x, y, 70, 22);
+          g.fillStyle(0x08040e, 0.22); g.fillEllipse(x - dir * 34, y + 2, 44, 14);
+          for (let f = 0; f < 4; f++) {
+            const reach = 18 + 14 * Math.max(0, Math.sin(t * 1.3 + i * 1.7 + f * 0.9));
+            const a0 = (f - 1.5) * 0.45;
+            let fx = x + dir * 30, fy = y + (f - 1.5) * 5;
+            g.lineStyle(4 - f * 0.5, 0x06030c, 0.35);
+            g.beginPath(); g.moveTo(fx, fy);
+            for (let k = 1; k <= 4; k++) {
+              const u = k / 4; fx += dir * Math.cos(a0 + Math.sin(t * 2 + f + k) * 0.5) * reach / 4; fy += Math.sin(a0 + Math.sin(t * 2.2 + f * 2 + k) * 0.6) * reach / 4;
+              g.lineTo(fx, fy); if (u === 1) { g.fillStyle(0x06030c, 0.3); g.fillCircle(fx, fy, 1.5); }
+            }
+            g.strokePath();
+          }
+          if (i % 3 === 0 && Math.sin(t * 0.7 + i * 2) > 0.3) {
+            const blink = Math.sin(t * 3 + i) > 0.95 ? 0.3 : 1;
+            g.fillStyle(0xd8d0ff, 0.6); g.fillEllipse(x - 5, y - 2, 3.5, 2.4 * blink); g.fillEllipse(x + 5, y - 2, 3.5, 2.4 * blink);
+          }
+        }
+        break;
+      }
+      case 'wisps':
+        // Pale will-o'-wisps bobbing low over the ground: a soft halo, a bright core and a fading tail,
+        // each drifting a while then guttering out and kindling somewhere else.
+        for (let i = 0; i < 11; i++) {
+          const life = 6 + (i % 4) * 1.5, k = ((t + i * 1.37) % life) / life, n = Math.floor((t + i * 1.37) / life);
+          const bx = view.x + ((i * 239 + n * 401) % view.w), by = view.y + ((i * 151 + n * 223) % view.h);
+          const x = bx + Math.sin(t * 0.5 + i) * 40 + k * 30, y = by + Math.sin(t * 2.1 + i * 1.3) * 7 - k * 10;
+          const a = Math.min(1, k * 5) * Math.min(1, (1 - k) * 4) * (0.75 + 0.25 * Math.sin(t * 7 + i * 3));
+          const col = i % 3 ? 0xc8f0e8 : 0xd8e8ff;
+          for (let s = 1; s <= 4; s++) {
+            const tx = x - s * 5 - Math.sin(t * 2 + s) * 2, ty = y + Math.sin(t * 2.1 + i * 1.3 - s * 0.4) * 3;
+            g.fillStyle(col, 0.12 * a * (1 - s / 5)); g.fillCircle(tx, ty, 3.5 - s * 0.5);
+          }
+          g.fillStyle(col, 0.08 * a); g.fillCircle(x, y, 14);
+          g.fillStyle(col, 0.18 * a); g.fillCircle(x, y, 7);
+          g.fillStyle(0xffffff, 0.85 * a); g.fillCircle(x, y, 2.4);
+          g.fillStyle(col, 0.06 * a); g.fillEllipse(x, y + 26, 18, 5);
+        }
+        break;
       default: break;
     }
   }
@@ -1217,7 +1498,13 @@ export class IsleWorldScene extends Phaser.Scene {
         : gt.look === 'ice' ? 0xbfe8f8 : gt.look === 'coral' ? 0xe87a8a : gt.look === 'sluice' ? 0x4a5a5a
         : gt.look === 'thorn' ? 0x3a5a2a : gt.look === 'roots' ? 0x6a4a2a : gt.look === 'bone' ? 0xe8e0c8 : gt.look === 'candy' ? 0xff8ac8
         : gt.look === 'cloud' ? 0xf4f8ff : gt.look === 'lightning' ? 0x9ad8ff : gt.look === 'orrery' ? 0xc8a050
-        : gt.look === 'veil' ? 0xc8b0ff : gt.look === 'book' ? 0x7a2a3a : 0x3a3a42;
+        : gt.look === 'veil' ? 0xc8b0ff : gt.look === 'book' ? 0x7a2a3a
+        : gt.look === 'boulder' ? 0x7a7068 : gt.look === 'crystal' ? 0xb88ae8 : gt.look === 'kiln' ? 0xb8603a
+        : gt.look === 'dune' ? 0xe0c080 : gt.look === 'iron' ? 0x5a5e66 : gt.look === 'tomb' ? 0x8a8478
+        : gt.look === 'cable' ? 0xc87a3a : gt.look === 'magnet' ? 0xc83a3a : gt.look === 'lead' ? 0x6a6e78
+        : gt.look === 'rubber' ? 0x2a2a2e : gt.look === 'phase' ? 0xb88aff
+        : gt.look === 'fang' ? 0xf4eedc : gt.look === 'web' ? 0xe8ecf0 : gt.look === 'chain' ? 0x6a6e78
+        : gt.look === 'shadow' ? 0x0e0a16 : gt.look === 'lychgate' ? 0x5a4a38 : 0x3a3a42;
       if (gt.look === 'portcullis' || gt.look === 'grate' || gt.look === 'sluice') {
         g.fillStyle(0x1a1a1e, 0.6); g.fillRect(r.x, r.y, r.w, r.h);
         g.lineStyle(4, col, 1);
@@ -1309,6 +1596,279 @@ export class IsleWorldScene extends Phaser.Scene {
         g.fillStyle(0xe8c050, 1);
         for (const [cx2, cy2] of [[r.x + 8, r.y + 8], [r.x + r.w - 8, r.y + 8], [r.x + 8, r.y + r.h - 8], [r.x + r.w - 8, r.y + r.h - 8]]) g.fillCircle(cx2, cy2, 5);
         g.lineStyle(3, 0xe8c050, 1); g.lineBetween(r.x + r.w / 2, r.y + 4, r.x + r.w / 2, r.y + r.h - 4);
+      } else if (gt.look === 'boulder') {
+        // Great rounded boulders wedged across the way, chocked with smaller stones.
+        const n = Math.max(1, Math.round(Math.max(r.w, r.h) / 70)), horiz = r.w >= r.h;
+        for (let i = 0; i < n; i++) {
+          const u = (i + 0.5) / n, bx = horiz ? r.x + u * r.w : r.x + r.w / 2, by = horiz ? r.y + r.h / 2 : r.y + u * r.h;
+          const br = Math.min(horiz ? r.w / n : r.w, horiz ? r.h : r.h / n) * 0.62;
+          g.fillStyle(0x000000, 0.25); g.fillEllipse(bx + 4, by + br * 0.7, br * 2.1, br * 0.7);
+          g.fillStyle(dim(col, 0.25), 1); g.fillCircle(bx, by, br);
+          g.fillStyle(col, 1); g.fillCircle(bx - br * 0.1, by - br * 0.12, br * 0.86);
+          g.fillStyle(lit(col, 0.25), 1); g.fillEllipse(bx - br * 0.35, by - br * 0.4, br * 0.7, br * 0.4);
+          g.lineStyle(1.5, dim(col, 0.4), 1); g.lineBetween(bx - br * 0.2, by - br * 0.1, bx + br * 0.3, by + br * 0.35);
+        }
+        for (let x = r.x + 10; x < r.x + r.w; x += 23) { g.fillStyle(dim(col, 0.15), 1); g.fillCircle(x, r.y + r.h - 6, 6); }
+      } else if (gt.look === 'crystal') {
+        // A thicket of crystal spars grown across the way, a light pulsing up through them.
+        g.fillStyle(dim(col, 0.5), 0.5); g.fillRect(r.x, r.y, r.w, r.h);
+        for (let x = r.x + 8; x < r.x + r.w; x += 18) {
+          const hgt = r.h * (0.55 + ((x * 7) % 5) * 0.09), lean = Math.sin(x * 0.3) * 6, pulse = 0.65 + 0.35 * Math.sin(t * 2 + x * 0.05);
+          g.fillStyle(col, pulse); g.fillTriangle(x - 8, r.y + r.h, x + 8, r.y + r.h, x + lean, r.y + r.h - hgt);
+          g.fillStyle(lit(col, 0.45), pulse); g.fillTriangle(x - 2, r.y + r.h, x + 4, r.y + r.h, x + lean, r.y + r.h - hgt);
+        }
+      } else if (gt.look === 'kiln') {
+        // A bricked-up kiln mouth, a fire glowing through the gaps in the courses.
+        g.fillStyle(0x2a1208, 1); g.fillRect(r.x, r.y, r.w, r.h);
+        for (let y = r.y, row = 0; y < r.y + r.h; y += 12, row++) for (let x = r.x - (row % 2) * 13; x < r.x + r.w; x += 26) {
+          const x0 = Math.max(r.x, x + 1), x1 = Math.min(r.x + r.w, x + 25);
+          if (x1 > x0) { g.fillStyle((x + y) % 3 ? col : dim(col, 0.15), 1); g.fillRect(x0, y + 1, x1 - x0, Math.min(10, r.y + r.h - y - 1)); }
+        }
+        g.fillStyle(0xff8a2a, 0.25 + 0.15 * Math.sin(t * 4)); g.fillRect(r.x, r.y, r.w, r.h);
+      } else if (gt.look === 'dune') {
+        // A sand drift banked across the way, ripples on its face and sand blowing off the crest.
+        g.fillStyle(dim(col, 0.15), 1); g.fillRoundedRect(r.x, r.y + r.h * 0.2, r.w, r.h * 0.8, 18);
+        g.fillStyle(col, 1); g.fillRoundedRect(r.x + 4, r.y, r.w - 8, r.h * 0.8, 22);
+        g.lineStyle(1.2, dim(col, 0.2), 0.8);
+        for (let y = r.y + 10; y < r.y + r.h * 0.75; y += 9) g.lineBetween(r.x + 14, y + Math.sin(y) * 2, r.x + r.w - 14, y + Math.cos(y) * 2);
+        for (let i = 0; i < 8; i++) { const k = (t * 0.9 + i / 8) % 1; g.fillStyle(lit(col, 0.3), 1 - k); g.fillRect(r.x + ((i * 53) % r.w) + k * 40, r.y + 4 - k * 14, 2, 2); }
+      } else if (gt.look === 'iron') {
+        // A riveted iron door: plates, a cross-strap, rivet heads catching the light.
+        g.fillStyle(dim(col, 0.3), 1); g.fillRect(r.x, r.y, r.w, r.h);
+        g.fillStyle(col, 1); g.fillRect(r.x + 3, r.y + 3, r.w - 6, r.h - 6);
+        g.lineStyle(2, dim(col, 0.4), 1);
+        for (let x = r.x + 40; x < r.x + r.w - 10; x += 40) g.lineBetween(x, r.y + 3, x, r.y + r.h - 3);
+        g.fillStyle(dim(col, 0.2), 1); g.fillRect(r.x + 3, r.y + r.h / 2 - 5, r.w - 6, 10);
+        g.fillStyle(lit(col, 0.4), 1);
+        for (let x = r.x + 10; x < r.x + r.w - 4; x += 16) { g.fillCircle(x, r.y + 9, 2.2); g.fillCircle(x, r.y + r.h - 9, 2.2); g.fillCircle(x, r.y + r.h / 2, 2.2); }
+      } else if (gt.look === 'tomb') {
+        // A sealing slab: dressed stone, a carved border and a sunk relief of a closed eye.
+        g.fillStyle(dim(col, 0.35), 1); g.fillRect(r.x, r.y, r.w, r.h);
+        g.fillStyle(col, 1); g.fillRect(r.x + 4, r.y + 4, r.w - 8, r.h - 8);
+        g.lineStyle(2, dim(col, 0.3), 1); g.strokeRect(r.x + 10, r.y + 10, r.w - 20, r.h - 20);
+        const ex = r.x + r.w / 2, ey = r.y + r.h / 2, ew = Math.min(r.w, r.h) * 0.35;
+        g.lineStyle(2.5, dim(col, 0.45), 1);
+        g.beginPath(); g.arc(ex, ey - ew * 0.5, ew, Math.PI * 0.2, Math.PI * 0.8, false); g.strokePath();
+        for (let k = -2; k <= 2; k++) g.lineBetween(ex + k * ew * 0.3, ey + ew * 0.42, ex + k * ew * 0.36, ey + ew * 0.62);
+      } else if (gt.look === 'cable') {
+        // Live cable strung post to post across the way, sagging, insulators on the posts, sparks crawling.
+        const horiz = r.w >= r.h, len = horiz ? r.w : r.h;
+        for (let p = 0; p <= len; p += 60) {
+          const px = horiz ? r.x + Math.min(p, r.w) : r.x + r.w / 2, py = horiz ? r.y + r.h / 2 : r.y + Math.min(p, r.h);
+          g.fillStyle(0x3a2a1a, 1); g.fillRect(px - 4, py - 22, 8, 30);
+          g.fillStyle(0xd8e0e8, 1); g.fillCircle(px, py - 18, 4); g.fillCircle(px, py - 8, 4);
+        }
+        for (const off of [-18, -8]) {
+          g.lineStyle(2.5, col, 1); g.beginPath();
+          for (let p = 0; p <= len; p += 10) {
+            const sag = Math.sin(((p % 60) / 60) * Math.PI) * 6;
+            const px = horiz ? r.x + p : r.x + r.w / 2 + sag, py = horiz ? r.y + r.h / 2 + off + sag : r.y + p;
+            if (p === 0) g.moveTo(px, py); else g.lineTo(px, py);
+          }
+          g.strokePath();
+        }
+        for (let i = 0; i < 4; i++) {
+          const u = ((t * 0.7 + i / 4) % 1) * len, px = horiz ? r.x + u : r.x + r.w / 2, py = horiz ? r.y + r.h / 2 - 18 : r.y + u;
+          g.fillStyle(0xbfe8ff, 0.9); g.fillCircle(px, py, 3); g.lineStyle(1, 0xffffff, 0.8); g.lineBetween(px - 6, py - 4, px + 6, py + 4);
+        }
+      } else if (gt.look === 'magnet') {
+        // A great horseshoe lodestone set across the way, red and silver poles, iron filings standing in its field.
+        g.fillStyle(0x2a2a30, 0.4); g.fillRect(r.x, r.y, r.w, r.h);
+        const mx = r.x + r.w / 2, my = r.y + r.h / 2, mr = Math.min(r.w, r.h) * 0.42;
+        g.lineStyle(mr * 0.45, col, 1); g.beginPath(); g.arc(mx, my, mr * 0.7, Math.PI, 0, false); g.strokePath();
+        g.fillStyle(0xd8dce4, 1); g.fillRect(mx - mr * 0.92, my - 2, mr * 0.45, mr * 0.5); g.fillRect(mx + mr * 0.47, my - 2, mr * 0.45, mr * 0.5);
+        g.lineStyle(1, 0x3a3a42, 0.8);
+        for (let k = 0; k < 7; k++) {
+          const a = Math.PI * (k / 6), rr = mr * (1.15 + 0.08 * Math.sin(t * 2 + k));
+          g.beginPath(); g.arc(mx, my, rr, Math.PI + a * 0.15, -a * 0.15, false); g.strokePath();
+        }
+        for (let x = r.x + 6; x < r.x + r.w; x += 9) { const hgt = 4 + 3 * Math.abs(Math.sin(x * 0.2 + t)); g.lineStyle(1, 0x5a5a62, 1); g.lineBetween(x, r.y + r.h - 2, x + 1, r.y + r.h - 2 - hgt); }
+      } else if (gt.look === 'lead') {
+        // A lead-lined blast door: dull grey plate, hazard chevrons along the foot, a trefoil warning sign.
+        g.fillStyle(dim(col, 0.35), 1); g.fillRect(r.x, r.y, r.w, r.h);
+        g.fillStyle(col, 1); g.fillRect(r.x + 4, r.y + 4, r.w - 8, r.h - 8);
+        for (let x = r.x + 4, k = 0; x < r.x + r.w - 4; x += 12, k++) { g.fillStyle(k % 2 ? 0x1a1a1a : 0xe8c83a, 1); g.fillRect(x, r.y + r.h - 14, Math.min(12, r.x + r.w - 4 - x), 10); }
+        const sx = r.x + r.w / 2, sy = r.y + (r.h - 14) / 2, sr = Math.min(r.w, r.h - 14) * 0.3;
+        g.fillStyle(0xe8c83a, 1); g.fillCircle(sx, sy, sr);
+        g.fillStyle(0x1a1a1a, 1);
+        for (let k = 0; k < 3; k++) { const a = -Math.PI / 2 + k * (Math.PI * 2 / 3); g.slice(sx, sy, sr * 0.85, a - 0.5, a + 0.5, false); g.fillPath(); }
+        g.fillStyle(0xe8c83a, 1); g.fillCircle(sx, sy, sr * 0.28); g.fillStyle(0x1a1a1a, 1); g.fillCircle(sx, sy, sr * 0.18);
+        g.fillStyle(0x9aff7a, 0.12 + 0.08 * Math.sin(t * 3)); g.fillRect(r.x + 4, r.y + 4, r.w - 8, r.h - 8);
+      } else if (gt.look === 'rubber') {
+        // A stretched black rubber membrane across the way, bulging and rippling as if leaned on.
+        g.fillStyle(0x4a4a50, 1); g.fillRect(r.x, r.y, 6, r.h); g.fillRect(r.x + r.w - 6, r.y, 6, r.h);
+        g.fillStyle(col, 1); g.fillRect(r.x + 6, r.y + 2, r.w - 12, r.h - 4);
+        const bx = r.x + r.w / 2 + Math.sin(t * 1.4) * r.w * 0.2, by = r.y + r.h / 2;
+        g.fillStyle(lit(col, 0.25), 1); g.fillEllipse(bx, by, r.w * 0.35, r.h * 0.55);
+        g.fillStyle(lit(col, 0.45), 1); g.fillEllipse(bx - r.w * 0.06, by - r.h * 0.12, r.w * 0.12, r.h * 0.16);
+        g.lineStyle(1, 0x5a5a62, 0.7);
+        for (let k = 1; k < 4; k++) g.strokeEllipse(bx, by, r.w * 0.35 + k * 18 + Math.sin(t * 3 + k) * 4, r.h * 0.55 + k * 10);
+      } else if (gt.look === 'phase') {
+        // A barrier that is half there: a violet sheet flickering between two offsets, interference bands sliding.
+        const off = Math.sin(t * 7) > 0.3 ? 4 : -4;
+        g.fillStyle(col, 0.22); g.fillRect(r.x + off, r.y, r.w, r.h);
+        g.fillStyle(0x8ae8e8, 0.16); g.fillRect(r.x - off, r.y, r.w, r.h);
+        for (let k = 0; k < 6; k++) { const y = r.y + ((t * 40 + k * r.h / 6) % r.h); g.fillStyle(0xffffff, 0.18); g.fillRect(r.x, y, r.w, 2); }
+        g.lineStyle(2, col, 0.7 + 0.3 * Math.sin(t * 11)); g.strokeRect(r.x + off * 0.5, r.y, r.w, r.h);
+      } else if (gt.look === 'fang') {
+        // Two great curved white fangs crossed over the way, rooted in dark gum, venom beading at the tips and dripping.
+        const horiz = r.w >= r.h, cx = r.x + r.w / 2, cy = r.y + r.h / 2, L = Math.max(r.w, r.h) * 0.62, Wd = Math.min(r.w, r.h) * 0.5 + 10;
+        g.fillStyle(0x1a2414, 0.35); g.fillEllipse(cx, cy + 6, r.w + 8, r.h + 8);
+        for (const s of [-1, 1]) {
+          const bx = horiz ? cx - s * L * 0.55 : cx - Wd * 0.5, by = horiz ? cy - Wd * 0.5 : cy - s * L * 0.55;
+          const tx = horiz ? cx + s * L * 0.5 : cx + Wd * 0.45, ty = horiz ? cy + Wd * 0.45 : cy + s * L * 0.5;
+          const nx = -(ty - by), ny = tx - bx, nl = Math.hypot(nx, ny) || 1, ux = nx / nl, uy = ny / nl;
+          const pts: Phaser.Math.Vector2[] = [];
+          for (let k = 0; k <= 10; k++) {
+            const u = k / 10, bow = Math.sin(u * Math.PI) * L * 0.12 * s, w = (1 - u) * 13 + 1;
+            pts.push(new Phaser.Math.Vector2(bx + (tx - bx) * u + ux * (bow + w), by + (ty - by) * u + uy * (bow + w)));
+          }
+          for (let k = 10; k >= 0; k--) {
+            const u = k / 10, bow = Math.sin(u * Math.PI) * L * 0.12 * s, w = (1 - u) * 13 + 1;
+            pts.push(new Phaser.Math.Vector2(bx + (tx - bx) * u + ux * (bow - w), by + (ty - by) * u + uy * (bow - w)));
+          }
+          g.fillStyle(0xb8ae98, 1); g.fillPoints(pts.map((p) => new Phaser.Math.Vector2(p.x + 2, p.y + 3)), true);
+          g.fillStyle(0xf4eedc, 1); g.fillPoints(pts, true);
+          g.lineStyle(1.5, 0x8a8270, 1); g.strokePoints(pts, true);
+          g.lineStyle(2, 0xffffff, 0.7);
+          g.lineBetween(pts[2].x, pts[2].y, pts[6].x, pts[6].y);
+          g.fillStyle(0x4a1a24, 1); g.fillEllipse(bx, by, 30, 18); g.fillStyle(0x7a2a3a, 1); g.fillEllipse(bx, by - 2, 22, 10);
+          // Venom beading at the tip, a drop falling.
+          g.fillStyle(0x7ad83a, 0.9); g.fillCircle(tx, ty, 3 + Math.sin(t * 3 + s) * 0.8);
+          const k = (t * 0.8 + (s > 0 ? 0.5 : 0)) % 1;
+          g.fillStyle(0x7ad83a, 0.85 * (1 - k)); g.fillEllipse(tx, ty + 4 + k * 26, 3, 4.5);
+          g.lineStyle(1, 0x9af05a, 0.5 * k); g.strokeEllipse(tx, ty + 32, 6 + k * 12, 2 + k * 4);
+        }
+        g.fillStyle(0x6ac82a, 0.25); g.fillEllipse(cx, r.y + r.h - 4, r.w * 0.5, 8);
+      } else if (gt.look === 'web') {
+        // A spider-web strung across: anchor threads to the frame, spokes and a spiral, dew glinting, the
+        // spider sitting in the hub, legs flexing.
+        const cx = r.x + r.w / 2, cy = r.y + r.h / 2, R = Math.hypot(r.w, r.h) / 2;
+        g.fillStyle(0x1a1a22, 0.15); g.fillRect(r.x, r.y, r.w, r.h);
+        const sway = Math.sin(t * 0.9) * 2;
+        const spokes = 12, ends: [number, number][] = [];
+        for (let k = 0; k < spokes; k++) {
+          const a = (k / spokes) * Math.PI * 2 + 0.13, ca = Math.cos(a), sa = Math.sin(a);
+          const sx = Math.abs(ca) > 1e-4 ? (r.w / 2) / Math.abs(ca) : Infinity, sy = Math.abs(sa) > 1e-4 ? (r.h / 2) / Math.abs(sa) : Infinity;
+          const d = Math.min(sx, sy, R);
+          ends.push([cx + ca * d, cy + sa * d]);
+          g.lineStyle(1.2, 0xe8ecf0, 0.75); g.lineBetween(cx + sway, cy, cx + ca * d, cy + sa * d);
+        }
+        g.lineStyle(1, 0xdce4ea, 0.6);
+        for (let ring = 1; ring <= 7; ring++) {
+          const f = ring / 8;
+          g.beginPath();
+          for (let k = 0; k <= spokes; k++) {
+            const [ex, ey] = ends[k % spokes], sag = 0.96 + 0.04 * Math.sin(k * 2.1 + ring);
+            const px = cx + sway * (1 - f) + (ex - cx) * f * sag, py = cy + (ey - cy) * f * sag;
+            if (k === 0) g.moveTo(px, py); else g.lineTo(px, py);
+          }
+          g.strokePath();
+        }
+        for (let k = 0; k < 10; k++) {
+          const [ex, ey] = ends[(k * 5) % spokes], f = 0.2 + ((k * 0.37) % 0.75);
+          const tw = Math.max(0, Math.sin(t * 2 + k * 1.9));
+          g.fillStyle(0xffffff, 0.3 + 0.6 * tw); g.fillCircle(cx + (ex - cx) * f, cy + (ey - cy) * f, 1.3);
+        }
+        // The spider: body and head, eight legs that flex.
+        const sx = cx + sway, sy = cy + Math.sin(t * 0.6) * 3;
+        g.lineStyle(2, 0x1a1418, 1);
+        for (let k = 0; k < 4; k++) for (const sd of [-1, 1]) {
+          const a = (k - 1.5) * 0.45 + (sd < 0 ? Math.PI : 0), flex = Math.sin(t * 4 + k) * 0.1;
+          const kx = sx + Math.cos(a + flex) * 12 * sd * sd, ky = sy + Math.sin(a + flex) * 10 - 6;
+          g.lineBetween(sx, sy, kx, ky); g.lineBetween(kx, ky, kx + Math.cos(a) * 8, ky + 10);
+        }
+        g.fillStyle(0x2a1e24, 1); g.fillEllipse(sx, sy + 6, 14, 16); g.fillStyle(0x1a1418, 1); g.fillCircle(sx, sy - 4, 5);
+        g.fillStyle(0xc83a2a, 1); g.fillTriangle(sx - 3, sy + 4, sx + 3, sy + 4, sx, sy + 9); g.fillTriangle(sx - 3, sy + 12, sx + 3, sy + 12, sx, sy + 7);
+        g.fillStyle(0xff5a3a, 0.9); g.fillCircle(sx - 2, sy - 5, 1); g.fillCircle(sx + 2, sy - 5, 1); g.fillCircle(sx - 1, sy - 3, 0.8); g.fillCircle(sx + 1, sy - 3, 0.8);
+      } else if (gt.look === 'chain') {
+        // Curtains of heavy chain hanging from a beam, each strand of interlocking links swaying a little.
+        const horiz = r.w >= r.h;
+        g.fillStyle(0x3a2a1a, 1);
+        if (horiz) g.fillRect(r.x - 4, r.y - 6, r.w + 8, 8); else g.fillRect(r.x - 6, r.y - 4, 8, r.h + 8);
+        g.fillStyle(0x6a6e78, 1);
+        const n = Math.max(3, Math.floor((horiz ? r.w : r.h) / 14));
+        for (let s = 0; s < n; s++) {
+          const base = (s + 0.5) * ((horiz ? r.w : r.h) / n), sw = Math.sin(t * 1.3 + s * 0.8) * 2.5;
+          const len = horiz ? r.h : r.w;
+          for (let k = 0, d = 0; d < len - 4; k++, d += 9) {
+            const off = sw * (d / len);
+            const lx = horiz ? r.x + base + off : r.x + d, ly = horiz ? r.y + d : r.y + base + off;
+            const side = k % 2 === 0;
+            const w = horiz ? (side ? 7 : 3) : 11, h = horiz ? 11 : (side ? 7 : 3);
+            g.lineStyle(2.5, 0x2a2c32, 1); g.strokeEllipse(lx + 1, ly + 1, w, h);
+            g.lineStyle(2, col, 1); g.strokeEllipse(lx, ly, w, h);
+            if (side) { g.lineStyle(1, 0xc8ccd4, 0.7); g.lineBetween(lx - w * 0.25, ly - h * 0.3, lx - w * 0.25, ly - h * 0.05); }
+          }
+        }
+        g.fillStyle(0x8a5a2a, 0.5);
+        for (let k = 0; k < 4; k++) g.fillCircle(r.x + ((k * 53) % r.w), r.y + ((k * 37) % r.h), 1.5);
+      } else if (gt.look === 'shadow') {
+        // A wall of moving darkness: layered black billows heaving inside the gap, tendrils licking out at
+        // the edges, a few pale eyes opening and closing in it.
+        const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
+        g.fillStyle(col, 0.85); g.fillRect(r.x + 6, r.y + 6, r.w - 12, r.h - 12);
+        for (let k = 0; k < 14; k++) {
+          const px = r.x + ((k * 47) % r.w) + Math.sin(t * 1.1 + k) * 8, py = r.y + ((k * 31) % r.h) + Math.cos(t * 0.9 + k * 1.7) * 8;
+          const s = 18 + (k % 4) * 8 + Math.sin(t * 2 + k) * 4;
+          g.fillStyle(k % 2 ? 0x0a0612 : 0x1e1430, 0.7); g.fillCircle(px, py, s);
+        }
+        for (let k = 0; k < 10; k++) {
+          const edge = k % 4, u = ((k * 0.37 + t * 0.05) % 1);
+          let ex = edge < 2 ? r.x + u * r.w : (edge === 2 ? r.x : r.x + r.w), ey = edge < 2 ? (edge === 0 ? r.y : r.y + r.h) : r.y + u * r.h;
+          const ox = ex - cx, oy = ey - cy, ol = Math.hypot(ox, oy) || 1, reach = 8 + 10 * Math.max(0, Math.sin(t * 2.4 + k * 1.3));
+          g.lineStyle(3, 0x0a0612, 0.75); g.beginPath(); g.moveTo(ex, ey);
+          for (let j = 1; j <= 3; j++) { ex += (ox / ol) * reach / 3 + Math.sin(t * 3 + k + j) * 2; ey += (oy / ol) * reach / 3 + Math.cos(t * 3 + k + j) * 2; g.lineTo(ex, ey); }
+          g.strokePath();
+        }
+        for (let k = 0; k < 3; k++) {
+          const op = Math.max(0, Math.sin(t * 0.8 + k * 2.1));
+          if (op < 0.2) continue;
+          const ex = r.x + r.w * (0.25 + k * 0.25), ey = r.y + r.h * (0.35 + ((k * 0.3) % 0.4));
+          g.fillStyle(0xd8d0ff, 0.75); g.fillEllipse(ex - 4, ey, 4, 3 * op); g.fillEllipse(ex + 4, ey, 4, 3 * op);
+          g.fillStyle(0x1a0a2a, 1); g.fillRect(ex - 4.4, ey - 1, 0.8, 2 * op); g.fillRect(ex + 3.6, ey - 1, 0.8, 2 * op);
+        }
+      } else if (gt.look === 'lychgate') {
+        // A roofed churchyard gate: two weathered timber posts, a little shingled gable over them, a pair of
+        // barred gates shut between, a hanging lantern guttering and a bell under the ridge.
+        const horiz = r.w >= r.h, cx = r.x + r.w / 2, cy = r.y + r.h / 2;
+        const span = horiz ? r.w : r.h;
+        const p1 = horiz ? [r.x + 4, cy] : [cx, r.y + 4], p2 = horiz ? [r.x + r.w - 4, cy] : [cx, r.y + r.h - 4];
+        for (const [px, py] of [p1, p2]) {
+          g.fillStyle(0x2a1e14, 1); g.fillRect(px - 6, py - 42, 12, 50);
+          g.fillStyle(col, 1); g.fillRect(px - 5, py - 42, 9, 48);
+          g.lineStyle(1, 0x2a1e14, 0.7); g.lineBetween(px - 2, py - 38, px - 2, py + 2); g.lineBetween(px + 1, py - 30, px + 1, py - 10);
+          g.fillStyle(0x6a6458, 1); g.fillRect(px - 8, py + 4, 16, 6);
+        }
+        // Gates: palings between the posts.
+        const gx0 = p1[0], gy0 = p1[1], gx1 = p2[0], gy1 = p2[1];
+        g.fillStyle(0x3a2c20, 1);
+        if (horiz) { g.fillRect(gx0 + 6, gy0 - 26, gx1 - gx0 - 12, 4); g.fillRect(gx0 + 6, gy0 - 4, gx1 - gx0 - 12, 4); }
+        g.lineStyle(3, lit(col, 0.1), 1);
+        for (let u = 12; u < span - 12; u += 9) {
+          const px = horiz ? r.x + u : cx, py = horiz ? cy : r.y + u;
+          if (horiz) { g.lineBetween(px, py - 30, px, py + 2); g.fillStyle(0x2a1e14, 1); g.fillTriangle(px - 2, py - 30, px + 2, py - 30, px, py - 35); }
+          else g.lineBetween(px - 14, py, px + 14, py);
+        }
+        g.fillStyle(0x1a1a1a, 1); g.fillCircle(horiz ? cx : cx + 10, horiz ? cy - 14 : cy, 2.5);
+        // Roof: a gable of dark shingles over the whole span.
+        const ry = (horiz ? cy : r.y) - 48, rx0 = (horiz ? r.x : cx - 22) - 10, rx1 = (horiz ? r.x + r.w : cx + 22) + 10;
+        g.fillStyle(0x1e1a1e, 1); g.fillTriangle(rx0, ry + 10, rx1, ry + 10, (rx0 + rx1) / 2, ry - 14);
+        g.fillStyle(0x3a343a, 1); g.fillRect(rx0, ry + 4, rx1 - rx0, 10);
+        g.lineStyle(1, 0x14101a, 1);
+        for (let x = rx0 + 6; x < rx1; x += 8) g.lineBetween(x, ry + 4, x, ry + 14);
+        for (let x = rx0 + 2; x < rx1; x += 10) g.lineBetween(x, ry + 9, x + 4, ry + 9);
+        g.fillStyle(0x5a5050, 1); g.fillRect(rx0 - 2, ry + 12, rx1 - rx0 + 4, 3);
+        // Bell under the ridge, swaying, and a lantern hanging from the eave.
+        const bs = Math.sin(t * 1.6) * 0.25, bx = (rx0 + rx1) / 2, by = ry + 18;
+        g.lineStyle(1, 0x2a2a2a, 1); g.lineBetween(bx, ry + 4, bx + Math.sin(bs) * 6, by);
+        g.fillStyle(0x8a7a4a, 1); g.fillTriangle(bx + Math.sin(bs) * 6 - 5, by + 8, bx + Math.sin(bs) * 6 + 5, by + 8, bx + Math.sin(bs) * 6, by - 2);
+        g.fillStyle(0xb8a86a, 1); g.fillCircle(bx + Math.sin(bs) * 8, by + 9, 1.5);
+        const lx = rx0 + 10, ly = ry + 30, fl = 0.7 + 0.3 * Math.sin(t * 9) * Math.sin(t * 3.7);
+        g.lineStyle(1, 0x2a2a2a, 1); g.lineBetween(lx, ry + 14, lx, ly - 6);
+        g.fillStyle(0xc8f0b0, 0.12 * fl); g.fillCircle(lx, ly, 16);
+        g.fillStyle(0x2a2420, 1); g.fillRect(lx - 4, ly - 6, 8, 11);
+        g.fillStyle(0xb8f08a, 0.85 * fl); g.fillRect(lx - 2.5, ly - 4, 5, 7);
       } else if (gt.look === 'candy') {
         // Candy-cane bars, red-and-white striped.
         g.fillStyle(0xfff0f6, 0.5); g.fillRect(r.x, r.y, r.w, r.h);

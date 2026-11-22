@@ -1088,7 +1088,7 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
       {
         key: 'speedOLightKills',
         label: 'Hit and Run',
-        howTo: "Land the killing blow with a Speed 'O' Light (Q) streak",
+        howTo: 'Land the killing blow with a Supernova (Q) beam',
         target: 5,
       },
     ],
@@ -1797,7 +1797,7 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
   ruin: {
     elementId: 'ruin',
     name: 'Ruin Mastery',
-    enhancedEmoji: '🦎',
+    enhancedEmoji: '🔊',
     enhancedColor: 0x8f1f18,
     requirements: [
       {
@@ -1833,11 +1833,11 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
         description: 'Passive: half of this game is a bar filling up. Kinetic charge, terror, inflammation, love, hunger, a patron\'s anger, hype, Authority, DNA, blood, a stomach, a stress total — an element without a bar is the exception, and every one of them is a promise that if the fight goes on long enough the thing at the end of it arrives.\n\nAgainst you it arrives half as fast. Every meter every enemy on the field owns fills at 50% of its normal rate, whatever fills it: hits landed, seconds survived, damage taken, bodies eaten. Nothing about the bar changes except how long it takes to get anywhere — the payoff at the top is exactly as big as it always was, and a bar already full stays full.\n\nWhat it does not do is drain them. A meter that empties on a timer still empties at its own speed, so this is not a counter to anybody\'s upkeep — it is a tax on their ramp. The elements that open strong barely notice. The ones that were counting on minute three notice a great deal.'
       },
       {
-        id: 'second-skin',
-        name: 'Second Skin',
+        id: 'screeching-steel',
+        name: 'Screeching Steel',
         bindable: true,
-        hudDescription: '25 triangle shards in every direction for 15 each, and anything they hit is dragged back to its base form. You shrink 20%, permanently. Five uses, ever',
-        description: 'Take hold of a seam and pull. A whole layer of you comes away at once and goes out as twenty-five triangular plates of dead skin, in a full circle, at whatever happens to be standing around you.\n\nEach plate is 15 damage. That is not what it is for.\n\nWhat it is for is the second half: anything a plate touches is **put back in the body it started the match in**. A beast becomes a hunter again, a flying judge lands, a butcher goes back to being a chef, a titan is a person, a burrowed acid is on the surface, a car is a driver, a flame body goes out. Everything that element spent to get into that form is spent; the form itself is simply over. There is no duration on it because there is nothing to time — the transformation ended.\n\nThe price is written on your own body. Every cast makes you **20% smaller for the rest of the match**, and it does not come back — one shed is a slightly smaller target, five is a third of the size you started as. That is a gift and a wound at once: you are far harder to hit, and you are also visibly a smaller thing than the person you are fighting, with a hitbox to match on the abilities that need you to *be* somewhere.\n\nAnd there are five. Not five per minute — five, and then the card greys out and stays grey. There is no layer six.'
+        hudDescription: 'A shriek that throws everyone within 190px clear, 3s immune to stuns and slows, then a 10s rusty aura that blunts melee against you by 40%',
+        description: 'Drag two rusted plates of yourself across each other and let the sound out.\n\nEverybody within 190px is **thrown straight away from you** — a full throw at point blank, about half of one at the edge of the shriek. Somebody threaded on your skewer stays on it.\n\nWhatever had hold of you lets go, and for **3 seconds nothing can stun, freeze, root or slow you**. It can be screamed out of a stun: it is the escape, and an escape a stun switches off is not one.\n\nThe rust the shriek shook loose settles on you as an **aura for 10 seconds**. Every weapon within 150px of you visibly rots, and anybody rusted who gets close enough to swing at you — inside 90px — **deals 40% less**.\n\n16 second cooldown.'
       },
     ],
   },

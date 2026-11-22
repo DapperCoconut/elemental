@@ -318,8 +318,8 @@ export const PREVIEWS: Record<string, PreviewScript> = {
   'light:prism-ramp:up': light.prismRampUpgraded,
   'light:light-trick': light.lightTrick,
   'light:light-trick:up': light.lightTrickUpgraded,
-  'light:speed-o-light': light.speedOLight,
-  'light:speed-o-light:up': light.speedOLightUpgraded,
+  'light:light-supernova': light.supernova,
+  'light:light-supernova:up': light.supernovaUpgraded,
 
   // ── Magnet ──
   'magnet:magnet-coin': magnet.coinFlip,
@@ -915,7 +915,7 @@ export const PREVIEWS: Record<string, PreviewScript> = {
   'passion:passive:faith': passion.faithPassive,
   'passion:passive:stages-of-faith': passion.stagesPassive,
   'ruin:mastery:combo-breaker': ruin.masteryComboBreaker,
-  'ruin:mastery:second-skin': ruin.masterySecondSkin,
+  'ruin:mastery:screeching-steel': ruin.masteryScreechingSteel,
   'ruin:passive:rust': ruin.rust,
   'ruin:passive:nothing-comes-back': ruin.nothingComesBack,
   'chalk:passive:the-canvas': chalk.theCanvas,

@@ -514,13 +514,10 @@ export class MagnetKit {
     if (f !== this.arena.player) f.earthStunnedUntil = Math.max(f.earthStunnedUntil, this.now + ms);
   }
 
-  private announce(x: number, y: number, text: string, color: number): void {
-    const { scene } = this.arena;
-    const t = scene.add.text(x, y, text, {
-      fontSize: '12px', fontFamily: 'Arial Black', color: `#${color.toString(16).padStart(6, '0')}`,
-      stroke: '#07090e', strokeThickness: 3,
-    }).setOrigin(0.5).setDepth(18);
-    scene.tweens.add({ targets: t, y: y - 22, alpha: 0, duration: 1000, ease: 'Cubic.easeOut', onComplete: () => t.destroy() });
+  private announce(_x: number, _y: number, _text: string, _color: number): void {
+
+    // Battle text pop-ups are disabled — they cluttered every attack.
+
   }
 
   /** Is `(x, y)` inside the Repulse cone cast from `f` toward `angle`? */

@@ -873,13 +873,7 @@ export class BiomeWorld {
     return best ? { zone: best.zone, spike: best.spike } : null;
   }
 
-  /** The kit's own pop-up: ArenaScene's is a no-op, and these few are worth reading. */
-  private announce(x: number, y: number, text: string, color: string, size: number, ms: number): void {
-    const scene = this.api.scene;
-    const t = scene.add.text(x, y, text, {
-      fontSize: `${size}px`, fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
-      color, stroke: '#140d08', strokeThickness: 3,
-    }).setOrigin(0.5).setDepth(14);
-    scene.tweens.add({ targets: t, y: y - 26, alpha: 0, duration: ms, ease: 'Cubic.easeOut', onComplete: () => t.destroy() });
+  private announce(_x: number, _y: number, _text: string, _color: string, _size: number, _ms: number): void {
+    // Battle text pop-ups are disabled — they cluttered every attack.
   }
 }

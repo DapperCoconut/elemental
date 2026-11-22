@@ -1120,6 +1120,7 @@ export class TechnologyKit {
     this.cruncherLastFireAt[owner] = time;
 
     const caster = owner === 'player' ? this.arena.player : this.arena.npc;
+    caster.onKitCast?.('tech-cruncher');
     const angle = Math.atan2(ty - caster.y, tx - caster.x);
     const speed = CRUNCHER_BASE_SPEED * (1 + this.cruncherSpeed[owner] / 100);
     const damage = CRUNCHER_BASE_DAMAGE * (1 + this.cruncherDmg[owner] / 100);
@@ -2339,11 +2340,8 @@ export class TechnologyKit {
     }
   }
 
-  /** A little screen-space pop that rises off the window (above it — world floating text sits under). */
-  private popBrowserText(x: number, y: number, msg: string, color: string): void {
-    const t = this.arena.scene.add.text(x, y, msg, { fontSize: '12px', color, fontFamily: FONT_MONO, fontStyle: 'bold', stroke: '#0a1218', strokeThickness: 3 })
-      .setOrigin(0.5).setDepth(48).setScrollFactor(0);
-    this.arena.scene.tweens.add({ targets: t, y: y - 22, alpha: 0, duration: 700, onComplete: () => t.destroy() });
+  private popBrowserText(_x: number, _y: number, _msg: string, _color: string): void {
+    // Battle text pop-ups are disabled — they cluttered every attack.
   }
 
   /** Full teardown of the window. */

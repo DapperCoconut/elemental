@@ -636,6 +636,47 @@ export class RuinFx extends FxBase {
     });
   }
 
+  /**
+   * Screeching Steel: metal tearing against metal, let out as sound. Sawtooth wavefronts racing
+   * out of him — each one a ring with teeth, the way a shriek looks on a scope — with rust
+   * shaken off the leading edge and shriek lines shooting past the last ring.
+   */
+  screech(x: number, y: number, r: number, ms = 560, depth = 11): void {
+    const seed = Math.random() * 999;
+    const waves = 4;
+    const teeth = 30;
+    this.anim(depth, ms, (g, t) => {
+      for (let w = 0; w < waves; w++) {
+        // Each wave leaves a beat after the last, and the later ones carry further.
+        const k = Phaser.Math.Clamp((t - w * 0.11) / 0.78, 0, 1);
+        if (k <= 0 || k >= 1) continue;
+        const rr = r * easeOut(k) * (0.66 + w * 0.113);
+        const amp = 7 * (1 - k) + 2;
+        const pts: Phaser.Geom.Point[] = [];
+        for (let i = 0; i <= teeth * 2; i++) {
+          const a = (i / (teeth * 2)) * TAU + seed;
+          const d = rr + (i % 2 ? amp : -amp);
+          pts.push(new Phaser.Geom.Point(x + Math.cos(a) * d, y + Math.sin(a) * d));
+        }
+        g.lineStyle(3.2 * (1 - k) + 0.8, this.tint(w % 2 ? RUI.bone : RUI.iron), (1 - k) * 0.85);
+        g.strokePoints(pts, true, true);
+        // Rust shaken off the front of the wave.
+        g.fillStyle(this.tint(RUI.rust), (1 - k) * 0.7);
+        for (let i = 0; i < 10; i++) {
+          const a = (i / 10) * TAU + jitter(seed, w * 20 + i) * 0.6;
+          g.fillRect(x + Math.cos(a) * (rr + 6), y + Math.sin(a) * (rr + 6), 2.4, 2.4);
+        }
+      }
+      // Shriek lines: short hard strokes thrown out past the last ring.
+      g.lineStyle(1.6, this.tint(RUI.bright), (1 - t) * 0.8);
+      for (let i = 0; i < 12; i++) {
+        const a = (i / 12) * TAU + jitter(seed, 60 + i) * 0.4;
+        const d0 = r * (0.6 + easeOut(t) * 0.5), d1 = d0 + 16 + jitter(seed, 80 + i) * 18;
+        g.lineBetween(x + Math.cos(a) * d0, y + Math.sin(a) * d0, x + Math.cos(a) * d1, y + Math.sin(a) * d1);
+      }
+    });
+  }
+
   /** Something broke. Shards thrown off a point on straight lines, tumbling as they go. */
   shatter(x: number, y: number, count = 8, spread = 34, color = RUI.red, ms = 460, depth = 10): void {
     const seeds = Array.from({ length: count }, (_, i) => ({

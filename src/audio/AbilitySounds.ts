@@ -115,7 +115,7 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   'blink': 'blink',
   'prism-ramp': 'prism',
   'light-trick': 'teleport',
-  'speed-o-light': ['status-haste', 1.1, 1.3],
+  'light-supernova': ['light-beam', 0.7, 1],
 
   // ── Gravity ──
   'space-slash': 'space-slash',

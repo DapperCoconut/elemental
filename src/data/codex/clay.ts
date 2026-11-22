@@ -123,7 +123,6 @@ const clay: ElementCodex = {
       },
       notes: [
         'Fuse counts hits, not damage — the one way to kill a fused Clay quickly is many small ones.',
-        'Ruin\'s Second Skin tears the fused form off without the split.',
       ],
     },
   },

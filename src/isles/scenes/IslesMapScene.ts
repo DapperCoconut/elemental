@@ -58,6 +58,39 @@ const ISLE_LAYOUT: Record<string, { pos: Record<string, Pt>; roads: [string, str
       ['galeward', 'slumber'], ['galeward', 'stormeye'], ['slumber', 'fable'], ['stormeye', 'orbit'], ['starfall', 'lung'],
     ],
   },
+  earth: {
+    pos: {
+      rubble: { x: 480, y: 178 }, sepulchre: { x: 480, y: 104 },
+      potter: { x: 300, y: 300 }, stonehold: { x: 480, y: 310 }, forge: { x: 660, y: 300 },
+      dunesea: { x: 300, y: 450 }, quarrymouth: { x: 480, y: 486 }, geode: { x: 660, y: 450 },
+    },
+    roads: [
+      ['quarrymouth', 'stonehold'], ['quarrymouth', 'dunesea'], ['quarrymouth', 'geode'], ['stonehold', 'rubble'],
+      ['stonehold', 'potter'], ['stonehold', 'forge'], ['potter', 'dunesea'], ['forge', 'geode'], ['rubble', 'sepulchre'],
+    ],
+  },
+  electricity: {
+    pos: {
+      superposition: { x: 480, y: 178 }, crowncoil: { x: 480, y: 104 },
+      circuit: { x: 300, y: 300 }, dynamo: { x: 480, y: 310 }, lodestar: { x: 660, y: 300 },
+      bounce: { x: 300, y: 450 }, terminus: { x: 480, y: 486 }, halflife: { x: 660, y: 450 },
+    },
+    roads: [
+      ['terminus', 'dynamo'], ['terminus', 'bounce'], ['terminus', 'halflife'], ['dynamo', 'superposition'],
+      ['dynamo', 'circuit'], ['dynamo', 'lodestar'], ['circuit', 'bounce'], ['lodestar', 'halflife'], ['superposition', 'crowncoil'],
+    ],
+  },
+  slime: {
+    pos: {
+      grave: { x: 480, y: 178 }, slough: { x: 480, y: 104 },
+      web: { x: 300, y: 300 }, fang: { x: 480, y: 310 }, cloak: { x: 660, y: 300 },
+      shackle: { x: 300, y: 450 }, stilthaven: { x: 480, y: 486 }, umbral: { x: 660, y: 450 },
+    },
+    roads: [
+      ['stilthaven', 'fang'], ['stilthaven', 'shackle'], ['stilthaven', 'umbral'], ['fang', 'grave'],
+      ['fang', 'web'], ['fang', 'cloak'], ['web', 'shackle'], ['cloak', 'umbral'], ['grave', 'slough'],
+    ],
+  },
 };
 
 export class IslesMapScene extends Phaser.Scene {
@@ -207,6 +240,55 @@ export class IslesMapScene extends Phaser.Scene {
       g.lineStyle(2.5, 0xe8e0d0, 1);
       for (let k = 0; k < 4; k++) { const a = t * 1.2 + k * Math.PI / 2; g.lineBetween(480, 104, 480 + Math.cos(a) * 18, 104 + Math.sin(a) * 18); }
       g.fillStyle(0x3a3a42, 1); g.fillCircle(480, 104, 3);
+    } else if (here === 'electricity') {
+      // The Crown Coil: a copper tower of stacked rings on a black peak, arcs jumping off its crown
+      // into the storm, the Grid's cables sagging away down the slopes.
+      g.fillStyle(0x1e2230, 1); g.fillTriangle(390, 236, 570, 236, 480, 120);
+      g.lineStyle(1.5, 0xc87a3a, 0.7);
+      for (const [x1, y1] of [[330, 290], [640, 290], [300, 440], [660, 440]]) { g.beginPath(); g.moveTo(480, 150); g.lineTo((480 + x1) / 2, (150 + y1) / 2 + 14); g.lineTo(x1, y1); g.strokePath(); }
+      g.fillStyle(0x8a5a2a, 1); g.fillRect(474, 96, 12, 40);
+      for (let k = 0; k < 4; k++) { g.lineStyle(3, 0xd88a4a, 1); g.strokeEllipse(480, 132 - k * 9, 34 - k * 6, 8 - k); }
+      g.fillStyle(0xd8e8ff, 1); g.fillCircle(480, 92, 6);
+      if ((t * 1.7) % 1 < 0.35) {
+        g.lineStyle(2, 0xbfe8ff, 1);
+        for (const dir of [-1, 1]) { g.beginPath(); g.moveTo(480, 92); g.lineTo(480 + dir * 14, 80); g.lineTo(480 + dir * 10, 70); g.lineTo(480 + dir * 26, 58); g.strokePath(); }
+      }
+    } else if (here === 'slime') {
+      // The deep mire on the crown: a black pool with the Slough lying coiled in it — the Matriarch's
+      // cast skin, pale and scaled, wound round on itself with its hollow head raised at the top —
+      // rows of great white fangs standing out of the swamp, and marsh gas bubbling up.
+      g.fillStyle(0x0e1a10, 1); g.fillEllipse(480, 150, 230, 120);
+      g.fillStyle(0x1a2e1a, 1); g.fillEllipse(480, 146, 200, 98);
+      g.lineStyle(9, 0xb8b498, 1);
+      g.beginPath();
+      for (let k = 0; k <= 60; k++) { const u = k / 60, a = u * Math.PI * 4.2 + 0.4, rr = 66 - u * 52; const px = 480 + Math.cos(a) * rr, py = 146 + Math.sin(a) * rr * 0.42; if (k === 0) g.moveTo(px, py); else g.lineTo(px, py); }
+      g.strokePath();
+      g.lineStyle(1, 0x7a7a60, 0.8);
+      for (let k = 2; k < 60; k += 3) { const u = k / 60, a = u * Math.PI * 4.2 + 0.4, rr = 66 - u * 52; const px = 480 + Math.cos(a) * rr, py = 146 + Math.sin(a) * rr * 0.42; g.strokeEllipse(px, py, 5, 3); }
+      g.lineStyle(7, 0xd8d4b8, 1); g.lineBetween(486, 144, 482, 120);
+      g.fillStyle(0xd8d4b8, 1); g.fillEllipse(480, 112, 30, 18);
+      g.fillStyle(0x1a1a14, 1); g.fillCircle(473, 109, 2.5); g.fillCircle(487, 109, 2.5);
+      g.fillStyle(0x0a0a08, 1); g.fillEllipse(480, 118, 14, 4);
+      for (const [fx, fy, h] of [[372, 214, 26], [392, 222, 20], [410, 212, 30], [550, 212, 30], [568, 222, 20], [588, 214, 26], [262, 380, 18], [700, 380, 18]] as const) {
+        g.fillStyle(0x8a8470, 1); g.fillTriangle(fx - 6, fy, fx + 6, fy, fx + 3, fy - h);
+        g.fillStyle(0xf4eedc, 1); g.fillTriangle(fx - 5, fy, fx + 4, fy, fx + 2, fy - h + 2);
+        g.fillStyle(0x7ad83a, 0.7); g.fillCircle(fx + 2.5, fy - h + 4 + ((t * 0.6 + fx * 0.01) % 1) * 8, 1.5);
+      }
+      for (let i = 0; i < 6; i++) {
+        const k = (t * 0.5 + i / 6) % 1, bx = 420 + ((i * 47) % 120), by = 176 - k * 18;
+        g.lineStyle(1, 0x9af05a, 0.6 * (1 - k)); g.strokeCircle(bx, by, 2 + k * 3);
+      }
+      g.fillStyle(0x2a3a1a, 0.35); g.fillEllipse(480, 400, 420, 120);
+    } else if (here === 'earth') {
+      // The mesa: a flat-topped mountain of banded stone, the Sepulchre's sealed gate cut in its face.
+      g.fillStyle(0x6a5a48, 1); g.fillTriangle(380, 236, 580, 236, 540, 128); g.fillTriangle(380, 236, 420, 128, 540, 128);
+      g.fillStyle(0x8a7860, 1); g.fillRect(420, 128, 120, 10);
+      g.lineStyle(1.5, 0x4a3a2a, 0.7);
+      for (const y of [150, 172, 196, 218]) g.lineBetween(420 - (y - 128) * 0.37, y, 540 + (y - 128) * 0.44, y);
+      g.fillStyle(0x2a2018, 1); g.fillRoundedRect(468, 92, 24, 26, 4);
+      g.fillStyle(0xa89878, 1); g.fillRect(471, 95, 18, 20);
+      g.lineStyle(1, 0x5a4a3a, 1); g.strokeRect(474, 98, 12, 14);
+      g.fillStyle(0xe0c080, 0.5 + Math.sin(t * 1.5) * 0.15); g.fillEllipse(300, 470, 90, 22);
     } else {
       // Volcano
       g.fillStyle(0x6a4a30, 1); g.fillTriangle(400, 210, 560, 210, 480, 90);

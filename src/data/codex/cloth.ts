@@ -220,7 +220,6 @@ const cloth: ElementCodex = {
       },
       notes: [
         'When the effigy ends, a grip held further out than an ordinary scarf can reach is let go of.',
-        'Ruin\'s Second Skin puts the fire out early.',
       ],
     },
   },

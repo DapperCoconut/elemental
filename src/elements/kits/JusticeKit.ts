@@ -842,30 +842,8 @@ export class JusticeKit {
     return this.upgraded('player', slot) || this.upgraded('npc', slot);
   }
 
-  /**
-   * A kit-owned pop-up.
-   *
-   * `ArenaScene.showFloatingText` is a deliberate no-op these days — seven hundred flavour
-   * labels were too many — so the handful of Justice events that genuinely have to be *read*
-   * (a verdict, an execution, a stance the ability tray cannot show) print their own text
-   * rather than quietly saying nothing at all.
-   */
-  private announce(x: number, y: number, text: string, color: string, size = 12, life = 1100): void {
-    const t = this.api.scene.add.text(x, y, text, {
-      fontSize: `${size}px`,
-      fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
-      color,
-      stroke: '#05070f',
-      strokeThickness: 4,
-    }).setOrigin(0.5).setDepth(22);
-    this.api.scene.tweens.add({
-      targets: t,
-      y: y - 24,
-      alpha: 0,
-      duration: life,
-      ease: 'Quad.easeIn',
-      onComplete: () => t.destroy(),
-    });
+  private announce(_x: number, _y: number, _text: string, _color: string, _size = 12, _life = 1100): void {
+    // Battle text pop-ups are disabled — they cluttered every attack.
   }
 
   // ── Mastery: Combo Excelsius ───────────────────────────────────────────────

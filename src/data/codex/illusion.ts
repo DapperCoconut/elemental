@@ -209,7 +209,6 @@ const illusion: ElementCodex = {
       notes: [
         'Re-Trick multiplies with the Masquerade mask and a Phantom mark: a marked opponent hit by a masked, Re-Tricked illusionist takes 1.2 × 1.5 × 1.25.',
         'Bots with the upgrade swap just before the clone would fade anyway, or the moment you find the real one.',
-        'Ruin\'s Second Skin breaks a Guise like any other form — the clone is torn down without paying anything out.',
       ],
     },
 

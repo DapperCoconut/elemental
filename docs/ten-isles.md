@@ -59,6 +59,9 @@ only the overview (this file) and its own isle:
 | The Drowned Reach (water) | `docs/ten-isles/water.md` |
 | Thornwild (life) | `docs/ten-isles/life.md` |
 | Highspire (air) | `docs/ten-isles/air.md` |
+| Bedrock Hold (earth) | `docs/ten-isles/earth.md` |
+| Voltreach (electricity) | `docs/ten-isles/electricity.md` |
+| Fangmire (slime / Venom) | `docs/ten-isles/slime.md` |
 
 A new isle gets a new file here before its builders launch.
 
@@ -139,6 +142,57 @@ A new isle gets a new file here before its builders launch.
   err >140), and gimmick liveness (40 s sim, bot follows `npcSeek`). The Phaser stub now has real `Phaser.Math`, so
   smoke runs actually progress. Fixed what it found: Kiln→Caldera and Glasshouse→Heartwood door arrivals inside
   solids, an unreachable Candlewick collect spot.
-- Not yet built: the other six isles; the
+- 2026-10-27: **Bedrock Hold (Earth Isle) kicked off** — bible `docs/ten-isles/earth.md`, brief retargeted, isle
+  registered with placeholders. Contract adds weathers `dust`/`sandstorm`/`grit`/`glints`, gate looks `boulder`/`crystal`/
+  `kiln`/`dune`/`iron`/`tomb`, fishery kinds `sand`/`cavern` (both need `rod-delver`, sold at Quarrymouth), hats
+  `miner`/`headwrap`/`coif`. Sea beast **the Cragjaw** (shrugs boulders off its back — shadows first) drops the
+  **Cragplate Ram** (ram rocks/drift/mines aside unharmed; every 8 s the plate hardens to shrug off one blow).
+- 2026-10-27: **Bedrock Hold built** — 6 courts + Quarrymouth port + the Sepulchre/Regent Gravane + genes, ~38.5k lines in
+  `content/earth/`, validator clean (no Earth warnings), build clean, not runtime-tested. `--only <court>` now also shows the
+  prince's messages (`isle:<prince>`), `--only <dungeon>` the monarch's. Engine gaps builders faked (worth real hooks):
+  gimmicks can't see a hit land on an object (strike → touch / hit near it); no boss taken-damage hook (Facet's Flawless and
+  Anvil's Tempered heal damage back); gene on-cast rules fire on refunded casts (Ruin Lockdown) and never for Metal's R.
+- 2026-10-27: **the Outer Sea** — the five abstract isles (`IsleDef.outer`) lie beyond the Breakwater and are harder to
+  reach: a crossing to one is 3800 m (not 2600) through three darker bands (the Outer Swell, the Breakers, the Black
+  Rollers — no lane cap, so the deepest band spawns thickest and pays best), a swell that heaves the boat side to side,
+  storm flashes, and *breakers* (a wall of white water across the sea with one trough to thread; swamped = 1 hull and a
+  shove). The dock lists those routes as ROUGH SEAS.
+- 2026-10-27: **Voltreach (Electricity Isle) kicked off** — bible `docs/ten-isles/electricity.md`, brief retargeted, isle
+  registered with placeholders. Contract adds weathers `static`/`aurora`/`glow`/`flicker`/`balloons`, gate looks `cable`/
+  `magnet`/`lead`/`rubber`/`phase`, fishery kinds `charged`/`coolant`/`quantum` (all need `rod-insulated`, sold at
+  Terminus), hats `antenna`/`hazmat`/`propeller`. Sea beast **the Galvaneel** (strings live arcs across the water that gutter
+  on a beat) drops the **Stormglass Mast** (every 6 s a bolt forks to the three nearest hazards ahead).
+- 2026-10-27: **Voltreach built** — 6 courts + Terminus port + the Crown Coil/Empress Ohmrine + genes, ~38.7k lines in
+  `content/electricity/`, validator clean (no Voltreach warnings), build clean, not runtime-tested. Engine gaps builders faked
+  (worth real hooks): gimmicks still can't see a hit land on an object (every court used touch / lean instead); no cast hook
+  for gimmicks (Memory Leak replays hits); gimmicks can't change cooldowns, lift fighters, reflect fighter shots or block
+  projectiles with walls; no gaze/facing source (Superposition reads the pointer); item scripts can't push; the boss draws
+  under `gloom` (Ohmrine/Volt redraw themselves on the air layer); painters can't read save state. Genes: Quantum's on-cast
+  rules never load (IslesFightKit reads `arena.elementId`, which is Quantum's current carried element); Technology Click and
+  Electricity F never stamp a cast.
+- 2026-10-27: **engine gaps closed** — real hooks for everything the Earth/Voltreach builders faked: strike targets
+  (`ctx.target` / `tk.spawnTarget`: invisible unkillable hitboxes every damage path reaches, both sides' shots, the bot
+  strikes what it casts beside; homing/auto-aim and ult charge ignore them), gimmick `onPlayerCast`/`onNpcCast`,
+  `*CooldownRate`, `ctx.airborne`, `ctx.shotsNear` (block / reflect shots), `ctx.facing`; item scripts get `nudge`/
+  `stun`/`facing`; signatures get `takenMult`/`onBossHurt`/`tk.shotsNear`, defs `drawLit` above the gloom (`tk.dark`);
+  painters get `pieces[].when` and `world.test`. Genes: rules use the save's element (Quantum works), every carried
+  ability maps to its key's slot, refused casts no longer pay out, Technology Click / Electricity F / Metal R report
+  casts via `Fighter.onKitCast`. Earth + Voltreach content retrofitted onto the hooks.
+- 2026-10-27: **Fangmire (Venom Isle) kicked off** — bible `docs/ten-isles/slime.md`, brief retargeted, isle registered
+  with placeholders (`outer: true`). Port Stilthaven, dungeon the Slough (the Matriarch's cast skin, walked tail → head),
+  monarch Nyxa (the Mark / the Draught / going grey), wanderer Tansy Rue. Contract adds weathers `miasma`/`drip`/
+  `gossamer`/`murk`/`wisps`, gate looks `fang`/`web`/`chain`/`shadow`/`lychgate`, fishery kinds `venom`/`blackwater`
+  (both need `rod-antivenin`, sold at Stilthaven), hats `cowl`/`plague`/`snake`. Sea beast **the Mire Hydra** (venom
+  slicks that corrode and drag) drops the **Hydra Prow** (three bow heads each bite the first hazard on their side; 8 s
+  regrow). Builders now run on Opus.
+- 2026-10-27: **Fangmire built** — 6 courts + Stilthaven port + the Slough/Matriarch Nyxa + genes, all builders on Opus;
+  validator clean (no Fangmire warnings), build clean, not runtime-tested. The bible's grave fish `fish-bonefish` clashed
+  with Thornwild's — renamed `fish-lych-bonefish`. Subterfuge Click now reports its cast (`onKitCast('sub-cutter')`).
+  Engine gaps builders worked around: signatures aren't told their phase (module vars set in `drawDecor`) and have no
+  `facing` (Nyxa's Hood reads the pointer) and no nudge (Fetter writes `tk.player.x/y`); gimmicks can't see a dash (Shade
+  Step reads speed > 560); item scripts can't slow; Manacle Works calls `Fighter.lockAbility` directly; the liveness sim
+  never dashes, so dash/speed rules go unexercised; Subterfuge Spray reports its cast at burst end; toxin/most statuses
+  ignore `statusDmgMult`/`statusDurMult`; alternate ultimates aren't in the gene key map.
+- Not yet built: the other three isles; the
   Obsidian Pinnacle + Obsidian King; revolts / anarchy / dark market; the meteor + hard mode (save has
   `hard`, fights already scale on it, but no 10-encounter courts or Fallen forms yet); online co-op.

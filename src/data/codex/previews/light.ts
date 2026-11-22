@@ -545,86 +545,139 @@ export const lightTrickUpgraded: PreviewScript = {
   },
 };
 
-// ══ Q — Speed 'O' Light ═══════════════════════════════════════════════
+// ══ Q — Supernova ═════════════════════════════════════════════════════
 
-/** Both ultimate loops run the real 60ms bounce clock; Q+ is whether every 10th one sticks. */
-function speedOLightScript(flare: boolean): PreviewScript {
+/**
+ * Both loops run the kit's real numbers: speed → beam time at 6s per 620 px/s, a 0.85 rad/s turn,
+ * 9 damage every 0.2s to anything within 34px of a line that runs to the wall. Q+ is whether the
+ * beam burns scorch behind it — and the car driving back over it afterwards to bank speed again.
+ */
+function supernovaScript(dynamo: boolean): PreviewScript {
+  const STOP_AT = 2600;
   return {
-    duration: 8600,
-    scale: 0.5,
+    duration: dynamo ? 10600 : 8600,
+    scale: 0.6,
     bodyTexture: '',
-    caption: flare
-      ? "Flare-Stream — every 10th hop leaves a 35s beam that triples your acceleration"
-      : "Q — 125 hops at 60ms, each leaving a 15-damage streak, all of it undodgeable",
+    caption: dynamo
+      ? 'Solar Dynamo — the beam burns 14s lanes into the floor; driving them banks +240 px/s a second'
+      : 'Q — stop dead: top speed buys 6s of a wall-to-wall beam at 45 dps, steered slowly',
     run(ctx) {
-      const fx = ctx.capture(() => new LightFx(ctx.scene, ctx.tint).setSink(ctx.sink));
-      const ground = ctx.adopt(ctx.scene.add.graphics().setDepth(4));
-      const pos = { x: ctx.cx, y: ctx.cy };
-      if (ctx.scene.textures.exists('elem-light')) {
-        const body = ctx.adopt(ctx.scene.add.image(ctx.cx, ctx.cy, 'elem-light').setDepth(5).setScale(0.5));
-        ctx.onFrame(() => body.setPosition(pos.x, pos.y));
-      }
-      const av = ctx.useAvatar(() => new LightAvatar(ctx.scene, ctx.tint, 'player'));
-      ctx.onFrame((dt) => av.update(dt, pos.x, pos.y, 1));
-      const victim = { x: ctx.w * 0.5, y: ctx.cy };
+      const { car, av, fx, ground } = drive(ctx, {});
+      accelBar(ctx, car);
+      car.speed = 470;
+      const lv = av instanceof LightAvatar ? av : null;
+      const beamG = ctx.adopt(ctx.scene.add.graphics().setDepth(6));
+      const victim = { x: ctx.w * 0.78, y: ctx.cy - ctx.h * 0.18 };
       dummy(ctx, victim.x, victim.y, 0.9);
-      const readout = label(ctx, ctx.w * 0.5, 12, '#fff4a8', 11);
+      const readout = label(ctx, ctx.w * 0.5, 26, '#fff4a8', 11);
 
-      const streaks: { x1: number; y1: number; x2: number; y2: number; born: number; hit: boolean }[] = [];
-      const beams: { x1: number; y1: number; x2: number; y2: number }[] = [];
-      ctx.onFrame((_dt, elapsed) => {
-        ground.clear();
-        for (const b of beams) {
-          LightFx.drawStreak(ground, ctx.tint, b.x1, b.y1, b.x2, b.y2, 18 * 0.8, LIGHT.ember, 0.7, elapsed / 1000);
+      const nova = { on: false, angle: 0, start: 0, end: 0, tick: 0, scorchT: 0, dealt: 0 };
+      const scorches: { x1: number; y1: number; x2: number; y2: number; born: number; seed: number }[] = [];
+      let stopped = false;
+
+      ctx.onFrame((dt, elapsed) => {
+        const t = elapsed / 1000;
+        if (!stopped && elapsed >= STOP_AT) {
+          // Stop on a dime: the speed on the meter becomes the beam's length in time.
+          stopped = true;
+          const ms = Math.min(9000, (car.speed / CAR_MAX_SPEED) * 6000);
+          nova.on = true;
+          nova.start = elapsed;
+          nova.end = elapsed + ms;
+          nova.angle = car.angle;
+          fx.flare(car.x, car.y, 1.5, 12, LIGHT.white, nova.angle);
+          fx.ring(car.x, car.y, 10, 96, LIGHT.gold, 360, 5, 9);
+          float(ctx, car.x, car.y - 36, `🌟 SUPERNOVA ${(ms / 1000).toFixed(1)}s`, '#fff4a8', 12);
+          car.speed = 0;
+          car.ratio = 0;
         }
-        for (let i = streaks.length - 1; i >= 0; i--) {
-          const s = streaks[i];
-          const life = 1 - (elapsed - s.born) / 900;
-          if (life <= 0) { streaks.splice(i, 1); continue; }
-          LightFx.drawStreak(ground, ctx.tint, s.x1, s.y1, s.x2, s.y2, 18, LIGHT.pale, 0.9 * life, elapsed / 1000);
-        }
-      });
 
-      ctx.at(400, () => {
-        av.play('raise', -Math.PI / 2, 900);
-        fx.flare(pos.x, pos.y, 1.6, 12, LIGHT.white);
-        fx.boom(pos.x, pos.y, 110, { color: LIGHT.pale, shards: 14, mark: false });
-        float(ctx, pos.x, pos.y - 34, "💫 SPEED 'O' LIGHT", '#fff4a8', 12);
-
-        // The real clock: 125 bounces, one every 60ms. The loop shows the first ~2 seconds.
-        const margin = 24;
-        let hops = 0, dealt = 0, accum = 0;
-        ctx.onFrame((dt, now) => {
-          if (hops >= 125) { readout.setText(`125 hops   —   ${dealt} dealt`); return; }
-          accum += dt;
-          while (accum >= 60 && hops < 125) {
-            accum -= 60;
-            hops++;
-            const wall = Math.floor(Math.random() * 4);
-            let nx = pos.x, ny = pos.y;
-            if (wall === 0) { nx = margin + Math.random() * (ctx.w - margin * 2); ny = margin; }
-            else if (wall === 1) { nx = margin + Math.random() * (ctx.w - margin * 2); ny = ctx.h - margin; }
-            else if (wall === 2) { nx = margin; ny = margin + Math.random() * (ctx.h - margin * 2); }
-            else { nx = ctx.w - margin; ny = margin + Math.random() * (ctx.h - margin * 2); }
-            const s = { x1: pos.x, y1: pos.y, x2: nx, y2: ny, born: now, hit: false };
-            streaks.push(s);
-            fx.flare(nx, ny, 0.55, 12, LIGHT.white, Math.atan2(ny - pos.y, nx - pos.x));
-            if (flare && hops % 10 === 0) beams.push({ x1: pos.x, y1: pos.y, x2: nx, y2: ny });
-            // 15 damage inside 40px of the line, once per target per streak.
-            const d = distToSeg(victim.x, victim.y, s.x1, s.y1, s.x2, s.y2);
-            if (d <= 40) {
-              dealt += 15;
-              fx.flare(victim.x, victim.y, 0.7, 11, LIGHT.pale, Math.atan2(ny - s.y1, nx - s.x1));
-              float(ctx, victim.x, victim.y - 22, '15', '#fff4a8', 11);
+        if (nova.on) {
+          if (elapsed >= nova.end) {
+            nova.on = false;
+            fx.flare(car.x, car.y, 0.9, 11, LIGHT.pale, nova.angle);
+            beamG.clear();
+            // Back to driving: from a standstill, straight down the freshest lane.
+            car.speed = 0;
+            if (scorches.length) {
+              const s = scorches[scorches.length - 1];
+              car.angle = Math.atan2(s.y2 - s.y1, s.x2 - s.x1);
             }
-            pos.x = nx;
-            pos.y = ny;
+          } else {
+            const want = Math.atan2(victim.y - car.y, victim.x - car.x);
+            const diff = Phaser.Math.Angle.Wrap(want - nova.angle);
+            nova.angle += Phaser.Math.Clamp(diff, -0.85 * dt / 1000, 0.85 * dt / 1000);
+            const cos = Math.cos(nova.angle), sin = Math.sin(nova.angle);
+            const x0 = car.x + cos * 22, y0 = car.y + sin * 22;
+            const len = rayToWall(x0, y0, nova.angle, ctx.w, ctx.h);
+            const x1 = x0 + cos * len, y1 = y0 + sin * len;
+            const fuel = Phaser.Math.Clamp((nova.end - elapsed) / (nova.end - nova.start), 0, 1);
+            beamG.clear();
+            LightFx.drawNova(beamG, ctx.tint, x0, y0, x1, y1, fuel, t);
+            // The fuel gauge over the caster.
+            beamG.fillStyle(0x000000, 0.55);
+            beamG.fillRoundedRect(car.x - 28, car.y - 50, 56, 10, 3);
+            beamG.fillStyle(ctx.tint(mixColor(LIGHT.ember, LIGHT.gold, fuel)), 1);
+            beamG.fillRoundedRect(car.x - 26, car.y - 48, Math.max(2, 52 * fuel), 6, 2);
+            lv?.setHold('spray', nova.angle);
+            av.setFacing(nova.angle);
+
+            nova.tick += dt;
+            while (nova.tick >= 200) {
+              nova.tick -= 200;
+              const dx = victim.x - x0, dy = victim.y - y0;
+              const along = dx * cos + dy * sin;
+              const perp = Math.abs(-dx * sin + dy * cos);
+              if (along >= -16 && perp <= 34) {
+                nova.dealt += 9;
+                fx.flare(victim.x, victim.y, 0.55, 11, LIGHT.pale, nova.angle);
+                float(ctx, victim.x, victim.y - 22, '9', '#fff4a8', 11);
+              }
+            }
+            if (dynamo) {
+              nova.scorchT += dt;
+              if (nova.scorchT >= 500) {
+                nova.scorchT -= 500;
+                scorches.push({ x1: car.x, y1: car.y, x2: x1, y2: y1, born: elapsed, seed: Math.random() * 99 });
+              }
+            }
           }
-          readout.setText(`hop ${hops}/125   —   ${dealt} dealt${flare ? `   —   ${beams.length} beams` : ''}`);
-        });
+          readout.setText(`${nova.dealt} dealt`);
+        } else if (!stopped) {
+          const aim = lapPoint(ctx, elapsed + 700);
+          stepCar(car, Math.atan2(aim.y - car.y, aim.x - car.x), dt, elapsed);
+          readout.setText(`${Math.round(car.speed)} px/s banked`);
+        } else if (dynamo) {
+          // Driving the scorch: the kit's +240 px/s every second on top of the car's own gain.
+          const on = scorches.some((s) => distToSeg(car.x, car.y, s.x1, s.y1, s.x2, s.y2) <= 26);
+          const s = scorches[scorches.length - 1];
+          const ahead = s ? { x: s.x2, y: s.y2 } : lapPoint(ctx, elapsed);
+          stepCar(car, Math.atan2(ahead.y - car.y, ahead.x - car.x), dt, elapsed);
+          if (on) car.speed = Math.min(car.maxSpeed, car.speed + 240 * dt / 1000);
+          car.x = Phaser.Math.Clamp(car.x, 20, ctx.w - 20);
+          car.y = Phaser.Math.Clamp(car.y, 20, ctx.h - 20);
+          car.ratio = car.speed / car.maxSpeed;
+          readout.setText(`${Math.round(car.speed)} px/s${on ? '   —   ON SCORCH' : ''}`);
+        }
+
+        ground.clear();
+        for (const s of scorches) {
+          const life = Phaser.Math.Clamp(1 - (elapsed - s.born) / 14000, 0, 1);
+          LightFx.drawScorch(ground, ctx.tint, s.x1, s.y1, s.x2, s.y2, 26, life, t, s.seed);
+        }
       });
     },
   };
+}
+
+function rayToWall(x: number, y: number, angle: number, w: number, h: number): number {
+  const cos = Math.cos(angle), sin = Math.sin(angle);
+  let t = Infinity;
+  if (cos > 1e-6) t = Math.min(t, (w - x) / cos);
+  else if (cos < -1e-6) t = Math.min(t, -x / cos);
+  if (sin > 1e-6) t = Math.min(t, (h - y) / sin);
+  else if (sin < -1e-6) t = Math.min(t, -y / sin);
+  return t === Infinity ? 0 : Math.max(0, t);
 }
 
 function distToSeg(px: number, py: number, x1: number, y1: number, x2: number, y2: number): number {
@@ -635,8 +688,8 @@ function distToSeg(px: number, py: number, x1: number, y1: number, x2: number, y
   return Phaser.Math.Distance.Between(px, py, x1 + t * dx, y1 + t * dy);
 }
 
-export const speedOLight = speedOLightScript(false);
-export const speedOLightUpgraded = speedOLightScript(true);
+export const supernova = supernovaScript(false);
+export const supernovaUpgraded = supernovaScript(true);
 
 // ══ Passive ═══════════════════════════════════════════════════════════
 

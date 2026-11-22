@@ -34,7 +34,8 @@ Solid = { kind:'rect'; x; y; w; h } | { kind:'circle'; x; y; r }
 ```ts
 NpcLook { body; accent; hand?; hat?: NpcHat; traits?: NpcTrait[]; size?: 0.7–1.4 (1); eye? }
 NpcHat  = none cap tophat hood helmet crown bandana chef wizard tricorn beanie veil goggles straw mitre candle
-          diving souwester wreath antlers mushroom aviator nightcap plume
+          diving souwester wreath antlers mushroom aviator nightcap plume miner headwrap coif antenna hazmat propeller
+          cowl plague snake   // cowl hides the face (two eye-glints); snake's tongue flicks
 NpcTrait= apron beard cane satchel pipe scarf glasses eyepatch lantern pack brand bandage rod book tool mask
 Talk    { when?: Cond; lines: string[]; sets?: flag }   // list most-specific first; `sets` flag set when block finishes
 NpcRole = 'shop'|'bakery'|'dock'|'tackle'|'banker'
@@ -58,12 +59,15 @@ AreaDef {
 }
 WeatherKind = none ash embers steam smoke sparks wax rain snow motes spray fog bubbles ink
               pollen spores petals leaves sugar fireflies wind clouds feathers stars storm dreams
+              dust sandstorm grit glints static aurora glow flicker balloons
+              miasma drip gossamer murk wisps   // murk is an overlay that dims the view
 AreaPainter {
   ground(g, rng): void                                  // baked once into a texture, under everything
-  pieces?: { x; y; w; h; draw(g, rng): void }[]         // each its own Graphics at depth = y
-  animate?(g, t /*SECONDS*/, view: Rect): void          // per frame, over ground, under actors
-  animateOver?(g, t /*SECONDS*/, view: Rect): void      // per frame, over actors
+  pieces?: { x; y; w; h; draw(g, rng): void; when?: Cond }[]  // own Graphics at depth = y; `when`: shown only while it holds
+  animate?(g, t /*SECONDS*/, view: Rect, world: PainterWorld): void   // per frame, over ground, under actors
+  animateOver?(g, t /*SECONDS*/, view: Rect, world: PainterWorld): void // per frame, over actors
 }
+PainterWorld { test(c: Cond): boolean }   // read the story: lit lamps after the monarch falls, etc.
 ```
 Pieces draw in **world coords**; `x` = centre, `y` = base/feet line; `w`/`h` are only a cull box
 (`x±w/2`, `y-h` … `y+40`; IsleWorldScene.ts:263). Exits: engine lands you at `to`'s exit whose `to` is this
@@ -86,6 +90,7 @@ WorldHazard =   // no HP in the world: a hit = back to last checkpoint
   | { kind:'floor'; rect; safeWhen: Cond; color? }
 WorldGate { rect; open: Cond; look; label? }   // wall until `open` holds
   look = portcullis grate wax rubble barrier ice coral sluice thorn roots bone candy cloud lightning orrery veil book
+         boulder crystal kiln dune iron tomb cable magnet lead rubber phase fang web chain shadow lychgate
 ```
 
 ## Fights
@@ -113,6 +118,14 @@ float(x, y, text, cssColor); flash(x, y, color: number)
 banner(text, cssColor = '#ffe2a8')
 sfx(name)                  // panned at arena centre
 victory()                  // win outright
+target({ x, y, r, onStruck(by: 'player'|'npc', amount), passThrough? }): StrikeTarget
+                           // a thing either side can STRIKE: shots (both sides), AoE, melee, kit abilities all
+                           // reach it; the bot also strikes targets in reach when it casts. Never breaks — handle
+                           // { x; y; alive; moveTo(x,y); setRadius(r); remove() }. passThrough: shots fly on.
+facing(f): radians         // player: toward the mouse; bot: its walking heading (toward its foe when still)
+airborne(f, ms); isAirborne(f)   // nothing hits them (shots pass under, damage refused); root them to "fly"
+shotsNear(x, y, r): ShotHandle[] // both sides' shots in flight: { x; y; owner; damage; block(); reflect(nx?, ny?, keepOwner?) }
+                           // reflect bounces a shared projectile and turns it on its owner (false = kit-local, blocked)
 ```
 
 ### EncounterGimmick (all optional except update)
@@ -127,6 +140,10 @@ npcTakenMult?(): n     // × item damage windows → npc.islesIncomingMult, clam
 npcSeek?(): Pt | null  // bot's mapSeekPoint (a SecretMap seek point wins over it)
 onPlayerHurt?(amount)  // every damage > 0, including ctx.hit / tk hits
 onNpcHurt?(amount)
+onPlayerCast?(abilityId, slot)  // every cast that went off (refused casts are not reported)
+onNpcCast?(abilityId)
+playerCooldownRate?(): n        // 1 normal, 2 = twice as fast, 0.5 = half; clamped [0.25, 4]
+npcCooldownRate?(): n
 destroy?()             // on reset (next match)
 ```
 
@@ -170,7 +187,8 @@ ItemScriptCtx { scene; W; H; player; npc; rng; hit(f, amount, x?, y?); heal(f, a
                 slotOf(abilityId): 'click'|'e'|'r'|'f'|'q'|null
                 refund(abilityId, ms)          // player.reduceCooldown
                 boostDamage(mult, ms)          // foe-taken multiplier window (stacks multiplicatively)
-                boostSpeed(mult, ms) }         // player speed window
+                boostSpeed(mult, ms)           // player speed window
+                nudge(f, dx, dy); stun(f, ms); facing(f) }
 ItemScript { update?(time, dt /*SECONDS*/); onHitDealt?(amount); onHitTaken?(amount);
              onCast?(abilityId, slot | null) /*after any earlier onCastStamp*/;
              drawGround?(g, time); drawAir?(g, time) }
@@ -178,7 +196,7 @@ ShopDef   { id; name; stock: itemId[]; buys? /*buys fish/materials at `sell`*/ }
 RecipeDef { id; name; inputs: { item; count }[]; coins; output: itemId; makes? (1) }
 BakeryDef { id; name; recipes: RecipeDef[] }
 FishDef   { id /*= an IsleItemDef kind 'fish'*/; fisheries: id[]; weight; fight: 1–5; size: [minCm, maxCm]; rod?; when?: Cond }
-FisheryDef{ id; name; kind }  kind = sea lava pond wax steam oil ice ink abyss bog syrup cloud aurora (cloud/aurora need skyline rod)
+FisheryDef{ id; name; kind }  kind = sea lava pond wax steam oil ice ink abyss bog syrup cloud aurora sand cavern charged coolant quantum (cloud/aurora need skyline rod; sand/cavern delver rod; charged/coolant/quantum insulated rod)
 RodDef    { id; name; control /*widens catch bar*/; kinds: FisheryDef['kind'][] }
 ```
 
@@ -217,7 +235,8 @@ WorldBossDef {
   tuning?: Partial<Record<LibMoveId, LibTuning>>;
   signatures: Record<string, SignatureFactory>   // cycle refers as 'sig:<key>'
   look: BossLook; phaseStyles?: BossPhaseStyle[] // index-aligned; extraPhase takes the slot after last
-  drawDecor?(g, s: BossBodyState)                // over the rig, every frame
+  drawDecor?(g, s: BossBodyState)                // over the rig, every frame (UNDER a gloom phase's dark)
+  drawLit?(g, s: BossBodyState)                  // every frame ABOVE the gloom — what shows in the dark; s.inGloom
   drawArena?(g, W, H)                            // once, over the court floor
 }
 WorldBossPhase { name; line?; hp; cycle: MoveRef[]; harass: HarassId[]; restMs; restEnragedMs? (restMs×0.55);
@@ -240,9 +259,12 @@ SignatureMove {
   gesture?: BossGesture; hold?: BossHold; locksBody? /*movement AI stands down*/; tell?
   cast(time /*ms*/)
   update?(time /*ms*/, dt /*SECONDS*/)    // every frame, whole fight — gate on your own state
-  drawGround?(g, time); drawAir?(g, time)
+  drawGround?(g, time); drawAir?(g, time)   // drawAir sits above a gloom phase's dark; `tk.dark` says it's dark
   onPhaseEnd?()                           // phase change / fight end: drop live state
+  takenMult?(): n                         // × damage the boss body takes, pulled per frame (0 = impervious)
+  onBossHurt?(amount)                     // every blow on the boss body (compare tk.player's position for "from behind")
 }
+tk.spawnTarget(def) / tk.strikeTargetsNear(x, y, reach, by, amount) / tk.shotsNear(x, y, r)  // for signatures (see GimmickCtx)
 BossGesture = punch slam raise sweep clap flex point recoil
 BossHold    = spray charge draw brace reach conduct | null
 BossLook (BossRig.ts:45) { crest: BossCrest; pattern: BossPattern; aura?: BossAura; hands?: BossHands;
@@ -335,11 +357,13 @@ motes(g, view: Rect, t, n, color, fall, sway, size, seed = 0)   // for animateOv
 - **Multipliers are pulled.** Return them from `*SpeedMult()`/`*TakenMult()` every frame; never write
   `speedMult`/`islesIncomingMult` on a Fighter yourself (ArenaScene / the kit rewrite them each frame).
 - **Positions:** move fighters only with `ctx.nudge` (clamped) or `tk.pull`; never write velocity.
-- **What gimmicks CANNOT do** (no API exists — don't hunt): touch, read, reflect or delete fighters'
-  projectiles; detect a hit landing on a gimmick object (only `onPlayerHurt`/`onNpcHurt` amounts, no source/
-  position); scale, lift, hide or make a fighter airborne; change a fighter's abilities or cooldowns
-  (`refund` is ItemScriptCtx only, player only). Toolkit hazards only ever damage the player — hurt the npc via
-  `ctx.hit(ctx.npc, …)` with your own geometry check.
+- **Strike, don't touch.** "Strike the lever / the rod / the prism" is `ctx.target(...)` — a real hit. Don't fake
+  it with walking into the thing or standing on it. Remove targets you no longer need (they block shots unless
+  `passThrough`).
+- **Shots:** `ctx.shotsNear` sees fighters' projectiles in flight — block them on a wall, bounce them off rubber.
+  Beams, AoE and instant hits are not shots; they reach strike targets but can't be blocked.
+- **What gimmicks still CANNOT do:** scale or hide a fighter, or change a fighter's abilities. Toolkit hazards
+  only ever damage the player — hurt the npc via `ctx.hit(ctx.npc, …)` with your own geometry check.
 - **Bot play:** give the bot the rule via `npcSeek()`; it is the only steering hook.
 - **SFX names** must be in the `SFX` set in `.check-isles.mjs:43` (or the `ui-*` / reward voices it allows);
   the validator warns on anything else.

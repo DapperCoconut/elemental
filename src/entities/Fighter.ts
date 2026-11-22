@@ -995,6 +995,12 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
    * the point it was actually aimed at is two seconds older than wherever the mouse is now.
    */
   public onCastStamp: ((abilityId: string, aim?: { x: number; y: number }) => void) | null = null;
+  /**
+   * A cast a kit runs on its own clock and never stamps (Technology's Cruncher, Electricity's
+   * Pain Battery release). Nothing about cooldowns, sound or the online relay — just the news,
+   * for listeners that count casts (the Isles' gene rules and arena rules).
+   */
+  public onKitCast: ((abilityId: string) => void) | null = null;
   /** 0–1 probability that outgoing attacks deal a critical hit (2× damage). */
   public critChance = 0;
   /** Damage multiplier applied on a critical hit. Default 2. */
@@ -1394,6 +1400,11 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
    * favouring one side, a charm's damage window). Its own field so nothing else overwrites it.
    */
   public islesIncomingMult = 1;
+  /**
+   * A Sovereign's signatures' say over the damage its body takes (`SignatureMove.takenMult`) —
+   * Tempered steel that only yields while glowing. Rewritten every frame by WorldBossKit.
+   */
+  public bossSigIncomingMult = 1;
   /** Card: HP regeneration per second (Regenerative card). Processed by ArenaScene update. */
   public regenPerSecond = 0;
   /** Accumulator (ms) for regen ticks. Managed by ArenaScene. */
@@ -1606,7 +1617,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       // Tallied here: after the crit roll (a crit really is a bigger hit) but before every
       // mitigation multiplier on the line below, which is what "damage aimed at you" means.
       this.rawDamageTaken += amount;
-      let mitigation = trueDamage ? 1 : this.incomingDamageMultiplier * this.gauntletDamageTakenMult * this.bribeIncomingMult * this.smokeIncomingMult * this.cardDamageTakenMult * this.droneArmorMult * this.kineticShieldMult * this.steelShieldMult * this.empoweredIncomingMult * this.potionArmorMult * this.hopelessIncomingMult * this.justiceIncomingMult * this.magmaIncomingMult * this.waxIncomingMult * this.clayIncomingMult * this.conquestIncomingMult * this.passionIncomingMult * this.quantumIncomingMult * this.deathIncomingMult * this.journalIncomingMult * this.paperIncomingMult * this.psychicIncomingMult * this.bindIncomingMult * this.illusionIncomingMult * this.soundIncomingMult * this.artifactIncomingMult * this.clothIncomingMult * this.marrowIncomingMult * this.woodIncomingMult * this.orderIncomingMult * this.wardIncomingMult * this.soulTankIncomingMult * this.bossWardIncomingMult * this.fortuneIncomingMult * this.dreamIncomingMult * this.duneIncomingMult * this.radiationIncomingMult * this.lifeIncomingMult * this.magicIncomingMult * this.mutationIncomingMult * this.mapArmorMult * this.starIncomingMult * this.earthBiomeIncomingMult * this.perkIncomingMult * this.paintIncomingMult * this.toxinIncomingMult * this.savorArmorMult * this.savorIncomingMult * this.netDefenseMult * this.islesIncomingMult;
+      let mitigation = trueDamage ? 1 : this.incomingDamageMultiplier * this.gauntletDamageTakenMult * this.bribeIncomingMult * this.smokeIncomingMult * this.cardDamageTakenMult * this.droneArmorMult * this.kineticShieldMult * this.steelShieldMult * this.empoweredIncomingMult * this.potionArmorMult * this.hopelessIncomingMult * this.justiceIncomingMult * this.magmaIncomingMult * this.waxIncomingMult * this.clayIncomingMult * this.conquestIncomingMult * this.passionIncomingMult * this.quantumIncomingMult * this.deathIncomingMult * this.journalIncomingMult * this.paperIncomingMult * this.psychicIncomingMult * this.bindIncomingMult * this.illusionIncomingMult * this.soundIncomingMult * this.artifactIncomingMult * this.clothIncomingMult * this.marrowIncomingMult * this.woodIncomingMult * this.orderIncomingMult * this.wardIncomingMult * this.soulTankIncomingMult * this.bossWardIncomingMult * this.fortuneIncomingMult * this.dreamIncomingMult * this.duneIncomingMult * this.radiationIncomingMult * this.lifeIncomingMult * this.magicIncomingMult * this.mutationIncomingMult * this.mapArmorMult * this.starIncomingMult * this.earthBiomeIncomingMult * this.perkIncomingMult * this.paintIncomingMult * this.toxinIncomingMult * this.savorArmorMult * this.savorIncomingMult * this.netDefenseMult * this.islesIncomingMult * this.bossSigIncomingMult;
       // Ruin's spikes turn armour inside out — 25% less damage taken comes back as 25% more.
       // Only a net *buff* is flipped; a fighter already taking extra damage is left alone.
       if (mitigation < 1 && this.scene.time.now < this.buffsInvertedUntil) mitigation = 2 - mitigation;
@@ -2219,6 +2230,11 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   }
 
   /** Make an ability immediately ready (clears its cooldown). */
+  /** True once `resetCooldown` has handed this ability's last stamp back (a refused cast). */
+  wasRefunded(abilityId: string): boolean {
+    return this.cooldowns.get(abilityId) === 0;
+  }
+
   resetCooldown(abilityId: string): void {
     this.cooldowns.set(abilityId, 0);
     const ult = this.element.abilities.find((a) => a.id === abilityId);

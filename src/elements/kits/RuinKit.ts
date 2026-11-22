@@ -118,24 +118,25 @@ const BOLT_RANGE = 200;
 // ── Mastery ──────────────────────────────────────────────────────────────────
 /** Combo Breaker: what every enemy meter in the game is worth while the mastery is on. */
 const COMBO_BREAKER_MULT = 0.5;
-/** Second Skin: one plate per degree of a full turn, near enough. */
-const SKIN_SHARDS = 25;
-const SKIN_DAMAGE = 15;
-const SKIN_SPEED = 540;
-const SKIN_LIFE_MS = 820;
-const SKIN_HIT_R = 22;
-const SKIN_SHARD_LEN = 15;
-/** How much of you is left after one layer comes off. It never goes back up. */
-const SKIN_SHRINK = 0.8;
-/** There is no layer six. */
-const SKIN_MAX_USES = 5;
+/** Screeching Steel: an escape, so it comes round about as often as the skewer does. */
+const STEEL_COOLDOWN_MS = 16000;
+/** How far the shriek carries — anybody inside it is thrown clear. */
+const SCREECH_R = 190;
+/** Launch speed of the throw, bled off to nothing over the shove. */
+const SCREECH_SHOVE_SPEED = 640;
+const SCREECH_SHOVE_MS = 380;
+/** Nothing stuns or slows him for this long after the shriek — long enough to get away. */
+const STEEL_IMMUNE_MS = 3000;
+/** The rusty aura left behind on him. */
+const RUST_AURA_MS = 10000;
+const RUST_AURA_R = 150;
 /**
- * Long enough that the five are a five-decision resource rather than a five-frame one — the
- * card would otherwise empty itself into the first thing that walked past.
+ * A rusted weapon only matters where a weapon reaches. `takeDamage` has no attacker, so — like
+ * the decay's weaken — the cut is felt on the Ruin's end, from anybody rusted and this close.
  */
-const SKIN_COOLDOWN_MS = 14000;
-/** How far a plate carries, for the bot's "is this worth a layer" check. */
-const SKIN_REACH = SKIN_SPEED * (SKIN_LIFE_MS / 1000);
+const RUST_MELEE_REACH = 90;
+/** What a rusted weapon still does: 40% less. */
+const RUST_WEAKEN = 0.6;
 
 // ── World objects ────────────────────────────────────────────────────────────
 
@@ -246,22 +247,15 @@ interface Lock {
 }
 
 /**
- * One triangular plate of shed skin in flight.
- *
- * `volley` is shared by all twenty-five plates of a single cast: a body may only be caught by
- * one of them, so standing in the middle of the burst is 15 damage and one revert rather than
- * twenty-five of each.
+ * Somebody the shriek threw. Driven from `update()`, which runs after movement, so the throw
+ * beats the AI's own steering for as long as it lasts — a single `setVelocity` would be
+ * overwritten the very next frame.
  */
-interface Shard {
-  owner: Owner;
-  x: number;
-  y: number;
+interface Shove {
+  victim: Fighter;
   vx: number;
   vy: number;
-  diesAt: number;
-  seed: number;
-  spin: number;
-  volley: { hits: Set<Fighter> };
+  startedAt: number;
 }
 
 /** A fleck of somebody shed onto the floor by the decay. Pure decoration, and short-lived. */
@@ -281,15 +275,23 @@ interface Side {
   decay: number;
   /** Damage Shred Slice has dealt since it last grew a crystal, counting down from 50. */
   shredDamage: number;
-  /** Second Skin: layers already shed. Five is all anybody gets, and it never resets mid-match. */
-  skinUses: number;
-  skinCastAt: number;
+  /** Screeching Steel: last cast, on the kit's own clock (the slot's real cooldown is the base ability's). */
+  steelCastAt: number;
+  /** Stuns and slows slide off him until this timestamp. */
+  steelImmuneUntil: number;
+  /** True while this kit is the one holding `unstoppable` on — so it only ever hands back its own. */
+  steelHeld: boolean;
+  /** The rusty aura is on him until this timestamp. */
+  rustUntil: number;
+  /** Who has already been called out as rusted under the current aura, so it says so once. */
+  rustNoted: Set<Fighter>;
 }
 
 function makeSide(owner: Owner): Side {
   return {
     owner, aimX: 0, aimY: 0, decay: 0, shredDamage: 0,
-    skinUses: 0, skinCastAt: -SKIN_COOLDOWN_MS,
+    steelCastAt: -STEEL_COOLDOWN_MS, steelImmuneUntil: 0, steelHeld: false,
+    rustUntil: 0, rustNoted: new Set(),
   };
 }
 
@@ -343,9 +345,9 @@ export interface RuinArenaApi {
   recordMasteryBestStat(key: string, value: number): void;
   broadcastMasteryCast(enhId: string): void;
   /**
-   * Second Skin: drag `f` back into the body they started the match in, and report the names of
-   * whatever forms actually ended. ArenaScene owns the dispatch for the same reason it owns
-   * `purgeSummons` — it is the only object that holds every kit.
+   * Drag `f` back into the body they started the match in, and report the names of whatever
+   * forms actually ended. Built for the retired Second Skin and nothing calls it now; kept, like
+   * `purgeSummons`' `report`, because every kit still implements its half of the contract.
    */
   revertForms(f: Fighter): string[];
 }
@@ -382,8 +384,8 @@ export class RuinKit {
   private cracks: Crack[] = [];
   private spikes: Spike[] = [];
   private bolts: Bolt[] = [];
-  /** Mastery: plates of shed skin still in the air. */
-  private shards: Shard[] = [];
+  /** Mastery: bodies the shriek is still throwing. */
+  private shoves: Shove[] = [];
   /** Accumulates toward CRACK_TICK_MS, so the cracks bite on a beat rather than every frame. */
   private crackTick = 0;
   /**
@@ -520,6 +522,10 @@ export class RuinKit {
     for (const l of this.locks) {
       if (l.victim.active) l.victim.clearLocks();
     }
+    // Screeching Steel's immunity is a flag on the fighter; hand back only what this kit took.
+    for (const owner of ['player', 'npc'] as Owner[]) {
+      if (this.sides[owner].steelHeld) this.fighter(owner).unstoppable = false;
+    }
     // Lockjaw's bite is an event listener rather than a field, so it is the one thing here that
     // would survive a match on its own if it weren't unhooked by hand.
     for (const [victim, hook] of this.lockjawHooks) victim.off('cast', hook);
@@ -537,7 +543,7 @@ export class RuinKit {
     this.cracks = [];
     this.spikes = [];
     this.bolts = [];
-    this.shards = [];
+    this.shoves = [];
     this.crackTick = 0;
     this.fleckAccum = 0;
     this.vizT = 0;
@@ -561,20 +567,20 @@ export class RuinKit {
     const ctx = this.api.buildPlayerContext(mouseX, mouseY);
     const clicked = pointer.isDown && !this.api.pointerWasDown;
 
-    // Mastery: Second Skin takes over whichever slot it was bound to. Read before the base
+    // Mastery: Screeching Steel takes over whichever slot it was bound to. Read before the base
     // keys, because `JustDown` consumes the flag — testing the bind afterwards eats the press.
-    const skin = this.secondSkinSlot('player');
-    if (skin) {
-      const key = skin === 'e' ? this.api.eKey : skin === 'r' ? this.api.rKey
-        : skin === 'f' ? this.api.fKey : this.api.qKey;
-      if (Phaser.Input.Keyboard.JustDown(key)) this.trySecondSkin('player');
+    const steel = this.steelSlot('player');
+    if (steel) {
+      const key = steel === 'e' ? this.api.eKey : steel === 'r' ? this.api.rKey
+        : steel === 'f' ? this.api.fKey : this.api.qKey;
+      if (Phaser.Input.Keyboard.JustDown(key)) this.tryScreechingSteel('player');
     }
 
     if (clicked) p.castAbility('ruin-shred', ctx);
-    if (skin !== 'e' && Phaser.Input.Keyboard.JustDown(this.api.eKey)) p.castAbility('ruin-lockdown', ctx);
-    if (skin !== 'r' && Phaser.Input.Keyboard.JustDown(this.api.rKey)) p.castAbility('ruin-skewer', ctx);
-    if (skin !== 'f' && Phaser.Input.Keyboard.JustDown(this.api.fKey)) p.castAbility('ruin-spikes', ctx);
-    if (skin !== 'q' && Phaser.Input.Keyboard.JustDown(this.api.qKey)) p.castAbility('ruin-decay', ctx);
+    if (steel !== 'e' && Phaser.Input.Keyboard.JustDown(this.api.eKey)) p.castAbility('ruin-lockdown', ctx);
+    if (steel !== 'r' && Phaser.Input.Keyboard.JustDown(this.api.rKey)) p.castAbility('ruin-skewer', ctx);
+    if (steel !== 'f' && Phaser.Input.Keyboard.JustDown(this.api.fKey)) p.castAbility('ruin-spikes', ctx);
+    if (steel !== 'q' && Phaser.Input.Keyboard.JustDown(this.api.qKey)) p.castAbility('ruin-decay', ctx);
   }
 
   // ── Ability entry points (called from build*Context) ───────────────────────
@@ -834,7 +840,7 @@ export class RuinKit {
     return best;
   }
 
-  // ── Mastery: Combo Breaker + Second Skin ───────────────────────────────────
+  // ── Mastery: Combo Breaker + Screeching Steel ───────────────────────────────────
 
   /** Whether that side is a mastered Ruin. */
   private masteryOn(owner: Owner): boolean {
@@ -843,19 +849,14 @@ export class RuinKit {
       : this.api.npcMasteryActive && this.api.npcElementId === 'ruin';
   }
 
-  /** The slot Second Skin is bound over for this side, or null when the side hasn't bound it. */
-  private secondSkinSlot(owner: Owner): 'e' | 'r' | 'f' | 'q' | null {
+  /** The slot Screeching Steel is bound over for this side, or null when the side hasn't bound it. */
+  private steelSlot(owner: Owner): 'e' | 'r' | 'f' | 'q' | null {
     if (!this.masteryOn(owner)) return null;
     for (const s of ['e', 'r', 'f', 'q'] as const) {
       const bind = owner === 'player' ? this.api.masteryBindFor(s) : this.api.npcMasteryBindFor(s);
-      if (bind === 'second-skin') return s;
+      if (bind === 'screeching-steel') return s;
     }
     return null;
-  }
-
-  /** How many layers this side has left. Zero is what greys the card out for good. */
-  private skinLeft(owner: Owner): number {
-    return Math.max(0, SKIN_MAX_USES - this.side(owner).skinUses);
   }
 
   /**
@@ -877,172 +878,173 @@ export class RuinKit {
   }
 
   /**
-   * The bound key, or the bot's own decision. Answers whether a layer actually came off.
+   * The bound key, or the bot's own decision. Answers whether the shriek went off.
    *
-   * Three refusals, and all three are voiced: the five are gone, the cooldown is still running,
-   * or the caster is already dead. Nothing here goes through `castAbility` — the ability lives
-   * on a private timer because the slot it is bound over still owns the real cooldown map.
+   * Nothing here goes through `castAbility` — the ability lives on a private timer because the
+   * slot it is bound over still owns the real cooldown map. That is also why it can be screamed
+   * out of a stun: it is the escape, and an escape that a stun switches off is not one.
    */
-  private trySecondSkin(owner: Owner): boolean {
+  private tryScreechingSteel(owner: Owner): boolean {
     const f = this.fighter(owner);
     if (!this.alive(f)) return false;
     const s = this.side(owner);
-
-    if (this.skinLeft(owner) <= 0) {
-      if (owner === 'player') {
-        this.say(owner, f.x, f.y - 50, '🦎 NOTHING LEFT TO SHED', RUI.ash);
-      }
-      return false;
-    }
-    if (this.now - s.skinCastAt < SKIN_COOLDOWN_MS) return false;
-
-    s.skinCastAt = this.now;
-    s.skinUses++;
-    this.castSecondSkin(owner);
+    if (this.now - s.steelCastAt < STEEL_COOLDOWN_MS) return false;
+    s.steelCastAt = this.now;
+    this.castScreechingSteel(owner);
     // A private timer never reaches the peer on its own — see `broadcastMasteryCast`.
-    if (owner === 'player') this.api.broadcastMasteryCast('second-skin');
+    if (owner === 'player') this.api.broadcastMasteryCast('screeching-steel');
     return true;
   }
 
-  /** Online: the opponent shed on their machine, so a layer has to come off here too. */
-  doNpcSecondSkin(): void {
-    const s = this.sides.npc;
-    if (this.skinLeft('npc') <= 0) return;
-    s.skinCastAt = this.now;
-    s.skinUses++;
-    this.castSecondSkin('npc');
+  /** Online: the opponent screamed on their machine, so it has to throw our player here too. */
+  doNpcScreechingSteel(): void {
+    this.sides.npc.steelCastAt = this.now;
+    this.castScreechingSteel('npc');
   }
 
   /**
-   * A layer comes off.
-   *
-   * The shrink is applied to the caster first and it is permanent — `ruinSizeMult` is its own
-   * field on `Fighter` precisely so a Fate slots roll or an Illusion fold landing later can't
-   * quietly hand the layer back. The plates then go out in a full circle sharing one hit set,
-   * so being surrounded is not twenty-five times the damage.
+   * The shriek. Everybody inside it is thrown straight out from him, he shakes off whatever had
+   * hold of him and stays loose for three seconds, and the rust it tore off the air settles on
+   * him as an aura for ten.
    */
-  private castSecondSkin(owner: Owner): void {
+  private castScreechingSteel(owner: Owner): void {
     const f = this.fighter(owner);
     const s = this.side(owner);
+    const isReplica = owner === 'npc' && this.api.isOnline;
 
-    // Measured before the shrink: the husk that comes off is the size he was, and the smaller
-    // outline underneath it is what `shed` draws inside that.
-    const wasR = 30 * f.sizeMult * f.shapeSizeMult * f.ruinSizeMult;
-    f.ruinSizeMult *= SKIN_SHRINK;
-    f.applySizeMult();
-    this.touched.add(f);
+    s.steelImmuneUntil = this.now + STEEL_IMMUNE_MS;
+    s.rustUntil = this.now + RUST_AURA_MS;
+    s.rustNoted.clear();
+    // Whatever already had hold of him lets go. The replica's body is owned by the other sim.
+    if (!isReplica) {
+      f.stunnedUntil = 0;
+      f.disarmedUntil = Math.min(f.disarmedUntil, Date.now());
+    }
 
-    const volley = { hits: new Set<Fighter>() };
-    const off = Math.random() * Math.PI * 2;
-    for (let i = 0; i < SKIN_SHARDS; i++) {
-      const a = off + (i / SKIN_SHARDS) * Math.PI * 2;
-      this.shards.push({
-        owner,
-        x: f.x + Math.cos(a) * 22,
-        y: f.y + Math.sin(a) * 22,
-        vx: Math.cos(a) * SKIN_SPEED,
-        vy: Math.sin(a) * SKIN_SPEED,
-        diesAt: this.now + SKIN_LIFE_MS,
-        seed: Math.random() * 999,
-        spin: Math.random() * Math.PI * 2,
-        volley,
+    for (const t of this.targetsOf(owner)) {
+      const d = Phaser.Math.Distance.Between(f.x, f.y, t.x, t.y);
+      if (d > SCREECH_R) continue;
+      // Somebody on a skewer goes where the skewer goes.
+      if (this.isRidden(t)) continue;
+      const a = d < 1 ? Math.random() * Math.PI * 2 : Math.atan2(t.y - f.y, t.x - f.x);
+      // Closer is louder: point blank is a full throw, the edge of the ring about half of one.
+      const k = 1 - 0.5 * (d / SCREECH_R);
+      this.shoves = this.shoves.filter((sh) => sh.victim !== t);
+      this.shoves.push({
+        victim: t, startedAt: this.now,
+        vx: Math.cos(a) * SCREECH_SHOVE_SPEED * k, vy: Math.sin(a) * SCREECH_SHOVE_SPEED * k,
       });
+      this.fx(owner).rustPuff(t.x, t.y, 6, 20);
     }
 
     const fx = this.fx(owner);
     this.avatar(owner)?.play('flex');
-    fx.shed(f.x, f.y, wasR);
-    fx.ring(f.x, f.y, 14, 90, RUI.bone, 480);
-    this.say(owner, f.x, f.y - 52, '🦎 SECOND SKIN', RUI.bone);
-    this.say(owner, f.x, f.y - 34,
-      `${this.skinLeft(owner)} LAYER${this.skinLeft(owner) === 1 ? '' : 'S'} LEFT`, RUI.ash);
-    Sfx.playAt('crystal-shatter', f.x, { volume: 0.9, rate: 0.55 });
-    Sfx.playAt('whoosh', f.x, { volume: 0.7, rate: 1.3 });
+    fx.screech(f.x, f.y, SCREECH_R);
+    fx.rustPuff(f.x, f.y, 14, 46, 700);
+    this.api.scene.cameras.main.shake(260, 0.007);
+    this.say(owner, f.x, f.y - 52, '🔊 SCREECHING STEEL', RUI.bone);
+    Sfx.playAt('clang', f.x, { volume: 0.9, rate: 1.9 });
+    Sfx.playAt('whoosh', f.x, { volume: 0.8, rate: 0.7 });
   }
 
   /**
-   * The plates in flight. A body caught by one takes its 15 and is dragged back into whatever
-   * shape it was in when the match started — which is the whole ability, and the reason it goes
-   * through the cross-kit `revertForms` dispatch rather than knowing anything about forms itself.
+   * The throws, and the immunity. Runs after movement, so a throw is the last word on a body's
+   * velocity for as long as it lasts. A replica is skipped: its own machine throws it.
    */
-  private updateShards(time: number, delta: number): void {
-    const dt = delta / 1000;
-    for (let i = this.shards.length - 1; i >= 0; i--) {
-      const sh = this.shards[i];
-      sh.x += sh.vx * dt;
-      sh.y += sh.vy * dt;
-      sh.spin += dt * 12;
-
-      for (const t of this.targetsOf(sh.owner)) {
-        if (sh.volley.hits.has(t)) continue;
-        if (Phaser.Math.Distance.Between(sh.x, sh.y, t.x, t.y) > SKIN_HIT_R) continue;
-        sh.volley.hits.add(t);
-        t.takeDamage(SKIN_DAMAGE);
-        this.api.spawnHitFlash(t.x, t.y, this.col(sh.owner)(RUI.bone));
-        this.fx(sh.owner).bite(t.x, t.y, 24, RUI.bone);
-        this.breakForms(sh.owner, t);
+  private updateSteel(): void {
+    for (let i = this.shoves.length - 1; i >= 0; i--) {
+      const sh = this.shoves[i];
+      const k = 1 - (this.now - sh.startedAt) / SCREECH_SHOVE_MS;
+      const v = sh.victim;
+      const replica = this.api.isOnline && v === this.api.npc;
+      if (k <= 0 || !this.alive(v) || v.knockbackImmune || v.unstoppable || replica) {
+        this.shoves.splice(i, 1);
+        continue;
       }
+      this.body(v).setVelocity(sh.vx * k, sh.vy * k);
+    }
 
-      const gone = time >= sh.diesAt
-        || sh.x < this.left - 16 || sh.x > this.right + 16
-        || sh.y < this.top - 16 || sh.y > this.bottom + 16;
-      if (gone) this.shards.splice(i, 1);
+    for (const owner of ['player', 'npc'] as Owner[]) {
+      const s = this.side(owner);
+      const f = this.fighter(owner);
+      // Myth-style: held on every frame while it lasts (Light rewrites the flag each frame too),
+      // and handed back exactly once when it ends.
+      if (this.now < s.steelImmuneUntil && this.alive(f)) {
+        f.unstoppable = true;
+        s.steelHeld = true;
+      } else if (s.steelHeld) {
+        f.unstoppable = false;
+        s.steelHeld = false;
+      }
+    }
+  }
+
+  /** Whether `owner`'s rusty aura is up. */
+  private rusting(owner: Owner): boolean {
+    return this.now < this.side(owner).rustUntil && this.alive(this.fighter(owner));
+  }
+
+  /** Enemies of `owner` standing in its rusty aura — the ones whose weapons are rotting. */
+  private rustedBy(owner: Owner): Fighter[] {
+    if (!this.rusting(owner)) return [];
+    const f = this.fighter(owner);
+    return this.targetsOf(owner).filter((t) => Phaser.Math.Distance.Between(f.x, f.y, t.x, t.y) <= RUST_AURA_R);
+  }
+
+  /**
+   * What the rust is worth, seen from the receiving end: a Ruin with the aura up takes 40% less
+   * while anybody rusted is close enough to be swinging at him. Folded into `ruinIncomingMult`
+   * by `updateDecay`, beside the blunting, for the same no-attacker-reference reason.
+   */
+  private rustAgainst(victim: Fighter): number {
+    for (const owner of ['player', 'npc'] as Owner[]) {
+      if (this.fighter(owner) !== victim || !this.rusting(owner)) continue;
+      const close = this.rustedBy(owner).some((t) =>
+        Phaser.Math.Distance.Between(victim.x, victim.y, t.x, t.y) <= RUST_MELEE_REACH);
+      if (close) return RUST_WEAKEN;
+    }
+    return 1;
+  }
+
+  /** The first time each enemy walks into the aura, their weapon visibly goes. */
+  private noteRust(): void {
+    for (const owner of ['player', 'npc'] as Owner[]) {
+      const s = this.side(owner);
+      for (const t of this.rustedBy(owner)) {
+        if (s.rustNoted.has(t)) continue;
+        s.rustNoted.add(t);
+        this.fx(owner).rustPuff(t.x + 16, t.y, 8, 16);
+        this.say(owner, t.x, t.y - 44, '🔧 WEAPON RUSTED', RUI.rust);
+      }
     }
   }
 
   /**
-   * Put somebody back in their base body.
-   *
-   * Every form in the game belongs to the kit that built it, so the only honest way to end one
-   * is to ask that kit to end it — which is what `revertForms` is. A body that was in nothing to
-   * begin with is not a miss: the plate still landed and still hurt.
+   * The bot screaming on its own clock. It is an escape, so the kit fires it at the two moments
+   * an escape is for — owner-side, as the bot contract asks, the AI never re-deriving either:
+   *   - something has hold of it (stunned, frozen, rooted or slowed) and an enemy is near enough
+   *     to be cashing in on that, or
+   *   - an enemy is pressed into melee reach, so the throw buys room *and* the aura it leaves
+   *     rusts whatever comes walking back in.
    */
-  private breakForms(owner: Owner, victim: Fighter): void {
-    const broken = this.api.revertForms(victim);
-    if (broken.length === 0) return;
-    this.fx(owner).unform(victim.x, victim.y, 42);
-    this.say(owner, victim.x, victim.y - 58,
-      `🦎 ${broken[0].toUpperCase()} BROKEN`, RUI.bright);
-    if (broken.length > 1) {
-      this.say(owner, victim.x, victim.y - 76,
-        `+${broken.length - 1} MORE`, RUI.bone);
-    }
-    Sfx.playAt('clang', victim.x, { volume: 0.85, rate: 1.3 });
-  }
-
-  /**
-   * The bot pulling its own seam.
-   *
-   * There are only five layers all match, so it is not allowed to shed at a distance and hit
-   * nothing. The geometry and both synergies are computed here, owner-side, exactly as the bot
-   * contract asks — the AI never re-derives either. A layer is worth spending when somebody is
-   * inside the plates' reach *and* is either already threaded onto this side's skewer (pinned:
-   * they cannot walk out of the burst) or standing inside a spike ring that is about to go off
-   * (the eruption strips their buffs on the same beat this strips the form underneath). Failing
-   * both, it will still shed on anybody who has walked well inside knife range.
-   */
-  private updateNpcSecondSkin(time: number): void {
+  private updateNpcSteel(time: number): void {
     // Online the npc is a remote player: their own client casts it and it arrives via replay.
     if (this.api.isOnline) return;
-    if (!this.secondSkinSlot('npc')) return;
-    if (this.skinLeft('npc') <= 0) return;
-    if (time - this.sides.npc.skinCastAt < SKIN_COOLDOWN_MS) return;
+    if (!this.steelSlot('npc')) return;
+    if (time - this.sides.npc.steelCastAt < STEEL_COOLDOWN_MS) return;
     const f = this.api.npc;
     if (!this.alive(f)) return;
 
-    const ring = this.rings.find((r) => r.owner === 'npc');
-    let fallback = false;
+    let near = false;
+    let pressed = false;
     for (const t of this.targetsOf('npc')) {
       const d = Phaser.Math.Distance.Between(f.x, f.y, t.x, t.y);
-      if (d > SKIN_REACH) continue;
-      if (this.skewers.some((s) => s.owner === 'npc' && s.riders.includes(t))
-        || (ring && Phaser.Math.Distance.Between(ring.x, ring.y, t.x, t.y) <= RING_R)) {
-        this.trySecondSkin('npc');
-        return;
-      }
-      if (d < SKIN_REACH * 0.45) fallback = true;
+      if (d <= SCREECH_R) near = true;
+      if (d <= RUST_MELEE_REACH) pressed = true;
     }
-    if (fallback) this.trySecondSkin('npc');
+    const held = f.stunnedUntil > Date.now() || f.earthStunnedUntil > time || f.frozenUntil > time
+      || f.walkSpeedMult < 1;
+    if ((held && near) || pressed) this.tryScreechingSteel('npc');
   }
 
   // ── Update ─────────────────────────────────────────────────────────────────
@@ -1063,8 +1065,9 @@ export class RuinKit {
     this.updateCracks(time, delta);
     this.updateSpikes(time, delta);
     this.updateLocks(time, delta);
-    this.updateShards(time, delta);
-    this.updateNpcSecondSkin(time);
+    this.updateSteel();
+    this.noteRust();
+    this.updateNpcSteel(time);
     this.updateDecay(time, delta);
     this.updateMeters();
     this.updateAvatars(delta, playerIs, npcIs);
@@ -1738,8 +1741,9 @@ export class RuinKit {
         const curve = this.decayCurve(owner);
         m *= this.isEnemyOf(owner, f) ? curve.vuln : curve.weaken;
       }
-      // Chain Reaction's blunting rides the same field, for the same reason.
+      // Chain Reaction's blunting and Screeching Steel's rust ride the same field, for the same reason.
       m *= this.bluntAgainst(f);
+      m *= this.rustAgainst(f);
       f.ruinIncomingMult = m;
       this.touched.add(f);
     }
@@ -1817,8 +1821,8 @@ export class RuinKit {
       // He cracks apart as he loses health — the one honest thing about him.
       if (this.playerAvatar instanceof RuinAvatar) this.playerAvatar.setRuinLevel(1 - Phaser.Math.Clamp(f.hp / f.maxHp, 0, 1));
       this.playerAvatar.setMastered(this.api.masteryActive);
-      // Second Skin: the rig is the body anybody actually sees, so the permanent shrink has to
-      // land on it as well as on the sprite's hitbox.
+      // `ruinSizeMult` is 1 unless something shrank him; the rig is the body anybody actually
+      // sees, so a shrink has to land on it as well as on the sprite's hitbox.
       this.playerAvatar.setRigScale(f.ruinSizeMult);
       this.playerAvatar.update(delta, f.x, f.y, this.alive(f) ? 1 : 0);
     } else if (this.playerAvatar) {
@@ -1886,6 +1890,32 @@ export class RuinKit {
       g.fillCircle(c.x, c.y, CRYSTAL_R * 1.7);
     }
 
+    // ── Rusty aura ──
+    // A ragged disc of rust haze riding under him, its edge breathing, with flakes of it
+    // circling slowly inward — and fading out over its last second.
+    for (const owner of ['player', 'npc'] as Owner[]) {
+      if (!this.rusting(owner)) continue;
+      const f = this.fighter(owner);
+      const tint = this.col(owner);
+      const fade = Phaser.Math.Clamp((this.side(owner).rustUntil - time) / 1000, 0, 1);
+      const pts: Phaser.Geom.Point[] = [];
+      for (let i = 0; i <= 32; i++) {
+        const a = (i / 32) * Math.PI * 2;
+        const rr = RUST_AURA_R * (0.94 + jitter(i, 7) * 0.08 + Math.sin(this.vizT * 2 + i * 1.7) * 0.025);
+        pts.push(new Phaser.Geom.Point(f.x + Math.cos(a) * rr, f.y + Math.sin(a) * rr * 0.62));
+      }
+      g.fillStyle(tint(RUI.rust), 0.1 * fade);
+      g.fillPoints(pts, true, true);
+      g.lineStyle(2, tint(RUI.rust), 0.45 * fade);
+      g.strokePoints(pts, true, true);
+      for (let i = 0; i < 18; i++) {
+        const a = jitter(i, 3) * Math.PI * 2 + this.vizT * 0.4;
+        const rr = RUST_AURA_R * ((jitter(i, 9) + this.vizT * 0.15) % 1);
+        g.fillStyle(tint(i % 3 ? RUI.rust : RUI.ember), 0.55 * fade);
+        g.fillRect(f.x + Math.cos(a) * rr, f.y + Math.sin(a) * rr * 0.62, 2.4, 2.4);
+      }
+    }
+
     for (const r of this.rings) {
       const charge = Phaser.Math.Clamp((time - r.startedAt) / RING_FUSE_MS, 0, 1);
       this.art(r.owner).ruinRing(g, this.col(r.owner), r.x, r.y, RING_R, this.vizT, 1, charge, r.seed);
@@ -1925,11 +1955,30 @@ export class RuinKit {
       this.art('player').crackWeb(g, this.pcol, f.x, f.y, 30, f.x, fade * 0.5, 1, { runs: 5, width: 1.6, color: RUI.bright });
     }
 
-    // ── Shed skin in flight ──
-    for (const sh of this.shards) {
-      const fade = Phaser.Math.Clamp((sh.diesAt - time) / 260, 0, 1);
-      this.art(sh.owner).skinShard(g, this.col(sh.owner), sh.x, sh.y, Math.atan2(sh.vy, sh.vx),
-        SKIN_SHARD_LEN, fade, sh.spin, sh.seed);
+    // ── Rusted weapons ──
+    // Everybody standing in a rusty aura wears a corroded blade at their side: an iron edge
+    // eaten through with rust, the blotches crawling, flakes dropping off the bottom of it.
+    for (const owner of ['player', 'npc'] as Owner[]) {
+      for (const t of this.rustedBy(owner)) {
+        const tint = this.col(owner);
+        const bx = t.x + 20, by = t.y - 4;
+        const ang = -1.1 + Math.sin(this.vizT * 2 + t.x * 0.01) * 0.08;
+        const ca = Math.cos(ang), sa = Math.sin(ang);
+        const tip = { x: bx + ca * 22, y: by + sa * 22 };
+        const nx = -sa * 3.2, ny = ca * 3.2;
+        g.fillStyle(tint(RUI.iron), 0.9);
+        g.fillTriangle(bx + nx, by + ny, bx - nx, by - ny, tip.x, tip.y);
+        g.lineStyle(2.4, tint(RUI.ash), 0.9);
+        g.lineBetween(bx - ca * 7, by - sa * 7, bx, by);
+        for (let i = 0; i < 4; i++) {
+          const k = 0.15 + i * 0.2 + Math.sin(this.vizT * 1.5 + i) * 0.03;
+          g.fillStyle(tint(i % 2 ? RUI.rust : RUI.ember), 0.75);
+          g.fillCircle(bx + ca * 22 * k + nx * jitter(t.x, i) * 0.6, by + sa * 22 * k + ny * jitter(t.y, i) * 0.6, 1.8 + jitter(i, t.x) * 1.4);
+        }
+        const drop = (this.vizT * 26 + t.x) % 16;
+        g.fillStyle(tint(RUI.rust), 0.7 * (1 - drop / 16));
+        g.fillRect(bx + ca * 10, by + sa * 10 + drop, 2.2, 2.2);
+      }
     }
 
     // ── Ruin spikes in flight ──
@@ -2094,10 +2143,24 @@ export class RuinKit {
       priority: 118,
     } : null);
 
-    this.api.setStatusIndicator('ruin-skin', this.secondSkinSlot('player') ? {
-      name: 'Second Skin', emoji: '🦎', color: RUI.bone,
-      description: `${this.skinLeft('player')} of 5 layers left. Each one shed is 25 plates at 15 damage that put anything they touch back in its base form — and 20% off your own size, for good. You are currently ${Math.round(p.ruinSizeMult * 100)}% of the size you started at.`,
-      count: this.skinLeft('player'), priority: 117,
+    const steel = this.sides.player;
+    this.api.setStatusIndicator('ruin-steel', playerIsRuin && this.now < steel.steelImmuneUntil ? {
+      name: 'Screeching Steel', emoji: '🔊', color: RUI.bone,
+      description: 'Nothing can stun, freeze, root or slow you. Get out.',
+      until: steel.steelImmuneUntil, priority: 117,
+    } : null);
+    this.api.setStatusIndicator('ruin-rust-aura', playerIsRuin && this.rusting('player') ? {
+      name: 'Rusty Aura', emoji: '🔧', color: RUI.rust,
+      description: `Weapons within ${RUST_AURA_R}px of you rot. Anybody rusted who gets close enough to swing at you deals ${Math.round((1 - RUST_WEAKEN) * 100)}% less.`,
+      until: steel.rustUntil, count: this.rustedBy('player').length || undefined, priority: 116,
+    } : null);
+
+    // Victim side: standing in an enemy Ruin's rusty aura.
+    const rustedMe = this.rustedBy('npc').includes(p);
+    this.api.setStatusIndicator('ruin-rusted', rustedMe ? {
+      name: 'Weapon Rusted', emoji: '🔧', color: RUI.rust,
+      description: `You are inside a Ruin's rusty aura. Anything you hit them with up close deals ${Math.round((1 - RUST_WEAKEN) * 100)}% less.`,
+      until: this.sides.npc.rustUntil, priority: 8,
     } : null);
 
     // Victim side: something just pulled you out of whatever you had turned into.
@@ -2132,12 +2195,12 @@ export class RuinKit {
   }
 
   /**
-   * The slot the bot gave up for Second Skin, so its AI stops casting what is no longer there.
-   * The kit is the only thing that knows: the bind lives on the scene, but whether Ruin is even
-   * the element wearing it does not. Side-effect-free.
+   * The slot the bot gave up for Screeching Steel, so its AI stops casting what is no longer
+   * there. The kit is the only thing that knows: the bind lives on the scene, but whether Ruin is
+   * even the element wearing it does not. Side-effect-free.
    */
-  npcSecondSkinSlot(): 'e' | 'r' | 'f' | 'q' | null {
-    return this.secondSkinSlot('npc');
+  npcSteelSlot(): 'e' | 'r' | 'f' | 'q' | null {
+    return this.steelSlot('npc');
   }
 
   /**
@@ -2146,13 +2209,9 @@ export class RuinKit {
    */
   getBarRatio(abilityId: string, time: number): number {
     const p = this.api.player;
-    // Mastery. The tray fills a card as it becomes *ready*, so a spent Second Skin is an empty
-    // bar that never fills again — which is what "greyed out and no longer usable" looks like
-    // on a tray that only knows how to count towards readiness.
-    if (abilityId === 'second-skin') {
-      if (this.skinLeft('player') <= 0) return 0;
-      return Phaser.Math.Clamp(
-        (time - this.sides.player.skinCastAt) / SKIN_COOLDOWN_MS, 0, 1);
+    // Mastery: a private timer, so the card counts it rather than the slot's real cooldown.
+    if (abilityId === 'screeching-steel') {
+      return Phaser.Math.Clamp((time - this.sides.player.steelCastAt) / STEEL_COOLDOWN_MS, 0, 1);
     }
     if (abilityId === 'ruin-spikes') {
       const ring = this.rings.find((r) => r.owner === 'player');

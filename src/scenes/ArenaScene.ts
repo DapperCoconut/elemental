@@ -66,6 +66,8 @@ import { ShadowKit, ShadowArenaApi } from '../elements/kits/ShadowKit';
 import { ElectricityKit, ElectricityArenaApi } from '../elements/kits/ElectricityKit';
 import { TechnologyKit, TechArenaApi } from '../elements/kits/TechnologyKit';
 import { ProjectileRegistry } from '../combat/ProjectileRegistry';
+import { isStrikeTarget, strikeTargetHit } from '../boss/framework/StrikeTargets';
+import { shotsNear } from '../combat/ShotHandles';
 import { SummonPurgeTarget } from '../combat/SummonPurge';
 import { FormRevertTarget } from '../combat/FormRevert';
 import { SlimeKit, SlimeArenaApi } from '../elements/kits/SlimeKit';
@@ -1806,6 +1808,8 @@ export class ArenaScene extends Phaser.Scene {
           if (arena.playerIs('light')) PlayerData.addMasteryStat('light', key, amount);
         },
         broadcastMasteryCast: (enhId) => arena.broadcastMasteryCast(enhId),
+        get isOnline() { return arena.isOnline; },
+        setStatusIndicator: (id, status) => arena.setStatusIndicator(id, status),
       };
       this.lightKit = new LightKit(lightApi);
     }
@@ -3819,7 +3823,7 @@ export class ArenaScene extends Phaser.Scene {
           else arena.iceKit.doNpcFireFrozenSolid(tx, ty, true);
         }),
         timeAlwaysNoonForced: (owner) => foreign(() => arena.timeKit.doTimeAlwaysNoon(owner, true)),
-        lightSpeedOLight: (owner) => foreign(() => arena.lightKit.startSpeedOLight(owner, arena.time.now)),
+        lightSupernova: (owner) => foreign(() => arena.lightKit.startNova(owner, arena.time.now)),
         echoEclipseDirect: (owner) => foreign(() => {
           const target = owner === 'player' ? arena.npc : arena.player;
           arena.echoKit.doEclipse(target.x, target.y, owner);
@@ -4221,6 +4225,15 @@ export class ArenaScene extends Phaser.Scene {
         const proj = a as Projectile;
         const target = b as Fighter;
         if (!proj.active || !target.active || target.hp <= 0) return;
+        if (isStrikeTarget(target)) {
+          // A lever, prism or pylon an Isles rule put on the floor: it reports the blow and
+          // never takes damage. Either side's shots count.
+          if (strikeTargetHit(target, proj, proj.isFromPlayer ? 'player' : 'npc')) {
+            proj.setActive(false).setVisible(false);
+            (proj.body as Phaser.Physics.Arcade.Body).stop();
+          }
+          return;
+        }
         if (!proj.isFromPlayer) {
           // An npc-owned shot normally only ever looks for the player. On a map
           // that puts a third party on the field, it can also hit that — which
@@ -4918,6 +4931,7 @@ export class ArenaScene extends Phaser.Scene {
             showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
             spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
             bossVictory: () => arena.endGame(true),
+            shotsNear: (x, y, r) => shotsNear(arena.projectiles, arena.techProjReg, x, y, r),
           };
           this.worldBossKit = new WorldBossKit(api);
         }
@@ -5046,6 +5060,8 @@ export class ArenaScene extends Phaser.Scene {
           get width() { return arena.scale.width; },
           get height() { return arena.scale.height; },
           get elementId() { return arena.elementId; },
+          get projectiles() { return arena.projectiles; },
+          get projectileRegistry() { return arena.techProjReg; },
           gameEnded: () => arena.gameEnded,
           addEnemy: (f) => { arena.enemies.push(f); arena.enemyGroup.add(f, true); },
           removeEnemy: (f) => {
@@ -5540,6 +5556,11 @@ export class ArenaScene extends Phaser.Scene {
       if (this.npcElement.id === 'fire') this.fireKit.replayNet(enhId, tx, ty);
       return;
     }
+    // Light: likewise its Supernova's aim, and the stop — the replica can't know the speed it had.
+    if (enhId.startsWith('light-nova-')) {
+      if (this.npcElement.id === 'light') this.lightKit.replayNet(enhId, tx, ty);
+      return;
+    }
         // Life: the seed the peer just picked — their next planting grows it.
     if (enhId.startsWith('life-seed:')) {
       if (this.npcElement.id === 'life') this.lifeKit.setNpcSeed(enhId);
@@ -5619,11 +5640,10 @@ export class ArenaScene extends Phaser.Scene {
       case 'devotion-crash':
         if (this.npcElement.id === 'passion') this.passionKit.doNpcCrash(tx, ty);
         break;
-      // Ruin Mastery — Second Skin. The burst is a full circle centred on the caster, so no aim
-      // crosses the wire; the layer they spent has to come off on this sim too, or their five
-      // would never run out over here.
-      case 'second-skin':
-        if (this.npcElement.id === 'ruin') this.ruinKit.doNpcSecondSkin();
+      // Ruin Mastery — Screeching Steel. The shriek is a full circle centred on the caster, so no
+      // aim crosses the wire; it has to throw our player on this sim, the one that owns the body.
+      case 'screeching-steel':
+        if (this.npcElement.id === 'ruin') this.ruinKit.doNpcScreechingSteel();
         break;
       // Paper Mastery — Restructure. The aim carries, because the cursor is the point the
       // pieces reassemble at and therefore where the opponent's body ends up on this sim too.
@@ -5780,6 +5800,8 @@ export class ArenaScene extends Phaser.Scene {
    * whoever dealt it. The npc slot holds an ally in co-op, which never earns off the player.
    */
   private creditUltDamage(victim: Fighter, amount: number): void {
+    // Striking a lever is not fighting anyone.
+    if (isStrikeTarget(victim)) return;
     const npcHostile = !this.npc?.allyDamageBlocked;
     if (victim === this.player) {
       this.player.addUltCharge(amount);
@@ -5880,7 +5902,7 @@ export class ArenaScene extends Phaser.Scene {
       'ruin-decay':            0xb08a3a,
       // Bone rather than any of the reds: the shed layer is the one thing this element makes
       // that isn't rusted, and the card has to read apart from whichever key it is sitting on.
-      'second-skin':           0xe6d8cf,
+      'screeching-steel':      0xe6d8cf,
       // Paper takes its card colours from the three storybooks: green knight, blue alien,
       // red fantasy — and the three keys that belong to no book stay paper-coloured.
       'paper-storybook':       0x6ef0a8,
@@ -6126,7 +6148,7 @@ export class ArenaScene extends Phaser.Scene {
       'blink':          0x88ddff,
       'prism-ramp':     0x66ddff,
       'light-trick':    0xffdd66,
-      'speed-o-light':  0xff2200,
+      'light-supernova': 0xffdd44,
       // Death (Gunpowder)
       'gunpowder-musket-shot':    0x3a2a1a,
       'gunpowder-explosive-retreat': 0xffaa33,
@@ -12108,6 +12130,7 @@ export class ArenaScene extends Phaser.Scene {
       npcMagmaBloat: this.magmaKit.isBloatActive('npc'),
       npcMagmaVolcanoes: this.magmaKit.volcanoCount('npc'),
       npcLightTrickRamp: this.npcElement.id === 'light' && this.lightKit.npcTrickRampReady(),
+      npcLightNovaReady: this.npcElement.id === 'light' && this.lightKit.npcNovaReady(),
       npcMagmaChargeTarget: this.magmaKit.chargeTarget('npc') ?? undefined,
       npcMagmaBlunderCharges: this.magmaKit.blunderCharges('npc'),
       npcMagmaGaugePressure: this.magmaKit.npcGaugePressure(),
@@ -12221,7 +12244,7 @@ export class ArenaScene extends Phaser.Scene {
       npcRuinSkewerOut: this.ruinKit.hasSkewer('npc'),
       npcRuinDecayStacks: this.ruinKit.decayStacks('npc'),
       npcRuinCanLock: this.ruinKit.canLock(this.player),
-      npcRuinSkinSlot: this.ruinKit.npcSecondSkinSlot(),
+      npcRuinSteelSlot: this.ruinKit.npcSteelSlot(),
       // Paper: which book is open decides what the click and the Q even are, so the bot has to
       // be told rather than guessing — and the Alien book refuses the click on its own clocks.
       npcPaperBook: this.paperKit.getBook('npc'),
@@ -12446,7 +12469,8 @@ export class ArenaScene extends Phaser.Scene {
     if (this.playerIs('earth') || this.npcElement.id === 'earth' || this.earthKit.hasActiveBiomeWorld()) {
       this.earthKit.update(time, delta);
     }
-    if (this.playerIs('light') || this.npcElement.id === 'light') {
+    // A Supernova borrowed by Subterfuge keeps the kit awake with no Light in the match.
+    if (this.playerIs('light') || this.npcElement.id === 'light' || this.lightKit.hasActiveNova()) {
       this.lightKit.update(time, delta, this.playerIs('light'), this.npcElement.id === 'light');
     }
     // Shadow post-AI overrides (must run after doAI so drag velocities win)
@@ -12961,9 +12985,9 @@ export class ArenaScene extends Phaser.Scene {
         // The pane's remaining seconds, the dance's own clock and a mask that has no duration
         // at all outlast their cooldowns.
         entry.fill.setSize(entry.maxWidth * this.illusionKit.getBarRatio(entry.abilityId, time), entry.fill.height);
-      } else if (entry.abilityId.startsWith('ruin-') || entry.abilityId === 'second-skin') {
+      } else if (entry.abilityId.startsWith('ruin-') || entry.abilityId === 'screeching-steel') {
         // The spike ring's two-second fuse is the only thing worth counting on these cards, and
-        // a Second Skin with no layers left is a bar that never fills again.
+        // Screeching Steel runs on the kit's own clock.
         entry.fill.setSize(entry.maxWidth * this.ruinKit.getBarRatio(entry.abilityId, time), entry.fill.height);
       } else if (entry.abilityId.startsWith('paper-') || entry.abilityId === 'restructure') {
         // The click is gated by the Alien book's burst and reload rather than by its own
@@ -13352,7 +13376,8 @@ export class ArenaScene extends Phaser.Scene {
     let best: Fighter = this.npc;
     let bestDist = Infinity;
     for (const e of this.reachableEnemies) {
-      if (!e.active || e.hp <= 0) continue;
+      // Strike targets are things on the floor, not foes — homing and auto-aim never pick one.
+      if (!e.active || e.hp <= 0 || isStrikeTarget(e)) continue;
       const d = Phaser.Math.Distance.Between(fromX, fromY, e.x, e.y);
       if (d < bestDist) { bestDist = d; best = e; }
     }
@@ -13386,8 +13411,9 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   /**
-   * Ruin Mastery's Second Skin: put `f` back in the body they started the match in, and report
-   * the names of the forms that actually ended.
+   * Put `f` back in the body they started the match in, and report the names of the forms that
+   * actually ended. Built for Ruin Mastery's retired Second Skin; nothing calls it now, but every
+   * kit still implements its half of the FormRevert contract.
    *
    * Same shape as {@link purgeSummonsInCircle} and for the same reason — ArenaScene is the only
    * object holding every kit, but none of the *deciding* happens here. Only the kit that built a

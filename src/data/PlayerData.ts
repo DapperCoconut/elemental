@@ -783,6 +783,8 @@ export function getMasteryBinds(elementId: string): Record<string, string> {
   for (const s of Object.keys(binds)) if (binds[s] === 'utter-focus') binds[s] = 'pre-move';
   // Bind's mastery was redone: an old Ritual Sacrifice bind reads as its replacement, False Idol.
   for (const s of Object.keys(binds)) if (binds[s] === 'ritual-sacrifice') binds[s] = 'false-idol';
+  // Ruin's bindable was redone: an old Second Skin bind reads as its replacement, Screeching Steel.
+  for (const s of Object.keys(binds)) if (binds[s] === 'second-skin') binds[s] = 'screeching-steel';
   return binds;
 }
 

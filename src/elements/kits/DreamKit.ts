@@ -636,12 +636,8 @@ export class DreamKit {
 
   private bounds(): Phaser.Geom.Rectangle { return this.api.scene.physics.world.bounds; }
 
-  /** Kit-made label — the arena's own floating text is switched off, so the ones that matter are ours. */
-  private announce(x: number, y: number, text: string, color: string, size = 12): void {
-    const t = this.api.scene.add.text(x, y, text, {
-      fontSize: `${size}px`, fontFamily: 'Arial Black', color, stroke: '#0b0620', strokeThickness: 3,
-    }).setOrigin(0.5).setDepth(19);
-    this.api.scene.tweens.add({ targets: t, y: y - 22, alpha: 0, duration: 1100, ease: 'Cubic.easeOut', onComplete: () => t.destroy() });
+  private announce(_x: number, _y: number, _text: string, _color: string, _size = 12): void {
+    // Battle text pop-ups are disabled — they cluttered every attack.
   }
 
   private deny(text: string): void {

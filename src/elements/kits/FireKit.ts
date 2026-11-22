@@ -1476,8 +1476,9 @@ export class FireKit {
     if (!nova) return;
     const owner = nova.owner;
     const f = this.fighterOf(owner);
-    // A felled, stunned or frozen caster lets go.
-    if (!f?.active || f.hp <= 0 || f.stunnedUntil > time || f.frozenUntil > time) { this.stopNova(owner); return; }
+    // A felled, stunned or frozen caster lets go. `stunnedUntil` is on the wall clock
+    // (Date.now), `frozenUntil` on the scene clock — compare each against its own.
+    if (!f?.active || f.hp <= 0 || f.stunnedUntil > Date.now() || f.frozenUntil > time) { this.stopNova(owner); return; }
     const isReplica = owner === 'npc' && this.arena.isOnline;
 
     // Where the beam is being pulled: the cursor, or the bot's quarry. A replica's pull point

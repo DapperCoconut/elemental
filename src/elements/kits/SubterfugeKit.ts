@@ -38,7 +38,7 @@ export interface SubterfugeArenaApi {
   oilTrain(owner: 'player' | 'npc'): void;
   iceFrozenSolidNoFrost(owner: 'player' | 'npc', tx: number, ty: number): void;
   timeAlwaysNoonForced(owner: 'player' | 'npc'): void;
-  lightSpeedOLight(owner: 'player' | 'npc'): void;
+  lightSupernova(owner: 'player' | 'npc'): void;
   echoEclipseDirect(owner: 'player' | 'npc'): void;
   magicNecronomicon(owner: 'player' | 'npc'): void;
   crystalClonePositions(owner: 'player' | 'npc'): Array<{ x: number; y: number }>;
@@ -1894,7 +1894,7 @@ export class SubterfugeKit {
         break;
       }
       case 'time': api.timeAlwaysNoonForced(owner); break;
-      case 'light': api.lightSpeedOLight(owner); break;
+      case 'light': api.lightSupernova(owner); break;
       case 'echo': api.echoEclipseDirect(owner); break;
       case 'magic': api.magicNecronomicon(owner); break;
 
@@ -2206,6 +2206,7 @@ export class SubterfugeKit {
   private _playerClickDaggers(tx: number, ty: number): void {
     const out = this.playerDaggers.filter(d => d.state !== 'returning').length;
     if (out >= DAGGER_MAX) { this._recallDaggers('player'); return; }
+    this.api.player.onKitCast?.('sub-cutter');
     this._throwDagger('player', tx, ty, this._pickBalancedColor('player'));
     // Crystal copy: active clones also throw daggers (extras beyond the 3-dagger cap)
     for (const pos of this.api.crystalClonePositions('player')) {

@@ -224,7 +224,7 @@ const subterfuge: ElementCodex = {
           { emoji: '🎵', name: 'Sound', description: 'A disco ball for 12 seconds, firing every 3 seconds for 10 damage.' },
           { emoji: '⚡', name: 'Electricity', description: 'Overcharged for 5 seconds: die inside the window and you come back at 25% health.' },
           { emoji: '🧪', name: 'Acid', description: 'Acid falls on the entire screen for 8 seconds at a quarter strength — 1.5 damage every half second, everywhere.' },
-          { emoji: '🪨', name: 'Earth · Oil · Ice · Time · Light · Echo · Magic', description: 'Routed straight into those kits — a golem, the train, Frozen Solid without the frost, Always Noon, Speed \'O\' Light, a direct Eclipse and the Necronomicon.' },
+          { emoji: '🪨', name: 'Earth · Oil · Ice · Time · Light · Echo · Magic', description: 'Routed straight into those kits — a golem, the train, Frozen Solid without the frost, Always Noon, a 3-second Supernova, a direct Eclipse and the Necronomicon.' },
           { emoji: '🚫', name: 'Gunpowder · Rubber', description: 'No contract. The ultimate is spent and nothing happens.' },
         ],
       },

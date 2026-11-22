@@ -3,6 +3,8 @@ import { Fighter } from '../../entities/Fighter';
 import { Husk, HuskWorld } from '../../invasion/Husk';
 import { HuskVariantDef } from '../../invasion/HuskVariants';
 import { Sfx } from '../../audio';
+import { inertStrikeTarget, type StrikeTarget, type StrikeTargetDef, type Striker } from './StrikeTargets';
+import type { ShotHandle } from '../../combat/ShotHandles';
 
 /**
  * The hazard engine every world boss (and, later, The Amalgam) fights through.
@@ -48,6 +50,13 @@ export interface BossToolkitHost {
   healBoss(amount: number): void;
   spawnHitFlash(x: number, y: number, color: number): void;
   showFloatingText(x: number, y: number, text: string, color: string): void;
+  /**
+   * Put a strikeable thing on the field (see StrikeTargets). Hosts without a live arena (the
+   * content validator's smoke runs) leave this out and get inert targets that are never struck.
+   */
+  spawnTarget?(def: StrikeTargetDef): StrikeTarget;
+  /** Fighters' shots in flight inside a circle (see ShotHandles). Absent: none are ever seen. */
+  shotsNear?(x: number, y: number, r: number): ShotHandle[];
 }
 
 // Shared numbers — the King's tuned figures, kept as the framework's floor.
@@ -117,6 +126,13 @@ export class BossToolkit {
   private charges: TCharge[] = [];
   private healOrbs: THealOrb[] = [];
   private adds: Husk[] = [];
+  private targets: { t: StrikeTarget; def: StrikeTargetDef }[] = [];
+
+  /**
+   * True while the room is dark (a Sovereign's `gloom` phase). Signatures read it to decide
+   * what to paint brighter; their `drawAir` layer already sits above the dark.
+   */
+  dark = false;
 
   private pullX = 0;
   private pullY = 0;
@@ -411,6 +427,42 @@ export class BossToolkit {
   }
 
   get addCount(): number { return this.adds.length; }
+
+  // ── Strike targets ───────────────────────────────────────────────
+
+  /**
+   * Something either fighter can strike — a lever, a prism, a pylon. Every damage path in the
+   * arena reaches it; each blow calls `def.onStruck(by, amount)` and the thing itself never
+   * breaks (remove it yourself). Survives phase changes; dropped with the toolkit.
+   */
+  spawnTarget(def: StrikeTargetDef): StrikeTarget {
+    const t = this.host.spawnTarget ? this.host.spawnTarget(def) : inertStrikeTarget(def);
+    this.targets.push({ t, def });
+    return t;
+  }
+
+  /**
+   * Fighters' shots in flight inside a circle — block them on a wall, bounce them back off a
+   * rebound (see ShotHandles). Empty where the host cannot see shots.
+   */
+  shotsNear(x: number, y: number, r: number): ShotHandle[] {
+    return this.host.shotsNear?.(x, y, r) ?? [];
+  }
+
+  /**
+   * Strike every live target within `reach` of a point — for blows that are not hits on a
+   * body (a bot's melee swing, a shockwave a rule throws).
+   */
+  strikeTargetsNear(x: number, y: number, reach: number, by: Striker, amount: number): number {
+    let n = 0;
+    this.targets = this.targets.filter((e) => e.t.alive);
+    for (const { t, def } of this.targets) {
+      if (Math.hypot(t.x - x, t.y - y) > reach + def.r) continue;
+      n++;
+      try { def.onStruck(by, amount); } catch (e) { console.error('[strike target]', e); }
+    }
+    return n;
+  }
 
   private removeAdd(husk: Husk): void {
     this.adds = this.adds.filter((h) => h !== husk);
@@ -838,6 +890,8 @@ export class BossToolkit {
 
   destroy(): void {
     this.clearHazards();
+    for (const { t } of this.targets) t.remove();
+    this.targets = [];
     this.healOrbs = [];
     if (this.player?.active) this.playerSlowMult = 1;
   }

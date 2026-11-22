@@ -56,6 +56,7 @@ export const ABILITY_TAGS: Record<string, readonly AbilityTag[]> = {
   fermata: ['recast'],
   // Light
   'light-lance': ['hold'],
+  'light-supernova': ['recast'],
   // Magnet
   'magnet-coin': ['hold'],
   'magnet-nail': ['recast'],

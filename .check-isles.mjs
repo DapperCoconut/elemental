@@ -6,7 +6,7 @@
 // skipped, and any still standing are listed at the end so an isle can't be called done with one left.
 // Phaser is stubbed (content only touches it inside draw functions), so this runs in plain node.
 import { build } from 'esbuild';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -49,10 +49,23 @@ rmSync(dir, { recursive: true, force: true });
 const onlyAt = process.argv.indexOf('--only');
 const ONLY = onlyAt > 0 ? process.argv[onlyAt + 1] : null;
 let errors = 0, warns = 0;
-const say = (m) => { if (!ONLY || m.includes(ONLY)) console.log(m); };
+// `--only <court>` also shows its prince's messages (they name `isle:<prince>` / `art-<prince>`), and
+// `--only <dungeon>` its monarch's.
+const ONLY_IDS = ONLY ? [ONLY] : [];
+if (ONLY) {
+  const court = R.allCourts().find((c) => c.id === ONLY || c.area === ONLY);
+  if (court) ONLY_IDS.push(`isle:${court.prince.id}`, `art-${court.prince.id}`);
+  for (const isle of R.ISLES) {
+    const dungeonArea = R.allAreas().find((a) => a.id === ONLY && a.isle === isle.id && !a.court && a.id !== isle.port);
+    if (dungeonArea) ONLY_IDS.push(`isle:${isle.monarch.id}`, isle.monarch.artifact);
+  }
+}
+const say = (m) => { if (!ONLY || ONLY_IDS.some((id) => m.includes(id))) console.log(m); };
 const err = (m) => { errors++; say(`  ✗ ${m}`); };
 const warn = (m) => { warns++; say(`  ! ${m}`); };
 const SFX = new Set(`hit-light hit-medium hit-heavy crit shield-block shield-break heal dash whoosh land explosion-small explosion-medium explosion-large status-burn status-freeze status-shock status-poison status-slow status-stun status-buff status-debuff fireball flame-burst inferno water-jet splash geyser rain bubble gust tornado beam-charge beam-fire rock-throw quake stone-slam stone-rise thorn spore ice-shard frost-blast ice-shatter zap thunder electric-charge plasma-arc chaos clang slash stab chain anvil gravity-slam meteor light-beam blink crystal-chime crystal-shatter prism portal teleport sonic-pulse screech drum-hit musket shotgun reload roar grenade-throw trap-set trap-snap sizzle slime-splat whip oil-splash engine drone-buzz train-horn magnet-pull glitch clock-tick time-warp dice jackpot sparkle curse-cast boing snap-back hush heartbeat money smoke judgement holy-chord wings hammer-forge gear-turn mortar-launch boss-intro boss-phase countdown-tick countdown-go`.split(' '));
+// …plus every voice SoundLibrary actually defines, so a real voice the list above missed is not flagged.
+for (const m of readFileSync('src/audio/SoundLibrary.ts', 'utf8').matchAll(/^\s*'([a-z0-9-]+)':/gm)) SFX.add(m[1]);
 
 // Placeholders: their areas, courts, and the bosses/artifacts they stand in for are skipped.
 const phAreas = new Set(R.allAreas().filter((a) => a.placeholder).map((a) => a.id));
@@ -295,8 +308,11 @@ for (const c of R.allCourts()) {
     for (const pc of a.painter.pieces ?? []) tryRun(`${a.id} piece@${pc.x},${pc.y}`, () => pc.draw(G, rng));
     const view = { x: 0, y: 0, w: a.w, h: a.h };
     for (const t of [0.5, 3.3, 17]) {
-      tryRun(`${a.id} animate`, () => a.painter.animate?.(G, t, view));
-      tryRun(`${a.id} animateOver`, () => a.painter.animateOver?.(G, t, view));
+      // Both halves of the story: every condition true, then every condition false.
+      for (const world of [{ test: () => true }, { test: () => false }]) {
+        tryRun(`${a.id} animate`, () => a.painter.animate?.(G, t, view, world));
+        tryRun(`${a.id} animateOver`, () => a.painter.animateOver?.(G, t, view, world));
+      }
     }
   }
   const bossDefs = [...R.allCourts().map((c) => R.getIslesBoss(`isle:${c.prince.id}`)), ...R.ISLES.map((i) => R.getIslesBoss(`isle:${i.monarch.id}`))].filter((d) => d && !phBosses.has(d.worldId));
@@ -317,17 +333,24 @@ for (const c of R.allCourts()) {
           for (let i = 0; i < 240; i++) {
             const t = 1000 + i * 16;
             scene.time.now = t;
+            tk.dark = i > 120;
             player.x = 480 + Math.sin(i / 15) * 250; player.y = 380 + Math.cos(i / 25) * 120;
             m.update?.(t, 0.016); tk.update(t, 16);
             m.drawGround?.(G, t); m.drawAir?.(G, t); tk.drawGround(G, t); tk.drawAir(G, t);
+            m.takenMult?.();
+            if (i % 40 === 0) { m.onBossHurt?.(12); tk.strikeTargetsNear(player.x, player.y, 400, 'player', 10); }
           }
           m.onPhaseEnd?.();
         });
       }
       for (let pi = 0; pi < d.phases.length + 1; pi++) {
-        tryRun(`${d.worldId} drawDecor p${pi}`, () => d.drawDecor?.(G, { x: 480, y: 260, t: 2, hpRatio: 0.5, enraged: pi > 1, hurt: false, phaseIdx: pi, hard,
-          facing: 0, castGlow: 0.5, radius: 34, palette: { main: d.color, lit: d.colorLit, dark: d.colorDark, accent: d.accent }, look: d.look,
-          hands: [{ x: 440, y: 270 }, { x: 520, y: 270 }, { x: 430, y: 300 }, { x: 530, y: 300 }] }));
+        for (const inGloom of [false, true]) {
+          const st = { x: 480, y: 260, t: 2, hpRatio: 0.5, enraged: pi > 1, hurt: false, phaseIdx: pi, hard,
+            facing: 0, castGlow: 0.5, radius: 34, palette: { main: d.color, lit: d.colorLit, dark: d.colorDark, accent: d.accent }, look: d.look,
+            hands: [{ x: 440, y: 270 }, { x: 520, y: 270 }, { x: 430, y: 300 }, { x: 530, y: 300 }], inGloom };
+          tryRun(`${d.worldId} drawDecor p${pi}`, () => d.drawDecor?.(G, st));
+          tryRun(`${d.worldId} drawLit p${pi}`, () => d.drawLit?.(G, st));
+        }
       }
     }
   }
@@ -344,12 +367,22 @@ for (const c of R.allCourts()) {
     let acts = 0;
     const act = (f) => (...a) => { acts++; return f(...a); };
     for (const f of [player, npc]) { const td = f.takeDamage, hl = f.heal, sp = f.setPosition; f.takeDamage = (...a) => { acts++; return td.apply(f, a); }; f.heal = (...a) => { acts++; return hl.apply(f, a); }; f.setPosition = function (...a) { acts++; return sp.apply(f, a); }; }
-    const tk = new Proxy({ bossX: 700, bossY: 320, player, W: 960, H: 640, now: 1000, palette: { main: 1, lit: 1, dark: 1, accent: 1 } }, {
+    const tk = new Proxy({ bossX: 700, bossY: 320, player, W: 960, H: 640, now: 1000, palette: { main: 1, lit: 1, dark: 1, accent: 1 }, dark: false,
+      spawnTarget: (def) => ctx.target(def), strikeTargetsNear: () => 0, shotsNear: (x, y, r) => ctx.shotsNear(x, y, r) }, {
       get: (t, k) => (k in t ? t[k] : (...a) => { if (typeof k === 'string' && /^(spawn|hit|pull|push|warn|ring|lane|zone|pool|bullet|beam|fire|burst|sfx)/i.test(k)) acts++; return G; }),
     });
+    // Strike targets: whoever stands at one strikes it now and then, and the player's "shots"
+    // strike a random one — so lever / prism / balloon rules get exercised.
+    const targets = [];
+    const aloft = new Map();
     const ctx = { scene, W: 960, H: 640, tk, player, npc, top: 96, hard: false, rng,
       hit: act((f, n) => { f.hp -= n; }), heal: act(() => {}), nudge: act((f, dx, dy) => { f.x += dx; f.y += dy; }), stun: act(() => {}), root: act(() => {}), silence: act(() => {}),
-      float: act(() => {}), flash: act(() => {}), banner: act(() => {}), sfx: () => {}, victory: () => {} };
+      float: act(() => {}), flash: act(() => {}), banner: act(() => {}), sfx: () => {}, victory: () => {},
+      target: (def) => { const t = { def, x: def.x, y: def.y, alive: true, moveTo(x, y) { t.x = x; t.y = y; }, setRadius(r) { def.r = r; }, remove() { t.alive = false; } }; targets.push(t); return t; },
+      facing: (f) => Math.atan2((f === player ? npc : player).y - f.y, (f === player ? npc : player).x - f.x),
+      airborne: act((f, ms) => { aloft.set(f, scene.time.now + ms); }), isAirborne: (f) => (aloft.get(f) ?? 0) > scene.time.now,
+      shotsNear: (x, y, r) => (Math.hypot(player.x - x, player.y - y) < r + 80 ? [{ x, y, owner: 'player', damage: 10, block: act(() => {}), reflect: act(() => true) }] : []) };
+    const strike = (t, by) => { acts++; t.def.onStruck(by, 10); };
     tryRun(`gimmick ${e.gimmick}`, () => {
       scene.time.now = 1000; // every rule starts its own clock at make()
       const gm = g.make(ctx);
@@ -368,6 +401,16 @@ for (const c of R.allCourts()) {
         gm.playerSpeedMult?.(); gm.npcSpeedMult?.(); gm.playerTakenMult?.(); gm.npcTakenMult?.(); gm.npcSeek?.();
         for (const m of [gm.playerSpeedMult?.(), gm.npcSpeedMult?.(), gm.playerTakenMult?.(), gm.npcTakenMult?.()]) if (m !== undefined && m !== 1) acts++;
         if (i % 50 === 0) { gm.onPlayerHurt?.(10); gm.onNpcHurt?.(10); }
+        if (i % 35 === 0) { gm.onPlayerCast?.('x', ['click', 'e', 'r', 'f', 'q'][(i / 35) % 5]); gm.onNpcCast?.('y'); }
+        for (const m of [gm.playerCooldownRate?.(), gm.npcCooldownRate?.()]) if (m !== undefined && m !== 1) acts++;
+        if (i % 20 === 0) {
+          for (const t of targets) {
+            if (!t.alive) continue;
+            if (Math.hypot(player.x - t.x, player.y - t.y) < t.def.r + 40) strike(t, 'player');
+            if (Math.hypot(npc.x - t.x, npc.y - t.y) < t.def.r + 40) strike(t, 'npc');
+          }
+        }
+        if (i % 90 === 45) { const live = targets.filter((t) => t.alive); if (live.length) strike(live[Math.floor(rng() * live.length)], 'player'); }
       }
       gm.destroy?.();
       if (!acts) warn(`gimmick ${e.gimmick}: did nothing to the fight in ~40 s of simulated play (no spawns, hits, pushes, CC, text or multipliers)`);
@@ -380,7 +423,8 @@ for (const c of R.allCourts()) {
     const player = fighter(), npc = fighter();
     tryRun(`script ${it.id}`, () => {
       const sc = f({ scene, W: 960, H: 640, player, npc, rng, hit: () => {}, heal: () => {}, float: () => {}, flash: () => {}, sfx: () => {},
-        slotOf: () => 'e', refund: () => {}, boostDamage: () => {}, boostSpeed: () => {} });
+        slotOf: () => 'e', refund: () => {}, boostDamage: () => {}, boostSpeed: () => {},
+        nudge: (f, dx, dy) => { f.x += dx; f.y += dy; }, stun: () => {}, facing: () => 0 });
       for (let i = 0; i < 300; i++) {
         scene.time.now = 1000 + i * 16;
         sc.update?.(scene.time.now, 0.016);

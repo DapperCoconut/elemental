@@ -849,8 +849,6 @@ export class IceKit {
         t.voidFrostStacks = 0;
         t.voidFrostStackTimers = [];
         t.incomingDamageMultiplier = (t === this.arena.npc && this.npcBlockUpActive) ? 0.75 : 1;
-        const vt = scene.add.text(t.x, t.y - 30, 'DETONATED', { fontSize: '11px', color: '#cc88ff', fontFamily: 'Arial Black' }).setOrigin(0.5).setDepth(12);
-        scene.tweens.add({ targets: vt, y: vt.y - 20, alpha: 0, duration: 1200, onComplete: () => vt.destroy() });
       } else {
         const targetStacks = t.frostStacks;
         if (targetStacks >= 5) this.arena.recordMasteryStat('frostBlast5StackHits', 1);
@@ -895,8 +893,6 @@ export class IceKit {
         // Plates slam inward and lock: the morph lands with weight instead of blinking on.
         this.pfx.bloom(player.x, player.y, 40, 11, 4, true);
         this.pfx.rime(player.x, player.y, 40, 2, true);
-        const mt = scene.add.text(player.x, player.y - 36, 'BLACK ICE', { fontSize: '11px', color: '#cc88ff', fontFamily: 'Arial Black' }).setOrigin(0.5).setDepth(12);
-        scene.tweens.add({ targets: mt, y: mt.y - 20, alpha: 0, duration: 1200, onComplete: () => mt.destroy() });
       } else {
         player.incomingDamageMultiplier = this.frostDamageMultiplier(this.playerFrostStacks);
         player.clearTint();

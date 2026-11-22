@@ -667,6 +667,98 @@ export class LightFx extends FxBase {
     g.fillStyle(tint(LIGHT.hot), alpha * 0.4 * pulse);
     g.fillCircle(x, y, 9);
   }
+
+  /**
+   * Supernova: a star's worth of light let out through the hands, running all the way to the
+   * wall. Four bands from a wide amber haze to a white spine, a prism fringe either side, bright
+   * knots racing down its length, a starburst at the palms and a splash where it hits the wall.
+   * `fuel` (1 → 0) is what is left of the banked speed — the beam thins as it runs dry.
+   */
+  static drawNova(
+    g: Phaser.GameObjects.Graphics, tint: LightColorFn,
+    x0: number, y0: number, x1: number, y1: number, fuel: number, t: number, alpha = 1,
+  ): void {
+    const ang = Math.atan2(y1 - y0, x1 - x0);
+    const len = Phaser.Math.Distance.Between(x0, y0, x1, y1) || 1;
+    const cos = Math.cos(ang), sin = Math.sin(ang);
+    const nx = -sin, ny = cos;
+    const swell = 0.55 + 0.45 * fuel;
+    const bands: Array<[number, number, number]> = [
+      [44, LIGHT.amber, 0.18],
+      [28, LIGHT.gold, 0.45],
+      [15, LIGHT.pale, 0.85],
+      [5, LIGHT.white, 1],
+    ];
+    bands.forEach(([w, col, a], i) => {
+      g.lineStyle(w * swell * (1 + Math.sin(t * (13 + i * 4) + i) * 0.07), tint(col), a * alpha);
+      g.lineBetween(x0, y0, x1, y1);
+    });
+    // The prism fringe: a red edge on one side and a blue one on the other, as light splits.
+    const edge = 15 * swell;
+    g.lineStyle(2, tint(LIGHT.prismR), 0.45 * alpha);
+    g.lineBetween(x0 + nx * edge, y0 + ny * edge, x1 + nx * edge, y1 + ny * edge);
+    g.lineStyle(2, tint(LIGHT.prismB), 0.45 * alpha);
+    g.lineBetween(x0 - nx * edge, y0 - ny * edge, x1 - nx * edge, y1 - ny * edge);
+    // Knots of light racing out to the wall, so the beam reads as flowing, not standing.
+    for (let k = 0; k < 8; k++) {
+      const d = (t * 900 + k * (len / 8)) % len;
+      g.fillStyle(tint(LIGHT.white), 0.75 * alpha);
+      lightShard(g, x0 + cos * d, y0 + sin * d, ang, 34 * swell, 6 * swell, 0.5);
+    }
+    // Palm starburst: eight rays turning slowly around a white core.
+    for (let i = 0; i < 8; i++) {
+      const a = t * 1.6 + (i / 8) * TAU;
+      g.fillStyle(tint(i % 2 ? LIGHT.gold : LIGHT.pale), 0.6 * alpha);
+      lightShard(g, x0 + Math.cos(a) * 12, y0 + Math.sin(a) * 12, a, (i % 2 ? 18 : 28) * swell, 4, 0.3);
+    }
+    g.fillStyle(tint(LIGHT.glow), 0.55 * alpha);
+    g.fillCircle(x0, y0, 15 * swell + Math.sin(t * 20) * 2);
+    g.fillStyle(tint(LIGHT.white), alpha);
+    g.fillCircle(x0, y0, 7 * swell);
+    // Where it meets the wall: a splash fanning back off the surface.
+    prismFan(g, tint, x1, y1, ang + Math.PI, 1.1, 30 * swell + Math.sin(t * 17) * 5, 0.7 * alpha);
+    g.fillStyle(tint(LIGHT.pale), 0.6 * alpha);
+    g.fillCircle(x1, y1, 16 * swell);
+  }
+
+  /**
+   * Solar Dynamo (Q+): the line a Supernova burned into the floor. A charred band with a seam of
+   * live gold down the middle and chevrons crawling along it — a lane that still has the beam's
+   * speed in it. `life` (1 → 0) fades the seam first, then the char.
+   */
+  static drawScorch(
+    g: Phaser.GameObjects.Graphics, tint: LightColorFn,
+    x1: number, y1: number, x2: number, y2: number, halfW: number, life: number, t: number, seed: number,
+  ): void {
+    const ang = Math.atan2(y2 - y1, x2 - x1);
+    const len = Phaser.Math.Distance.Between(x1, y1, x2, y2) || 1;
+    const cos = Math.cos(ang), sin = Math.sin(ang);
+    const nx = -sin, ny = cos;
+    const char = Math.min(1, life * 2.5);
+    g.lineStyle(halfW * 2, tint(LIGHT.night), 0.5 * char);
+    g.lineBetween(x1, y1, x2, y2);
+    g.lineStyle(halfW * 1.1, tint(LIGHT.hot), 0.12 * char);
+    g.lineBetween(x1, y1, x2, y2);
+    // The seam: broken into glowing cracks rather than one clean line.
+    const seam = life * (0.55 + 0.25 * Math.sin(t * 3 + seed));
+    const step = 26;
+    for (let d = 0; d < len - step; d += step) {
+      const wob = Math.sin(seed + d * 0.09) * halfW * 0.25;
+      const wob2 = Math.sin(seed + (d + step) * 0.09) * halfW * 0.25;
+      g.lineStyle(2.4, tint(LIGHT.gold), seam);
+      g.lineBetween(x1 + cos * d + nx * wob, y1 + sin * d + ny * wob,
+        x1 + cos * (d + step * 0.8) + nx * wob2, y1 + sin * (d + step * 0.8) + ny * wob2);
+    }
+    // Chevrons running with the beam's direction: the lane wants you to go this way.
+    for (let k = 0; k < Math.floor(len / 70); k++) {
+      const d = (t * 120 + k * 70) % len;
+      const cx = x1 + cos * d, cy = y1 + sin * d;
+      const bx = cx - cos * 9, by = cy - sin * 9;
+      g.lineStyle(2, tint(LIGHT.amber), 0.55 * life);
+      g.lineBetween(bx + nx * halfW * 0.5, by + ny * halfW * 0.5, cx, cy);
+      g.lineBetween(bx - nx * halfW * 0.5, by - ny * halfW * 0.5, cx, cy);
+    }
+  }
 }
 
 // ── LightAura ─────────────────────────────────────────────────────────────

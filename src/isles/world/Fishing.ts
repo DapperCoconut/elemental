@@ -20,7 +20,9 @@ const GAUGE_H = 260;
 const WATER_TINT: Record<FisheryDef['kind'], number> = {
   sea: 0x6ac8ff, lava: 0xff7a2f, pond: 0x7ad8c8, wax: 0xffe2a8, steam: 0xd8e8f0, oil: 0x6a5a3a,
   ice: 0xc8f0ff, ink: 0x2a2a3a, abyss: 0x3a6ab8, bog: 0x6a7a3a, syrup: 0xd88a3a,
-  cloud: 0xf4f8ff, aurora: 0x8ae8d8,
+  cloud: 0xf4f8ff, aurora: 0x8ae8d8, sand: 0xe0c080, cavern: 0x2a4a5a,
+  charged: 0x8ad8ff, coolant: 0x7aff8a, quantum: 0xc8a8ff,
+  venom: 0x9ae04a, blackwater: 0x1a1a24,
 };
 
 export class Fishing {
@@ -67,7 +69,14 @@ export class Fishing {
         : fy.kind === 'abyss' ? 'The line runs out before it finds the bottom. Only a whalebone rod reaches the trench.'
         : fy.kind === 'syrup' ? 'Your line gums up and sets solid. Only a briarwood rod fishes syrup.'
         : fy.kind === 'cloud' ? 'The line just blows sideways in the updraft. Only a skyline rod casts into cloud.'
-        : fy.kind === 'aurora' ? 'Your line frays to light the moment it touches. Only a skyline rod holds in starlight.' : `Your ${rod?.name ?? 'rod'} can't handle ${fy.kind} water.`;
+        : fy.kind === 'aurora' ? 'Your line frays to light the moment it touches. Only a skyline rod holds in starlight.'
+        : fy.kind === 'sand' ? 'The hook just skitters over the dune. Only a delver rod\'s drill-lure bites into sand.'
+        : fy.kind === 'cavern' ? 'Your line runs out halfway down the shaft. Only a delver rod reaches the black lake.'
+        : fy.kind === 'charged' ? 'The line jumps in your hands and the rod sparks. Only an insulated rod fishes live water.'
+        : fy.kind === 'coolant' ? 'The line glows, then goes brittle and snaps. Only an insulated rod holds in coolant.'
+        : fy.kind === 'quantum' ? 'Your hook is in the well and also not. Only an insulated rod settles the question.'
+        : fy.kind === 'venom' ? 'The line hisses and eats through where it touches. Only an antivenin rod fishes the fen.'
+        : fy.kind === 'blackwater' ? 'Your line goes into the black and comes back without a shadow. Only an antivenin rod holds.' : `Your ${rod?.name ?? 'rod'} can't handle ${fy.kind} water.`;
     }
     return null;
   }

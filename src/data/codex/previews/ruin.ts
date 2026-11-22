@@ -4,7 +4,7 @@ import { BaseAvatar } from '../../../elements/kits/ElementVisuals';
 import { HealthBar } from '../../../combat/HealthBar';
 import {
   RUI, RuinAvatar, RuinFx, chainRun, crackWeb, decayCoat, padlock, rubyJewel,
-  ruinCluster, ruinRing, rustySpike, shredWedge, shrapnelShard, skinShard,
+  ruinCluster, ruinRing, rustySpike, shredWedge, shrapnelShard,
 } from '../../../elements/kits/RuinVisuals';
 
 /**
@@ -750,105 +750,96 @@ export const masteryComboBreaker: PreviewScript = {
 };
 
 /**
- * Mastery bindable — Second Skin. Twenty-five plates in a circle off the real primitive, a body
- * that visibly shrinks and stays shrunk, and a transformed dummy dragged back to its base shape.
+ * Mastery bindable — Screeching Steel. Two brawlers pressed up against him and swinging; the
+ * shriek throws them clear and shakes off the stun, and the rust aura it leaves rots their
+ * blades, so when they walk back in the same swing lands 40% lighter.
  */
-export const masterySecondSkin: PreviewScript = {
-  duration: 9600,
+export const masteryScreechingSteel: PreviewScript = {
+  duration: 9000,
   scale: 0.9,
-  caption: 'The bound key — 25 plates in every direction for 15, every form they hit ends, and you are 20% smaller for good',
+  caption: 'The bound key — throw everyone within 190px clear, 3s immune to stuns and slows, then 10s of rust that blunts melee by 40%',
   run(ctx) {
     const { fx, av } = stage(ctx, { noDummy: true });
+    const reach = Math.min(190, ctx.w * 0.34);
+    const foes = [
+      { x: ctx.cx - 44, y: ctx.cy, vx: 0, vy: 0, side: -1, nextSwing: 400 },
+      { x: ctx.cx + 44, y: ctx.cy + 6, vx: 0, vy: 0, side: 1, nextSwing: 650 },
+    ];
+    for (const f of foes) dummyAt(ctx, f);
+    const castAt = 1500;
+    let stunned = true;
+    let rustUntil = 0;
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(4));
+    const air = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
 
-    // The victim, drawn twice its base size while it is still "transformed".
-    const foe = { x: ctx.w * 0.68, y: ctx.cy - 6 };
-    let beast = true;
-    const foeG = ctx.adopt(ctx.scene.add.graphics().setDepth(5));
-    ctx.onFrame((_dt, elapsed) => {
-      foeG.clear();
-      const r = beast ? 26 : 15;
-      const t = elapsed / 1000;
-      foeG.fillStyle(beast ? 0x5a3630 : 0x2b2f3d, 1);
-      foeG.fillCircle(foe.x, foe.y, r);
-      foeG.fillStyle(beast ? 0x7d4a3f : 0x3c4254, 1);
-      foeG.fillCircle(foe.x, foe.y, r * 0.76);
-      foeG.fillStyle(beast ? 0xffcc55 : 0x8e97ad, 0.9);
-      foeG.fillCircle(foe.x - r * 0.3, foe.y - r * 0.24, r * 0.19);
-      foeG.fillCircle(foe.x + r * 0.3, foe.y - r * 0.24, r * 0.19);
-      if (!beast) return;
-      // Ears, so "a form" reads at a glance rather than "a bigger circle".
-      foeG.fillStyle(0x5a3630, 1);
-      for (const s of [-1, 1]) {
-        foeG.fillTriangle(
-          foe.x + s * r * 0.6, foe.y - r * 0.7,
-          foe.x + s * r * 0.2, foe.y - r * 1.35 - Math.sin(t * 4) * 1.5,
-          foe.x + s * r * 0.9, foe.y - r * 0.95,
-        );
-      }
-    });
-    label(ctx, foe.x, foe.y + 44, 'in a form', RUI.ember);
-
-    // The caster's own layers, and the ring of plates each shed throws.
-    let scale = 1;
-    const shards: Array<{
-      x: number; y: number; vx: number; vy: number; spin: number; seed: number;
-      dies: number; hit: boolean;
-    }> = [];
-    const air = ctx.adopt(ctx.scene.add.graphics().setDepth(11));
-    const body = ctx.adopt(ctx.scene.add.graphics().setDepth(6));
     ctx.onFrame((dt, elapsed) => {
-      air.clear();
-      body.clear();
-      // The layer that is left: a ring around the caster that tightens with every cast.
-      body.lineStyle(2, ctx.tint(RUI.rust), 0.5);
-      body.strokeCircle(ctx.cx, ctx.cy, 30 * scale);
-
+      const t = elapsed / 1000;
       const s = dt / 1000;
-      for (let i = shards.length - 1; i >= 0; i--) {
-        const sh = shards[i];
-        sh.x += sh.vx * s;
-        sh.y += sh.vy * s;
-        sh.spin += s * 12;
-        if (elapsed >= sh.dies) { shards.splice(i, 1); continue; }
-        const fade = Phaser.Math.Clamp((sh.dies - elapsed) / 260, 0, 1);
-        skinShard(air, ctx.tint, sh.x, sh.y, Math.atan2(sh.vy, sh.vx), 15, fade, sh.spin, sh.seed);
-        // One plate per body, exactly as the volley's shared hit list enforces.
-        if (sh.hit || shards.some((o) => o.hit)) continue;
-        if (Phaser.Math.Distance.Between(sh.x, sh.y, foe.x, foe.y) > 22) continue;
-        sh.hit = true;
-        fx.bite(foe.x, foe.y, 24, RUI.bone);
-        tick(ctx, foe.x, foe.y - 34, '15', RUI.bone);
-        if (!beast) return;
-        beast = false;
-        fx.unform(foe.x, foe.y, 42);
-        tick(ctx, foe.x, foe.y - 56, '🦎 BEAST FORM BROKEN', RUI.bright);
+      g.clear();
+      air.clear();
+      // Held in place before the shriek: a shackle of stars over his head.
+      if (stunned) {
+        for (let i = 0; i < 3; i++) {
+          const a = t * 4 + (i / 3) * Math.PI * 2;
+          air.fillStyle(ctx.tint(RUI.bone), 0.85);
+          air.fillCircle(ctx.cx + Math.cos(a) * 14, ctx.cy - 34 + Math.sin(a) * 4, 2.6);
+        }
+      }
+      // The rusty aura, with its edge breathing.
+      const rusting = elapsed < rustUntil;
+      if (rusting) {
+        g.fillStyle(ctx.tint(RUI.rust), 0.1);
+        g.fillEllipse(ctx.cx, ctx.cy, 300, 186);
+        g.lineStyle(2, ctx.tint(RUI.rust), 0.45 + Math.sin(t * 2) * 0.1);
+        g.strokeEllipse(ctx.cx, ctx.cy, 300, 186);
+      }
+      for (const f of foes) {
+        // Thrown: the kit's decaying shove. Otherwise walk back in to swinging range.
+        if (Math.hypot(f.vx, f.vy) > 4) {
+          f.x += f.vx * s; f.y += f.vy * s;
+          f.vx *= Math.pow(0.02, s); f.vy *= Math.pow(0.02, s);
+        } else {
+          const want = ctx.cx + f.side * 44;
+          f.x += Phaser.Math.Clamp(want - f.x, -70 * s, 70 * s);
+        }
+        const close = Math.abs(f.x - ctx.cx) <= 50;
+        if (close && elapsed >= f.nextSwing) {
+          f.nextSwing = elapsed + 900;
+          const rusted = rusting;
+          fx.bite(ctx.cx + f.side * 14, ctx.cy, 18, rusted ? RUI.rust : RUI.bone);
+          tick(ctx, ctx.cx + f.side * 22, ctx.cy - 30, rusted ? '7' : '12', rusted ? RUI.rust : RUI.bright);
+        }
+        // A rotted blade at the side of anybody inside the aura.
+        if (rusting && Math.abs(f.x - ctx.cx) <= 150) {
+          const bx = f.x + 18, by = f.y - 4, ang = -1.1;
+          const ca = Math.cos(ang), sa = Math.sin(ang);
+          air.fillStyle(ctx.tint(RUI.iron), 0.9);
+          air.fillTriangle(bx - sa * 3, by + ca * 3, bx + sa * 3, by - ca * 3, bx + ca * 20, by + sa * 20);
+          for (let i = 0; i < 3; i++) {
+            air.fillStyle(ctx.tint(i % 2 ? RUI.ember : RUI.rust), 0.8);
+            air.fillCircle(bx + ca * (5 + i * 5), by + sa * (5 + i * 5), 2);
+          }
+        }
       }
     });
 
-    const shed = (at: number, left: number): void => {
-      ctx.at(at, () => {
-        scale *= 0.8;
-        av.play('flex');
-        fx.shed(ctx.cx, ctx.cy, 30);
-        fx.ring(ctx.cx, ctx.cy, 14, 90, RUI.bone, 480);
-        tick(ctx, ctx.cx, ctx.cy - 52, '🦎 SECOND SKIN', RUI.bone);
-        tick(ctx, ctx.cx, ctx.cy - 34, `${left} LAYERS LEFT`, RUI.ash);
-        const off = Math.random() * Math.PI * 2;
-        for (let i = 0; i < 25; i++) {
-          const a = off + (i / 25) * Math.PI * 2;
-          shards.push({
-            x: ctx.cx + Math.cos(a) * 22, y: ctx.cy + Math.sin(a) * 22,
-            vx: Math.cos(a) * 540, vy: Math.sin(a) * 540,
-            spin: Math.random() * Math.PI * 2, seed: i * 7,
-            dies: at + 820, hit: false,
-          });
-        }
-      });
-    };
-
-    shed(700, 4);
-    shed(4200, 3);
-    ctx.at(7400, () => label(ctx, ctx.cx, ctx.cy + 62, 'two layers gone — 64% size, for the rest of the match', RUI.rust));
+    ctx.at(castAt, () => {
+      stunned = false;
+      rustUntil = castAt + 10000;
+      av.play('flex');
+      fx.screech(ctx.cx, ctx.cy, reach);
+      fx.rustPuff(ctx.cx, ctx.cy, 14, 46, 700);
+      tick(ctx, ctx.cx, ctx.cy - 52, '🔊 SCREECHING STEEL', RUI.bone);
+      for (const f of foes) {
+        const d = Math.abs(f.x - ctx.cx);
+        const k = 1 - 0.5 * (d / 190);
+        f.vx = f.side * 640 * k;
+        f.vy = 0;
+        f.nextSwing = castAt + 1400;
+      }
+    });
+    ctx.at(castAt + 300, () => tick(ctx, ctx.cx, ctx.cy + 40, 'stun broken — 3s immune', RUI.bone));
+    ctx.at(castAt + 2600, () => label(ctx, ctx.cx, ctx.h - 12, 'rusted swings inside 90px: 40% less', RUI.rust));
   },
 };
 

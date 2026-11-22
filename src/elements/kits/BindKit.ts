@@ -586,14 +586,8 @@ export class BindKit {
     return { x: Phaser.Math.Clamp(x, b.left + pad, b.right - pad), y: Phaser.Math.Clamp(y, b.top + pad, b.bottom - pad) };
   }
 
-  /** `showFloatingText` is a no-op in this codebase, so the labels that matter are the kit's own. */
-  private announce(x: number, y: number, text: string, color: number, size = 12): void {
-    const { scene } = this.api;
-    const t = scene.add.text(x, y, text, {
-      fontSize: `${size}px`, fontFamily: 'Arial Black', color: this.hex(color),
-      stroke: '#080415', strokeThickness: 3,
-    }).setOrigin(0.5).setDepth(19);
-    scene.tweens.add({ targets: t, y: y - 22, alpha: 0, duration: 1200, ease: 'Cubic.easeOut', onComplete: () => t.destroy() });
+  private announce(_x: number, _y: number, _text: string, _color: number, _size = 12): void {
+    // Battle text pop-ups are disabled — they cluttered every attack.
   }
 
   /** A refusal: the label, a sound, rate-limited so a held key does not spam it. */

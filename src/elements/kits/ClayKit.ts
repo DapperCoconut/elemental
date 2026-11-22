@@ -311,14 +311,8 @@ export class ClayKit implements SummonPurgeTarget, FormRevertTarget {
   private clampX(x: number): number { return Phaser.Math.Clamp(x, PAD, this.api.width - PAD); }
   private clampY(y: number): number { return Phaser.Math.Clamp(y, PAD, this.api.height - PAD); }
 
-  /** The kit's own pop-up: ArenaScene's is a no-op, and these few are worth reading. */
-  private announce(x: number, y: number, text: string, color: string, size = 11, ms = 1000): void {
-    const scene = this.api.scene;
-    const label = scene.add.text(x, y, text, {
-      fontSize: `${size}px`, fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif',
-      color, stroke: '#1a0e08', strokeThickness: 3,
-    }).setOrigin(0.5).setDepth(16);
-    scene.tweens.add({ targets: label, y: y - 24, alpha: 0, duration: ms, ease: 'Cubic.easeOut', onComplete: () => label.destroy() });
+  private announce(_x: number, _y: number, _text: string, _color: string, _size = 11, _ms = 1000): void {
+    // Battle text pop-ups are disabled — they cluttered every attack.
   }
 
   /** Every point of damage the kit deals passes through here. */

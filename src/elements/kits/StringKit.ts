@@ -570,14 +570,8 @@ export class StringKit {
     if (f?.active) f.resetCooldown(abilityId);
   }
 
-  /** `showFloatingText` is a no-op in this codebase, so the labels that matter are the kit's own. */
-  private announce(x: number, y: number, text: string, color: number, size = 12): void {
-    const { scene } = this.api;
-    const t = scene.add.text(x, y, text, {
-      fontSize: `${size}px`, fontFamily: 'Arial Black', color: this.hex(color),
-      stroke: '#1a1410', strokeThickness: 3,
-    }).setOrigin(0.5).setDepth(18);
-    scene.tweens.add({ targets: t, y: y - 22, alpha: 0, duration: 1300, ease: 'Cubic.easeOut', onComplete: () => t.destroy() });
+  private announce(_x: number, _y: number, _text: string, _color: number, _size = 12): void {
+    // Battle text pop-ups are disabled — they cluttered every attack.
   }
 
   /** One hit from this element, settled on this sim. Never self-inflicted, so shields may answer it. */

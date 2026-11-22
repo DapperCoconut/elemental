@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { Fighter } from '../../entities/Fighter';
 import { CastContext } from '../Ability';
 import { Projectile } from '../../combat/Projectile';
+import type { CustomStatus } from './StatusHudKit';
 import {
   ArmGesture, LIGHT, LightAura, LightAvatar, LightColorFn, LightFx, mixColor,
 } from './LightVisuals';
@@ -40,6 +41,9 @@ export interface LightArenaApi {
   masteryBindFor(slot: string): string | null;
   recordMasteryStat(key: string, amount: number): void;
   broadcastMasteryCast(enhId: string): void;
+  /** Online PvP: the npc is a replica, so its beam's length and aim arrive over the wire. */
+  readonly isOnline: boolean;
+  setStatusIndicator(id: string, status: CustomStatus | null): void;
 }
 
 // ── Tuning ──────────────────────────────────────────────────────────────
@@ -74,12 +78,27 @@ const TRICK_RADIUS = 50;
 const TRICK_DAMAGE = 5;
 const TRICK_BOOST_MS = 1200;
 
-const STREAK_DAMAGE = 15;
-const STREAK_HIT_RADIUS = 40;
-const STREAK_THICKNESS = 18;
-const STREAK_LIFETIME_MS = 900;
-const SPEED_O_LIGHT_BOUNCES = 125;
-const SPEED_O_LIGHT_BOUNCE_MS = 60;
+// ── Q Supernova ─────────────────────────────────────────────────────────
+/** Beam time bought by speed: a car at the stock top speed stops dead into six seconds of it. */
+const NOVA_MS_AT_TOP_SPEED = 6000;
+/** Redline banks past the stock top end; this is the longest a beam will ever run. */
+const NOVA_MAX_MS = 9000;
+/** Below this there is nothing to convert, and the press is refused rather than wasted. */
+const NOVA_MIN_SPEED = 40;
+/** Subterfuge's Dark Treachery puts the beam on a body that was never driving. */
+const NOVA_FOREIGN_MS = 3000;
+/** Palms sit this far out along the aim, so the beam leaves the hands rather than the chest. */
+const NOVA_PALM_OFFSET = 22;
+const NOVA_HALF_WIDTH = 18;
+const NOVA_HIT_PAD = 16;
+/** Fire's Supernova turning radius: radians per second the beam may swing toward the aim. */
+const NOVA_TURN_RATE = 0.85;
+const NOVA_TICK_MS = 200;
+const NOVA_TICK_DAMAGE = 9;           // 45 a second
+/** Online: how often the owner re-sends where the beam is being pulled. */
+const NOVA_NET_AIM_MS = 150;
+/** A bot only stops into a beam once it has this much of its top speed banked. */
+const NOVA_BOT_MIN_RATIO = 0.6;
 
 const BOOST_TARGET_SPEED = CAR_MAX_SPEED / 3; // Prism Ramp / Light Trick boosts now only push you to 1/3 top speed
 
@@ -121,10 +140,15 @@ const DRILL_RELEASE_WINDOW_MS = 180;
 const F_PLUS_JAVELIN_COUNT = 12;
 const F_PLUS_JAVELIN_SPEED = 480;
 
-// ── Q+ Flare-Stream ─────────────────────────────────────────────────────
-const FLARE_TELEPORT_INTERVAL = 10;
-const FLARE_BEAM_LIFETIME_MS = 35000;
-const FLARE_ACCEL_MULT = 3;
+// ── Q+ Solar Dynamo ─────────────────────────────────────────────────────
+/** A live beam burns its current line into the floor on this beat. */
+const SCORCH_EVERY_MS = 500;
+const SCORCH_LIFE_MS = 14000;
+/** Per side; the oldest strip cools first. */
+const SCORCH_MAX = 14;
+const SCORCH_HALF_WIDTH = 26;
+/** Speed gained per second on your own scorch — on top of the car's own, turning or not. */
+const SCORCH_ACCEL = 240;
 
 // ── Aurora (divine perk) ────────────────────────────────────────────────
 /** Speed handed over for being hit at all, before the size of the hit is counted. */
@@ -150,7 +174,6 @@ const CAST_GESTURES: Record<string, ArmGesture> = {
   blink: 'dash',
   'prism-ramp': 'slam',
   'light-trick': 'clap',
-  'speed-o-light': 'raise',
 };
 
 // Every world object below is plain data painted into the kit's own Graphics layers — nothing
@@ -169,14 +192,19 @@ interface LightRamp {
   overlapping: Set<Fighter>;
 }
 
-interface LightStreak {
-  x1: number;
-  y1: number;
-  x2: number;
-  y2: number;
+/** A live Supernova beam. Owner-agnostic: the NPC's (bot or online replica) runs here too. */
+interface LightNova {
   owner: 'player' | 'npc';
-  until: number;
-  hitSet: Set<Fighter>;
+  angle: number;
+  startedAt: number;
+  /** The banked speed, spent: the beam goes out at this timestamp whatever happens. */
+  endsAt: number;
+  /** Where the beam is being pulled toward — the cursor, the bot's target, or a relayed aim. */
+  pullX: number;
+  pullY: number;
+  tickAccum: number;
+  netAccum: number;
+  scorchAccum: number;
 }
 
 interface LightDrill {
@@ -191,13 +219,15 @@ interface LightDrill {
   until: number;
 }
 
-interface LightFlareBeam {
+/** Solar Dynamo: one line a Supernova burned into the floor. */
+interface LightScorch {
   x1: number;
   y1: number;
   x2: number;
   y2: number;
   owner: 'player' | 'npc';
   until: number;
+  seed: number;
 }
 
 /** What the lance looks like this frame, or null when it isn't out. */
@@ -216,6 +246,17 @@ function distToSegment(px: number, py: number, x1: number, y1: number, x2: numbe
   if (lenSq === 0) return Phaser.Math.Distance.Between(px, py, x1, y1);
   const t = Phaser.Math.Clamp(((px - x1) * dx + (py - y1) * dy) / lenSq, 0, 1);
   return Phaser.Math.Distance.Between(px, py, x1 + t * dx, y1 + t * dy);
+}
+
+/** How far a ray from (x, y) at `angle` travels before it leaves the w × h arena. */
+function rayToWall(x: number, y: number, angle: number, w: number, h: number): number {
+  const cos = Math.cos(angle), sin = Math.sin(angle);
+  let t = Infinity;
+  if (cos > 1e-6) t = Math.min(t, (w - x) / cos);
+  else if (cos < -1e-6) t = Math.min(t, -x / cos);
+  if (sin > 1e-6) t = Math.min(t, (h - y) / sin);
+  else if (sin < -1e-6) t = Math.min(t, -y / sin);
+  return t === Infinity ? 0 : Math.max(0, t);
 }
 
 // ── LightKit ──────────────────────────────────────────────────────────────
@@ -237,8 +278,8 @@ export class LightKit {
   private kebabAura: LightAura | null = null;
   private npcKebabAura: LightAura | null = null;
   /**
-   * Two layers, because these objects are not all in the same place. Ramps, streaks and flare
-   * beams lie on the floor and must pass *under* the fighters; lances, drills and the kebab
+   * Two layers, because these objects are not all in the same place. Ramps and Solar Dynamo
+   * scorch lie on the floor and must pass *under* the fighters; lances, drills and the kebab
    * shaft are held out in front of them and must pass over.
    */
   private groundGfx: Phaser.GameObjects.Graphics | null = null;
@@ -264,12 +305,13 @@ export class LightKit {
   private flickerGhosts: Array<{ x: number; y: number; angle: number; owner: 'player' | 'npc'; bornAt: number; flareAt: number }> = [];
 
   private ramps: LightRamp[] = [];
-  private streaks: LightStreak[] = [];
   private lanceHitCooldowns: Map<Fighter, number> = new Map();
 
-  private speedOLightActive = false;
-  private speedOLightBouncesLeft = 0;
-  private speedOLightNextBounceAt = 0;
+  /** Q — Supernova, per side. Null when no beam is open. */
+  private playerNova: LightNova | null = null;
+  private npcNova: LightNova | null = null;
+  /** The beam layer: over the floor, under the fighters' held-out layer. */
+  private novaGfx: Phaser.GameObjects.Graphics | null = null;
 
   /** The lance tachometer under the HP bar — one Graphics repainted every frame it is shown. */
   private accelGfx: Phaser.GameObjects.Graphics | null = null;
@@ -292,10 +334,8 @@ export class LightKit {
   /** A ramp reached with R still held: rides normally unless R is let go inside the window. */
   private pendingDrill: { ramp: LightRamp; until: number } | null = null;
 
-  // ── Q+ Flare-Stream ──────────────────────────────────────────────────────
-  private playerTeleportCount = 0;
-  private npcTeleportCount = 0;
-  private flareBeams: LightFlareBeam[] = [];
+  // ── Q+ Solar Dynamo ──────────────────────────────────────────────────────
+  private scorches: LightScorch[] = [];
 
   // ── Aurora (perk) ────────────────────────────────────────────────────────
   /** Last seen player HP, so a drop can be read as "you were hit" without a damage hook. */
@@ -316,10 +356,6 @@ export class LightKit {
   private npcCarBoostUntil = 0;
   private npcRamps: LightRamp[] = [];
   private npcLanceHitCooldowns: Map<Fighter, number> = new Map();
-
-  private npcSpeedOLightActive = false;
-  private npcSpeedOLightBouncesLeft = 0;
-  private npcSpeedOLightNextBounceAt = 0;
 
   constructor(private arena: LightArenaApi) {
     // Built here, not as field initialisers, so they see the injected arena.
@@ -390,12 +426,11 @@ export class LightKit {
     this.flickerGhosts = [];
 
     this.ramps = [];
-    this.streaks = [];
     this.lanceHitCooldowns.clear();
 
-    this.speedOLightActive = false;
-    this.speedOLightBouncesLeft = 0;
-    this.speedOLightNextBounceAt = 0;
+    this.playerNova = null;
+    this.npcNova = null;
+    if (this.novaGfx) { this.novaGfx.destroy(); this.novaGfx = null; }
 
     this.destroyAccelBar();
 
@@ -412,9 +447,7 @@ export class LightKit {
     this.rReleasedAt = -Infinity;
     this.pendingDrill = null;
 
-    this.playerTeleportCount = 0;
-    this.npcTeleportCount = 0;
-    this.flareBeams = [];
+    this.scorches = [];
 
     this.auroraLastHp = -1;
     this.auroraSurge = 0;
@@ -424,10 +457,6 @@ export class LightKit {
     this.npcCarBoostUntil = 0;
     this.npcRamps = [];
     this.npcLanceHitCooldowns.clear();
-
-    this.npcSpeedOLightActive = false;
-    this.npcSpeedOLightBouncesLeft = 0;
-    this.npcSpeedOLightNextBounceAt = 0;
 
     // Mastery — Unstoppable + Killer Kebab
     this.arena.player.unstoppable = false;
@@ -471,9 +500,10 @@ export class LightKit {
         this.blinkCharges = Math.min(this.blinkMaxCharges(), this.blinkCharges + 1);
       }
 
-      if (this.speedOLightActive) {
-        this.stepSpeedOLight('player', time);
+      if (this.playerNova) {
+        // Supernova: stopped dead and rooted. The beam itself is run below, for either side.
         playerBody.setVelocity(0, 0);
+        this.destroyAccelBar();
         this.destroyDangerVignette();
       } else if (this.ePlusHolding) {
         // E+ Steam Charge: rooted in place, aiming at the cursor, acceleration frozen (not lost)
@@ -521,8 +551,7 @@ export class LightKit {
     }
 
     if (isNpcLight) {
-      if (this.npcSpeedOLightActive) {
-        this.stepSpeedOLight('npc', time);
+      if (this.npcNova) {
         npcBody.setVelocity(0, 0);
       } else {
         const desired = Math.atan2(player.y - npc.y, player.x - npc.x);
@@ -549,10 +578,18 @@ export class LightKit {
       if (npcCastId === 'light-trick') {
         this.triggerLightTrick('npc', time, npc, [player]);
       }
-      if (npcCastId === 'speed-o-light' && !this.npcSpeedOLightActive) {
-        this.startSpeedOLight('npc', time);
+      if (npcCastId === 'light-supernova' && !this.npcNova) {
+        // A replica's banked speed lives on the other machine: run it long and let the
+        // owner's relayed stop end it.
+        this.startNova('npc', time, this.arena.isOnline ? NOVA_MAX_MS : this.novaMsFor(this.npcCarSpeed));
       }
     }
+
+    // Supernova runs for either side whether or not Light is the element — Subterfuge's Dark
+    // Treachery can hand the beam to anyone.
+    this.updateNova(this.playerNova, time, delta);
+    this.updateNova(this.npcNova, time, delta);
+    this.paintNovas(time);
 
     // R+ Prism Drill is timed off the moment R comes up, so track that edge every frame.
     const rDown = this.arena.rKey.isDown;
@@ -565,8 +602,7 @@ export class LightKit {
     this.updateRampArray(time, this.npcRamps, npc, [player]);
     this.resolvePendingDrill(time);
 
-    this.updateStreaks(time);
-    this.updateFlareBeams(time);
+    this.updateScorches(time);
     this.updateDrills(time, delta);
 
     // Mastery — Killer Kebab. Runs after the car step so riders land on this frame's lance.
@@ -671,23 +707,17 @@ export class LightKit {
 
     const auroraUp = this.arena.hasPerk('player', 'aurora') && player.active && player.hp > 0;
     const hasGround = this.ramps.length > 0 || this.npcRamps.length > 0
-      || this.streaks.length > 0 || this.flareBeams.length > 0 || this.flickerGhosts.length > 0
+      || this.scorches.length > 0 || this.flickerGhosts.length > 0
       || auroraUp;
     if (hasGround || this.groundGfx) {
       const g = this.ground();
       g.clear();
       // The curtain is worn, so it goes down first and everything else lies over it.
       if (auroraUp) LightFx.drawAurora(g, this.pcol, player.x, player.y, this.vizT, this.auroraSurge);
-      // Flare beams are long-lived road surface, so they sit under the transient streaks.
-      for (const b of this.flareBeams) {
-        const life = Phaser.Math.Clamp((b.until - time) / FLARE_BEAM_LIFETIME_MS, 0, 1);
-        LightFx.drawStreak(g, this.col(b.owner), b.x1, b.y1, b.x2, b.y2, STREAK_THICKNESS * 0.8,
-          LIGHT.ember, 0.25 + life * 0.55, this.vizT);
-      }
-      for (const s of this.streaks) {
-        const life = Phaser.Math.Clamp((s.until - time) / STREAK_LIFETIME_MS, 0, 1);
-        LightFx.drawStreak(g, this.col(s.owner), s.x1, s.y1, s.x2, s.y2, STREAK_THICKNESS,
-          s.owner === 'player' ? LIGHT.pale : LIGHT.cyan, 0.9 * life, this.vizT);
+      // Scorch is burned into the floor itself, so it sits under the ramps.
+      for (const s of this.scorches) {
+        const life = Phaser.Math.Clamp((s.until - time) / SCORCH_LIFE_MS, 0, 1);
+        LightFx.drawScorch(g, this.col(s.owner), s.x1, s.y1, s.x2, s.y2, SCORCH_HALF_WIDTH, life, this.vizT, s.seed);
       }
       for (const r of this.ramps) LightFx.drawRamp(g, this.pcol, r.x, r.y, r.angle, this.vizT);
       for (const r of this.npcRamps) LightFx.drawRamp(g, this.ncol, r.x, r.y, r.angle, this.vizT);
@@ -737,17 +767,19 @@ export class LightKit {
     if (isPlayerLight && player.active) {
       if (!this.playerAvatar) this.playerAvatar = new LightAvatar(scene, this.pcol, 'player');
       const ratio = Phaser.Math.Clamp(this.carSpeed / CAR_MAX_SPEED, 0, 1);
-      const driving = this.lanceHeld && !this.speedOLightActive;
-      const aim = driving || this.ePlusHolding
+      const nova = this.playerNova;
+      const driving = this.lanceHeld && !nova;
+      const aim = nova ? nova.angle : driving || this.ePlusHolding
         ? this.carAngle
         : Math.atan2(this.lastAimY - player.y, this.lastAimX - player.x);
       this.playerAvatar.setFacing(aim);
       this.playerAvatar.setSpeed(driving ? ratio : 0);
-      this.playerAvatar.setIntensity(this.speedOLightActive ? 1.5 : time < this.carBoostUntil ? 1.2 : 1);
+      this.playerAvatar.setIntensity(nova ? 1.5 : time < this.carBoostUntil ? 1.2 : 1);
       this.playerAvatar.setMastered(this.arena.masteryActive);
-      // Single owner of setHold: driving pins both hands to the wheel, a steam charge hauls
-      // them back into the chest, and otherwise the idle sway runs.
-      this.playerAvatar.setHold(this.ePlusHolding ? 'charge' : driving ? 'ride' : null, aim);
+      // Single owner of setHold: a Supernova throws both palms out down the beam, driving pins
+      // them to the wheel, a steam charge hauls them back into the chest, and otherwise the
+      // idle sway runs.
+      this.playerAvatar.setHold(nova ? 'spray' : this.ePlusHolding ? 'charge' : driving ? 'ride' : null, aim);
       // The car itself shrinks to half size while driving, so the rig follows it down.
       this.playerAvatar.update(delta, player.x, player.y, player.forceInvisible ? 0 : player.alpha);
 
@@ -769,10 +801,11 @@ export class LightKit {
 
     if (isNpcLight && npc.active) {
       if (!this.npcAvatar) this.npcAvatar = new LightAvatar(scene, this.ncol, 'npc');
-      this.npcAvatar.setFacing(this.npcCarAngle);
-      this.npcAvatar.setSpeed(Phaser.Math.Clamp(this.npcCarSpeed / CAR_MAX_SPEED, 0, 1));
+      const npcAim = this.npcNova ? this.npcNova.angle : this.npcCarAngle;
+      this.npcAvatar.setFacing(npcAim);
+      this.npcAvatar.setSpeed(this.npcNova ? 0 : Phaser.Math.Clamp(this.npcCarSpeed / CAR_MAX_SPEED, 0, 1));
       this.npcAvatar.setMastered(this.arena.npcMasteryActive);
-      this.npcAvatar.setHold(this.npcSpeedOLightActive ? null : 'ride', this.npcCarAngle);
+      this.npcAvatar.setHold(this.npcNova ? 'spray' : 'ride', npcAim);
       this.npcAvatar.update(delta, npc.x, npc.y, npc.forceInvisible ? 0 : npc.alpha);
 
       if (time < this.npcKebabWindowUntil) {
@@ -835,11 +868,8 @@ export class LightKit {
     const maxTurnStep = turnRate * dtS;
     angle += Phaser.Math.Clamp(diff, -maxTurnStep, maxTurnStep);
 
-    // Q+ Flare-Stream: driving along one of your own flare beams triples the accel rate
     const owner = isPlayer ? 'player' : 'npc';
-    const onFlare = this.flareBeams.length > 0 && this.upgraded(owner, 'q')
-      && this.isOnFlareBeam(owner, body.center.x, body.center.y);
-    const accelRate = onFlare ? CAR_ACCEL_RATE * FLARE_ACCEL_MULT : CAR_ACCEL_RATE;
+    const accelRate = CAR_ACCEL_RATE;
 
     // Mastery — Unstoppable: the lance bites into the corner, so a hard turn costs far less speed.
     const unstoppable = isPlayer ? this.arena.masteryActive : this.arena.npcMasteryActive;
@@ -849,6 +879,11 @@ export class LightKit {
       speed = Math.min(maxSpeed, speed + accelRate * dtS);
     } else {
       speed = Math.max(CAR_MIN_COAST, speed - brakeRate * dtS * (absDiff / Math.PI));
+    }
+
+    // Q+ Solar Dynamo: your own scorch keeps feeding you speed — on a straightaway or mid-drift.
+    if (this.scorches.length > 0 && this.isOnScorch(owner, body.center.x, body.center.y)) {
+      speed += SCORCH_ACCEL * dtS;
     }
 
     if (time < boostUntil) speed = Math.max(speed, BOOST_TARGET_SPEED);
@@ -1297,134 +1332,242 @@ export class LightKit {
     return this.upgraded('npc', 'f') && this.trickRampNear(npc.x, npc.y) !== null;
   }
 
-  // ── Speed 'O' Light ──────────────────────────────────────────────────────
+  // ── Q — Supernova ────────────────────────────────────────────────────────
 
-  /** Public: also triggered by Subterfuge's Dark Treachery (light-Q copy). */
-  startSpeedOLight(owner: 'player' | 'npc', time: number): void {
-    const caster = owner === 'player' ? this.arena.player : this.arena.npc;
-    caster.dodgeChance += 1.0;
-    // Going to light speed: the body blows out into a flare and a spectrum shell.
-    const fx = this.fx(owner);
-    this.avatar(owner)?.play('raise', -Math.PI / 2, 900);
-    fx.flare(caster.x, caster.y, 1.6, 12, LIGHT.white);
-    fx.boom(caster.x, caster.y, 110, { color: LIGHT.pale, shards: 14, mark: false });
-    this.arena.scene.cameras.main.shake(300, 0.006);
-    if (owner === 'player') {
-      this.speedOLightActive = true;
-      this.speedOLightBouncesLeft = SPEED_O_LIGHT_BOUNCES;
-      this.speedOLightNextBounceAt = time;
-    } else {
-      this.npcSpeedOLightActive = true;
-      this.npcSpeedOLightBouncesLeft = SPEED_O_LIGHT_BOUNCES;
-      this.npcSpeedOLightNextBounceAt = time;
-    }
-    this.arena.showFloatingText(caster.x, caster.y - 30, "💫 SPEED 'O' LIGHT", '#fff4a8');
+  private novaOf(owner: 'player' | 'npc'): LightNova | null {
+    return owner === 'player' ? this.playerNova : this.npcNova;
+  }
+
+  /** How long a beam this much speed buys. Redline's doubled top end is capped at NOVA_MAX_MS. */
+  private novaMsFor(speed: number): number {
+    return Math.min(NOVA_MAX_MS, (speed / CAR_MAX_SPEED) * NOVA_MS_AT_TOP_SPEED);
   }
 
   /**
-   * Ruin Mastery — Second Skin. Speed 'O' Light is the form here: the fighter stops being a
-   * body at all — teleporting wall to wall, dodging everything — until the bounces run out.
-   * Ended the same way `stepSpeedOLight` ends it, so the borrowed dodge goes back.
-   *
-   * Car-mode is deliberately *not* reverted. It is held on the mouse button rather than cast,
-   * so breaking it would last exactly one frame and then fold the player straight back down.
+   * The speed the player has to convert right now: the car's, while driving, and otherwise
+   * whatever the body is actually moving at on foot.
    */
-  revertForms(f: Fighter): string[] {
-    const owner: 'player' | 'npc' | null = f === this.arena.player ? 'player'
-      : f === this.arena.npc ? 'npc' : null;
-    if (!owner) return [];
-    const active = owner === 'player' ? this.speedOLightActive : this.npcSpeedOLightActive;
-    if (!active) return [];
-    f.dodgeChance = Math.max(0, f.dodgeChance - 1.0);
+  private playerSpeedNow(): number {
+    const body = this.arena.player.body as Phaser.Physics.Arcade.Body;
+    const onFoot = body ? Math.hypot(body.velocity.x, body.velocity.y) : 0;
+    return Math.max(this.lanceHeld ? this.carSpeed : 0, onFoot);
+  }
+
+  /** True while either side has a beam open — keeps the kit ticking for a borrowed one. */
+  hasActiveNova(): boolean {
+    return this.playerNova !== null || this.npcNova !== null;
+  }
+
+  /**
+   * Bot synergy, owner-side: the bot's car has banked enough speed that stopping dead buys a
+   * beam worth the charge. Ramps, tricks, blinks and its own scorch all feed this. Side-effect-free.
+   */
+  npcNovaReady(): boolean {
+    return !this.npcNova && this.npcCarSpeed / CAR_MAX_SPEED >= NOVA_BOT_MIN_RATIO;
+  }
+
+  /**
+   * Open a Supernova: stop on a dime and let the speed out as light. `durationMs` is the speed
+   * already converted; the default is Subterfuge's Dark Treachery, which borrows the beam onto a
+   * body that was never driving. Public for that reason.
+   */
+  startNova(owner: 'player' | 'npc', time: number, durationMs = NOVA_FOREIGN_MS): void {
+    if (this.novaOf(owner)) return;
+    const { player, npc, scene } = this.arena;
+    const f = owner === 'player' ? player : npc;
+    if (!f?.active || f.hp <= 0) return;
+    const ptr = scene.input.activePointer;
+    const aimX = owner === 'player' ? ptr.worldX : player.x;
+    const aimY = owner === 'player' ? ptr.worldY : player.y;
+    const nova: LightNova = {
+      owner,
+      angle: Math.atan2(aimY - f.y, aimX - f.x),
+      startedAt: time,
+      endsAt: time + Math.max(250, durationMs),
+      pullX: aimX, pullY: aimY,
+      tickAccum: 0, netAccum: 0, scorchAccum: 0,
+    };
+    if (owner === 'player') this.playerNova = nova; else this.npcNova = nova;
+
+    // Stopped on a dime: every bit of the speed is in the beam now, none of it in the car.
+    (f.body as Phaser.Physics.Arcade.Body | null)?.setVelocity(0, 0);
+    if (owner === 'player') this.carSpeed = 0; else this.npcCarSpeed = 0;
+
+    const fx = this.fx(owner);
+    fx.flare(f.x, f.y, 1.5, 12, LIGHT.white, nova.angle);
+    fx.ring(f.x, f.y, 10, 96, LIGHT.gold, 360, 5, 9);
+    fx.speedLines(f.x, f.y, nova.angle + Math.PI, 1.2, 10, LIGHT.pale);
+    scene.cameras.main.shake(220, 0.006);
+    this.arena.showFloatingText(f.x, f.y - 46, `🌟 SUPERNOVA ${(durationMs / 1000).toFixed(1)}s`, '#fff4a8');
+  }
+
+  /** End a beam: Q again, the banked speed running out, its caster going down, or a relayed stop. */
+  stopNova(owner: 'player' | 'npc'): void {
+    const nova = this.novaOf(owner);
+    if (!nova) return;
     if (owner === 'player') {
-      this.speedOLightActive = false;
-      this.speedOLightBouncesLeft = 0;
+      this.playerNova = null;
+      this.arena.setStatusIndicator('light-supernova', null);
+      // The replica on the other machine never knew how long this one was going to run.
+      this.arena.broadcastMasteryCast('light-nova-stop');
     } else {
-      this.npcSpeedOLightActive = false;
-      this.npcSpeedOLightBouncesLeft = 0;
+      this.npcNova = null;
     }
-    return ["Speed 'O' Light"];
-  }
-
-  private stepSpeedOLight(owner: 'player' | 'npc', time: number): void {
-    const isPlayer = owner === 'player';
-    const nextAt = isPlayer ? this.speedOLightNextBounceAt : this.npcSpeedOLightNextBounceAt;
-    if (time < nextAt) return;
-
-    const caster = isPlayer ? this.arena.player : this.arena.npc;
-    const body = caster.body as Phaser.Physics.Arcade.Body;
-    const { width: W, height: H } = this.arena;
-    const margin = 24;
-    const wall = Math.floor(Math.random() * 4);
-    let nx = caster.x;
-    let ny = caster.y;
-    if (wall === 0) { nx = margin + Math.random() * (W - margin * 2); ny = margin; }
-    else if (wall === 1) { nx = margin + Math.random() * (W - margin * 2); ny = H - margin; }
-    else if (wall === 2) { nx = margin; ny = margin + Math.random() * (H - margin * 2); }
-    else { nx = W - margin; ny = margin + Math.random() * (H - margin * 2); }
-
-    const angle = Math.atan2(ny - caster.y, nx - caster.x);
-    this.streaks.push({ x1: caster.x, y1: caster.y, x2: nx, y2: ny, owner, until: time + STREAK_LIFETIME_MS, hitSet: new Set() });
-    // Each bounce leaves a flare at the wall it came off.
-    this.fx(owner).flare(nx, ny, 0.55, 12, LIGHT.white, angle);
-
-    // Q+ Flare-Stream: every 10th teleport leaves a lasting orange beam
-    if (this.upgraded(owner, 'q')) {
-      const count = isPlayer ? ++this.playerTeleportCount : ++this.npcTeleportCount;
-      if (count % FLARE_TELEPORT_INTERVAL === 0) {
-        this.flareBeams.push({ x1: caster.x, y1: caster.y, x2: nx, y2: ny, owner, until: time + FLARE_BEAM_LIFETIME_MS });
-        const length = Math.max(4, Phaser.Math.Distance.Between(caster.x, caster.y, nx, ny));
-        this.fx(owner).sparkle((caster.x + nx) / 2, (caster.y + ny) / 2, 8, length * 0.3, 11, LIGHT.ember);
-      }
-    }
-
-    caster.setPosition(nx, ny);
-    body.reset(nx, ny);
-
-    const bouncesLeft = (isPlayer ? this.speedOLightBouncesLeft : this.npcSpeedOLightBouncesLeft) - 1;
-    if (isPlayer) {
-      this.speedOLightBouncesLeft = bouncesLeft;
-      this.speedOLightNextBounceAt = time + SPEED_O_LIGHT_BOUNCE_MS;
-    } else {
-      this.npcSpeedOLightBouncesLeft = bouncesLeft;
-      this.npcSpeedOLightNextBounceAt = time + SPEED_O_LIGHT_BOUNCE_MS;
-    }
-
-    if (bouncesLeft <= 0) {
-      caster.dodgeChance = Math.max(0, caster.dodgeChance - 1.0);
-      if (isPlayer) this.speedOLightActive = false; else this.npcSpeedOLightActive = false;
+    const f = owner === 'player' ? this.arena.player : this.arena.npc;
+    if (f?.active) {
+      // The star goes out: a last flash at the palms and the light scattering off them.
+      const fx = this.fx(owner);
+      fx.flare(f.x, f.y, 0.9, 11, LIGHT.pale, nova.angle);
+      fx.shards(f.x, f.y, 6, { speed: 160, angle: nova.angle, spread: 1.4, size: 11, color: LIGHT.gold, depth: 9 });
     }
   }
 
-  private updateStreaks(time: number): void {
-    for (let i = this.streaks.length - 1; i >= 0; i--) {
-      const s = this.streaks[i];
-      if (time >= s.until) { this.streaks.splice(i, 1); continue; }
-      const targets = s.owner === 'player' ? this.arena.enemies : [this.arena.player];
+  /** Beam endpoints for this frame: palms → the wall, however far that is. */
+  private novaSegment(nova: LightNova, f: Fighter): { x0: number; y0: number; x1: number; y1: number } {
+    const cos = Math.cos(nova.angle), sin = Math.sin(nova.angle);
+    const x0 = f.x + cos * NOVA_PALM_OFFSET, y0 = f.y + sin * NOVA_PALM_OFFSET;
+    const len = rayToWall(x0, y0, nova.angle, this.arena.width, this.arena.height);
+    return { x0, y0, x1: x0 + cos * len, y1: y0 + sin * len };
+  }
+
+  private updateNova(nova: LightNova | null, time: number, delta: number): void {
+    if (!nova) return;
+    const owner = nova.owner;
+    const { player, npc, scene } = this.arena;
+    const f = owner === 'player' ? player : npc;
+    const isReplica = owner === 'npc' && this.arena.isOnline;
+    if (!f?.active || f.hp <= 0 || time >= nova.endsAt) { this.stopNova(owner); return; }
+    // A stunned or frozen caster lets go — unless Unstoppable says nothing sticks. A replica
+    // waits for the owner's own stop instead, since the hold lands on the owner's sim.
+    const held = !f.unstoppable
+      && (f.stunnedUntil > Date.now() || f.earthStunnedUntil > time || f.frozenUntil > time);
+    if (held && !isReplica) { this.stopNova(owner); return; }
+
+    // Where the beam is being pulled: the cursor, or the bot's quarry. A replica's pull point
+    // arrives over the wire (light-nova-aim).
+    if (owner === 'player') {
+      const ptr = scene.input.activePointer;
+      nova.pullX = ptr.worldX; nova.pullY = ptr.worldY;
+    } else if (!isReplica) {
+      nova.pullX = player.x; nova.pullY = player.y;
+    }
+    const want = Math.atan2(nova.pullY - f.y, nova.pullX - f.x);
+    const diff = Phaser.Math.Angle.Wrap(want - nova.angle);
+    const maxTurn = NOVA_TURN_RATE * (delta / 1000);
+    nova.angle += Phaser.Math.Clamp(diff, -maxTurn, maxTurn);
+    (f.body as Phaser.Physics.Arcade.Body | null)?.setVelocity(0, 0);
+
+    // Online: keep the peer's replica of the beam pointing where ours points.
+    if (owner === 'player' && this.arena.isOnline) {
+      nova.netAccum += delta;
+      if (nova.netAccum >= NOVA_NET_AIM_MS) { nova.netAccum = 0; this.arena.broadcastMasteryCast('light-nova-aim'); }
+    }
+
+    const seg = this.novaSegment(nova, f);
+    const cos = Math.cos(nova.angle), sin = Math.sin(nova.angle);
+
+    // Damage ticks, the full length of the beam.
+    nova.tickAccum += delta;
+    while (nova.tickAccum >= NOVA_TICK_MS) {
+      nova.tickAccum -= NOVA_TICK_MS;
+      const targets = owner === 'player' ? this.arena.enemies : [player];
       for (const t of targets) {
-        if (!t.active || t.hp <= 0 || s.hitSet.has(t)) continue;
-        if (distToSegment(t.x, t.y, s.x1, s.y1, s.x2, s.y2) <= STREAK_HIT_RADIUS) {
-          s.hitSet.add(t);
-          const hx = t.x, hy = t.y;
-          t.takeDamage(STREAK_DAMAGE);
-          this.fx(s.owner).flare(hx, hy, 0.7, 11, LIGHT.pale, Math.atan2(s.y2 - s.y1, s.x2 - s.x1));
-          if (s.owner === 'player' && t.hp <= 0) this.arena.recordMasteryStat('speedOLightKills', 1);
-        }
+        if (!t?.active || t.hp <= 0) continue;
+        const dx = t.x - seg.x0, dy = t.y - seg.y0;
+        const along = dx * cos + dy * sin;
+        const perp = Math.abs(-dx * sin + dy * cos);
+        if (along < -NOVA_HIT_PAD || perp > NOVA_HALF_WIDTH + NOVA_HIT_PAD) continue;
+        const hx = t.x, hy = t.y;
+        t.takeDamage(NOVA_TICK_DAMAGE);
+        this.fx(owner).flare(hx, hy, 0.55, 11, LIGHT.pale, nova.angle);
+        if (owner === 'player' && t.hp <= 0) this.arena.recordMasteryStat('speedOLightKills', 1);
       }
     }
-  }
 
-  private updateFlareBeams(time: number): void {
-    for (let i = this.flareBeams.length - 1; i >= 0; i--) {
-      if (time >= this.flareBeams[i].until) this.flareBeams.splice(i, 1);
+    // Q+ Solar Dynamo: the beam burns its line into the floor on a beat.
+    if (this.upgraded(owner, 'q')) {
+      nova.scorchAccum += delta;
+      if (nova.scorchAccum >= SCORCH_EVERY_MS) {
+        nova.scorchAccum -= SCORCH_EVERY_MS;
+        this.layScorch(owner, f.x, f.y, seg.x1, seg.y1, time);
+      }
+    }
+
+    if (owner === 'player') {
+      this.arena.setStatusIndicator('light-supernova', {
+        name: 'Supernova', emoji: '🌟', color: LIGHT.gold, priority: 119, until: nova.endsAt,
+        description: 'Stopped dead, pouring your banked speed out as a beam that reaches the wall. It turns slowly after your cursor. Press Q to let go early.',
+      });
     }
   }
 
-  private isOnFlareBeam(owner: 'player' | 'npc', x: number, y: number): boolean {
-    for (const b of this.flareBeams) {
-      if (b.owner === owner && distToSegment(x, y, b.x1, b.y1, b.x2, b.y2) <= STREAK_HIT_RADIUS) return true;
+  /** The beam layer and the fuel gauge over each caster. */
+  private paintNovas(time: number): void {
+    if (!this.playerNova && !this.npcNova) {
+      if (this.novaGfx) this.novaGfx.clear();
+      return;
+    }
+    if (!this.novaGfx || !this.novaGfx.active) this.novaGfx = this.arena.scene.add.graphics().setDepth(6);
+    const g = this.novaGfx;
+    g.clear();
+    for (const nova of [this.playerNova, this.npcNova]) {
+      if (!nova) continue;
+      const f = nova.owner === 'player' ? this.arena.player : this.arena.npc;
+      if (!f?.active) continue;
+      const tint = this.col(nova.owner);
+      const seg = this.novaSegment(nova, f);
+      const span = Math.max(1, nova.endsAt - nova.startedAt);
+      const fuel = Phaser.Math.Clamp((nova.endsAt - time) / span, 0, 1);
+      LightFx.drawNova(g, tint, seg.x0, seg.y0, seg.x1, seg.y1, fuel, this.vizT);
+      // The fuel gauge: the speed that is left, burning down from gold to ember.
+      if (nova.owner === 'npc' && this.arena.isOnline) continue;
+      const bw = 52, bh = 6, bx = f.x - bw / 2, by = f.y - 56;
+      g.fillStyle(0x000000, 0.55);
+      g.fillRoundedRect(bx - 2, by - 2, bw + 4, bh + 4, 3);
+      g.fillStyle(tint(mixColor(LIGHT.ember, LIGHT.gold, fuel)), 1);
+      g.fillRoundedRect(bx, by, Math.max(2, bw * fuel), bh, 2);
+      g.fillStyle(tint(LIGHT.white), 0.9);
+      g.fillCircle(bx + bw * fuel, by + bh / 2, 3 + Math.sin(this.vizT * 20));
+    }
+  }
+
+  // ── Q+ Solar Dynamo ──────────────────────────────────────────────────────
+
+  private layScorch(owner: 'player' | 'npc', x0: number, y0: number, x1: number, y1: number, time: number): void {
+    this.scorches.push({ x1: x0, y1: y0, x2: x1, y2: y1, owner, until: time + SCORCH_LIFE_MS, seed: Math.random() * 99 });
+    const mine = this.scorches.filter((s) => s.owner === owner);
+    if (mine.length > SCORCH_MAX) this.scorches.splice(this.scorches.indexOf(mine[0]), 1);
+    // A puff of embers off the fresh line.
+    const k = 0.3 + Math.random() * 0.5;
+    this.fx(owner).sparkle(x0 + (x1 - x0) * k, y0 + (y1 - y0) * k, 4, 30, 5, LIGHT.ember);
+  }
+
+  private updateScorches(time: number): void {
+    for (let i = this.scorches.length - 1; i >= 0; i--) {
+      if (time >= this.scorches[i].until) this.scorches.splice(i, 1);
+    }
+  }
+
+  private isOnScorch(owner: 'player' | 'npc', x: number, y: number): boolean {
+    for (const s of this.scorches) {
+      if (s.owner === owner && distToSegment(x, y, s.x1, s.y1, s.x2, s.y2) <= SCORCH_HALF_WIDTH) return true;
     }
     return false;
+  }
+
+  /** Online replay of the peer's beam: where it is being pulled, and the moment it goes out. */
+  replayNet(id: string, tx: number, ty: number): void {
+    if (id === 'light-nova-aim' && this.npcNova) { this.npcNova.pullX = tx; this.npcNova.pullY = ty; }
+    else if (id === 'light-nova-stop') this.stopNova('npc');
+  }
+
+  /**
+   * Ruin's FormRevert contract. A Supernova is a stance, not a body — nothing here is a form,
+   * and car-mode is held on the mouse rather than cast, so breaking it would last one frame.
+   */
+  revertForms(f: Fighter): string[] {
+    void f;
+    return [];
   }
 
   /** An upgrade read for either side: the player's own loadout, or the opponent's. */
@@ -1627,7 +1770,7 @@ export class LightKit {
       // slot taken over by the mastery ability
     } else if (this.arena.hasUpgrade('e')) {
       if (Phaser.Input.Keyboard.JustDown(eKey)) {
-        if (!this.ePlusHolding && this.blinkCharges > 0 && !this.speedOLightActive) {
+        if (!this.ePlusHolding && this.blinkCharges > 0 && !this.playerNova) {
           this.ePlusHolding = true;
           this.ePlusHoldStart = time;
           this.pfx.ring(player.x, player.y, 50, 12, LIGHT.glass, 340, 3, 8);
@@ -1653,7 +1796,7 @@ export class LightKit {
         this.arena.showFloatingText(player.x, player.y - 30, '🔥 STEAM RELEASE', '#ff6622');
       }
     } else if (Phaser.Input.Keyboard.JustDown(eKey)) {
-      if (this.blinkCharges > 0 && !this.speedOLightActive) {
+      if (this.blinkCharges > 0 && !this.playerNova) {
         this.blinkCharges--;
         this.blinkRechargeQueue.push(time + this.blinkRechargeMs());
         // Flicker: the shape you were still standing there when you left.
@@ -1681,10 +1824,18 @@ export class LightKit {
       }
     }
 
-    // Q: Speed 'O' Light
+    // Q: Supernova — stop on a dime and spend the speed as a beam. Q again lets go early.
     if (kebabSlot !== 'q' && Phaser.Input.Keyboard.JustDown(qKey)) {
-      if (!this.speedOLightActive && player.castAbility('speed-o-light', playerCtx)) {
-        this.startSpeedOLight('player', time);
+      if (this.playerNova) {
+        this.stopNova('player');
+      } else {
+        const speed = this.playerSpeedNow();
+        if (speed < NOVA_MIN_SPEED) {
+          // Nothing to convert: refused here, so the charge isn't spent on a quarter-second flash.
+          this.arena.showFloatingText(player.x, player.y - 34, '🌟 NO SPEED TO BURN', '#bbaa77');
+        } else if (player.castAbility('light-supernova', playerCtx)) {
+          this.startNova('player', time, this.novaMsFor(speed));
+        }
       }
     }
   }

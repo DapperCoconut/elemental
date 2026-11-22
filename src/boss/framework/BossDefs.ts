@@ -104,6 +104,13 @@ export interface SignatureMove {
   drawAir?(g: Phaser.GameObjects.Graphics, time: number): void;
   /** Phase transition or fight end — drop any live state. */
   onPhaseEnd?(): void;
+  /**
+   * Multiplier on damage the Sovereign's body takes, pulled every frame while the fight runs
+   * (0 = impervious). Every signature's is multiplied together. Gate it on your own state.
+   */
+  takenMult?(): number;
+  /** Every blow that lands on the Sovereign's body, after mitigation. */
+  onBossHurt?(amount: number): void;
 }
 
 export type SignatureFactory = (tk: BossToolkit) => SignatureMove;
@@ -138,6 +145,8 @@ export interface BossBodyState {
   look: BossLook;
   /** Live hand positions, index 0–1 (0–3 on a four-armed Sovereign). */
   hands: { x: number; y: number }[];
+  /** True while the room is dark (a `gloom` phase): the rig is under the dark, `drawLit` above it. */
+  inGloom?: boolean;
 }
 
 // ── Phase styling ────────────────────────────────────────────────────
@@ -288,6 +297,12 @@ export interface WorldBossDef {
 
   /** Optional flourish painted over the rig — the one thing only this Sovereign has. */
   drawDecor?(g: Phaser.GameObjects.Graphics, s: BossBodyState): void;
+  /**
+   * What of the Sovereign shows through the dark — painted every frame *above* the gloom
+   * vignette (and above the room), so a crackle, a lantern or two eyes can stay visible in a
+   * `gloom` phase. Check `s.inGloom`; outside the dark this is just one more layer over the body.
+   */
+  drawLit?(g: Phaser.GameObjects.Graphics, s: BossBodyState): void;
   /** Optional bespoke floor, painted once under the whole fight. */
   drawArena?(g: Phaser.GameObjects.Graphics, W: number, H: number): void;
 }
