@@ -35,13 +35,45 @@ const PROW_REGROW = 8;
 const PROW_REACH = 120;
 /** Half the width of the trough a breaker leaves to slip through. */
 const BREAKER_GAP = 78;
+/** The Wheelback's dice: seconds a die tumbles before it lands, seconds per pip as it counts down, and its burst radius. */
+const DIE_ROLL = 0.9;
+/** The Cantor's sound-rings: how fast one spreads (px/s), the half-width of each rest (radians) and how far it carries. */
+const RING_SPEED = 175;
+const RING_REST = 0.2;
+const RING_MAX = 1050;
+/** The Foghorn Bow: seconds between blasts, how far the blast shoves drift and mines, and how long it holds the sea ahead. */
+const HORN_EVERY = 8;
+const HORN_REACH = 430;
+const HORN_HOLD = 2;
+/** The Lensback's burning spots: seconds the glint swells before the beam, how long the beam lands, and how long the scorch burns after. */
+const BURN_WARN = 1.15;
+const BURN_BEAM = 0.25;
+const BURN_LINGER = 1.1;
+/** The Burning Glass Prow: seconds between lances, and how far ahead the lens reaches. */
+const GLASS_EVERY = 7;
+const GLASS_REACH = 470;
+/** The Cantor's half-width along its length, from the tip of its head (0) to the tail stock (1). */
+const CANTOR_PROFILE: [number, number][] = [[0, 16], [0.07, 36], [0.18, 52], [0.36, 60], [0.55, 54], [0.75, 36], [0.9, 19], [1, 11]];
+const DIE_TICK = 0.6;
+const DIE_RING = 84;
+/** The Fortune Helm: seconds between spins, and how long the little wheel whirls before it lands. */
+const HELM_EVERY = 7;
+const HELM_WHIRL = 1;
+/** Where the pips sit on a die face for each count, in units of a third of the face. */
+const PIPS: Record<number, [number, number][]> = {
+  1: [[0, 0]], 2: [[-1, -1], [1, 1]], 3: [[-1, -1], [0, 0], [1, 1]], 4: [[-1, -1], [1, -1], [-1, 1], [1, 1]],
+  5: [[-1, -1], [1, -1], [0, 0], [-1, 1], [1, 1]], 6: [[-1, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [1, 1]],
+};
+/** The Fortune Helm's three boons, in wheel order. */
+const HELM_BOONS = ['gust', 'ward', 'broadside'] as const;
+type HelmBoon = (typeof HELM_BOONS)[number];
 
 /**
  * Sea beasts, by the `beast` id an isle's `UberDef` names. Each guards its isle's Uber-upgrade
  * and only surfaces once you have landed on that isle. `shot` tints its spit; `spawn` is what
  * its third attack throws on the water.
  */
-const BEASTS: Record<string, { name: string; shot: number; bar: number; spawn: 'driftwall' | 'whirls' | 'brambles' | 'gusts' | 'rockfall' | 'arcs' | 'slicks' }> = {
+const BEASTS: Record<string, { name: string; shot: number; bar: number; spawn: 'driftwall' | 'whirls' | 'brambles' | 'gusts' | 'rockfall' | 'arcs' | 'slicks' | 'dice' | 'rings' | 'burns' }> = {
   magmaw: { name: 'THE MAGMAW', shot: 0xff5a1a, bar: 0xff6a2a, spawn: 'driftwall' },
   wyrm: { name: 'THE MAELSTROM WYRM', shot: 0x6ad8ff, bar: 0x4ab8ff, spawn: 'whirls' },
   brambleback: { name: 'THE BRAMBLEBACK', shot: 0x9ad84a, bar: 0x7ac83a, spawn: 'brambles' },
@@ -49,6 +81,9 @@ const BEASTS: Record<string, { name: string; shot: number; bar: number; spawn: '
   cragjaw: { name: 'THE CRAGJAW', shot: 0xc8b090, bar: 0xb89a6a, spawn: 'rockfall' },
   galvaneel: { name: 'THE GALVANEEL', shot: 0x8ad8ff, bar: 0x5ab8ff, spawn: 'arcs' },
   hydra: { name: 'THE MIRE HYDRA', shot: 0x8ae03a, bar: 0x6ac82a, spawn: 'slicks' },
+  wheelback: { name: 'THE WHEELBACK', shot: 0xe8c050, bar: 0xd83a3a, spawn: 'dice' },
+  cantor: { name: 'THE CANTOR', shot: 0xf0dca0, bar: 0xc8a050, spawn: 'rings' },
+  lensback: { name: 'THE LENSBACK', shot: 0xfff4c8, bar: 0xf0c848, spawn: 'burns' },
 };
 
 /** `bramble`: a floating mat of thorn-vine the Brambleback sheds; it snags (stops your drift) and scratches, but can be shot apart. */
@@ -57,8 +92,12 @@ const BEASTS: Record<string, { name: string; shot: number; bar: number; spawn: '
 /** `breaker`: an Outer Sea roller — a wall of white water the width of the sea rolling in faster than the swell, with one trough (`seed` = its x) to steer through; it cannot be shot or rammed. */
 /** `boulder`: a boulder the Cragjaw shrugs off its back — a shadow on the water first; when it lands it smashes whatever is under it and settles as a rock. */
 /** `slick`: a glob of venom the Mire Hydra spits — in the air for `SLICK_FLIGHT` s (its shadow on the water), then a sheen of venom spreading on the sea; crossing it corrodes the hull once (`armed` 2 once it has) and drags the boat while you are in it; it thins and fades over `SLICK_LIFE` s; it cannot be shot. `seed` is the x it was spat from. */
-type HazardKind = 'rock' | 'reef' | 'mine' | 'whirl' | 'drift' | 'tentacle' | 'spout' | 'bramble' | 'gust' | 'boulder' | 'breaker' | 'arc' | 'slick';
-interface Hazard { kind: HazardKind; x: number; y: number; r: number; hp: number; maxHp: number; t: number; seed: number; dead: boolean; armed?: number }
+/** `die`: a boat-sized die the Wheelback rolls onto the sea — it tumbles in from `seed` (an x) for `DIE_ROLL` s and lands at `x` showing `maxHp` pips; `armed` is the pips left, one ticking off every `DIE_TICK` s (`tick` counts down to the next), and at zero it bursts in a ring of spray `DIE_RING` wide that damages a boat inside it. It CAN be shot: each hit knocks a pip off (a tumbling die is knocked flat where it is), so shooting it out early bursts it well ahead of the boat. */
+/** `ring`: a sound-ring the Cantor sings — centred where it sounded (it does not drift with the sea), its radius `r` spreading at `RING_SPEED` from `t` 0, broken by two rests at the angles in `gaps` (each `RING_REST` either side); a boat it meets outside a rest loses a plank and is shoved outward (`armed` 1 once it has met the boat). It cannot be shot. */
+/** `burn`: a burning spot the Lensback focuses on the sea — fixed where it was aimed (it does not drift with the sea); a glint swells for `BURN_WARN` s, then the beam lands for `BURN_BEAM` s and the scorch burns `BURN_LINGER` s more; a boat inside `r` while it burns loses a plank (`armed` 1 once it has; `tick` set once the beam has landed). It cannot be shot. */
+type HazardKind = 'rock' | 'reef' | 'mine' | 'whirl' | 'drift' | 'tentacle' | 'spout' | 'bramble' | 'gust' | 'boulder' | 'breaker' | 'arc' | 'slick' | 'die' | 'ring' | 'burn';
+/** `held`: seconds the Foghorn Bow still holds this hazard (its own motion and timers stop; it still drifts with the sea). */
+interface Hazard { kind: HazardKind; x: number; y: number; r: number; hp: number; maxHp: number; t: number; seed: number; dead: boolean; armed?: number; tick?: number; gaps?: number[]; held?: number }
 interface Loot { kind: 'crate' | 'barrel' | 'orb' | 'bottle'; x: number; y: number; t: number; taken: boolean }
 interface Shot { x: number; y: number; vx: number; vy: number; dmg: number; life: number; big?: boolean; foe?: boolean }
 interface Beast {
@@ -146,8 +185,9 @@ export class SeaVoyageScene extends Phaser.Scene {
     if (!this.crossing) this.dest = 'wastes';
     this.rough = !!this.crossing?.outer;
     this.swellT = 0; this.nextBreaker = 1400; this.nextFlash = 4; this.flashT = 9;
-    this.bowWaveT = 9;
+    this.bowWaveT = 9; this.hornT = 9; this.glassT = 9; this.glassHits = [];
     this.slickDrag = 0; this.prowReady = [0, 0, 0];
+    this.helmBoon = null; this.helmWard = false; this.helmT = 9; this.helmAngle = 0; this.helmPending = false;
     this.over = false;
     this.hazards = []; this.loot = []; this.shots = []; this.wake = [];
     this.beast = null;
@@ -221,7 +261,10 @@ export class SeaVoyageScene extends Phaser.Scene {
 
     // Scroll the world toward the boat.
     const scroll = fwd * dt;
-    for (const h of this.hazards) { h.y += scroll; h.t += dt; }
+    for (const h of this.hazards) {
+      if (h.kind !== 'ring' && h.kind !== 'burn') h.y += scroll;
+      if ((h.held ?? 0) > 0) h.held = (h.held ?? 0) - dt; else h.t += dt;
+    }
     for (const l of this.loot) { l.y += scroll; l.t += dt; }
     if (this.beast) { this.beast.t += dt; }
     this.hazards = this.hazards.filter((h) => !h.dead && h.y < 720);
@@ -264,10 +307,13 @@ export class SeaVoyageScene extends Phaser.Scene {
       this.cameras.main.shake(200, 0.006);
       const ring = this.add.circle(this.bx, this.by, 170, this.elementColor, 0.25).setScale(0.2);
       this.tweens.add({ targets: ring, scale: 1, alpha: 0, duration: 380, onComplete: () => ring.destroy() });
-      for (const h of this.hazards) if (Math.hypot(h.x - this.bx, h.y - this.by) < 170 && h.kind !== 'reef' && h.kind !== 'gust' && h.kind !== 'breaker' && h.kind !== 'arc' && h.kind !== 'slick') this.damageHazard(h, 4);
+      for (const h of this.hazards) if (h.kind === 'die' && !h.dead && Math.hypot(h.x - this.bx, h.y - this.by) < 170) this.knockDie(h, 2);
+      for (const h of this.hazards) if (Math.hypot(h.x - this.bx, h.y - this.by) < 170 && h.kind !== 'die' && h.kind !== 'reef' && h.kind !== 'gust' && h.kind !== 'breaker' && h.kind !== 'arc' && h.kind !== 'slick' && h.kind !== 'ring' && h.kind !== 'burn') this.damageHazard(h, 4);
       if (this.beast && Math.hypot(this.beast.x - this.bx, this.beast.y - this.by) < 230) this.hitBeast(6);
     }
     this.bowWaveT += dt;
+    this.helmT += dt;
+    if (this.helmPending && this.helmT >= HELM_WHIRL) this.helmLand();
     if (Save.S().boat.uber && this.turretCd <= 0) this.uberTick();
 
     // Shots.
@@ -278,7 +324,12 @@ export class SeaVoyageScene extends Phaser.Scene {
         continue;
       }
       for (const h of this.hazards) {
-        if (h.dead || h.kind === 'whirl' || h.kind === 'reef' || h.kind === 'gust' || h.kind === 'boulder' || h.kind === 'breaker' || h.kind === 'arc' || h.kind === 'slick') continue;
+        if (h.dead || h.kind === 'whirl' || h.kind === 'reef' || h.kind === 'gust' || h.kind === 'boulder' || h.kind === 'breaker' || h.kind === 'arc' || h.kind === 'slick' || h.kind === 'ring' || h.kind === 'burn') continue;
+        if (h.kind === 'die') {
+          const at = this.dieAt(h);
+          if (Math.hypot(sh.x - at.x, sh.y - at.y) < h.r + 6) { this.knockDie(h, 1); sh.life = 0; break; }
+          continue;
+        }
         if (Math.hypot(sh.x - h.x, sh.y - h.y) < h.r + 6) { this.damageHazard(h, sh.dmg); sh.life = 0; break; }
       }
       if (this.beast && sh.life > 0 && this.beast.phase === 'fight' && Math.hypot(sh.x - this.beast.x, sh.y - this.beast.y) < 56) { this.hitBeast(sh.dmg); sh.life = 0; }
@@ -290,6 +341,11 @@ export class SeaVoyageScene extends Phaser.Scene {
     for (const h of this.hazards) {
       if (h.dead) continue;
       const d = Math.hypot(h.x - this.bx, h.y - this.by);
+      // Held by the Foghorn: only the solid things still bar the way; everything that moves or counts waits.
+      const held = (h.held ?? 0) > 0;
+      if (held && h.kind !== 'rock' && h.kind !== 'reef' && h.kind !== 'drift' && h.kind !== 'bramble' && h.kind !== 'mine') continue;
+      if (h.kind === 'ring') { this.ringTouch(h, d); continue; }
+      if (h.kind === 'burn') { this.burnTouch(h, d); continue; }
       if (h.kind === 'whirl') {
         if (d < h.r * 2.6) { const pull = (1 - d / (h.r * 2.6)) * 220; this.bvx += Math.sign(h.x - this.bx) * pull * dt * 2; }
         if (d < h.r * 0.5) this.damageBoat(1);
@@ -335,6 +391,19 @@ export class SeaVoyageScene extends Phaser.Scene {
         }
         continue;
       }
+      if (h.kind === 'die') {
+        if (h.t < DIE_ROLL) continue;
+        if (h.tick === undefined) {
+          // Down it comes: it lands showing its pips and starts to count.
+          h.tick = DIE_TICK; h.armed ??= h.maxHp; this.explode(h.x, h.y, h.r + 6); Sfx.play('dice');
+        }
+        h.tick -= dt;
+        if (h.tick <= 0) { h.tick += DIE_TICK; h.armed = (h.armed ?? 1) - 1; }
+        if ((h.armed ?? 0) <= 0) { this.burstDie(h); continue; }
+        // Bumping a landed die shoves the boat off it; it is too heavy to ram.
+        if (d < h.r + 16) this.bvx = Math.sign(this.bx - h.x || 1) * 240;
+        continue;
+      }
       if (h.kind === 'breaker') {
         // It rolls in faster than the sea; caught outside the trough, it breaks over the boat.
         h.y += (90 + this.band() * 25) * dt;
@@ -356,8 +425,8 @@ export class SeaVoyageScene extends Phaser.Scene {
         h.kind = 'rock'; h.hp = h.maxHp = 3;
         continue;
       }
-      if (h.kind === 'mine' && d < 90 && h.armed === undefined) h.armed = 0.6;
-      if (h.kind === 'mine' && h.armed !== undefined) {
+      if (h.kind === 'mine' && d < 90 && h.armed === undefined && !held) h.armed = 0.6;
+      if (h.kind === 'mine' && h.armed !== undefined && !held) {
         h.armed -= dt;
         if (h.armed <= 0) { this.explode(h.x, h.y, 80); h.dead = true; if (d < 80) this.damageBoat(2); continue; }
       }
@@ -463,6 +532,11 @@ export class SeaVoyageScene extends Phaser.Scene {
 
   private damageBoat(n: number): void {
     if (this.invuln > 0 || this.over) return;
+    if (this.helmWard && Save.S().boat.uber === 'uber-fortunehelm') {
+      this.helmWard = false; this.invuln = 0.9;
+      this.float(this.bx, this.by - 34, 'the ward holds', '#ffe08a'); Sfx.play('shield-block');
+      return;
+    }
     if (this.plateReady && Save.S().boat.uber === 'uber-cragplate') {
       this.plateReady = false; this.invuln = 0.9; this.turretCd = 8;
       this.float(this.bx, this.by - 34, 'the cragplate holds', '#e0c8a0'); Sfx.play('shield-block');
@@ -496,6 +570,9 @@ export class SeaVoyageScene extends Phaser.Scene {
     else if (uber === 'uber-cragplate') this.uberPlate();
     else if (uber === 'uber-stormmast') this.uberMast();
     else if (uber === 'uber-hydraprow') this.uberProw();
+    else if (uber === 'uber-fortunehelm') this.uberHelm();
+    else if (uber === 'uber-foghorn') this.uberHorn();
+    else if (uber === 'uber-burningglass') this.uberGlass();
     else this.turretCd = 99;
   }
 
@@ -578,6 +655,179 @@ export class SeaVoyageScene extends Phaser.Scene {
     }
   }
 
+  /** Where a die is right now: sliding in from `seed` while it tumbles, at rest at `x` once it lands. */
+  private dieAt(h: Hazard): Pt {
+    if (h.t >= DIE_ROLL) return { x: h.x, y: h.y };
+    const k = Phaser.Math.Clamp(h.t / DIE_ROLL, 0, 1), e = 1 - (1 - k) * (1 - k);
+    return { x: Phaser.Math.Linear(h.seed, h.x, e), y: h.y - Math.abs(Math.sin(k * Math.PI * 3)) * (1 - k) * 22 };
+  }
+
+  /**
+   * Knock `n` pips off a die. A die still tumbling is knocked flat where it is (and lands there);
+   * one knocked to zero bursts on the spot.
+   */
+  private knockDie(h: Hazard, n: number): void {
+    if (h.dead) return;
+    if (h.t < DIE_ROLL) { h.x = this.dieAt(h).x; h.t = DIE_ROLL; }
+    h.tick = DIE_TICK;
+    h.armed = (h.armed ?? h.maxHp) - n;
+    if (h.armed <= 0) this.burstDie(h);
+    else Sfx.play('hit-light');
+  }
+
+  /** A die comes up empty: it bursts in a ring of spray, and a boat inside the ring is struck. */
+  private burstDie(h: Hazard): void {
+    h.dead = true;
+    this.explode(h.x, h.y, h.r + 14);
+    const ring = this.add.circle(h.x, h.y, DIE_RING, 0xd8f0ff, 0.14).setStrokeStyle(5, 0xffffff, 0.85).setScale(0.25);
+    this.tweens.add({ targets: ring, scale: 1, alpha: 0, duration: 360, onComplete: () => ring.destroy() });
+    Sfx.play('splash');
+    if (Math.hypot(this.bx - h.x, this.by - h.y) < DIE_RING) { this.damageBoat(1); this.float(this.bx, this.by - 36, 'snake eyes!', '#ffd27a'); }
+  }
+
+  /** The Fortune Helm's last boon (null before its first spin) and the wedge angle it landed on. */
+  private helmBoon: HelmBoon | null = null;
+  private helmAngle = 0;
+  /** Seconds since the helm last began to spin: it whirls for `HELM_WHIRL`, then lands and the boon's badge shows a moment. */
+  private helmT = 9;
+  /** The helm is whirling and has not landed yet. */
+  private helmPending = false;
+  /** The helm landed on *ward*: the next blow to the hull is shrugged off. */
+  private helmWard = false;
+
+  /**
+   * The Fortune Helm: the boat's wheel is a little roulette wheel that spins itself every seven
+   * seconds and lands on a boon — `gust` a burst of speed, `ward` shrug off the next blow (kept until
+   * it is used, so a held ward re-spins between the other two), `broadside` a heavy shot at the
+   * nearest hazard ahead (or the beast, if nothing is in the way). The wheel whirls for a second
+   * first; `helmLand` pays the boon out when it stops.
+   */
+  private uberHelm(): void {
+    this.turretCd = HELM_EVERY;
+    const pool = HELM_BOONS.filter((b) => !(b === 'ward' && this.helmWard));
+    this.helmBoon = pool[Math.floor(this.rng() * pool.length)];
+    this.helmAngle = -Math.PI / 2 - (HELM_BOONS.indexOf(this.helmBoon) + 0.5) * (Math.PI * 2 / HELM_BOONS.length) + (this.rng() - 0.5) * 0.9;
+    this.helmT = 0;
+    this.helmPending = true;
+    Sfx.play('dice');
+  }
+
+  /** The Fortune Helm stops on its boon and pays it out. */
+  private helmLand(): void {
+    this.helmPending = false;
+    const boon = this.helmBoon;
+    if (!boon || this.over) return;
+    Sfx.play('jackpot');
+    if (boon === 'gust') {
+      this.sailT = 0;
+      this.float(this.bx, this.by - 40, 'GUST!', '#e8f8ff'); Sfx.play('gust');
+    } else if (boon === 'ward') {
+      this.helmWard = true;
+      this.float(this.bx, this.by - 40, 'WARD!', '#ffe08a'); Sfx.play('sparkle');
+    } else {
+      let best: { x: number; y: number } | null = null, bd = 460;
+      for (const h of this.hazards) {
+        if (h.dead || h.y > this.by - 20 || h.y < -20 || !(h.kind === 'rock' || h.kind === 'drift' || h.kind === 'mine' || h.kind === 'bramble' || h.kind === 'die')) continue;
+        const at = h.kind === 'die' ? this.dieAt(h) : h, d = Math.hypot(at.x - this.bx, at.y - this.by);
+        if (d < bd) { bd = d; best = at; }
+      }
+      if (!best && this.beast?.phase === 'fight') best = this.beast;
+      const a = best ? Math.atan2(best.y - this.by, best.x - this.bx) : -Math.PI / 2;
+      this.shots.push({ x: this.bx, y: this.by - 20, vx: Math.cos(a) * 560, vy: Math.sin(a) * 560, dmg: 3, life: 1.4, big: true });
+      this.float(this.bx, this.by - 40, 'BROADSIDE!', '#ffb07a'); Sfx.play('flame-burst');
+    }
+  }
+
+  /** Seconds since the Foghorn Bow last sounded (drawn as the spreading blast while < 1.6). */
+  private hornT = 9;
+
+  /**
+   * The Foghorn Bow sounds a long low blast every eight seconds: drift and mines inside its ring are
+   * shoved out of the boat's lane, and every hazard ahead — the Cantor's rings with them — is held
+   * still for two seconds (timers stop, nothing rolls, spins, arms or spreads).
+   */
+  private uberHorn(): void {
+    this.turretCd = HORN_EVERY;
+    this.hornT = 0;
+    let held = 0;
+    for (const h of this.hazards) {
+      if (h.dead) continue;
+      const dx = h.x - this.bx, d = Math.hypot(dx, h.y - this.by);
+      if ((h.kind === 'drift' || h.kind === 'mine') && d < HORN_REACH) {
+        h.x = Phaser.Math.Clamp(h.x + (Math.sign(dx) || (this.rng() < 0.5 ? -1 : 1)) * (110 - Math.min(80, Math.abs(dx) * 0.4)), 30, 930);
+      }
+      const ahead = h.kind === 'ring' ? d > h.r : h.y < this.by - 10 && h.y > -80;
+      if (ahead) { h.held = HORN_HOLD; held++; }
+    }
+    if (held) this.float(this.bx, this.by - 44, 'the sea holds its breath', '#e8dcb0');
+    Sfx.play('sonic-pulse');
+    this.cameras.main.shake(260, 0.003);
+  }
+
+  /** Seconds since the Burning Glass Prow last lanced (drawn as the beams while < 0.5), and where its beams struck. */
+  private glassT = 9;
+  private glassHits: Pt[] = [];
+
+  /**
+   * The Burning Glass Prow: the lens on the bow gathers the sun and every seven seconds lances a beam
+   * ahead at the two nearest hazards in front of the boat — rocks, drift, mines, bramble mats,
+   * tentacles, dice and venom slicks are burned away. With nothing in the way it scorches a beast
+   * ahead instead; with nothing at all it waits and tries again shortly.
+   */
+  private uberGlass(): void {
+    const at = (h: Hazard): Pt => (h.kind === 'die' ? this.dieAt(h) : h);
+    const burnable = (h: Hazard) => h.kind === 'rock' || h.kind === 'drift' || h.kind === 'mine' || h.kind === 'bramble'
+      || h.kind === 'tentacle' || h.kind === 'die' || (h.kind === 'slick' && h.t >= SLICK_FLIGHT);
+    const ahead = this.hazards
+      .filter((h) => {
+        if (h.dead || !burnable(h)) return false;
+        const p = at(h), dy = this.by - p.y;
+        return dy > 10 && dy < GLASS_REACH && p.y > -30 && Math.abs(p.x - this.bx) < 70 + dy * 0.6;
+      })
+      .sort((a, b) => Math.hypot(at(a).x - this.bx, at(a).y - this.by) - Math.hypot(at(b).x - this.bx, at(b).y - this.by))
+      .slice(0, 2);
+    this.glassHits = ahead.map((h) => ({ ...at(h) }));
+    for (const h of ahead) {
+      const p = at(h);
+      h.dead = true; this.explode(p.x, p.y, h.r + 12);
+      if (h.kind === 'rock' && this.rng() < 0.3) this.loot.push({ kind: 'crate', x: h.x, y: h.y, t: 0, taken: false });
+    }
+    if (!ahead.length && this.beast?.phase === 'fight' && this.beast.y < this.by && this.by - this.beast.y < GLASS_REACH + 60 && Math.abs(this.beast.x - this.bx) < 260) {
+      this.hitBeast(3); this.glassHits.push({ x: this.beast.x, y: this.beast.y });
+    }
+    if (!this.glassHits.length) { this.turretCd = 0.5; return; }
+    this.turretCd = GLASS_EVERY;
+    this.glassT = 0;
+    Sfx.play('light-beam');
+  }
+
+  /** A Lensback burning spot: the glint swells, then the beam lands and the scorch burns; inside it while it burns costs a plank, once. */
+  private burnTouch(h: Hazard, d: number): void {
+    if (h.t > BURN_WARN + BURN_BEAM + BURN_LINGER) { h.dead = true; return; }
+    if (h.t < BURN_WARN) return;
+    if (h.tick === undefined) { h.tick = 1; this.explode(h.x, h.y, h.r * 0.8); Sfx.play('light-beam'); }
+    if (h.armed || d > h.r + 8) return;
+    h.armed = 1;
+    this.damageBoat(1);
+    this.float(this.bx, this.by - 36, 'scorched by the glass!', '#fff4c8'); Sfx.play('status-burn');
+  }
+
+  /** A Cantor ring meeting the boat: through a rest it passes; anywhere else it costs a plank and shoves the boat outward. */
+  private ringTouch(h: Hazard, d: number): void {
+    if (h.t < 0) return;
+    h.r = 30 + h.t * RING_SPEED;
+    if (h.r > RING_MAX) { h.dead = true; return; }
+    if (h.armed || Math.abs(d - h.r) > 14) return;
+    h.armed = 1;
+    const a = Math.atan2(this.by - h.y, this.bx - h.x);
+    const inRest = (h.gaps ?? []).some((gp) => Math.abs(Phaser.Math.Angle.Wrap(a - gp)) < RING_REST);
+    if (inRest) { this.float(this.bx, this.by - 36, 'through the rest', '#f0dca0'); return; }
+    this.damageBoat(1);
+    this.bvx += Math.cos(a) * 640;
+    this.by = Math.min(590, this.by + Math.max(0, Math.sin(a)) * 34);
+    this.float(this.bx, this.by - 36, 'a plank sings loose!', '#f0dca0'); Sfx.play('sonic-pulse');
+  }
+
   /** The Cragplate has hardened: the next hit on the hull is shrugged off. */
   private plateReady = false;
 
@@ -625,8 +875,8 @@ export class SeaVoyageScene extends Phaser.Scene {
   private thornBurst(): void {
     const R = 150;
     for (const h of this.hazards) {
-      if (h.dead || h.kind === 'whirl' || h.kind === 'reef' || h.kind === 'tentacle' || h.kind === 'spout' || h.kind === 'gust' || h.kind === 'boulder' || h.kind === 'breaker' || h.kind === 'arc' || h.kind === 'slick') continue;
-      if (Math.hypot(h.x - this.bx, h.y - this.by) < R + h.r) this.damageHazard(h, 3);
+      if (h.dead || h.kind === 'whirl' || h.kind === 'reef' || h.kind === 'tentacle' || h.kind === 'spout' || h.kind === 'gust' || h.kind === 'boulder' || h.kind === 'breaker' || h.kind === 'arc' || h.kind === 'slick' || h.kind === 'ring' || h.kind === 'burn') continue;
+      if (Math.hypot(h.x - this.bx, h.y - this.by) < R + h.r) { if (h.kind === 'die') this.knockDie(h, 1); else this.damageHazard(h, 3); }
     }
     if (this.beast?.phase === 'fight' && Math.hypot(this.beast.x - this.bx, this.beast.y - this.by) < 260) this.hitBeast(4);
     this.thornT = 0;
@@ -649,7 +899,8 @@ export class SeaVoyageScene extends Phaser.Scene {
       if (dy > -20 || dy < -reach || Math.abs(dx) > 70 + (-dy) * 0.45) continue;
       any = true;
       if (h.kind === 'whirl') { h.dead = true; this.explode(h.x, h.y, h.r * 1.6); continue; }
-      if (h.kind === 'reef' || h.kind === 'tentacle' || h.kind === 'spout' || h.kind === 'gust' || h.kind === 'boulder' || h.kind === 'breaker' || h.kind === 'arc' || h.kind === 'slick') continue;
+      if (h.kind === 'reef' || h.kind === 'tentacle' || h.kind === 'spout' || h.kind === 'gust' || h.kind === 'boulder' || h.kind === 'breaker' || h.kind === 'arc' || h.kind === 'slick' || h.kind === 'ring' || h.kind === 'burn') continue;
+      if (h.kind === 'die') { if (h.t >= DIE_ROLL) h.x = Phaser.Math.Clamp(h.x + (Math.sign(dx) || 1) * 70, 30, 930); this.knockDie(h, 1); continue; }
       h.x = Phaser.Math.Clamp(h.x + (Math.sign(dx) || 1) * 70, 30, 930);
       this.damageHazard(h, 2);
     }
@@ -666,7 +917,7 @@ export class SeaVoyageScene extends Phaser.Scene {
   private uberTurret(): void {
     let best: { x: number; y: number } | null = null, bd = 380;
     for (const h of this.hazards) {
-      if (h.dead || h.kind === 'whirl' || h.kind === 'reef' || h.kind === 'spout' || h.kind === 'tentacle' || h.kind === 'gust' || h.kind === 'boulder' || h.kind === 'breaker' || h.kind === 'arc' || h.kind === 'slick' || h.y > this.by) continue;
+      if (h.dead || h.kind === 'whirl' || h.kind === 'reef' || h.kind === 'spout' || h.kind === 'tentacle' || h.kind === 'gust' || h.kind === 'boulder' || h.kind === 'breaker' || h.kind === 'arc' || h.kind === 'slick' || h.kind === 'ring' || h.kind === 'burn' || h.y > this.by) continue;
       const d = Math.hypot(h.x - this.bx, h.y - this.by);
       if (d < bd) { bd = d; best = h; }
     }
@@ -745,7 +996,7 @@ export class SeaVoyageScene extends Phaser.Scene {
           const a = Math.atan2(this.by - b.y, this.bx - b.x) + i * 0.22;
           this.shots.push({ x: b.x, y: b.y + 30, vx: Math.cos(a) * 240, vy: Math.sin(a) * 240, dmg: 1, life: 3, foe: true });
         }
-        Sfx.play(b.kind === 'wyrm' ? 'water-jet' : b.kind === 'brambleback' ? 'thorn' : b.kind === 'skyray' ? 'whoosh' : b.kind === 'cragjaw' ? 'rock-throw' : b.kind === 'galvaneel' ? 'zap' : b.kind === 'hydra' ? 'status-poison' : 'fireball');
+        Sfx.play(b.kind === 'wyrm' ? 'water-jet' : b.kind === 'brambleback' ? 'thorn' : b.kind === 'skyray' ? 'whoosh' : b.kind === 'cragjaw' ? 'rock-throw' : b.kind === 'galvaneel' ? 'zap' : b.kind === 'hydra' ? 'status-poison' : b.kind === 'wheelback' ? 'dice' : b.kind === 'cantor' ? 'sonic-pulse' : b.kind === 'lensback' ? 'light-beam' : 'fireball');
       }
       if (b.attack === 'slam' && b.attackT > 1.0 && b.attackT - dt <= 1.0) {
         for (let i = 0; i < 3; i++) this.hazards.push({ kind: 'tentacle', x: Phaser.Math.Clamp(this.bx + (i - 1) * 110, 60, 900), y: this.by - 20, r: 26, hp: 999, maxHp: 999, t: 0, seed: i, dead: false });
@@ -775,6 +1026,39 @@ export class SeaVoyageScene extends Phaser.Scene {
           this.hazards.push({ kind: 'slick', x, y: this.by - 170 - i * 70 - this.rng() * 40, r: 58 + this.rng() * 18, hp: 999, maxHp: 999, t: -i * 0.18, seed: b.x + (i - 1.5) * 50, dead: false });
         });
         Sfx.play('acid-spray');
+      } else if (b.attack === 'wave' && b.attackT > 0.8 && b.attackT - dt <= 0.8 && BEASTS[b.kind]?.spawn === 'dice') {
+        // The Wheelback's wheel throws its dice: a line of them tumbling out across the sea, one
+        // rolling right into the boat's lane, each set to burst about when the boat reaches it —
+        // slip into a gap between the rings, or shoot a die out early.
+        for (let k = -3; k <= 3; k++) {
+          const x = this.bx + k * 230 + (this.rng() - 0.5) * 30;
+          if (x < 50 || x > 910) continue;
+          const pips = 2 + Math.floor(this.rng() * 3);
+          const y = this.by - this.speed * (DIE_ROLL + pips * DIE_TICK) - 30 - this.rng() * 40;
+          const from = Phaser.Math.Clamp(x + (x < b.x ? 1 : -1) * 190, 20, 940);
+          this.hazards.push({ kind: 'die', x, y, r: 22, hp: 999, maxHp: pips, t: -Math.abs(k) * 0.08, seed: from, dead: false, armed: pips });
+        }
+        Sfx.play('dice');
+      } else if (b.attack === 'wave' && b.attackT > 0.8 && b.attackT - dt <= 0.8 && BEASTS[b.kind]?.spawn === 'rings') {
+        // The Cantor sings a phrase: three sound-rings spreading from its throat one after another, each
+        // broken by two rests — one near the boat's line but never on it, so you steer for each in turn.
+        const cx = b.x, cy = b.y + 78, aim = Math.atan2(this.by - cy, this.bx - cx);
+        for (let i = 0; i < 3; i++) {
+          const g1 = aim + (this.rng() < 0.5 ? -1 : 1) * (0.28 + this.rng() * 0.45);
+          const g2 = g1 + (this.rng() < 0.5 ? -1 : 1) * (1.0 + this.rng() * 0.7);
+          this.hazards.push({ kind: 'ring', x: cx, y: cy, r: 30, hp: 999, maxHp: 999, t: -i * 0.95, seed: i, dead: false, gaps: [g1, g2] });
+        }
+        Sfx.play('sonic-pulse');
+      } else if (b.attack === 'wave' && b.attackT > 0.8 && b.attackT - dt <= 0.8 && BEASTS[b.kind]?.spawn === 'burns') {
+        // The Lensback tilts its glass dome to the noon sun and walks burning spots across the boat's
+        // line: one right under the boat, then pairs further out on a slant, each glinting before its
+        // beam lands — slip into a gap between them before they burn.
+        const slant = this.rng() < 0.5 ? -1 : 1;
+        [0, -1, 1, -2, 2].forEach((k) => {
+          const x = Phaser.Math.Clamp(this.bx + k * 140 + (this.rng() - 0.5) * 24, 40, 920);
+          this.hazards.push({ kind: 'burn', x, y: this.by - 8 + k * slant * 12, r: 46, hp: 999, maxHp: 999, t: -Math.abs(k) * 0.45, seed: k, dead: false });
+        });
+        Sfx.play('light-beam');
       } else if (b.attack === 'wave' && b.attackT > 0.8 && b.attackT - dt <= 0.8 && BEASTS[b.kind]?.spawn === 'gusts') {
         // The Skyray's wake: two gust fronts rolling down the sea, each shoving the other way —
         // ride them out by steering against the push.
@@ -915,6 +1199,9 @@ export class SeaVoyageScene extends Phaser.Scene {
       else if (this.beast.kind === 'cragjaw') this.drawCragjaw(g, this.beast, t);
       else if (this.beast.kind === 'galvaneel') this.drawGalvaneel(g, this.beast, t);
       else if (this.beast.kind === 'hydra') this.drawHydra(g, this.beast, t);
+      else if (this.beast.kind === 'wheelback') this.drawWheelback(g, this.beast, t);
+      else if (this.beast.kind === 'cantor') this.drawCantor(g, this.beast, t);
+      else if (this.beast.kind === 'lensback') this.drawLensback(g, this.beast, t);
       else this.drawBeast(g, this.beast, t);
     }
     if (this.thornT < 0.45) {
@@ -944,6 +1231,45 @@ export class SeaVoyageScene extends Phaser.Scene {
           g.strokePath();
         }
       }
+    }
+    if (this.hornT < 1.6) {
+      // The Foghorn's blast: a long low ring of grey-gold air rolling out from the prow, wobbling with
+      // the note, a fainter second ring behind it, and fog breathing from the horn's mouth.
+      this.hornT += 1 / 60;
+      const k = Math.min(1, this.hornT / 1.6), R = 30 + (1 - (1 - k) * (1 - k)) * HORN_REACH, a = 1 - k;
+      const pts = (rr: number, wob: number) => {
+        const out: Phaser.Geom.Point[] = [];
+        for (let i = 0; i <= 48; i++) { const an = (i / 48) * Math.PI * 2, w = rr + Math.sin(an * 6 + this.hornT * 9) * wob; out.push(new Phaser.Geom.Point(this.bx + Math.cos(an) * w, this.by - 20 + Math.sin(an) * w * 0.9)); }
+        return out;
+      };
+      g.lineStyle(16 * a + 2, 0xe8dcb0, 0.12 * a); g.strokePoints(pts(R, 4), true);
+      g.lineStyle(4 * a + 1, 0xf4ecd0, 0.55 * a); g.strokePoints(pts(R, 4), true);
+      if (R > 90) { g.lineStyle(2, 0xd8d0b8, 0.3 * a); g.strokePoints(pts(R - 60, 3), true); }
+      const mouth = { x: this.bx + Math.sin(this.heading) * (this.boat.len / 2 + 14), y: this.by - Math.cos(this.heading) * (this.boat.len / 2 + 14) };
+      for (let i = 0; i < 6; i++) {
+        const q = Math.min(1, this.hornT * 1.5) * (0.4 + i * 0.12);
+        g.fillStyle(0xe8e4d8, 0.22 * a); g.fillCircle(mouth.x + Math.sin(i * 2.1) * q * 18, mouth.y - q * 40 - i * 4, 5 + q * 12);
+      }
+    }
+    if (this.glassT < 0.5) {
+      // The Burning Glass Prow lances: a white-hot beam from the prow lens to each target — a gold
+      // halo, a bright body and a white core, flickering — with a flash and a spray of sparks where it burns.
+      this.glassT += 1 / 60;
+      const k = this.glassT / 0.5, a = 1 - k * k, fl = 0.8 + 0.2 * Math.sin(this.glassT * 90);
+      const lens = { x: this.bx + Math.sin(this.heading) * (this.boat.len / 2 + 4), y: this.by - Math.cos(this.heading) * (this.boat.len / 2 + 4) };
+      for (const p of this.glassHits) {
+        g.lineStyle(14, 0xffd060, 0.18 * a); g.lineBetween(lens.x, lens.y, p.x, p.y);
+        g.lineStyle(6, 0xfff4c8, 0.6 * a * fl); g.lineBetween(lens.x, lens.y, p.x, p.y);
+        g.lineStyle(2, 0xffffff, a); g.lineBetween(lens.x, lens.y, p.x, p.y);
+        g.fillStyle(0xffffff, 0.8 * a); g.fillCircle(p.x, p.y, 10 * (1 - k) + 4);
+        g.lineStyle(2, 0xffe890, a); g.strokeCircle(p.x, p.y, 10 + k * 34);
+        for (let i = 0; i < 8; i++) {
+          const sa = i * (Math.PI / 4) + p.x * 0.1, d = 6 + k * 30;
+          g.fillStyle(i % 2 ? 0xffffff : 0xffc860, a); g.fillCircle(p.x + Math.cos(sa) * d, p.y + Math.sin(sa) * d + k * k * 10, 1.6);
+        }
+        for (let i = 0; i < 3; i++) { g.fillStyle(0xe8e4dc, 0.25 * a); g.fillCircle(p.x + (i - 1) * 8, p.y - 8 - k * 30 - i * 4, 5 + k * 9); }
+      }
+      g.fillStyle(0xffffff, 0.7 * a); g.fillCircle(lens.x, lens.y, 9 * a + 3);
     }
     if (this.bowWaveT < 0.6) {
       const k = this.bowWaveT / 0.6;
@@ -1099,6 +1425,102 @@ export class SeaVoyageScene extends Phaser.Scene {
         if (gape > 0.3) { g.fillStyle(0xf4eedc, 1); g.fillCircle(hx + ca * 6, hy + sa * 6, 1); }
       }
     }
+    if (Save.S().boat.uber === 'uber-fortunehelm') {
+      // The ship's wheel is a little roulette wheel on a gilt pedestal: red and black pockets, a gold
+      // rim with spoke-handles, three boon marks (a white gust curl, a gold ward, a red broadside
+      // ball) and a pointer at the top. It whirls and clicks to a stop on its boon, which flashes.
+      const c = pt(0, L * 0.2), R = 9;
+      const whirl = this.helmPending ? 1 - Phaser.Math.Clamp(this.helmT / HELM_WHIRL, 0, 1) : 0;
+      const ang = this.helmAngle - whirl * whirl * whirl * 16 + rot;
+      g.fillStyle(0x000000, 0.3); g.fillCircle(c.x + 1.5, c.y + 2, R + 3);
+      for (let k = 0; k < 6; k++) {
+        const a = ang + k * (Math.PI / 3);
+        g.lineStyle(2, 0xb88a2a, 1); g.lineBetween(c.x, c.y, c.x + Math.cos(a) * (R + 4), c.y + Math.sin(a) * (R + 4));
+        g.fillStyle(0xe8c050, 1); g.fillCircle(c.x + Math.cos(a) * (R + 4), c.y + Math.sin(a) * (R + 4), 1.8);
+      }
+      g.fillStyle(0xc8a040, 1); g.fillCircle(c.x, c.y, R + 1.5);
+      for (let k = 0; k < 12; k++) {
+        const a0 = ang + k * (Math.PI / 6);
+        g.fillStyle(k % 2 ? 0x1a1418 : 0xb8202a, 1); g.slice(c.x, c.y, R, a0, a0 + Math.PI / 6, false); g.fillPath();
+      }
+      for (let i = 0; i < HELM_BOONS.length; i++) {
+        const a = ang + (i + 0.5) * (Math.PI * 2 / HELM_BOONS.length), mx = c.x + Math.cos(a) * R * 0.66, my = c.y + Math.sin(a) * R * 0.66;
+        const lit = !this.helmPending && this.helmBoon === HELM_BOONS[i] && this.helmT < HELM_WHIRL + 1.2;
+        g.fillStyle(i === 0 ? 0xe8f8ff : i === 1 ? 0xffd84a : 0xff7a4a, 1); g.fillCircle(mx, my, lit ? 2.6 + Math.sin(t * 20) * 0.6 : 1.8);
+      }
+      g.fillStyle(0xe8c050, 1); g.fillCircle(c.x, c.y, 2.6); g.fillStyle(0xfff0b0, 1); g.fillCircle(c.x - 0.8, c.y - 0.8, 1);
+      const tip = pt(0, L * 0.2 - R - 4), tl = pt(-3, L * 0.2 - R - 9), tr = pt(3, L * 0.2 - R - 9);
+      g.fillStyle(0xfff0b0, 1); g.fillTriangle(tip.x, tip.y, tl.x, tl.y, tr.x, tr.y);
+      // The boon it landed on, as a badge over the boat for a moment.
+      const since = this.helmT - HELM_WHIRL;
+      if (!this.helmPending && this.helmBoon && since >= 0 && since < 1.4) {
+        const k = since / 1.4, bx = x, by = y - L * 0.8 - k * 18, a = Math.min(1, (1 - k) * 3);
+        g.fillStyle(0x1a1418, 0.7 * a); g.fillCircle(bx, by, 12);
+        g.lineStyle(2, 0xe8c050, a); g.strokeCircle(bx, by, 12);
+        if (this.helmBoon === 'gust') {
+          g.lineStyle(2, 0xe8f8ff, a);
+          g.beginPath(); g.arc(bx - 1, by, 6, Math.PI * 0.9, Math.PI * 2.4, false); g.strokePath();
+          g.lineBetween(bx - 8, by + 4, bx + 6, by + 4); g.lineBetween(bx - 6, by - 4, bx + 2, by - 4);
+        } else if (this.helmBoon === 'ward') {
+          g.fillStyle(0xffd84a, a); g.fillTriangle(bx - 6, by - 6, bx + 6, by - 6, bx, by + 8); g.fillRect(bx - 6, by - 7, 12, 4);
+          g.fillStyle(0xfff4c0, a); g.fillTriangle(bx - 3, by - 4, bx, by - 4, bx - 1, by + 3);
+        } else {
+          g.fillStyle(0x2a2a2e, a); g.fillCircle(bx - 1, by + 1, 5);
+          g.fillStyle(0xff7a2a, a); g.fillTriangle(bx + 3, by - 3, bx + 9, by - 8, bx + 6, by - 1);
+          g.fillStyle(0xffffff, 0.6 * a); g.fillCircle(bx - 2.5, by - 0.5, 1.4);
+        }
+      }
+      if (this.helmWard) {
+        // The ward held in reserve: a faint gold shimmer arched over the bow.
+        g.lineStyle(2, 0xffd84a, 0.35 + Math.sin(t * 4) * 0.2);
+        g.beginPath(); g.arc(x, y, L * 0.72, -Math.PI / 2 - 0.9 + rot, -Math.PI / 2 + 0.9 + rot, false); g.strokePath();
+        g.lineStyle(1, 0xfff4c0, 0.25); g.beginPath(); g.arc(x, y, L * 0.78, -Math.PI / 2 - 0.6 + rot, -Math.PI / 2 + 0.6 + rot, false); g.strokePath();
+      }
+    }
+    if (Save.S().boat.uber === 'uber-foghorn') {
+      // A brass foghorn mounted on the prow: a curled tube from a bellows-box on the deck, flaring to a
+      // wide bell over the bow, a dark mouth and a bright rim; it shudders and glows as it sounds.
+      const blast = this.hornT < 1.2 ? 1 - this.hornT / 1.2 : 0, sh = blast * Math.sin(t * 60) * 0.8;
+      const box = pt(0, -L * 0.12), c1 = pt(-5, -L * 0.24), c2 = pt(4 + sh, -L * 0.36), neck = pt(sh, -L / 2 + 2);
+      g.fillStyle(0x3a2414, 1); g.fillRect(box.x - 6, box.y - 4, 12, 8);
+      g.fillStyle(0x7a5430, 1); g.fillRect(box.x - 6, box.y - 4, 12, 2);
+      g.lineStyle(4.5, 0x5a3a14, 1); g.beginPath(); g.moveTo(box.x, box.y - 3); g.lineTo(c1.x, c1.y); g.lineTo(c2.x, c2.y); g.lineTo(neck.x, neck.y); g.strokePath();
+      g.lineStyle(3, 0xc8963a, 1); g.beginPath(); g.moveTo(box.x, box.y - 3); g.lineTo(c1.x, c1.y); g.lineTo(c2.x, c2.y); g.lineTo(neck.x, neck.y); g.strokePath();
+      g.lineStyle(1, 0xfff0b0, 0.7); g.lineBetween(c1.x - 1, c1.y, c2.x - 1, c2.y);
+      const bl = pt(-9 + sh, -L / 2 - 12), br = pt(9 + sh, -L / 2 - 12), bm = pt(sh, -L / 2 - 13);
+      g.fillStyle(0x5a3a14, 1); g.fillTriangle(neck.x, neck.y, bl.x, bl.y, br.x, br.y);
+      g.fillStyle(0xd8a848, 1); g.fillTriangle(neck.x, neck.y + 0.5, pt(-7.5 + sh, -L / 2 - 11).x, pt(-7.5 + sh, -L / 2 - 11).y, pt(7.5 + sh, -L / 2 - 11).x, pt(7.5 + sh, -L / 2 - 11).y);
+      g.fillStyle(0xffe8a0, 0.7); g.fillTriangle(neck.x, neck.y, pt(-6 + sh, -L / 2 - 11).x, pt(-6 + sh, -L / 2 - 11).y, pt(-2 + sh, -L / 2 - 11).x, pt(-2 + sh, -L / 2 - 11).y);
+      g.fillStyle(0xe8c060, 1); g.fillEllipse(bm.x, bm.y, 19, 6);
+      g.fillStyle(0x1a0e06, 1); g.fillEllipse(bm.x, bm.y, 14, 3.6);
+      if (blast > 0) { g.fillStyle(0xfff0c0, 0.5 * blast); g.fillEllipse(bm.x, bm.y - 2, 22 + blast * 8, 8 + blast * 4); }
+      else if (this.turretCd < 1) { g.fillStyle(0xffe8a0, 0.25 * (1 - this.turretCd)); g.fillEllipse(bm.x, bm.y, 20, 7); }
+    }
+    if (Save.S().boat.uber === 'uber-burningglass') {
+      // The Burning Glass Prow: a round lens in a brass ring standing on a forked yoke at the bow, a
+      // counterweight box on the deck behind it; as it charges, sunlight gathers into it in converging
+      // rays and its heart brightens to white, and it flares as it lances.
+      const charge = 1 - Phaser.Math.Clamp(this.turretCd / GLASS_EVERY, 0, 1), fire = this.glassT < 0.4 ? 1 - this.glassT / 0.4 : 0;
+      const base = pt(0, -L * 0.3), fork0 = pt(-6, -L / 2 + 2), fork1 = pt(6, -L / 2 + 2), lc = pt(0, -L / 2 - 4);
+      g.fillStyle(0x3a2414, 1); g.fillRect(base.x - 5, base.y - 4, 10, 8);
+      g.fillStyle(0x7a5430, 1); g.fillRect(base.x - 5, base.y - 4, 10, 2);
+      g.lineStyle(3, 0x5a3a14, 1); g.lineBetween(base.x, base.y - 2, lc.x, lc.y + 4); g.lineBetween(fork0.x, fork0.y, lc.x - 7, lc.y); g.lineBetween(fork1.x, fork1.y, lc.x + 7, lc.y);
+      g.lineStyle(1.6, 0xc8963a, 1); g.lineBetween(base.x, base.y - 2, lc.x, lc.y + 4); g.lineBetween(fork0.x, fork0.y, lc.x - 7, lc.y); g.lineBetween(fork1.x, fork1.y, lc.x + 7, lc.y);
+      if (charge > 0.2 && fire === 0) {
+        g.lineStyle(1, 0xfff4c8, 0.35 * charge);
+        for (let i = -2; i <= 2; i++) { const s = pt(i * 14, -L / 2 - 44); g.lineBetween(s.x, s.y, lc.x, lc.y); }
+      }
+      g.fillStyle(0xffd060, (0.08 + 0.25 * charge) + 0.4 * fire); g.fillCircle(lc.x, lc.y, 12 + charge * 4 + fire * 8);
+      g.fillStyle(0x9ad8d0, 0.6); g.fillCircle(lc.x, lc.y, 7);
+      g.fillStyle(0xffffff, 0.25 + 0.7 * Math.max(charge * charge, fire)); g.fillCircle(lc.x, lc.y, 2 + charge * 3 + fire * 3);
+      g.lineStyle(1.2, 0xffffff, 0.7); g.beginPath(); g.arc(lc.x, lc.y, 5, Math.PI * 1.05, Math.PI * 1.5); g.strokePath();
+      g.lineStyle(2.4, 0x6a4a1a, 1); g.strokeCircle(lc.x, lc.y, 7.5);
+      g.lineStyle(1.4, 0xe8b848, 1); g.strokeCircle(lc.x, lc.y, 7.5);
+      if (charge > 0.97 || fire > 0) {
+        const s = 5 + Math.sin(t * 9) * 2 + fire * 8;
+        g.lineStyle(1, 0xffffff, 0.8); g.lineBetween(lc.x - s, lc.y, lc.x + s, lc.y); g.lineBetween(lc.x, lc.y - s, lc.x, lc.y + s);
+      }
+    }
     // The captain: a dot of your element at the tiller.
     const cap = pt(0, L * 0.4);
     g.fillStyle(this.elementColor, 1); g.fillCircle(cap.x, cap.y, 5);
@@ -1106,7 +1528,120 @@ export class SeaVoyageScene extends Phaser.Scene {
 
   private drawHazard(g: Phaser.GameObjects.Graphics, h: Hazard, t: number): void {
     const { x, y, r } = h;
+    if ((h.held ?? 0) > 0) this.drawHeld(g, h, t);
     switch (h.kind) {
+      case 'burn': {
+        if (h.t < 0) break;
+        // A Lensback burning spot. Glint: the sea inside the focus whitens and shimmers, a ring of light
+        // tightening onto it, caustic threads drawn in toward the centre and a four-point glint swelling
+        // there. Beam: a column of white noon light slants down from the beast's dome onto the spot, the
+        // water flashing and boiling. Scorch: a seething patch of white-gold water steaming away.
+        const held = (h.held ?? 0) > 0;
+        if (h.t < BURN_WARN) {
+          const k = h.t / BURN_WARN, e = k * k, tw = 0.6 + 0.4 * Math.sin(t * 18 + h.seed);
+          g.fillStyle(0xfff0b0, 0.05 + 0.12 * e); g.fillEllipse(x, y, r * 2, r * 1.2);
+          g.lineStyle(1.2, 0xfff4c8, 0.25 + 0.35 * e);
+          for (let i = 0; i < 16; i++) {
+            const a = i * (Math.PI / 8) + h.seed;
+            g.lineBetween(x + Math.cos(a) * r, y + Math.sin(a) * r * 0.6, x + Math.cos(a) * (r - 4), y + Math.sin(a) * (r - 4) * 0.6);
+          }
+          g.lineStyle(2, 0xffe890, 0.4 + 0.4 * e); g.strokeEllipse(x, y, r * 2, r * 1.2);
+          const rr = r * (1.6 - k * 1.2);
+          g.lineStyle(3, 0xffffff, 0.15 + 0.45 * k); g.strokeEllipse(x, y, rr * 2, rr * 1.2);
+          for (let i = 0; i < 7; i++) {
+            const a = i * 0.9 + t * 0.6 + h.seed, d0 = r * (0.95 - ((t * 0.8 + i * 0.14) % 1) * 0.8);
+            g.lineStyle(1, 0xffffff, 0.35 * e);
+            g.lineBetween(x + Math.cos(a) * d0, y + Math.sin(a) * d0 * 0.6, x + Math.cos(a + 0.25) * d0 * 0.65, y + Math.sin(a + 0.25) * d0 * 0.39);
+          }
+          const s = 4 + e * 18 * tw;
+          g.fillStyle(0xffffff, 0.25 + 0.5 * e); g.fillEllipse(x, y, 6 + e * 18, 3 + e * 10);
+          g.lineStyle(1.5, 0xffffff, 0.5 + 0.5 * e); g.lineBetween(x - s, y, x + s, y); g.lineBetween(x, y - s * 0.6, x, y + s * 0.6);
+          g.lineStyle(1, 0xffffff, 0.3 * e); g.lineBetween(x - s * 0.5, y - s * 0.3, x + s * 0.5, y + s * 0.3); g.lineBetween(x - s * 0.5, y + s * 0.3, x + s * 0.5, y - s * 0.3);
+          break;
+        }
+        const bt = h.t - BURN_WARN;
+        if (bt < BURN_BEAM) {
+          const k = bt / BURN_BEAM, a = 1 - k * 0.3;
+          const src = this.beast && this.beast.phase !== 'sink' ? { x: this.beast.x, y: this.beast.y - 10 } : { x: x + 60, y: -40 };
+          const ang = Math.atan2(y - src.y, x - src.x), nx = -Math.sin(ang), ny = Math.cos(ang);
+          const beam = (w0: number, w1: number, c: number, al: number) => {
+            g.fillStyle(c, al);
+            g.fillTriangle(src.x + nx * w0, src.y + ny * w0, src.x - nx * w0, src.y - ny * w0, x - nx * w1, y - ny * w1);
+            g.fillTriangle(src.x + nx * w0, src.y + ny * w0, x - nx * w1, y - ny * w1, x + nx * w1, y + ny * w1);
+          };
+          beam(34, r * 0.9, 0xfff0b0, 0.14 * a); beam(22, r * 0.55, 0xfff8e0, 0.35 * a); beam(10, r * 0.28, 0xffffff, 0.85 * a);
+          g.fillStyle(0xffffff, 0.35 * a); g.fillEllipse(x, y, r * 2.6, r * 1.5);
+          g.fillStyle(0xffffff, 0.95); g.fillEllipse(x, y, r * 1.3, r * 0.8);
+          g.lineStyle(3, 0xffe890, 0.8 * (1 - k)); g.strokeEllipse(x, y, r * (2 + k * 1.2), r * (1.2 + k * 0.7));
+          for (let i = 0; i < 10; i++) {
+            const sa = i * 0.63 + h.seed, d0 = r * (0.5 + k * 0.9);
+            g.fillStyle(0xffffff, 0.9 * (1 - k)); g.fillCircle(x + Math.cos(sa) * d0, y + Math.sin(sa) * d0 * 0.6 - k * 10, 1.6);
+          }
+          break;
+        }
+        const lk = (bt - BURN_BEAM) / BURN_LINGER, a = (1 - lk) * (held ? 0.6 : 1);
+        g.fillStyle(0xff8a2a, 0.18 * a); g.fillEllipse(x, y, r * 2.1, r * 1.25);
+        g.fillStyle(0xffd060, 0.35 * a); g.fillEllipse(x, y, r * 1.6, r * 0.95);
+        g.fillStyle(0xfff4d0, 0.55 * a); g.fillEllipse(x, y, r * 0.9, r * 0.5);
+        g.lineStyle(2, 0xffb040, 0.6 * a); g.strokeEllipse(x, y, r * 2, r * 1.2);
+        for (let i = 0; i < 12; i++) {
+          const ph = (t * 3 + i * 0.37) % 1, ba = i * 0.52 + h.seed, d0 = r * 0.75 * ((i * 7 % 10) / 10);
+          const bx = x + Math.cos(ba) * d0, by = y + Math.sin(ba) * d0 * 0.6;
+          g.lineStyle(1, 0xffffff, 0.6 * a * (1 - ph)); g.strokeCircle(bx, by, 1 + ph * 3);
+        }
+        for (let i = 0; i < 6; i++) {
+          const ph = ((lk * 1.6 + i / 6) % 1), sx = x + Math.sin(i * 2.3 + t) * r * 0.5;
+          g.fillStyle(0xf4f0e8, 0.22 * a * (1 - ph)); g.fillCircle(sx + ph * 8, y - ph * 46, 5 + ph * 10);
+        }
+        break;
+      }
+      case 'ring': {
+        if (h.t < 0) break;
+        // A sound-ring: a band of shoved, glittering water spreading from where the Cantor sang, a
+        // bright crest with a trough of darker water inside it and a fainter echo behind, broken by its
+        // two rests — each gap capped with curls of foam and marked by a little hovering rest sign.
+        const held = (h.held ?? 0) > 0, fade = Math.min(1, (RING_MAX - r) / 260) * Math.min(1, h.t * 4);
+        const gaps = (h.gaps ?? []).map((gp) => Phaser.Math.Angle.Normalize(gp)).sort((a, b) => a - b);
+        const runs: [number, number][] = gaps.length === 2
+          ? [[gaps[0] + RING_REST, gaps[1] - RING_REST], [gaps[1] + RING_REST, gaps[0] + Math.PI * 2 - RING_REST]]
+          : [[0, Math.PI * 2]];
+        const crest = held ? 0xc8d0d8 : 0xf4f0dc, sheen = held ? 0x8a98a8 : 0xbfe0ff;
+        const arcs = (rr: number, w: number, c: number, a: number) => {
+          g.lineStyle(w, c, a);
+          for (const [a0, a1] of runs) { g.beginPath(); g.arc(x, y, rr, a0, a1, false); g.strokePath(); }
+        };
+        arcs(r + 5, 12, sheen, 0.12 * fade);
+        arcs(r - 6, 6, 0x05101e, 0.25 * fade);
+        arcs(r, 4, crest, 0.7 * fade);
+        arcs(r + 2, 1.2, 0xffffff, 0.55 * fade);
+        if (r > 60) arcs(r - 34, 2, sheen, 0.2 * fade);
+        if (!held) {
+          for (let k = 0; k < 40; k++) {
+            const a = k * (Math.PI / 20) + h.seed * 0.37, inRun = runs.some(([a0, a1]) => (a >= a0 && a <= a1) || (a + Math.PI * 2 >= a0 && a + Math.PI * 2 <= a1));
+            if (!inRun) continue;
+            const tw = Math.max(0, Math.sin(t * 7 + k * 2.3 + h.seed));
+            if (tw < 0.6) continue;
+            const px = x + Math.cos(a) * (r + Math.sin(k * 1.7) * 3), py = y + Math.sin(a) * (r + Math.sin(k * 1.7) * 3);
+            if (py < -20 || py > 680 || px < -20 || px > 980) continue;
+            g.fillStyle(0xffffff, (tw - 0.6) * 2 * fade); g.fillCircle(px, py, 1.6);
+            g.lineStyle(1, 0xffffff, (tw - 0.6) * 1.5 * fade); g.lineBetween(px - 4, py, px + 4, py); g.lineBetween(px, py - 4, px, py + 4);
+          }
+        }
+        for (const gp of gaps) {
+          for (const side of [-1, 1]) {
+            const a = gp + side * RING_REST, px = x + Math.cos(a) * r, py = y + Math.sin(a) * r;
+            g.fillStyle(crest, 0.8 * fade); g.fillCircle(px, py, 3.2); g.fillStyle(0xffffff, 0.5 * fade); g.fillCircle(px - side * Math.sin(a) * 3, py + side * Math.cos(a) * 3, 2);
+          }
+          // The rest sign: a little quaver rest hovering in the gap.
+          const mx = x + Math.cos(gp) * r, my = y + Math.sin(gp) * r + Math.sin(t * 3 + gp) * 2;
+          if (my > -20 && my < 680) {
+            g.lineStyle(2, 0xf0dca0, 0.75 * fade);
+            g.beginPath(); g.moveTo(mx - 3, my - 5); g.lineTo(mx + 3, my - 4); g.lineTo(mx - 1, my + 6); g.strokePath();
+            g.fillStyle(0xf0dca0, 0.75 * fade); g.fillCircle(mx - 3, my - 5, 1.8);
+          }
+        }
+        break;
+      }
       case 'rock': {
         g.fillStyle(0xffffff, 0.2); g.fillEllipse(x, y + r * 0.5, r * 2.6, r * 0.9);
         const pts: Phaser.Geom.Point[] = [];
@@ -1289,10 +1824,416 @@ export class SeaVoyageScene extends Phaser.Scene {
         }
         break;
       }
+      case 'die': {
+        if (h.t < 0) break;
+        const pipsAt = (cx: number, cy: number, half: number, n: number, ang: number, col: number) => {
+          const q = half * 0.52, pr = Math.max(1.6, half * 0.17), ca = Math.cos(ang), sa = Math.sin(ang);
+          for (const [u, v] of PIPS[Math.max(1, Math.min(6, n))]) {
+            const px = cx + (u * ca - v * sa) * q, py = cy + (u * sa + v * ca) * q;
+            g.fillStyle(col, 1); g.fillCircle(px, py, n === 1 ? pr * 1.5 : pr);
+            g.fillStyle(0xffffff, 0.3); g.fillCircle(px - pr * 0.3, py - pr * 0.3, pr * 0.35);
+          }
+        };
+        const face = (cx: number, cy: number, half: number, ang: number, top: number, side: number) => {
+          const corner = (k: number, s: number) => {
+            const a = ang + Math.PI / 4 + k * (Math.PI / 2);
+            return [cx + Math.cos(a) * half * Math.SQRT2 * s, cy + Math.sin(a) * half * Math.SQRT2 * s] as const;
+          };
+          const c = [0, 1, 2, 3].map((k) => corner(k, 1));
+          g.fillStyle(side, 1);
+          g.fillTriangle(c[0][0] + 3, c[0][1] + 5, c[1][0] + 3, c[1][1] + 5, c[2][0] + 3, c[2][1] + 5);
+          g.fillTriangle(c[0][0] + 3, c[0][1] + 5, c[2][0] + 3, c[2][1] + 5, c[3][0] + 3, c[3][1] + 5);
+          g.fillStyle(top, 1); g.fillTriangle(c[0][0], c[0][1], c[1][0], c[1][1], c[2][0], c[2][1]); g.fillTriangle(c[0][0], c[0][1], c[2][0], c[2][1], c[3][0], c[3][1]);
+          const inner = [0, 1, 2, 3].map((k) => corner(k, 0.84));
+          g.fillStyle(0xfffaf0, 0.55); g.fillTriangle(inner[2][0], inner[2][1], inner[3][0], inner[3][1], cx + (inner[2][0] + inner[3][0] - 2 * cx) * 0.35, cy + (inner[2][1] + inner[3][1] - 2 * cy) * 0.35);
+          g.lineStyle(1.2, 0x8a7a60, 0.9); g.strokePoints(c.map(([px, py]) => new Phaser.Geom.Point(px, py)), true, true);
+        };
+        const half = r * 0.82;
+        if (h.t < DIE_ROLL) {
+          // Tumbling in: it bounds across the water spinning end over end, a splash at each bounce,
+          // its shadow skating under it and a faint ring already marking where it will burst.
+          const k = h.t / DIE_ROLL, at = this.dieAt(h), dir = Math.sign(h.x - h.seed) || 1;
+          g.lineStyle(1.5, 0xffe8b0, 0.15 + k * 0.25); g.strokeEllipse(x, y, DIE_RING * 2, DIE_RING * 1.4);
+          g.fillStyle(0x000000, 0.25); g.fillEllipse(at.x + 3, y + 8, r * 2.2 * (0.7 + 0.3 * (1 - (y - at.y) / 22)), r * 0.8);
+          for (let i = 1; i <= 3; i++) {
+            const kk = i / 3;
+            if (k < kk) continue;
+            const bx = Phaser.Math.Linear(h.seed, h.x, 1 - (1 - kk) * (1 - kk)), age = (k - kk) * DIE_ROLL;
+            if (age < 0.35) { g.lineStyle(2, 0xe8f6ff, 0.7 * (1 - age / 0.35)); g.strokeEllipse(bx, y + 4, 20 + age * 90, 6 + age * 26); }
+          }
+          const spin = (1 - k) * Math.PI * 3 * dir;
+          face(at.x, at.y, half, spin, 0xf4ecd8, 0xb8ac90);
+          pipsAt(at.x, at.y, half, 1 + (Math.floor(k * 9) % 6), spin, 0x1a1418);
+          break;
+        }
+        // Landed: a die riding the swell, the count of pips on its face ticking down, a warning ring of
+        // spray on the water round it that pulses faster and reddens as the count runs out.
+        const left = Math.max(1, h.armed ?? 1), urgent = 1 - left / Math.max(1, h.maxHp);
+        const bob = Math.sin(t * 3 + h.seed) * 1.5, tilt = Math.sin(t * 1.4 + h.seed) * 0.06;
+        const pulse = 0.5 + 0.5 * Math.sin(t * (4 + urgent * 10));
+        const ringC = left <= 1 ? 0xff5a3a : 0xffe8b0;
+        g.fillStyle(ringC, 0.04 + urgent * 0.06 * pulse); g.fillEllipse(x, y, DIE_RING * 2, DIE_RING * 1.4);
+        g.lineStyle(2, ringC, 0.35 + 0.4 * pulse);
+        for (let s = 0; s < 16; s++) {
+          const a0 = t * 0.6 + s * (Math.PI / 8);
+          g.beginPath(); g.arc(x, y, DIE_RING, a0, a0 + Math.PI / 14, false); g.strokePath();
+        }
+        g.fillStyle(0xffffff, 0.22); g.fillEllipse(x, y + half + 4, half * 3, half * 0.8);
+        for (let i = 0; i < 6; i++) { const k = (t * 1.2 + i / 6) % 1, a = i * 1.05 + h.seed; g.fillStyle(0xe8f6ff, 0.5 * (1 - k)); g.fillCircle(x + Math.cos(a) * (half * 1.3 + k * 10), y + bob + Math.sin(a) * (half * 0.8 + k * 6), 1.6); }
+        face(x, y + bob, half, tilt, 0xf4ecd8, 0xb8ac90);
+        pipsAt(x, y + bob, half, left, tilt, left <= 1 ? 0xc81a2a : 0x1a1418);
+        if ((h.tick ?? 0) > DIE_TICK - 0.12) { g.fillStyle(0xffffff, 0.5); g.fillCircle(x, y + bob, half * 1.1); }
+        break;
+      }
       case 'spout':
         g.fillStyle(0xd8f0ff, 0.5); g.fillCircle(x, y, r);
         for (let i = 0; i < 6; i++) { const k = ((t * 1.5 + i / 6) % 1); g.fillStyle(0xffffff, (1 - k) * 0.6); g.fillCircle(x + Math.sin(i * 2 + t) * 8, y - k * 40, 4 + k * 4); }
         break;
+    }
+  }
+
+  /**
+   * A hazard the Foghorn holds: a pale fermata (the musical "hold") hangs over it with three still,
+   * unmoving ripple lines round it, fading as the hold runs out.
+   */
+  private drawHeld(g: Phaser.GameObjects.Graphics, h: Hazard, t: number): void {
+    const a = Math.min(1, (h.held ?? 0) / 0.5);
+    let fx = h.x, fy = h.y - h.r - 14;
+    if (h.kind === 'ring') {
+      const ang = Math.atan2(this.by - h.y, this.bx - h.x);
+      fx = h.x + Math.cos(ang) * h.r; fy = h.y + Math.sin(ang) * h.r - 16;
+    } else {
+      for (let k = 0; k < 3; k++) { g.lineStyle(1, 0xe8dcb0, (0.35 - k * 0.1) * a); g.strokeEllipse(h.x, h.y, h.r * 2.4 + k * 12, h.r * 1.4 + k * 7); }
+    }
+    if (fy < -20 || fy > 680) return;
+    const bob = Math.sin(t * 2) * 1;
+    g.lineStyle(2.5, 0x1a1410, 0.5 * a); g.beginPath(); g.arc(fx + 1, fy + 1 + bob, 8, Math.PI, Math.PI * 2, false); g.strokePath();
+    g.lineStyle(2.5, 0xf0e4c0, 0.9 * a); g.beginPath(); g.arc(fx, fy + bob, 8, Math.PI, Math.PI * 2, false); g.strokePath();
+    g.fillStyle(0xf0e4c0, 0.9 * a); g.fillCircle(fx, fy - 2 + bob, 2);
+  }
+
+  /**
+   * The Cantor: a humpback the size of a cathedral, seen from above with its head toward the boat —
+   * slate-dark and knobbed with tubercles, long white pectoral fins rowing slow, flukes lifting with a
+   * ragged trailing edge, bronze bells barnacled over its hide, a rank of organ pipes standing on its
+   * back and its throat-pleats ribbed like pipes along the jaw. Before each note every pipe and pleat
+   * glows from within; as it sounds the bells shake and the pipes breathe out rings of air.
+   */
+  private drawCantor(g: Phaser.GameObjects.Graphics, b: Beast, t: number): void {
+    const { x, y } = b;
+    const hide = 0x28323e, hideD = 0x161c24, hideL = 0x46566a, white = 0xd8dee4, bronze = 0xb8823a;
+    const wind = b.attack ? Math.min(1, b.attackT / 0.8) : 0;
+    const after = b.attack && b.attackT > 0.8 ? Math.max(0, 1 - (b.attackT - 0.8) * 2.2) : 0;
+    const glow = b.attack && b.attackT <= 0.8 ? wind * wind : after;
+    const sung = after > 0 ? after : 0;
+    const HEAD = 88, LEN = 192;
+    const prof = CANTOR_PROFILE;
+    const W = (s: number) => {
+      for (let i = 1; i < prof.length; i++) if (s <= prof[i][0]) { const k = (s - prof[i - 1][0]) / (prof[i][0] - prof[i - 1][0]); return prof[i - 1][1] + (prof[i][1] - prof[i - 1][1]) * k; }
+      return 11;
+    };
+    const sway = (s: number) => Math.sin(t * 1.1 - s * 2.4) * 5 * s;
+    const Y = (s: number) => y + HEAD - s * LEN;
+    const P = (s: number, side: number, k = 1) => new Phaser.Geom.Point(x + sway(s) + side * W(s) * k, Y(s));
+    // Water: the wake round the body and its shadow beneath.
+    g.fillStyle(0xffffff, 0.12); g.fillEllipse(x, y + 10, 200, 300);
+    for (let i = 0; i < 3; i++) { const k = (t * 0.4 + i / 3) % 1; g.lineStyle(2, 0xe8f0ff, 0.25 * (1 - k)); g.strokeEllipse(x, y, 170 + k * 140, 260 + k * 90); }
+    g.fillStyle(0x000000, 0.32); g.fillEllipse(x + 8, y + 10, 150, 250);
+    // Flukes at the tail: two broad blades with a notch, the trailing edge ragged, white beneath.
+    const ts = Y(1) - 4, wag = Math.sin(t * 1.1 - 2.4) * 10, lift = 0.75 + 0.25 * Math.sin(t * 1.1);
+    for (const side of [-1, 1]) {
+      const root = { x: x + sway(1) + wag * 0.3, y: ts }, tip = { x: x + wag + side * 70, y: ts - 34 * lift + Math.abs(side * 4) };
+      const back = { x: x + wag + side * 12, y: ts - 30 * lift };
+      g.fillStyle(hideD, 1); g.fillTriangle(root.x, root.y + 2, tip.x + side * 2, tip.y - 2, back.x, back.y - 3);
+      g.fillStyle(hide, 1); g.fillTriangle(root.x, root.y, tip.x, tip.y, back.x, back.y);
+      g.fillStyle(white, 0.55); g.fillTriangle(root.x + side * 10, root.y - 10, tip.x - side * 10, tip.y + 3, back.x + side * 6, back.y + 2);
+      for (let k = 1; k <= 5; k++) {
+        const u = k / 6, ex = Phaser.Math.Linear(back.x, tip.x, u), ey = Phaser.Math.Linear(back.y, tip.y, u);
+        g.fillStyle(hideD, 1); g.fillTriangle(ex - 3, ey + 1, ex + 3, ey + 1, ex + side * 1, ey - 4);
+      }
+    }
+    // Pectoral fins: very long, knobbed along the leading edge, white with a dark trailing edge, rowing.
+    for (const side of [-1, 1]) {
+      const st = Math.sin(t * 0.9 + (side > 0 ? 0 : Math.PI)) * 0.18, s0 = 0.27;
+      const rx = x + sway(s0) + side * W(s0) * 0.8, ry = Y(s0);
+      const len = 108, tipX = rx + side * len * Math.cos(0.55 - st), tipY = ry - len * Math.sin(0.55 - st) * 0.9;
+      const lead0 = { x: rx, y: ry + 12 }, trail0 = { x: rx - side * 2, y: ry - 14 };
+      g.fillStyle(hideD, 1); g.fillTriangle(lead0.x, lead0.y + 2, trail0.x, trail0.y - 2, tipX + side * 3, tipY);
+      g.fillStyle(white, 1); g.fillTriangle(lead0.x, lead0.y, trail0.x, trail0.y, tipX, tipY);
+      g.fillStyle(hide, 0.8); g.fillTriangle(trail0.x, trail0.y, Phaser.Math.Linear(trail0.x, tipX, 0.6), Phaser.Math.Linear(trail0.y, tipY, 0.6) - 2, Phaser.Math.Linear(lead0.x, tipX, 0.35), Phaser.Math.Linear(lead0.y, tipY, 0.35) - 3);
+      for (let k = 1; k <= 6; k++) {
+        const u = k / 7, kx = Phaser.Math.Linear(lead0.x, tipX, u), ky = Phaser.Math.Linear(lead0.y, tipY, u);
+        g.fillStyle(0xeef2f4, 1); g.fillCircle(kx, ky + 1, 3.2 - u * 1.6);
+        g.fillStyle(0x9aa4ac, 0.8); g.fillCircle(kx + 0.8, ky + 2, 1);
+      }
+      g.fillStyle(0xffffff, 0.15 * (0.5 + 0.5 * Math.sin(t * 0.9))); g.fillEllipse(tipX, tipY + 6, 30, 9);
+    }
+    // The body: outline, hide, a paler flank line and the darker spine.
+    const outline: Phaser.Geom.Point[] = [], body: Phaser.Geom.Point[] = [], spine: Phaser.Geom.Point[] = [];
+    for (let i = 0; i <= 16; i++) outline.push(P(i / 16, -1, 1.05));
+    for (let i = 16; i >= 0; i--) outline.push(P(i / 16, 1, 1.05));
+    for (let i = 0; i <= 16; i++) body.push(P(i / 16, -1));
+    for (let i = 16; i >= 0; i--) body.push(P(i / 16, 1));
+    for (let i = 1; i <= 15; i++) spine.push(P(i / 16, -1, 0.32));
+    for (let i = 15; i >= 1; i--) spine.push(P(i / 16, 1, 0.32));
+    g.fillStyle(hideD, 1); g.fillPoints(outline, true, true);
+    g.fillStyle(hide, 1); g.fillPoints(body, true, true);
+    g.fillStyle(hideD, 0.6); g.fillPoints(spine, true, true);
+    g.fillStyle(hideL, 0.45); for (let i = 2; i < 14; i++) { const p = P(i / 16, -1, 0.7); g.fillEllipse(p.x, p.y, 8, 12); }
+    // Throat pleats down both sides of the jaw, ribbed like organ pipes — they glow before each note.
+    for (const side of [-1, 1]) {
+      for (let k = 0; k < 6; k++) {
+        const kk = 0.74 + k * 0.05;
+        const a0 = P(0.04, side, kk * 0.9), a1 = P(0.34, side, kk);
+        g.lineStyle(2.4, k % 2 ? 0x6a7a88 : 0x8a9aa8, 1); g.lineBetween(a0.x, a0.y, a1.x, a1.y);
+        if (glow > 0) { g.lineStyle(1.4, 0xffe8a0, glow * (0.6 + 0.4 * Math.sin(t * 20 + k))); g.lineBetween(a0.x, a0.y, a1.x, a1.y); }
+        const m = P(0.08 + (k % 3) * 0.02, side, kk * 0.92);
+        g.fillStyle(glow > 0 ? 0xfff0b0 : 0x0e1218, glow > 0 ? 0.4 + glow * 0.6 : 0.8); g.fillEllipse(m.x, m.y, 2.6, 4);
+      }
+      if (glow > 0) { const c = P(0.18, side, 0.95); g.fillStyle(0xffd870, 0.12 * glow); g.fillEllipse(c.x, c.y, 30, 70); }
+    }
+    // Tubercles: rows of knobs over the rostrum.
+    for (let row = 0; row < 3; row++) for (let k = -2; k <= 2; k++) {
+      const s = 0.03 + row * 0.05, p = P(s, k / 2.6, 0.75);
+      g.fillStyle(hideD, 1); g.fillCircle(p.x + 0.6, p.y + 0.8, 2.4); g.fillStyle(hideL, 1); g.fillCircle(p.x, p.y, 2);
+    }
+    // Blowholes, and a spout every few seconds drifting off on the wind.
+    const bh = P(0.22, 0);
+    for (const d of [-1, 1]) { g.fillStyle(0x0a0e12, 1); g.fillEllipse(bh.x + d * 3.5, bh.y, 3, 7); }
+    const sp = (t % 6.5) / 6.5;
+    if (sp < 0.22) {
+      const k = sp / 0.22;
+      for (let i = 0; i < 8; i++) { const a = -Math.PI / 2 + (i - 3.5) * 0.18; g.fillStyle(0xe8f4ff, 0.5 * (1 - k)); g.fillCircle(bh.x + Math.cos(a) * k * 30 + k * 10, bh.y + Math.sin(a) * k * 34, 3 + k * 6); }
+    }
+    // Eyes at the corners of the jaw.
+    for (const side of [-1, 1]) {
+      const e = P(0.16, side, 0.92);
+      g.fillStyle(0xc8d0d8, 1); g.fillEllipse(e.x, e.y, 7, 5); g.fillStyle(0x0a0a0e, 1); g.fillCircle(e.x, e.y + 0.5, 1.8); g.fillStyle(0xffffff, 0.8); g.fillCircle(e.x - 0.8, e.y - 0.4, 0.7);
+    }
+    // White barnacle clusters.
+    for (const [s, k] of [[0.06, -0.5], [0.1, 0.6], [0.3, -0.85], [0.47, 0.82], [0.62, -0.6], [0.8, 0.4]] as const) {
+      const p = P(s, k);
+      for (let j = 0; j < 4; j++) { const bx = p.x + Math.cos(j * 1.7) * 3.5, by = p.y + Math.sin(j * 1.7) * 3; g.fillStyle(0xd8d0c0, 1); g.fillCircle(bx, by, 2); g.fillStyle(0x4a4438, 1); g.fillCircle(bx, by, 0.7); }
+    }
+    // Bronze bells barnacled over the hide: domed, a lip, a dark mouth and a clapper; they shake when it sings.
+    for (const [s, k, sz] of [[0.12, -0.7, 7], [0.24, 0.72, 8], [0.42, -0.78, 9], [0.52, 0.66, 7], [0.68, -0.5, 6], [0.72, 0.5, 6], [0.35, 0.3, 5]] as const) {
+      const p = P(s, k), sh = sung > 0 ? Math.sin(t * 40 + s * 30) * 1.6 * sung : Math.sin(t * 1.5 + s * 9) * 0.4;
+      const bx = p.x + sh, by = p.y;
+      g.fillStyle(0x000000, 0.3); g.fillEllipse(bx + 1.5, by + 2, sz * 1.5, sz * 0.7);
+      g.fillStyle(0x4a2c12, 1); g.fillTriangle(bx - sz * 0.75, by + sz * 0.45, bx + sz * 0.75, by + sz * 0.45, bx, by - sz * 0.75);
+      g.fillStyle(bronze, 1); g.fillEllipse(bx, by - sz * 0.2, sz * 0.9, sz * 1.0); g.fillTriangle(bx - sz * 0.68, by + sz * 0.4, bx + sz * 0.68, by + sz * 0.4, bx, by - sz * 0.45);
+      g.fillStyle(0xe8c070, 0.8); g.fillEllipse(bx - sz * 0.2, by - sz * 0.35, sz * 0.25, sz * 0.4);
+      g.fillStyle(0x5aa88a, 0.5); g.fillCircle(bx + sz * 0.22, by + sz * 0.05, sz * 0.14);
+      g.fillStyle(0x1a0e06, 1); g.fillEllipse(bx, by + sz * 0.42, sz * 1.3, sz * 0.3);
+      g.fillStyle(0x2a2420, 1); g.fillCircle(bx + sh * 0.6, by + sz * 0.55, sz * 0.13);
+      g.lineStyle(1.2, 0x3a2410, 1); g.strokeEllipse(bx, by - sz * 0.78, sz * 0.35, sz * 0.25);
+      if (sung > 0.3) { g.lineStyle(1, 0xf0dca0, sung * 0.6); g.strokeCircle(bx, by, sz * (1.4 + (1 - sung) * 1.5)); }
+    }
+    // The organ on its back: a rank of pipes standing up from the spine, tallest in the middle; their
+    // mouths glow before each note and breathe rings of air as it sounds.
+    const base = P(0.44, 0);
+    const n = 7;
+    for (let i = 0; i < n; i++) {
+      const off = i - (n - 1) / 2, px = base.x + off * 9, pb = base.y + Math.abs(off) * 3 + 8;
+      const ph = 26 + (3 - Math.abs(off)) * 9, top = pb - ph, hw = 3.4;
+      g.fillStyle(0x000000, 0.3); g.fillRect(px - hw + 3, pb - 2, hw * 2, 5);
+      g.fillStyle(0x3a3a44, 1); g.fillRect(px - hw - 1, top - 1, hw * 2 + 2, ph + 1);
+      g.fillStyle(0xb8bcc8, 1); g.fillRect(px - hw, top, hw * 2, ph);
+      g.fillStyle(0x7a7e8a, 1); g.fillRect(px + hw * 0.3, top, hw * 0.7, ph);
+      g.fillStyle(0xf0f2f8, 0.8); g.fillRect(px - hw * 0.6, top + 2, 1.2, ph - 6);
+      g.fillStyle(0x8a8e9a, 1); g.fillEllipse(px, top, hw * 2.2, 2.6);
+      g.fillStyle(0x14141a, 1); g.fillEllipse(px, top, hw * 1.4, 1.4);
+      const my = pb - 9;
+      g.fillStyle(glow > 0 ? 0xfff0b0 : 0x14141a, 1); g.fillRect(px - hw * 0.6, my, hw * 1.2, 3.4);
+      g.fillStyle(0x5a5e6a, 1); g.fillTriangle(px - hw * 0.6, my + 3.4, px + hw * 0.6, my + 3.4, px, my + 6);
+      if (glow > 0) {
+        g.fillStyle(0xffd870, 0.25 * glow); g.fillCircle(px, my + 1.5, 6 + glow * 3);
+        g.fillStyle(0xfff4c8, 0.2 * glow); g.fillRect(px - hw, top, hw * 2, ph);
+      }
+      if (sung > 0) {
+        for (let k = 0; k < 2; k++) { const q = ((1 - sung) + k * 0.4) % 1; g.lineStyle(1.2, 0xf4ecd0, 0.5 * (1 - q)); g.strokeEllipse(px, top - q * 18, 6 + q * 16, 3 + q * 7); }
+      }
+    }
+    g.fillStyle(0x4a2c18, 1); g.fillRect(base.x - 34, base.y + 6 + 8, 68, 5);
+    g.fillStyle(bronze, 1); g.fillRect(base.x - 34, base.y + 6 + 8, 68, 1.5);
+    if (wind > 0 && b.attack === 'wave') { g.lineStyle(2, 0xffe8a0, 0.4 * wind); g.strokeEllipse(x, y, 150 + wind * 20, 260 + wind * 20); }
+    if (b.attack === 'slam') { g.lineStyle(3, 0xf0dca0, 0.6); g.strokeCircle(this.bx, this.by - 20, 60 + Math.sin(t * 20) * 6); }
+    if (b.phase === 'fight') {
+      g.fillStyle(0x000000, 0.6); g.fillRect(280, 70, 400, 12);
+      g.fillStyle(BEASTS.cantor.bar, 1); g.fillRect(282, 72, 396 * Math.max(0, b.hp / b.maxHp), 8);
+    }
+  }
+
+  /**
+   * The Lensback: a sea turtle the size of a harbour, seen from above with its head toward the boat.
+   * Its shell is a dome of leaded glass — a hexagonal crown pane, a ring of six and a ring of twelve,
+   * each pane faintly tinted and held in dark lead, the old turtle's ribs showing through as shadows —
+   * set in a riveted rim of verdigrised bronze marginal plates crusted with barnacles. Long front
+   * flippers row slow; a beaked, plated head sways out in front. The dome sways a little to keep the
+   * sun; before it burns it tilts toward the boat, the sun gathers in a white-hot point on the glass and
+   * the whole dome lights up from within.
+   */
+  private drawLensback(g: Phaser.GameObjects.Graphics, b: Beast, t: number): void {
+    const { x, y } = b;
+    const hide = 0x5a6a52, hideD = 0x34402e, hideL = 0x8a9a78, lead = 0x22262c, bronze = 0x8a7040, verd = 0x5aa88a;
+    const wind = b.attack === 'wave' ? Math.min(1, b.attackT / 0.8) : 0;
+    const after = b.attack === 'wave' && b.attackT > 0.8 ? Math.max(0, 1 - (b.attackT - 0.8) * 1.4) : 0;
+    const glow = b.attack === 'wave' ? (b.attackT <= 0.8 ? wind * wind : after) : b.attack === 'spit' ? Math.max(0, Math.sin(Math.min(1, b.attackT / 0.8) * Math.PI)) * 0.5 : 0;
+    const RX = 104, RY = 90, cx = x, cy = y - 8;
+    const toB = Math.atan2(this.by - cy, this.bx - cx);
+    const tiltK = 0.25 + 0.75 * Math.max(wind, after);
+    const tx = Math.cos(toB) * tiltK * 0.6 + Math.sin(t * 0.5) * 0.25 * (1 - tiltK), ty = Math.sin(toB) * tiltK * 0.6 + Math.cos(t * 0.37) * 0.15 * (1 - tiltK);
+    const D = (a: number, rr: number) => {
+      const bulge = (1 - rr * rr) * 14;
+      return new Phaser.Geom.Point(cx + Math.cos(a) * rr * RX + tx * bulge, cy + Math.sin(a) * rr * RY + ty * bulge - (1 - rr * rr) * 6);
+    };
+    // Water: a broad wake, the shadow, ripples, and the dome's glare dancing on the sea beside it.
+    g.fillStyle(0xffffff, 0.1); g.fillEllipse(x, y + 10, 330, 290);
+    for (let i = 0; i < 3; i++) { const k = (t * 0.35 + i / 3) % 1; g.lineStyle(2, 0xe8f4ff, 0.22 * (1 - k)); g.strokeEllipse(x, y + 6, 250 + k * 160, 220 + k * 110); }
+    g.fillStyle(0x000000, 0.32); g.fillEllipse(x + 10, y + 14, 230, 210);
+    for (let i = 0; i < 5; i++) {
+      const a = t * 0.3 + i * 1.26, gx = x + Math.cos(a) * 150, gy = y + Math.sin(a) * 120, sp = 0.5 + 0.5 * Math.sin(t * 3 + i * 2);
+      g.fillStyle(0xfff8e0, 0.12 * sp + 0.2 * glow); g.fillEllipse(gx, gy, 26, 7);
+      g.fillStyle(0xffffff, 0.35 * sp); g.fillEllipse(gx, gy, 8, 2);
+    }
+    // Flippers: long front paddles rowing, short rear ones; leading edges scaled, a claw or two.
+    const flipper = (side: number, sx: number, sy: number, len: number, ang: number, w: number) => {
+      const dx = side * Math.cos(ang), dy = Math.sin(ang), nx = dy * side, ny = -dx * side;
+      const P = (u: number, v: number) => new Phaser.Geom.Point(sx + dx * len * u + nx * w * v, sy + dy * len * u + ny * w * v);
+      const out = [P(0, -1.1), P(0.45, -0.95), P(0.85, -0.45), P(1.04, 0), P(0.6, 0.6), P(0.2, 0.75), P(0, 0.75)];
+      const inn = [P(0.02, -0.9), P(0.45, -0.78), P(0.83, -0.36), P(0.98, 0), P(0.58, 0.48), P(0.2, 0.6), P(0.02, 0.6)];
+      g.fillStyle(hideD, 1); g.fillPoints(out, true, true);
+      g.fillStyle(hide, 1); g.fillPoints(inn, true, true);
+      g.fillStyle(hideL, 0.5); g.fillPoints([P(0.05, -0.75), P(0.45, -0.65), P(0.8, -0.3), P(0.45, -0.3), P(0.05, -0.2)], true, true);
+      for (let k = 1; k <= 7; k++) {
+        const u = k / 8, p = P(u, -0.82 + u * 0.55);
+        g.fillStyle(hideD, 1); g.fillEllipse(p.x + 0.6, p.y + 0.8, 7 - u * 3, 5 - u * 2);
+        g.fillStyle(hideL, 1); g.fillEllipse(p.x, p.y, 6 - u * 3, 4 - u * 2);
+      }
+      for (let k = 1; k <= 4; k++) { const p = P(0.2 + k * 0.15, 0.15); g.fillStyle(hideD, 0.6); g.fillEllipse(p.x, p.y, 5, 3.5); }
+      for (const u of [0.4, 0.55]) { const p = P(u, -1.0); g.fillStyle(0xd8ccb0, 1); g.fillCircle(p.x, p.y, 1.8); }
+    };
+    const row = Math.sin(t * 0.85) * 0.38;
+    for (const side of [-1, 1]) {
+      flipper(side, cx + side * 72, cy - RY * 0.62, 46, -0.85 - Math.sin(t * 0.85 + 1) * 0.2, 13);
+      flipper(side, cx + side * 78, cy + RY * 0.42, 120, 0.15 + row, 22);
+      const tip = { x: cx + side * (78 + Math.cos(0.15 + row) * 124), y: cy + RY * 0.42 + Math.sin(0.15 + row) * 124 };
+      g.fillStyle(0xffffff, 0.14 * (0.5 + 0.5 * Math.sin(t * 0.85))); g.fillEllipse(tip.x, tip.y + 4, 34, 10);
+    }
+    // Tail.
+    const tw = Math.sin(t * 1.1) * 5;
+    g.fillStyle(hideD, 1); g.fillTriangle(cx - 12, cy - RY * 0.9, cx + 12, cy - RY * 0.9, cx + tw, cy - RY - 30);
+    g.fillStyle(hide, 1); g.fillTriangle(cx - 9, cy - RY * 0.9, cx + 9, cy - RY * 0.9, cx + tw, cy - RY - 26);
+    // Head and neck, out in front toward the boat.
+    const sway = Math.sin(t * 0.7) * 8, gape = b.attack === 'spit' ? Math.max(0, Math.sin(Math.min(1, b.attackT / 0.8) * Math.PI)) : 0;
+    const hx = cx + sway, hy = cy + RY + 34;
+    g.fillStyle(hideD, 1); g.fillEllipse(cx + sway * 0.4, cy + RY * 0.92, 54, 40);
+    g.fillStyle(hide, 1); g.fillEllipse(cx + sway * 0.4, cy + RY * 0.92, 48, 34);
+    for (let k = 0; k < 4; k++) { g.lineStyle(1.5, hideD, 0.7); g.beginPath(); g.arc(cx + sway * 0.45, cy + RY * 0.88 + k * 6, 20 - k * 2, Math.PI * 0.2, Math.PI * 0.8, false); g.strokePath(); }
+    g.fillStyle(hideD, 1); g.fillEllipse(hx, hy, 50, 54);
+    g.fillStyle(hide, 1); g.fillEllipse(hx, hy - 1, 45, 49);
+    g.fillStyle(hideD, 1); g.fillTriangle(hx - 15, hy + 16, hx + 15, hy + 16, hx, hy + 36);
+    g.fillStyle(0x9a9478, 1); g.fillTriangle(hx - 12, hy + 16, hx + 12, hy + 16, hx, hy + 33);
+    g.fillStyle(0xd8d0b0, 0.7); g.fillTriangle(hx - 8, hy + 17, hx - 1, hy + 17, hx - 1, hy + 30);
+    if (gape > 0) { g.fillStyle(0x1a0e0a, 1); g.fillEllipse(hx, hy + 19, 22, 4 + gape * 8); g.fillStyle(0xfff4c8, 0.6 * gape); g.fillEllipse(hx, hy + 19, 12, 2 + gape * 5); }
+    // Head scutes: a mosaic of plates.
+    const plates: [number, number, number, number][] = [[0, -12, 14, 11], [-11, -2, 11, 10], [11, -2, 11, 10], [0, 2, 12, 10], [-7, 10, 9, 7], [7, 10, 9, 7], [-15, -13, 8, 8], [15, -13, 8, 8]];
+    for (const [ox, oy, w, h] of plates) {
+      g.fillStyle(hideD, 1); g.fillEllipse(hx + ox + 0.5, hy + oy + 0.8, w + 1, h + 1);
+      g.fillStyle(hideL, 0.9); g.fillEllipse(hx + ox, hy + oy, w, h);
+      g.fillStyle(0xffffff, 0.15); g.fillEllipse(hx + ox - w * 0.18, hy + oy - h * 0.2, w * 0.45, h * 0.3);
+    }
+    for (const side of [-1, 1]) {
+      const ex = hx + side * 20, ey = hy + 6;
+      g.fillStyle(hideD, 1); g.fillEllipse(ex, ey, 12, 10);
+      g.fillStyle(0x1a1408, 1); g.fillEllipse(ex, ey + 0.5, 8, 6);
+      g.fillStyle(0xffd860, 0.6 + 0.4 * glow); g.fillCircle(ex + side * 0.5, ey + 0.5, 2.4);
+      g.fillStyle(0x000000, 1); g.fillEllipse(ex + side * 0.5, ey + 0.5, 1, 3.4);
+      g.fillStyle(0xffffff, 0.8); g.fillCircle(ex - side * 1.5, ey - 1, 0.9);
+      g.fillStyle(hide, 1); g.fillEllipse(ex, ey - 4, 13, 4);
+    }
+    // The dome. First the rim of bronze marginal plates, then the glass interior.
+    const rim: Phaser.Geom.Point[] = [], rimIn: Phaser.Geom.Point[] = [];
+    for (let i = 0; i < 48; i++) { const a = (i / 48) * Math.PI * 2; rim.push(new Phaser.Geom.Point(cx + Math.cos(a) * (RX + 6), cy + Math.sin(a) * (RY + 6))); }
+    g.fillStyle(0x1a1a16, 1); g.fillPoints(rim, true, true);
+    for (let i = 0; i < 24; i++) {
+      const a0 = (i / 24) * Math.PI * 2, a1 = ((i + 1) / 24) * Math.PI * 2, am = (a0 + a1) / 2;
+      const pts = [D(a0, 0.86), D(a1, 0.86),
+        new Phaser.Geom.Point(cx + Math.cos(a1) * (RX + 4), cy + Math.sin(a1) * (RY + 4)),
+        new Phaser.Geom.Point(cx + Math.cos(am) * (RX + 7), cy + Math.sin(am) * (RY + 7)),
+        new Phaser.Geom.Point(cx + Math.cos(a0) * (RX + 4), cy + Math.sin(a0) * (RY + 4))];
+      const lightSide = Math.max(0, -Math.cos(am - 3.9));
+      g.fillStyle(i % 2 ? bronze : 0x9a8050, 1); g.fillPoints(pts, true, true);
+      g.fillStyle(0xffe8b0, 0.25 * lightSide); g.fillPoints(pts, true, true);
+      g.lineStyle(1, 0x3a2a14, 0.9); g.strokePoints(pts, true, true);
+      const rv = new Phaser.Geom.Point(cx + Math.cos(am) * (RX + 1), cy + Math.sin(am) * (RY + 1));
+      g.fillStyle(0x3a2a14, 1); g.fillCircle(rv.x, rv.y, 1.6); g.fillStyle(0xf0d898, 0.8); g.fillCircle(rv.x - 0.4, rv.y - 0.4, 0.7);
+      if (i % 3 === 1) { g.fillStyle(verd, 0.55); g.fillEllipse(rv.x + Math.cos(am) * -4, rv.y + Math.sin(am) * -4, 7, 4); }
+    }
+    for (let i = 0; i < 36; i++) { const a = (i / 36) * Math.PI * 2; rimIn.push(D(a, 0.86)); }
+    const inner = Phaser.Display.Color.Interpolate.ColorWithColor(Phaser.Display.Color.ValueToColor(0x1a2a30), Phaser.Display.Color.ValueToColor(0xfff0b0), 100, glow * 100);
+    g.fillStyle(Phaser.Display.Color.GetColor(inner.r, inner.g, inner.b), 1); g.fillPoints(rimIn, true, true);
+    // The turtle beneath, seen through the glass: spine and rib shadows.
+    g.lineStyle(5, 0x0e161a, 0.45 * (1 - glow * 0.6));
+    { const s0 = D(-Math.PI / 2, 0.8), s1 = D(Math.PI / 2, 0.8); g.lineBetween(s0.x, s0.y, s1.x, s1.y); }
+    g.lineStyle(3, 0x0e161a, 0.35 * (1 - glow * 0.6));
+    for (let k = -3; k <= 3; k++) for (const side of [-1, 1]) {
+      const p0 = D(Math.PI / 2 + k * 0.32, 0.1), a = side > 0 ? k * 0.32 : Math.PI - k * 0.32, p1 = D(a, 0.78);
+      g.lineBetween(p0.x, p0.y, p1.x, p1.y);
+    }
+    // Glass panes: a crown hexagon, a ring of six, a ring of twelve.
+    const tints = [0xd8f0f0, 0xc8e4f4, 0xf2e8c8, 0xdcf2dc, 0xf4e0c8, 0xd0dcf4, 0xe8f4f8];
+    const hlA = t * 0.12 + 3.9;
+    const cells: { pts: Phaser.Geom.Point[]; a: number; rr: number; tint: number }[] = [];
+    const hex: Phaser.Geom.Point[] = []; for (let k = 0; k < 6; k++) hex.push(D(k * Math.PI / 3, 0.28));
+    cells.push({ pts: hex, a: 0, rr: 0, tint: tints[6] });
+    for (let k = 0; k < 6; k++) {
+      const a0 = k * Math.PI / 3, pts = [D(a0, 0.28), D(a0 + Math.PI / 3, 0.28)];
+      for (let j = 4; j >= 0; j--) pts.push(D(a0 + j * Math.PI / 12, 0.58));
+      cells.push({ pts, a: a0 + Math.PI / 6, rr: 0.43, tint: tints[k % 6] });
+    }
+    for (let k = 0; k < 12; k++) {
+      const a0 = k * Math.PI / 6 + Math.PI / 12, pts: Phaser.Geom.Point[] = [];
+      for (let j = 0; j <= 2; j++) pts.push(D(a0 + j * Math.PI / 12, 0.58));
+      for (let j = 2; j >= 0; j--) pts.push(D(a0 + j * Math.PI / 12, 0.86));
+      cells.push({ pts, a: a0 + Math.PI / 12, rr: 0.72, tint: tints[(k * 5 + 2) % 6] });
+    }
+    for (const c of cells) {
+      const face = c.rr === 0 ? 0.6 : Math.max(0, Math.cos(c.a - hlA)) * c.rr + Math.max(0, Math.cos(c.a - toB)) * glow * 0.6;
+      g.fillStyle(c.tint, 0.5 + glow * 0.2); g.fillPoints(c.pts, true, true);
+      if (face > 0.05) { g.fillStyle(0xffffff, Math.min(0.55, face * 0.45)); g.fillPoints(c.pts, true, true); }
+      const p0 = c.pts[0], p1 = c.pts[c.pts.length - 1], mid = c.pts[Math.floor(c.pts.length / 2)];
+      g.lineStyle(1, 0xffffff, 0.35); g.lineBetween(Phaser.Math.Linear(p0.x, mid.x, 0.2), Phaser.Math.Linear(p0.y, mid.y, 0.2), Phaser.Math.Linear(p1.x, mid.x, 0.5), Phaser.Math.Linear(p1.y, mid.y, 0.5));
+    }
+    for (const c of cells) { g.lineStyle(3, lead, 1); g.strokePoints(c.pts, true, true); }
+    for (const c of cells) { g.lineStyle(1, 0x6a7078, 0.6); g.strokePoints(c.pts.map((p) => new Phaser.Geom.Point(p.x - 0.6, p.y - 0.6)), true, true); }
+    // Solder knots where the leads meet.
+    for (let k = 0; k < 6; k++) { const p = D(k * Math.PI / 3, 0.28); g.fillStyle(0x3a3e46, 1); g.fillCircle(p.x, p.y, 2.4); g.fillStyle(0x9aa0aa, 0.8); g.fillCircle(p.x - 0.6, p.y - 0.6, 0.9); }
+    for (let k = 0; k < 12; k++) { const p = D(k * Math.PI / 6 + Math.PI / 12, 0.58); g.fillStyle(0x3a3e46, 1); g.fillCircle(p.x, p.y, 2.2); g.fillStyle(0x9aa0aa, 0.8); g.fillCircle(p.x - 0.5, p.y - 0.5, 0.8); }
+    // The sun's reflection sliding over the dome, and its focal point when it means to burn.
+    const sun = D(hlA, 0.55);
+    g.fillStyle(0xffffff, 0.3); g.fillEllipse(sun.x, sun.y, 30, 16);
+    g.fillStyle(0xffffff, 0.8); g.fillEllipse(sun.x, sun.y, 9, 5);
+    { const s = 9 + Math.sin(t * 4) * 3; g.lineStyle(1, 0xffffff, 0.7); g.lineBetween(sun.x - s, sun.y, sun.x + s, sun.y); g.lineBetween(sun.x, sun.y - s * 0.7, sun.x, sun.y + s * 0.7); }
+    if (glow > 0) {
+      const f = D(toB, 0.4), fl = 0.85 + 0.15 * Math.sin(t * 30);
+      g.fillStyle(0xfff0b0, 0.25 * glow); g.fillEllipse(cx, cy, RX * 2, RY * 2);
+      g.fillStyle(0xffe890, 0.4 * glow * fl); g.fillCircle(f.x, f.y, 22 + glow * 14);
+      g.fillStyle(0xffffff, 0.9 * glow); g.fillCircle(f.x, f.y, 6 + glow * 6);
+      for (let k = 0; k < 8; k++) {
+        const a = k * (Math.PI / 4) + t * 0.8, l = (16 + glow * 26) * (k % 2 ? 0.6 : 1);
+        g.lineStyle(1.5, 0xffffff, 0.7 * glow); g.lineBetween(f.x, f.y, f.x + Math.cos(a) * l, f.y + Math.sin(a) * l * 0.8);
+      }
+    }
+    // Barnacles crusting the rim.
+    for (const [a, n] of [[0.4, 4], [1.9, 3], [2.8, 5], [3.7, 3], [4.6, 4], [5.6, 3]] as const) {
+      const p = new Phaser.Geom.Point(cx + Math.cos(a) * (RX + 3), cy + Math.sin(a) * (RY + 3));
+      for (let j = 0; j < n; j++) { const bx = p.x + Math.cos(j * 1.9 + a) * 4, by = p.y + Math.sin(j * 1.9 + a) * 3; g.fillStyle(0xd8d0c0, 1); g.fillCircle(bx, by, 2.1); g.fillStyle(0x4a4438, 1); g.fillCircle(bx, by, 0.8); }
+    }
+    if (b.attack === 'slam') { g.lineStyle(3, 0xfff0b0, 0.6); g.strokeCircle(this.bx, this.by - 20, 60 + Math.sin(t * 20) * 6); }
+    if (b.phase === 'fight') {
+      g.fillStyle(0x000000, 0.6); g.fillRect(280, 70, 400, 12);
+      g.fillStyle(BEASTS.lensback.bar, 1); g.fillRect(282, 72, 396 * Math.max(0, b.hp / b.maxHp), 8);
     }
   }
 
@@ -1571,6 +2512,109 @@ export class SeaVoyageScene extends Phaser.Scene {
     }
   }
 
+  /**
+   * The Wheelback: a sea turtle the size of a reef whose shell is carved and inlaid as a roulette
+   * wheel — a mahogany rim studded with gilt, a ball-track the ball runs round, a ring of red and
+   * black pockets (one green) with gold frets, a gilt cone and a turning cross-handled hub — the whole
+   * wheel spinning as it swims, faster as it winds up to throw its dice. Barnacled with stacks of
+   * gambling chips; great mottled flippers row at the sides and a beaked head pushes out in front.
+   */
+  private drawWheelback(g: Phaser.GameObjects.Graphics, b: Beast, t: number): void {
+    const { x, y } = b;
+    const skin = 0x5a7a5a, skinD = 0x3a5a40, skinL = 0x8aa888;
+    const windup = b.attack === 'wave' ? Math.min(1, b.attackT / 0.8) : 0;
+    const spin = t * (0.8 + windup * 5) + (b.attack === 'wave' ? b.attackT * b.attackT * 3 : 0);
+    const RX = 116, RY = 72, sy = y - 6;
+    const P = (a: number, rr: number): [number, number] => [x + Math.cos(a) * rr * RX, sy + Math.sin(a) * rr * RY];
+    // Water: wake round the shell and its shadow.
+    g.fillStyle(0xffffff, 0.15); g.fillEllipse(x, y + 44, 300 + Math.sin(t * 2) * 10, 50);
+    for (let i = 0; i < 3; i++) { const k = (t * 0.45 + i / 3) % 1; g.lineStyle(2, 0xe8f0ff, 0.28 * (1 - k)); g.strokeEllipse(x, y + 10, 250 + k * 150, 150 + k * 60); }
+    g.fillStyle(0x000000, 0.3); g.fillEllipse(x + 6, y + 18, 260, 160);
+    // Flippers: the front pair rowing big strokes, the rear pair paddling, and a stub of tail.
+    for (const side of [-1, 1]) {
+      const st = Math.sin(t * 1.8 + (side > 0 ? Math.PI : 0)), fx = x + side * RX * 0.88, fy = y + RY * 0.42;
+      const tipX = fx + side * (56 + st * 8), tipY = fy + 34 + st * 22;
+      g.fillStyle(skinD, 1); g.fillTriangle(fx - side * 10, fy - 16, fx + side * 6, fy + 18, tipX, tipY);
+      g.fillStyle(skin, 1); g.fillTriangle(fx - side * 6, fy - 10, fx + side * 4, fy + 12, tipX - side * 4, tipY - 4);
+      g.fillStyle(skinL, 0.7); for (let k = 1; k <= 3; k++) g.fillCircle(Phaser.Math.Linear(fx, tipX, k / 4), Phaser.Math.Linear(fy, tipY, k / 4) - 3, 3 - k * 0.5);
+      const rs = Math.sin(t * 1.8 + 1 + (side > 0 ? 0 : Math.PI)), rx = x + side * RX * 0.66, ry = y - RY * 0.72;
+      g.fillStyle(skinD, 1); g.fillTriangle(rx, ry + 8, rx + side * 8, ry - 10, rx + side * (34 + rs * 6), ry - 22 - rs * 8);
+      g.fillStyle(0xffffff, 0.18 * (0.5 + 0.5 * st)); g.fillEllipse(tipX, tipY + 4, 26, 8);
+    }
+    g.fillStyle(skinD, 1); g.fillTriangle(x - 10, y - RY - 2, x + 10, y - RY - 2, x + Math.sin(t * 2.4) * 8, y - RY - 26);
+    // Head and neck in front, beak opening when it spits.
+    const open = b.attack === 'spit' ? Math.min(1, b.attackT * 2) : 0.08 + Math.sin(t * 1.7) * 0.05;
+    const hx = x + Math.sin(t * 0.9) * 6, hy = y + RY + 24;
+    g.fillStyle(skinD, 1); g.fillEllipse(x, y + RY + 2, 54, 36);
+    g.lineStyle(1.5, 0x2a4030, 0.8); for (let k = 0; k < 3; k++) g.strokeEllipse(x, y + RY - 2 + k * 6, 44 - k * 4, 10);
+    g.fillStyle(skin, 1); g.fillEllipse(hx, hy, 58, 44);
+    g.fillStyle(skinL, 0.6); for (const [dx, dy, rr] of [[-14, -8, 5], [10, -12, 4], [16, 2, 3.5], [-6, 4, 3]] as const) g.fillCircle(hx + dx, hy + dy, rr);
+    g.fillStyle(0x3a3020, 1); g.fillTriangle(hx - 14, hy + 10, hx + 14, hy + 10, hx, hy + 28 + open * 4);
+    g.fillStyle(0x5a4a30, 1); g.fillTriangle(hx - 10, hy + 11, hx + 4, hy + 11, hx - 2, hy + 22);
+    if (open > 0.15) { g.fillStyle(0x1a0a08, 1); g.fillEllipse(hx, hy + 14, 22, 3 + open * 14); g.fillStyle(0xe8c050, 0.6 * open); g.fillCircle(hx, hy + 15, 3 + open * 3); }
+    for (const d of [-1, 1]) {
+      g.fillStyle(0xffd860, 1); g.fillEllipse(hx + d * 16, hy - 6, 11, 8);
+      g.fillStyle(0x1a1008, 1); g.fillRect(hx + d * 16 - 1, hy - 9.5, 2, 7);
+      g.fillStyle(0xffffff, 0.8); g.fillCircle(hx + d * 16 - 2, hy - 8, 1.2);
+      g.lineStyle(2, skinD, 1); g.lineBetween(hx + d * 9, hy - 12, hx + d * 22, hy - 11);
+    }
+    // The shell: a mahogany rim with barnacles, gilt studs and the ball-track.
+    g.fillStyle(0x2a140a, 1); g.fillEllipse(x, sy + 6, RX * 2 + 18, RY * 2 + 16);
+    g.fillStyle(0x6a3018, 1); g.fillEllipse(x, sy, RX * 2 + 12, RY * 2 + 10);
+    g.fillStyle(0x8a4422, 1); g.fillEllipse(x, sy - 2, RX * 2, RY * 2);
+    g.lineStyle(1, 0x4a2010, 0.7); for (let k = 0; k < 24; k++) { const a = k * (Math.PI / 12) + 0.1; const [ax, ay] = P(a, 0.93), [bx2, by2] = P(a + 0.12, 1.02); g.lineBetween(ax, ay, bx2, by2); }
+    for (let k = 0; k < 16; k++) { const [px, py] = P(spin + k * (Math.PI / 8), 0.97); g.fillStyle(0xe8c050, 1); g.fillCircle(px, py, 2.2); g.fillStyle(0xfff4c0, 0.8); g.fillCircle(px - 0.6, py - 0.6, 0.8); }
+    g.fillStyle(0xb07a40, 1); g.fillEllipse(x, sy - 2, RX * 1.8, RY * 1.8);
+    g.fillStyle(0xc8925a, 0.5); g.fillEllipse(x - RX * 0.1, sy - RY * 0.12, RX * 1.6, RY * 1.4);
+    // The pockets: eighteen wedges round the wheel, red and black with one green, gold frets between.
+    const N = 18;
+    for (let k = 0; k < N; k++) {
+      const a0 = spin + k * (Math.PI * 2 / N), a1 = a0 + Math.PI * 2 / N;
+      const [o0x, o0y] = P(a0, 0.86), [o1x, o1y] = P(a1, 0.86), [i0x, i0y] = P(a0, 0.6), [i1x, i1y] = P(a1, 0.6);
+      g.fillStyle(k === 0 ? 0x1a7a3a : k % 2 ? 0x141014 : 0xb01c28, 1);
+      g.fillTriangle(o0x, o0y, o1x, o1y, i1x, i1y); g.fillTriangle(o0x, o0y, i1x, i1y, i0x, i0y);
+      g.lineStyle(1.5, 0xe8c050, 1); g.lineBetween(o0x, o0y, i0x, i0y);
+      const [nx, ny] = P(a0 + Math.PI / N, 0.78); g.fillStyle(0xf4ecd8, 0.75); g.fillRect(nx - 1.5, ny - 1, 3, 2);
+    }
+    g.lineStyle(2, 0xe8c050, 1); g.strokeEllipse(x, sy, RX * 1.72, RY * 1.72); g.strokeEllipse(x, sy, RX * 1.2, RY * 1.2);
+    // The cone and hub: gilt rings rising to a cross-handled turret turning against the wheel.
+    g.fillStyle(0x8a5a2a, 1); g.fillEllipse(x, sy, RX * 1.18, RY * 1.18);
+    g.fillStyle(0xc8a040, 1); g.fillEllipse(x, sy - 3, RX * 0.7, RY * 0.7);
+    g.fillStyle(0xe8c860, 1); g.fillEllipse(x - 4, sy - 7, RX * 0.42, RY * 0.4);
+    const hub = -spin * 1.6;
+    for (let k = 0; k < 4; k++) {
+      const a = hub + k * (Math.PI / 2), ex = x + Math.cos(a) * 26, ey = sy - 12 + Math.sin(a) * 16;
+      g.lineStyle(4, 0x8a6a2a, 1); g.lineBetween(x, sy - 12, ex, ey);
+      g.lineStyle(2, 0xf0d070, 1); g.lineBetween(x, sy - 13, ex, ey - 1);
+      g.fillStyle(0xe8c050, 1); g.fillCircle(ex, ey, 4.5); g.fillStyle(0xfff4c0, 0.9); g.fillCircle(ex - 1.2, ey - 1.2, 1.5);
+    }
+    g.fillStyle(0xd8b048, 1); g.fillCircle(x, sy - 12, 7); g.fillStyle(0xfff0b0, 1); g.fillCircle(x - 2, sy - 14, 2.4);
+    // The ball, racing the other way round the track.
+    const ba = -t * (2.6 + windup * 3), [bpx, bpy] = P(ba, 0.9);
+    g.fillStyle(0x000000, 0.3); g.fillCircle(bpx + 1, bpy + 2, 4); g.fillStyle(0xffffff, 1); g.fillCircle(bpx, bpy, 3.6);
+    g.fillStyle(0xd8d8e0, 1); g.fillCircle(bpx + 1, bpy + 1, 1.6);
+    // Barnacles of chips: little stacks crusted round the rim, and white barnacles between.
+    const chips = [[0.4, 0xc81a2a, 4], [1.25, 0x2a5ab8, 3], [2.2, 0x1a1418, 5], [3.5, 0x2a8a3a, 3], [4.3, 0xc81a2a, 2], [5.3, 0xe8e0d0, 4]] as const;
+    for (const [a, c, n] of chips) {
+      const [cx, cy] = P(a, 1.04), edge = Phaser.Display.Color.ValueToColor(c).darken(30).color;
+      for (let k = 0; k < n; k++) {
+        g.fillStyle(edge, 1); g.fillEllipse(cx, cy - k * 3 + 1.5, 13, 5.5);
+        g.fillStyle(c, 1); g.fillEllipse(cx, cy - k * 3, 13, 5);
+        g.fillStyle(0xffffff, 0.8); g.fillRect(cx - 5.5, cy - k * 3 - 0.6, 2, 1.2); g.fillRect(cx + 3.5, cy - k * 3 - 0.6, 2, 1.2);
+      }
+    }
+    for (let k = 0; k < 10; k++) {
+      const [cx, cy] = P(0.9 + k * 0.58, 1.02 + (k % 2) * 0.04);
+      g.fillStyle(0xd8d0c0, 1); g.fillTriangle(cx - 3, cy + 2, cx + 3, cy + 2, cx, cy - 4); g.fillStyle(0x5a5040, 1); g.fillCircle(cx, cy - 2, 0.9);
+    }
+    if (windup > 0) { g.lineStyle(2, 0xffe8a0, 0.5 * windup); g.strokeEllipse(x, sy, RX * 2 + 24 + windup * 10, RY * 2 + 20 + windup * 8); }
+    if (b.attack === 'slam') { g.lineStyle(3, 0xe8c050, 0.6); g.strokeCircle(this.bx, this.by - 20, 60 + Math.sin(t * 20) * 6); }
+    if (b.phase === 'fight') {
+      g.fillStyle(0x000000, 0.6); g.fillRect(280, 70, 400, 12);
+      g.fillStyle(BEASTS.wheelback.bar, 1); g.fillRect(282, 72, 396 * Math.max(0, b.hp / b.maxHp), 8);
+    }
+  }
+
   private drawCragjaw(g: Phaser.GameObjects.Graphics, b: Beast, t: number): void {
     const { x, y } = b;
     const stone = 0x5a5048, lit = 0x8a7c6a, dark = 0x2e2824;
@@ -1646,5 +2690,36 @@ export class SeaVoyageScene extends Phaser.Scene {
     const leg = this.crossing ? `  → ${this.crossing.name} ${Math.max(0, Math.round(this.toLand()))} m` : `  ${Math.round(this.dist)} m`;
     this.hudText.setText(`${this.boat.name}${leg}\nHold ${this.haul} 🪙  ${this.orbs ? this.orbs + ' 🔮' : ''}`);
     if (this.burstCd > 0) { g.fillStyle(0x000000, 0.45); g.fillRect(840, 12, 104, 10); g.fillStyle(this.elementColor, 1); g.fillRect(842, 14, 100 * (1 - this.burstCd / 7), 6); }
+    if (Save.S().boat.uber === 'uber-fortunehelm') {
+      // The Fortune Helm's dial: a gold arc filling toward the next spin, the last boon's colour in the
+      // hub, and a gold pip while a ward is held.
+      const cx = 926, cy = 46, k = this.helmPending ? 1 : 1 - Phaser.Math.Clamp(this.turretCd / HELM_EVERY, 0, 1);
+      g.fillStyle(0x000000, 0.45); g.fillCircle(cx, cy, 15);
+      g.lineStyle(3, 0x3a2a14, 1); g.strokeCircle(cx, cy, 11);
+      g.lineStyle(3, 0xe8c050, 1); g.beginPath(); g.arc(cx, cy, 11, -Math.PI / 2, -Math.PI / 2 + k * Math.PI * 2, false); g.strokePath();
+      const boon = this.helmBoon;
+      g.fillStyle(boon === 'gust' ? 0xe8f8ff : boon === 'ward' ? 0xffd84a : boon === 'broadside' ? 0xff7a4a : 0x5a4a3a, 1); g.fillCircle(cx, cy, 5);
+      if (this.helmWard) { g.fillStyle(0xffd84a, 1); g.fillTriangle(cx - 22, cy - 6, cx - 14, cy - 6, cx - 18, cy + 4); }
+    }
+    if (Save.S().boat.uber === 'uber-foghorn') {
+      // The Foghorn's dial: a brass arc filling toward the next blast round a little horn mark.
+      const cx = 926, cy = 46, k = 1 - Phaser.Math.Clamp(this.turretCd / HORN_EVERY, 0, 1);
+      g.fillStyle(0x000000, 0.45); g.fillCircle(cx, cy, 15);
+      g.lineStyle(3, 0x3a2a14, 1); g.strokeCircle(cx, cy, 11);
+      g.lineStyle(3, 0xd8a848, 1); g.beginPath(); g.arc(cx, cy, 11, -Math.PI / 2, -Math.PI / 2 + k * Math.PI * 2, false); g.strokePath();
+      g.fillStyle(0xd8a848, 1); g.fillTriangle(cx - 5, cy - 1.5, cx - 5, cy + 1.5, cx + 3, cy - 5); g.fillTriangle(cx - 5, cy + 1.5, cx + 3, cy + 5, cx + 3, cy - 5);
+      g.fillStyle(0x1a0e06, 1); g.fillEllipse(cx + 3, cy, 2.4, 9);
+    }
+    if (Save.S().boat.uber === 'uber-burningglass') {
+      // The Burning Glass's dial: a gold arc filling toward the next lance round a little lens whose
+      // heart brightens as it charges.
+      const cx = 926, cy = 46, k = 1 - Phaser.Math.Clamp(this.turretCd / GLASS_EVERY, 0, 1);
+      g.fillStyle(0x000000, 0.45); g.fillCircle(cx, cy, 15);
+      g.lineStyle(3, 0x3a2a14, 1); g.strokeCircle(cx, cy, 11);
+      g.lineStyle(3, 0xf0c848, 1); g.beginPath(); g.arc(cx, cy, 11, -Math.PI / 2, -Math.PI / 2 + k * Math.PI * 2, false); g.strokePath();
+      g.fillStyle(0x9ad8d0, 0.7); g.fillCircle(cx, cy, 5.5);
+      g.lineStyle(1.5, 0xd8a848, 1); g.strokeCircle(cx, cy, 5.5);
+      g.fillStyle(0xffffff, 0.3 + 0.7 * k * k); g.fillCircle(cx, cy, 1.5 + k * 2);
+    }
   }
 }

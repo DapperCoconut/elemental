@@ -182,6 +182,7 @@ for (const a of areas) {
   for (const isle of R.ISLES) { const w = R.getWanderer(isle.id); if (w) { for (const [k, t] of Object.entries(w.byArea)) lines(`wanderer ${w.id} @${k}`, t); lines(`wanderer ${w.id}`, w.general); } }
   const encs = [...R.allCourts().filter((c) => !phCourts.has(c.id)).flatMap((c) => c.encounters), ...R.allEncounters()];
   for (const e of new Map(encs.map((e) => [e.id, e])).values()) for (const l of [...(e.challenge ?? []), ...(e.beaten ?? [])]) long(`encounter ${e.id}`, l);
+  for (const q of R.allQuests()) for (const l of [...(q.offer ?? []), ...(q.accept ?? []), ...(q.complete ?? [])]) long(`quest ${q.id}`, l);
 }
 
 // Courts & encounters
@@ -381,6 +382,8 @@ for (const c of R.allCourts()) {
       target: (def) => { const t = { def, x: def.x, y: def.y, alive: true, moveTo(x, y) { t.x = x; t.y = y; }, setRadius(r) { def.r = r; }, remove() { t.alive = false; } }; targets.push(t); return t; },
       facing: (f) => Math.atan2((f === player ? npc : player).y - f.y, (f === player ? npc : player).x - f.x),
       airborne: act((f, ms) => { aloft.set(f, scene.time.now + ms); }), isAirborne: (f) => (aloft.get(f) ?? 0) > scene.time.now,
+      // The sim dashes a quarter of the time, so dash rules get exercised.
+      dashing: (f) => Math.floor((scene.time.now + (f === npc ? 1250 : 0)) / 2500) % 4 === 0,
       shotsNear: (x, y, r) => (Math.hypot(player.x - x, player.y - y) < r + 80 ? [{ x, y, owner: 'player', damage: 10, block: act(() => {}), reflect: act(() => true) }] : []) };
     const strike = (t, by) => { acts++; t.def.onStruck(by, 10); };
     tryRun(`gimmick ${e.gimmick}`, () => {

@@ -123,7 +123,7 @@ export const ELEMENT_PROFILES: Record<string, ElementProfile> = {
   },
   fate: {
     archetype: 'Gambler',
-    blurb: 'A six-card hand you never quite choose. Preserve and enchant the ones worth keeping.',
+    blurb: 'A three-card hand you never quite choose. Roll the die, curse the foe, and bet the hand.',
     complexity: 3,
   },
   sound: {

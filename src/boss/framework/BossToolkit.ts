@@ -5,6 +5,7 @@ import { HuskVariantDef } from '../../invasion/HuskVariants';
 import { Sfx } from '../../audio';
 import { inertStrikeTarget, type StrikeTarget, type StrikeTargetDef, type Striker } from './StrikeTargets';
 import type { ShotHandle } from '../../combat/ShotHandles';
+import { crowdControl } from './CrowdControl';
 
 /**
  * The hazard engine every world boss (and, later, The Amalgam) fights through.
@@ -57,6 +58,11 @@ export interface BossToolkitHost {
   spawnTarget?(def: StrikeTargetDef): StrikeTarget;
   /** Fighters' shots in flight inside a circle (see ShotHandles). Absent: none are ever seen. */
   shotsNear?(x: number, y: number, r: number): ShotHandle[];
+  /**
+   * Damage a fighter other than the player (a `hits` bullet striking the bot). Absent: the
+   * toolkit calls `takeDamage` itself.
+   */
+  hurt?(f: Fighter, amount: number, x: number, y: number): void;
 }
 
 // Shared numbers — the King's tuned figures, kept as the framework's floor.
@@ -75,6 +81,8 @@ interface TBullet {
   turn: number;
   speed: number;
   color: number;
+  /** Fighters it can strike; absent = the player only. Steering chases the nearest of them. */
+  hits?: Fighter[];
 }
 interface TLane {
   x: number; y: number; angle: number;
@@ -133,6 +141,15 @@ export class BossToolkit {
    * what to paint brighter; their `drawAir` layer already sits above the dark.
    */
   dark = false;
+  /**
+   * The boss's current phase, 0-based (a hard fight's extra phase is the last index). Set by the
+   * host as each phase begins; signatures read it instead of guessing from `drawDecor`.
+   */
+  phase = 0;
+  private lastP: { x: number; y: number } | null = null;
+  private dashUntil = -1;
+  /** True for ~120 ms after the player dashes, blinks, leaps or is launched — never read speeds yourself. */
+  playerDashing(): boolean { return this.dashUntil > this.now; }
 
   private pullX = 0;
   private pullY = 0;
@@ -237,6 +254,33 @@ export class BossToolkit {
   }
 
   /**
+   * A real stun (disarm + tray icon + body held) on `f`, default the player; `unstoppable` ignores it.
+   * Without a live hold owner (the validator's smoke runs) it still disarms and stamps the tray.
+   */
+  stun(ms: number, f: Fighter = this.player): void {
+    if (ms <= 0 || this.host.stopped() || !f.active || f.hp <= 0 || f.unstoppable) return;
+    const cc = crowdControl();
+    if (cc) { cc.stun(f, ms); return; }
+    // Stubbed fighters (validator smoke runs) may lack the method.
+    if (typeof f.applyDisarm === 'function') f.applyDisarm(ms);
+    f.stunnedUntil = Math.max(f.stunnedUntil ?? 0, Date.now() + ms);
+  }
+
+  /** A real root on `f` (default the player): body held each frame, casting still allowed. */
+  root(ms: number, f: Fighter = this.player): void {
+    if (ms <= 0 || this.host.stopped() || !f.active || f.hp <= 0 || f.unstoppable) return;
+    crowdControl()?.root(f, ms);
+  }
+
+  /** A real silence on `f` (default the player): abilities locked, movement free. */
+  silence(ms: number, f: Fighter = this.player): void {
+    if (ms <= 0 || this.host.stopped() || !f.active || f.hp <= 0) return;
+    const cc = crowdControl();
+    if (cc) { cc.silence(f, ms); return; }
+    f.silencedUntil = Math.max(f.silencedUntil ?? 0, Date.now() + ms);
+  }
+
+  /**
    * Held here and *pulled* by ArenaScene, never written onto the player —
    * ArenaScene rebuilds playerSpeedMult from scratch every frame.
    */
@@ -275,16 +319,30 @@ export class BossToolkit {
 
   // ── Spawners ─────────────────────────────────────────────────────
 
+  /**
+   * A bullet. By default it strikes only the player; pass `hits` (e.g. `[ctx.npc]`, or both
+   * fighters) for a shot that can strike the bot too — a turret that fires at whoever built least,
+   * a freed soul flung at the foe. Every bullet dies on its first hit.
+   */
   spawnBullet(o: {
     x: number; y: number; angle: number; speed: number; damage: number;
-    lifeMs?: number; r?: number; turn?: number; color?: number;
+    lifeMs?: number; r?: number; turn?: number; color?: number; hits?: Fighter[];
   }): void {
     this.bullets.push({
       x: o.x, y: o.y,
       vx: Math.cos(o.angle) * o.speed, vy: Math.sin(o.angle) * o.speed,
       r: o.r ?? 5, damage: o.damage, dieAt: this.now + (o.lifeMs ?? 6000),
-      turn: o.turn ?? 0, speed: o.speed, color: o.color ?? this.palette.lit,
+      turn: o.turn ?? 0, speed: o.speed, color: o.color ?? this.palette.lit, hits: o.hits,
     });
+  }
+
+  /** Damage any fighter by a toolkit hazard: the player through `hitPlayer`, others through the host. */
+  hitFighter(f: Fighter, amount: number, x: number, y: number): void {
+    if (f === this.player) { this.hitPlayer(amount, x, y); return; }
+    if (!f.active || f.hp <= 0 || this.host.stopped()) return;
+    const n = Math.max(1, Math.round(amount * this.damageScale));
+    if (this.host.hurt) this.host.hurt(f, n, x, y);
+    else { f.takeDamage(n); this.host.spawnHitFlash(x, y, this.palette.lit); }
   }
 
   /** Stretch a warning by the fight's telegraph scale. */
@@ -478,12 +536,16 @@ export class BossToolkit {
   update(time: number, delta: number): void {
     const dt = delta / 1000;
     const p = this.player;
+    // Dash watch: faster than any walk this frame (dash, blink, leap, launch) counts for 120 ms.
+    if (this.lastP && dt > 0 && Math.hypot(p.x - this.lastP.x, p.y - this.lastP.y) / dt > 560) this.dashUntil = time + 120;
+    this.lastP = { x: p.x, y: p.y };
     const stopped = this.host.stopped();
 
     // Bullets — steer, move, cull, hit.
     for (const b of this.bullets) {
-      if (b.turn > 0 && p.active) {
-        const want = Math.atan2(p.y - b.y, p.x - b.x);
+      const aim = b.hits ? nearestOf(b.hits, b.x, b.y) : p;
+      if (b.turn > 0 && aim && aim.active) {
+        const want = Math.atan2(aim.y - b.y, aim.x - b.x);
         const cur = Math.atan2(b.vy, b.vx);
         const turned = Phaser.Math.Angle.RotateTo(cur, want, b.turn * dt);
         b.vx = Math.cos(turned) * b.speed;
@@ -491,9 +553,12 @@ export class BossToolkit {
       }
       b.x += b.vx * dt;
       b.y += b.vy * dt;
-      if (!stopped && p.active && Phaser.Math.Distance.Between(b.x, b.y, p.x, p.y) < PLAYER_R + b.r) {
-        this.hitPlayer(b.damage, b.x, b.y);
+      if (stopped) continue;
+      for (const f of b.hits ?? [p]) {
+        if (!f.active || f.hp <= 0 || Phaser.Math.Distance.Between(b.x, b.y, f.x, f.y) >= PLAYER_R + b.r) continue;
+        this.hitFighter(f, b.damage, b.x, b.y);
         b.dieAt = 0;
+        break;
       }
     }
     this.bullets = this.bullets.filter((b) =>
@@ -895,4 +960,16 @@ export class BossToolkit {
     this.healOrbs = [];
     if (this.player?.active) this.playerSlowMult = 1;
   }
+}
+
+/** The live fighter in `fs` nearest (x, y), if any. */
+function nearestOf(fs: Fighter[], x: number, y: number): Fighter | undefined {
+  let best: Fighter | undefined;
+  let bd = Infinity;
+  for (const f of fs) {
+    if (!f.active || f.hp <= 0) continue;
+    const d = (f.x - x) ** 2 + (f.y - y) ** 2;
+    if (d < bd) { bd = d; best = f; }
+  }
+  return best;
 }

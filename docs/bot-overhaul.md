@@ -62,6 +62,14 @@ fate, creation, growth, rubber, acid, hunt, time; then the remainder). For each 
 
 ## Partial passes landed outside a batch
 
+- **Fate (2026-11-22 kit revamp: Side Shuffle / Dice of Doom / Cursed Talisman / card-wager All In), steps 3 and 4.**
+  One bundled field, `fateNpcHints` (`FateKit.getNpcAiHints`): `shuffleThreat` (a player bullet within
+  200px is heading at the bot → Side Shuffle, whose decoys eat it and draw a card), `targetCursed`
+  (the bot's talisman is on the player → All In while the wager can crit), `talismanOnMe` (counter-aim:
+  throw cards at the player's talisman to break it). The die is spent kit-side (`npcSpendDie`: card
+  faces on the best card, 3 held, damage faces launched in range). No NPC mastery; kit still not
+  owner-aware for New Cards beyond `ownerHasUpgrade`.
+
 - **Creation (2026-10-17 Q rework: Self-Destruct + Scrapnel), part of steps 3 and 4.** The Workshop
   is gone; Q is `self-destruct`. Synergy field `npcCreationDetonate` (`CreationKit.npcSelfDestructReady`:
   the player stands inside 85% of the blast radius of an npc-owned wall, automaton, or the Nexus) is

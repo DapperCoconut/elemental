@@ -860,59 +860,121 @@ export class FateFx extends FxBase {
   }
 
   /**
-   * A slot machine cabinet: a gilt housing, three reels turning at different rates, a payline,
-   * and a lever that kicks when the reels are close to stopping. Painted into a caller-owned
-   * Graphics because the kit already drives its position and its damage meter.
+   * A die, seen slightly from above: an ivory body with a darker side face for depth, rounded
+   * corners and the pips of `face`. `spin` (radians) turns it in the plane, and `tumble` (0–1)
+   * squashes it as though it were rolling over an edge — so a thrown die reads as rolling, not
+   * sliding. `rim` gilds the outline for a die held above the head.
    */
-  static drawSlotMachine(
+  static drawDie(
     g: Phaser.GameObjects.Graphics, tint: FateColorFn,
-    x: number, y: number, t: number, fill: number, alpha = 1,
+    x: number, y: number, size: number, face: number, spin: number,
+    opts: { tumble?: number; alpha?: number; rim?: number; shadow?: boolean } = {},
   ): void {
-    const w = 44, h = 52;
-    g.fillStyle(tint(FATE.shade), 0.35 * alpha);
-    g.fillEllipse(x, y + h * 0.5, w * 1.2, 12);
+    const alpha = opts.alpha ?? 1;
+    const tumble = opts.tumble ?? 0;
+    const h = size / 2;
+    const sq = 1 - Math.abs(Math.sin(tumble * Math.PI)) * 0.35;
+    const c = Math.cos(spin), sn = Math.sin(spin);
+    const pt = (px: number, py: number) => ({ x: x + px * c - py * sq * sn, y: y + px * sn + py * sq * c });
+    const rounded = (ox: number, oy: number, half: number) => {
+      const r = half * 0.32;
+      const out: { x: number; y: number }[] = [];
+      const corners: [number, number, number][] = [
+        [half - r, -half + r, -Math.PI / 2], [half - r, half - r, 0], [-half + r, half - r, Math.PI / 2], [-half + r, -half + r, Math.PI],
+      ];
+      for (const [cx, cy, a0] of corners) {
+        for (let k = 0; k <= 4; k++) {
+          const a = a0 + (k / 4) * (Math.PI / 2);
+          out.push(pt(ox + cx + Math.cos(a) * r, oy + cy + Math.sin(a) * r));
+        }
+      }
+      return out;
+    };
+    if (opts.shadow !== false) {
+      g.fillStyle(tint(FATE.shade), 0.3 * alpha);
+      g.fillEllipse(x, y + size * 0.78, size * 1.1, size * 0.32);
+    }
+    // Side face first (offset down), then the top face over it.
+    g.fillStyle(tint(0xc9c2ae), alpha);
+    fillPoly(g, rounded(0, size * 0.12, h));
+    g.fillStyle(tint(FATE.ivory), alpha);
+    fillPoly(g, rounded(0, 0, h));
+    g.lineStyle(opts.rim ? 2 : 1.2, tint(opts.rim ?? FATE.ash), alpha * 0.9);
+    const outline = rounded(0, 0, h);
+    g.beginPath();
+    g.moveTo(outline[0].x, outline[0].y);
+    for (let i = 1; i < outline.length; i++) g.lineTo(outline[i].x, outline[i].y);
+    g.closePath();
+    g.strokePath();
+    // Pips — a 1 is the classic single red pip, everything else is ink.
+    const o = h * 0.5;
+    const layouts: Record<number, [number, number][]> = {
+      1: [[0, 0]],
+      2: [[-o, -o], [o, o]],
+      3: [[-o, -o], [0, 0], [o, o]],
+      4: [[-o, -o], [o, -o], [-o, o], [o, o]],
+      5: [[-o, -o], [o, -o], [0, 0], [-o, o], [o, o]],
+      6: [[-o, -o], [o, -o], [-o, 0], [o, 0], [-o, o], [o, o]],
+    };
+    const pips = layouts[Phaser.Math.Clamp(Math.round(face), 1, 6)];
+    g.fillStyle(tint(face === 1 ? FATE.blood : FATE.ink), alpha);
+    for (const [px, py] of pips) {
+      const p = pt(px, py);
+      g.fillCircle(p.x, p.y, size * (face === 1 ? 0.15 : 0.1));
+    }
+    // Glint on the upper-left corner.
+    const gl = pt(-h * 0.55, -h * 0.6);
+    g.fillStyle(tint(FATE.white), alpha * 0.55);
+    g.fillCircle(gl.x, gl.y, size * 0.07);
+  }
 
-    // Cabinet.
-    g.fillStyle(tint(FATE.brass), alpha);
-    fillPoly(g, cardPoly(x, y, 0, w, h, 1));
-    g.fillStyle(tint(FATE.gold), alpha);
-    fillPoly(g, cardPoly(x, y - 1, 0, w * 0.88, h * 0.9, 1));
-    g.fillStyle(tint(FATE.ash), alpha);
-    fillPoly(g, cardPoly(x, y - 4, 0, w * 0.74, h * 0.44, 1));
-
-    // Three reels, each turning at its own rate so the machine never looks like one dial.
-    const symbols: Suit[] = ['spade', 'heart', 'diamond', 'club'];
-    for (let r = 0; r < 3; r++) {
-      const rx = x + (r - 1) * (w * 0.24);
-      const spin = t * (1.4 + r * 0.55);
-      const idx = Math.floor(spin) % symbols.length;
-      const frac = spin % 1;
-      g.fillStyle(tint(FATE.bone), alpha);
-      fillPoly(g, cardPoly(rx, y - 4, 0, w * 0.2, h * 0.38, 1));
-      // Two symbols sliding through the window — the outgoing one and the incoming one.
-      for (const [k, off] of [[idx, -frac], [(idx + 1) % symbols.length, 1 - frac]] as const) {
-        const sy = y - 4 + off * h * 0.34;
-        if (Math.abs(sy - (y - 4)) > h * 0.2) continue;
-        g.fillStyle(tint(suitInk(symbols[k])), alpha * 0.95);
-        suitGlyph(g, symbols[k], rx, sy, 4.4);
+  /**
+   * A paper talisman (ofuda): a tall strip of yellowed paper with a red seal and an inked
+   * sigil, its tail fluttering. `crack` (0–1) is how close it is to tearing — the strip
+   * darkens and splits as the cursed fighter shoots at it.
+   */
+  static drawTalisman(
+    g: Phaser.GameObjects.Graphics, tint: FateColorFn,
+    x: number, y: number, heading: number, t: number, crack = 0, alpha = 1, scale = 1,
+  ): void {
+    const w = 11 * scale, h = 24 * scale;
+    // A violet haze it carries everywhere — the curse itself.
+    g.fillStyle(tint(FATE.curse), 0.16 * alpha);
+    g.fillCircle(x, y, 20 * scale);
+    const wob = Math.sin(t * 7) * 0.12;
+    const a = heading + wob;
+    g.fillStyle(tint(crack > 0.6 ? 0xb8a26a : 0xf1dc95), alpha);
+    fillPoly(g, cardPoly(x, y, a, w, h, 1));
+    // Red seal across the top third and an inked sigil down the middle.
+    const ux = Math.cos(a + Math.PI / 2), uy = Math.sin(a + Math.PI / 2);
+    const top = { x: x - ux * h * 0.28, y: y - uy * h * 0.28 };
+    g.fillStyle(tint(FATE.blood), alpha);
+    g.fillCircle(top.x, top.y, w * 0.34);
+    g.lineStyle(1.3 * scale, tint(FATE.ink), alpha * 0.9);
+    for (let i = 0; i < 3; i++) {
+      const f = -0.02 + i * 0.16;
+      const cx = x + ux * h * f, cy = y + uy * h * f;
+      const px = Math.cos(a) * w * 0.3, py = Math.sin(a) * w * 0.3;
+      g.lineBetween(cx - px, cy - py, cx + px, cy + py);
+    }
+    g.lineBetween(x - ux * h * 0.1, y - uy * h * 0.1, x + ux * h * 0.38, y + uy * h * 0.38);
+    // Tail streamers that flutter behind.
+    for (let k = -1; k <= 1; k += 2) {
+      const bx = x + ux * h * 0.5 + Math.cos(a) * w * 0.25 * k;
+      const by = y + uy * h * 0.5 + Math.sin(a) * w * 0.25 * k;
+      const fl = Math.sin(t * 9 + k) * 4 * scale;
+      g.lineStyle(1.4 * scale, tint(FATE.great), alpha * 0.8);
+      g.lineBetween(bx, by, bx + ux * 7 * scale + Math.cos(a) * fl, by + uy * 7 * scale + Math.sin(a) * fl);
+    }
+    // Cracks spreading as it takes damage.
+    if (crack > 0.05) {
+      g.lineStyle(1.2 * scale, tint(FATE.shade), alpha * Math.min(1, crack * 1.4));
+      const n = Math.ceil(crack * 3);
+      for (let i = 0; i < n; i++) {
+        const sx = x + Math.cos(a) * w * (0.5 - i * 0.3), sy = y + Math.sin(a) * w * (0.5 - i * 0.3);
+        g.lineBetween(sx, sy, sx - Math.cos(a) * w * 0.4 + ux * h * 0.18, sy - Math.sin(a) * w * 0.4 + uy * h * 0.18);
       }
     }
-    // Payline.
-    g.lineStyle(1.4, tint(FATE.blood), alpha * 0.9);
-    g.lineBetween(x - w * 0.34, y - 4, x + w * 0.34, y - 4);
-
-    // Damage meter along the base, and a lever that jerks as it approaches a roll.
-    g.fillStyle(tint(FATE.ash), alpha * 0.9);
-    g.fillRect(x - w * 0.36, y + h * 0.24, w * 0.72, 5);
-    g.fillStyle(tint(fill >= 1 ? FATE.great : FATE.gold), alpha);
-    g.fillRect(x - w * 0.36, y + h * 0.24, w * 0.72 * Phaser.Math.Clamp(fill, 0, 1), 5);
-
-    const kick = fill > 0.75 ? Math.sin(t * 18) * 0.35 : 0;
-    const lx = x + w * 0.56;
-    g.lineStyle(3, tint(FATE.brass), alpha);
-    g.lineBetween(lx, y + 6, lx + Math.sin(0.5 + kick) * 10, y + 6 - Math.cos(0.5 + kick) * 18);
-    g.fillStyle(tint(FATE.blood), alpha);
-    g.fillCircle(lx + Math.sin(0.5 + kick) * 10, y + 6 - Math.cos(0.5 + kick) * 18, 4);
   }
 
   /**

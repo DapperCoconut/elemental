@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { setCrowdControl } from '../../boss/framework/CrowdControl';
 import type { Fighter } from '../../entities/Fighter';
 import { BossToolkit, BossToolkitHost } from '../../boss/framework/BossToolkit';
 import { Sfx } from '../../audio';
@@ -46,6 +47,8 @@ export interface IslesArenaApi {
 }
 
 const FIELD_PAD = 40;
+/** Px/s above which a fighter's move this frame counts as a dash (walk ≈ 200, hasted ≈ 400). */
+const DASH_SPEED = 560;
 const FIELD_TOP = 96;
 
 interface Window { mult: number; until: number }
@@ -70,6 +73,8 @@ export class IslesFightKit {
   private aloft = new Map<Fighter, { until: number; ownPhase: boolean }>();
   /** Last heading of each fighter as it walked, and where it was last frame. */
   private heading = new Map<Fighter, { a: number; x: number; y: number }>();
+  /** Until when each fighter counts as dashing (moved faster than any walk this frame). */
+  private dashUntil = new Map<Fighter, number>();
 
   constructor(private api: IslesArenaApi) {}
 
@@ -91,6 +96,7 @@ export class IslesFightKit {
     this.heading.clear();
     this.gGround = this.gAir = this.gHud = null;
     this.bannerText = null;
+    setCrowdControl(payload ? { stun: this.stun, root: this.root, silence: this.silence } : null);
     if (!payload) return;
 
     const { scene, player, npc } = this.api;
@@ -234,6 +240,7 @@ export class IslesFightKit {
       showFloatingText: (x, y, t, c) => api.showFloatingText(x, y, t, c),
       spawnTarget: (def) => makeStrikeTarget(api.scene, def, (f) => api.addEnemy(f), (f) => api.removeEnemy(f)),
       shotsNear: (x, y, r) => this.shotsNear(x, y, r),
+      hurt: (f, n, x, y) => this.hit(f, n, x, y),
     };
   }
 
@@ -259,6 +266,9 @@ export class IslesFightKit {
   };
 
   private isAirborne = (f: Fighter): boolean => (this.aloft.get(f)?.until ?? 0) > this.api.scene.time.now;
+
+  /** See GimmickCtx.dashing. */
+  private dashing = (f: Fighter): boolean => (this.dashUntil.get(f) ?? 0) > this.api.scene.time.now;
 
   /** See GimmickCtx.shotsNear. */
   private shotsNear = (x: number, y: number, r: number): ShotHandle[] =>
@@ -342,6 +352,7 @@ export class IslesFightKit {
       facing: this.facing,
       airborne: this.airborne,
       isAirborne: this.isAirborne,
+      dashing: this.dashing,
       shotsNear: this.shotsNear,
     };
   }
@@ -438,6 +449,9 @@ export class IslesFightKit {
       const h = this.heading.get(f);
       if (!h) { this.heading.set(f, { a: Math.atan2(npc.y - player.y, npc.x - player.x) + (f === npc ? Math.PI : 0), x: f.x, y: f.y }); continue; }
       const dx = f.x - h.x, dy = f.y - h.y;
+      // Faster than any walk (≈200 px/s, hastes included) means a dash, blink or launch; held 120 ms
+      // so a one-frame teleport still reads.
+      if (dt > 0 && Math.hypot(dx, dy) / dt > DASH_SPEED) this.dashUntil.set(f, time + 120);
       if (dx * dx + dy * dy > 0.25) h.a = Math.atan2(dy, dx);
       else if (f === npc) h.a = Math.atan2(player.y - f.y, player.x - f.x);
       h.x = f.x; h.y = f.y;

@@ -44,7 +44,9 @@ export type Cond =
 // ── People ─────────────────────────────────────────────────────────────
 
 export type NpcHat =
-  | 'none' | 'cap' | 'tophat' | 'hood' | 'helmet' | 'crown' | 'bandana' | 'chef' | 'wizard'
+  | 'none' | 'cap' | 'tophat' | 'hood' | 'helmet' | 'crown' | 'bandana' | 'chef'
+  /** A tall pointed wizard's hat, star-spangled, its tip flopping (mages, spellwrights, familiar-sellers). */
+  | 'wizard'
   | 'tricorn' | 'beanie' | 'veil' | 'goggles' | 'straw' | 'mitre' | 'candle'
   /** A brass diving helmet with a round faceplate (the face shows through the glass). */
   | 'diving'
@@ -79,7 +81,23 @@ export type NpcHat =
   /** A plague-doctor's beaked mask under a wide-brimmed hat (apothecaries, gravediggers, milkers). */
   | 'plague'
   /** A live serpent coiled round the head like a turban, its head raised and tongue flicking (venom-priests, charmers). */
-  | 'snake';
+  | 'snake'
+  /** A green celluloid dealer's eyeshade on a band (croupiers, clerks, card-sharps). */
+  | 'visor'
+  /** A three-pointed fool's cap with a bell on each point (jokers, tricksters, fools). */
+  | 'jester'
+  /** A tall military shako with a plume and a brass plate (soldiers, sergeants, drummers). */
+  | 'shako'
+  /** A peaked bandmaster's cap with gold braid on the band and a brass lyre badge (bandsmen, heralds, conductors). */
+  | 'bandmaster'
+  /** A feathered masquerade half-mask over the eyes, sequinned, a plume at one temple (revellers, maskers). */
+  | 'domino'
+  /** Quilted earmuffs on a band over a knit cap (hush wardens, the muffled, the deafened). */
+  | 'earmuffs'
+  /** A judge's long white curled wig falling to the shoulders (judges, advocates, clerks of the court). */
+  | 'wig'
+  /** A floppy painter's beret, flecked with paint (painters, muralists, censors of art). */
+  | 'beret';
 
 export type NpcTrait =
   | 'apron' | 'beard' | 'cane' | 'satchel' | 'pipe' | 'scarf' | 'glasses' | 'eyepatch'
@@ -257,7 +275,18 @@ export interface WorldGate {
     | 'cable' | 'magnet' | 'lead' | 'rubber' | 'phase'
     /** `fang` two great curved white fangs crossed, dripping; `web` a spider-web strung across with a spider in it;
      * `chain` hanging curtains of heavy chain; `shadow` a wall of moving darkness; `lychgate` a roofed churchyard gate. */
-    | 'fang' | 'web' | 'chain' | 'shadow' | 'lychgate';
+    | 'fang' | 'web' | 'chain' | 'shadow' | 'lychgate'
+    /** `dice` stacked giant ivory dice; `vault` a round bank-vault door with bolts and a wheel; `clock` a clock face
+     * with its hands as bars; `locket` a great open locket; `eye` a great lidded eye; `palisade` stakes hung with banners. */
+    | 'dice' | 'vault' | 'clock' | 'locket' | 'eye' | 'palisade'
+    /** `pipes` a rank of organ pipes as bars; `bell` a great bronze bell hung low across the way; `curtain` a red theatre
+     * curtain with gold fringe; `stalactite` dripping cave teeth meeting stalagmites; `stainedglass` a leaded
+     * stained-glass screen; `scroll` a giant unrolled score sheet strung across, notes on its staves. */
+    | 'pipes' | 'bell' | 'curtain' | 'stalactite' | 'stainedglass' | 'scroll'
+    /** `mirror` a tall gilt-framed mirror wall throwing glare; `sunbar` bars of solid sunlight; `lanterns` a curtain of
+     * hanging soul-lanterns; `sigil` a glowing sigil circle standing on edge; `lens` a great lens in a brass ring on a
+     * stand; `scaffold` painters' scaffolding hung with paint-spattered dust-sheets. */
+    | 'mirror' | 'sunbar' | 'lanterns' | 'sigil' | 'lens' | 'scaffold';
   label?: string;
 }
 
@@ -313,6 +342,18 @@ export interface PainterWorld {
  * `miasma` green marsh-gas bubbles rising and popping in a low sickly haze, `drip` venom drops falling from
  * above and splashing, `gossamer` loose web strands drifting and glinting, `murk` wisps of living shadow
  * crawling in a dimmed light (an overlay), `wisps` pale will-o'-wisps bobbing and fading (graveyards).
+ * `cards` playing cards fluttering and spinning down, `confetti` lottery confetti and curling streamers,
+ * `goldleaf` flakes of gold leaf drifting and winking, `sandfall` fine hourglass sand falling in threads,
+ * `sepia` drifting sepia motes in a faded warm haze like an old photograph (an overlay), `ripples` slow
+ * concentric psychic rings pulsing outward in the air.
+ * `notes` music notes (quavers, crotchets, a clef or two) drifting up and bobbing as if on a stave,
+ * `glowworms` blue glowworm threads hanging from a cave roof and twinkling, `lull` slow lint and down falling in a
+ * muffled grey hush (an overlay that greys the view), `sequins` sequins glittering and silk ribbons undulating,
+ * `incense` coils of incense smoke with slanting shafts of stained-glass colour, `pages` loose manuscript sheets
+ * blowing and tumbling end over end.
+ * `sunbeams` slanting god-rays with dust glinting in them, `glare` a white heat-glare that blooms and shimmers at
+ * the edges (an overlay), `lanterns` paper sky-lanterns drifting up glowing, `sigils` glowing runes drifting and
+ * slowly turning, `prisms` rainbow caustics and prism flecks dancing, `pigment` puffs of coloured pigment powder.
  */
 export type WeatherKind = 'none' | 'ash' | 'embers' | 'steam' | 'smoke' | 'sparks' | 'wax' | 'rain' | 'snow' | 'motes'
   | 'spray' | 'fog' | 'bubbles' | 'ink'
@@ -320,7 +361,10 @@ export type WeatherKind = 'none' | 'ash' | 'embers' | 'steam' | 'smoke' | 'spark
   | 'wind' | 'clouds' | 'feathers' | 'stars' | 'storm' | 'dreams'
   | 'dust' | 'sandstorm' | 'grit' | 'glints'
   | 'static' | 'aurora' | 'glow' | 'flicker' | 'balloons'
-  | 'miasma' | 'drip' | 'gossamer' | 'murk' | 'wisps';
+  | 'miasma' | 'drip' | 'gossamer' | 'murk' | 'wisps'
+  | 'cards' | 'confetti' | 'goldleaf' | 'sandfall' | 'sepia' | 'ripples'
+  | 'notes' | 'glowworms' | 'lull' | 'sequins' | 'incense' | 'pages'
+  | 'sunbeams' | 'glare' | 'lanterns' | 'sigils' | 'prisms' | 'pigment';
 
 export interface AreaDef {
   id: string;
@@ -434,6 +478,11 @@ export interface GimmickCtx {
   airborne(f: Fighter, ms: number): void;
   /** True while `airborne` holds. */
   isAirborne(f: Fighter): boolean;
+  /**
+   * True for ~120 ms after a fighter moved faster than any walk — a dash, blink, leap or launch (any
+   * kit's). Use it for "a dash shakes it off" / "I will not dash" rules instead of reading speeds.
+   */
+  dashing(f: Fighter): boolean;
   /**
    * Shots in flight inside a circle — both sides', the arena's shared projectiles and the
    * kit-local ones that register. Each handle can `block()` it (gone, no hit) or `reflect()` it
@@ -601,7 +650,13 @@ export interface FisheryDef {
     /** `charged` a storm-fed mill race fizzing with current; `coolant` a reactor's glowing cooling pond; `quantum` a well whose fish are and are not there. All need the insulated rod. */
     | 'charged' | 'coolant' | 'quantum'
     /** `venom` a steaming green venom fen; `blackwater` still black water whose fish are shadows. Both need the antivenin rod. */
-    | 'venom' | 'blackwater';
+    | 'venom' | 'blackwater'
+    /** `gilded` gold-bright water over sunken coins; `lethe` pale still water of forgetting. Both need the fortune rod. */
+    | 'gilded' | 'lethe'
+    /** `resonant` a cave pool that rings like a struck glass when touched; `still` a silent mirror-flat mere. Both need the tuning rod. */
+    | 'resonant' | 'still'
+    /** `sunpool` a pool too bright to look into, its fish only dark shapes; `mana` a spring of liquid light whose fish are runes. Both need the prism rod. */
+    | 'sunpool' | 'mana';
 }
 
 export interface RodDef {

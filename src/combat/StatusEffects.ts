@@ -322,6 +322,11 @@ export const STATUS_DESCRIPTORS: StatusDescriptor[] = [
     read: (f) => (f.vulnerableNextHit ? 1 : 0),
   },
   {
+    id: 'fate-cursed', name: 'Cursed Talisman', emoji: '🧧', color: 0x7733cc, priority: 39.5, kind: 'flag',
+    description: 'A cursed talisman orbits you. Every hit you take has a chance to crit for double — break the talisman to lift it.',
+    read: (f) => (f.fateCurseCrit > 0 ? 1 : 0),
+  },
+  {
     id: 'vulnerable', name: 'Vulnerable', emoji: '🔻', color: 0xcc2288, priority: 41, kind: 'stack',
     description: 'Dark corrosion. Each stack raises the damage you take by 25%.',
     read: (f) => f.darkVulnStacks,
@@ -615,6 +620,11 @@ export const STATUS_DESCRIPTORS: StatusDescriptor[] = [
     id: 'shield-charge', name: 'Shield', emoji: '🛡️', color: 0x66aaff, priority: 101, kind: 'stack',
     description: 'Each charge fully blocks one incoming hit, no matter how big.',
     read: (f) => f.shieldCharges,
+  },
+  {
+    id: 'fate-sure-dodge', name: 'Lucky Dodge', emoji: '🎲', color: 0xffcc44, priority: 101.5, kind: 'stack',
+    description: 'Each die that hit with the Dice of Doom barrage guarantees one incoming hit misses you.',
+    read: (f) => f.fateSureDodges,
   },
   {
     id: 'shield-hp', name: 'Shield HP', emoji: '💠', color: 0x44ccff, priority: 102, kind: 'amount',

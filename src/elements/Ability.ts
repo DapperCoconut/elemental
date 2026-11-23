@@ -163,9 +163,9 @@ export interface CastContext {
   creationSelfDestruct: () => boolean;
   // Fate (alt-life)
   fateThrowCard: (tx: number, ty: number) => void;
-  fateReroll: () => void;
-  fatePreserve: () => void;
-  fateEnchant: () => void;
+  fateSideShuffle: () => void;
+  fateDiceOfDoom: () => void;
+  fateCursedTalisman: () => void;
   fateAllIn: () => void;
   // Magnet (abstract combined: electricity + slime)
   magnetCoin: (tx: number, ty: number) => void;

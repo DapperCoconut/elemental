@@ -109,6 +109,9 @@ const DUNGEON_CATCH: Record<string, { flash: [number, number, number]; sfx: stri
   earth: { flash: [150, 120, 80], sfx: 'quake', text: '🪨 Buried!' },
   electricity: { flash: [170, 215, 255], sfx: 'zap', text: '⚡ Shocked!' },
   slime: { flash: [120, 230, 60], sfx: 'status-poison', text: '🐍 Bitten!' },
+  fate: { flash: [255, 205, 70], sfx: 'dice', text: '🎲 Busted!' },
+  sound: { flash: [210, 225, 255], sfx: 'sonic-pulse', text: '🎵 Blown back by the Organ!' },
+  light: { flash: [255, 250, 225], sfx: 'light-beam', text: '☀️ Scorched by the glass!' },
 };
 
 export class IsleWorldScene extends Phaser.Scene {
@@ -1425,6 +1428,650 @@ export class IsleWorldScene extends Phaser.Scene {
           g.fillStyle(col, 0.06 * a); g.fillEllipse(x, y + 26, 18, 5);
         }
         break;
+      case 'cards': {
+        // Playing cards fluttering down: each one rocks and tumbles, its face narrowing as it turns so the
+        // red lattice back flashes through, a suit pip on the face and a thin dark edge.
+        const quad = (cx: number, cy: number, hw: number, hh: number, a: number) => {
+          const ca = Math.cos(a), sa = Math.sin(a);
+          const x0 = cx + (-hw) * ca - (-hh) * sa, y0 = cy + (-hw) * sa + (-hh) * ca;
+          const x1 = cx + hw * ca - (-hh) * sa, y1 = cy + hw * sa + (-hh) * ca;
+          const x2 = cx + hw * ca - hh * sa, y2 = cy + hw * sa + hh * ca;
+          const x3 = cx + (-hw) * ca - hh * sa, y3 = cy + (-hw) * sa + hh * ca;
+          g.fillTriangle(x0, y0, x1, y1, x2, y2); g.fillTriangle(x0, y0, x2, y2, x3, y3);
+        };
+        for (let i = 0; i < 18; i++) {
+          const fall = view.y + ((i * 97 + t * (26 + (i % 4) * 7)) % (view.h + 40)) - 20;
+          const rock = Math.sin(t * 1.3 + i * 2.1);
+          const x = view.x + ((i * 181 + t * 12) % view.w) + rock * 26;
+          const ang = rock * 0.6 + Math.sin(t * 0.4 + i) * 0.5, flip = Math.cos(t * (2 + (i % 3) * 0.6) + i * 1.7);
+          const hw = 5.5 * Math.max(0.12, Math.abs(flip)), hh = 7.5;
+          g.fillStyle(0x000000, 0.12); quad(x + 3, fall + 4, hw, hh, ang);
+          g.fillStyle(0x2a1a1a, 0.9); quad(x, fall, hw + 0.8, hh + 0.8, ang);
+          if (flip > 0) {
+            g.fillStyle(0xfbf6ea, 0.95); quad(x, fall, hw, hh, ang);
+            const red = i % 2 === 0;
+            g.fillStyle(red ? 0xd8283a : 0x1a1a22, 0.95);
+            if (hw > 2.5) {
+              if (i % 4 === 0) { g.fillCircle(x - 1.2, fall - 0.8, 1.5); g.fillCircle(x + 1.2, fall - 0.8, 1.5); g.fillTriangle(x - 2.6, fall - 0.2, x + 2.6, fall - 0.2, x, fall + 2.8); }
+              else if (i % 4 === 1) { g.fillTriangle(x, fall - 3, x - 2.2, fall, x + 2.2, fall); g.fillTriangle(x, fall + 3, x - 2.2, fall, x + 2.2, fall); }
+              else if (i % 4 === 2) { g.fillCircle(x, fall - 1.6, 1.4); g.fillCircle(x - 1.6, fall + 0.6, 1.4); g.fillCircle(x + 1.6, fall + 0.6, 1.4); g.fillRect(x - 0.4, fall, 0.8, 2.8); }
+              else { g.fillTriangle(x, fall - 2.8, x - 2.4, fall + 0.6, x + 2.4, fall + 0.6); g.fillCircle(x - 1.2, fall + 0.6, 1.3); g.fillCircle(x + 1.2, fall + 0.6, 1.3); g.fillRect(x - 0.4, fall + 0.5, 0.8, 2.6); }
+            }
+          } else {
+            g.fillStyle(0xa8202e, 0.95); quad(x, fall, hw, hh, ang);
+            g.fillStyle(0xf0c8a8, 0.55); quad(x, fall, hw * 0.6, hh * 0.72, ang);
+            g.fillStyle(0xa8202e, 0.95); quad(x, fall, hw * 0.4, hh * 0.55, ang);
+          }
+          if (Math.abs(flip) > 0.96) { g.fillStyle(0xffffff, 0.5); g.fillCircle(x - hw * 0.5, fall - hh * 0.5, 1); }
+        }
+        break;
+      }
+      case 'confetti':
+        // Lottery confetti: bright paper squares flipping as they fall (thin edge-on, full face-on), and
+        // long curling streamers corkscrewing down among them.
+        for (let i = 0; i < 64; i++) {
+          const col = [0xff4a5a, 0xffd04a, 0x4ab8ff, 0x6ae06a, 0xd86aff, 0xff9a3a, 0xffffff][i % 7];
+          const y = view.y + ((i * 61 + t * (38 + (i % 5) * 9)) % (view.h + 20)) - 10;
+          const x = view.x + ((i * 139) % view.w) + Math.sin(t * 1.9 + i * 1.3) * 12;
+          const flip = Math.cos(t * (5 + (i % 4)) + i * 2.3), w = 4 * Math.abs(flip) + 0.6;
+          g.fillStyle(flip > 0 ? col : dim(col, 0.3), 0.9); g.fillRect(x - w / 2, y - 2, w, 4);
+          if (flip > 0.9) { g.fillStyle(0xffffff, 0.6); g.fillRect(x - w / 2, y - 2, w, 1); }
+        }
+        for (let i = 0; i < 7; i++) {
+          const col = [0xffd04a, 0xff4a5a, 0x4ab8ff, 0x6ae06a][i % 4];
+          const y0 = view.y + ((i * 173 + t * (30 + (i % 3) * 8)) % (view.h + 120)) - 80;
+          const x0 = view.x + ((i * 257) % view.w) + Math.sin(t * 0.7 + i) * 20;
+          for (let k = 0; k < 14; k++) {
+            const ph = t * 4 + i + k * 0.7, wx = Math.sin(ph) * 6, wide = Math.abs(Math.cos(ph));
+            const y = y0 + k * 4;
+            g.fillStyle(Math.cos(ph) > 0 ? col : dim(col, 0.35), 0.85); g.fillRect(x0 + wx - 1.5 * wide - 0.5, y, 3 * wide + 1, 4.2);
+          }
+        }
+        break;
+      case 'goldleaf':
+        // Flakes of gold leaf drifting on the air, crumpled and see-sawing; each winks bright when it
+        // turns face-on and throws a little four-point glint, a warm faint sheen over everything.
+        g.fillStyle(0xffd870, 0.025 + Math.sin(t * 0.6) * 0.01); g.fillRect(view.x, view.y, view.w, view.h);
+        for (let i = 0; i < 34; i++) {
+          const y = view.y + ((i * 89 + t * (10 + (i % 4) * 4)) % (view.h + 20)) - 10;
+          const sway = Math.sin(t * 1.1 + i * 1.9);
+          const x = view.x + ((i * 157 + t * 6) % view.w) + sway * 22;
+          const turn = Math.cos(t * (1.6 + (i % 5) * 0.3) + i * 2.7), face = Math.abs(turn);
+          const s = 3 + (i % 3) * 1.2, wd = s * (0.25 + face * 0.75), tilt = sway * 2;
+          const col = turn > 0 ? 0xe8b830 : 0xb8862a;
+          g.fillStyle(col, 0.9);
+          g.fillTriangle(x - wd, y + tilt * 0.5, x + wd * 0.6, y - s * 0.9, x + wd, y + s * 0.3 - tilt * 0.5);
+          g.fillTriangle(x - wd, y + tilt * 0.5, x + wd, y + s * 0.3 - tilt * 0.5, x - wd * 0.3, y + s * 0.8);
+          g.fillStyle(0xfff0a8, 0.7 * face); g.fillTriangle(x - wd * 0.6, y, x + wd * 0.4, y - s * 0.5, x, y + s * 0.2);
+          if (face > 0.93 && turn > 0) {
+            const gl = (face - 0.93) * 14;
+            g.lineStyle(1, 0xffffff, gl); g.lineBetween(x - 6, y, x + 6, y); g.lineBetween(x, y - 6, x, y + 6);
+            g.fillStyle(0xfff8d0, 0.2 * gl); g.fillCircle(x, y, 7);
+          }
+        }
+        break;
+      case 'sandfall':
+        // Fine hourglass sand falling in threads out of nowhere: each thread runs a while, its grains
+        // streaming and catching light, piles a small cone where it lands, then thins and stops.
+        for (let i = 0; i < 11; i++) {
+          const life = 7 + (i % 4) * 1.6, ph = ((t + i * 1.91) % life) / life, n = Math.floor((t + i * 1.91) / life);
+          const cx = view.x + ((i * 293 + n * 151) % view.w), y0 = view.y + ((i * 67 + n * 41) % (view.h * 0.35));
+          const drop = 120 + (i % 3) * 50, a = Math.min(1, ph * 6) * Math.min(1, (1 - ph) * 5);
+          if (a <= 0.02) continue;
+          g.lineStyle(1.4, 0xd8b878, 0.35 * a); g.lineBetween(cx, y0, cx, y0 + drop);
+          for (let k = 0; k < 10; k++) {
+            const y = y0 + ((t * 190 + k * (drop / 10) + i * 17) % drop), jit = Math.sin(t * 9 + k * 2.3 + i) * 0.9;
+            g.fillStyle(k % 3 ? 0xe8c890 : 0xfff0c8, 0.85 * a); g.fillRect(cx + jit - 0.8, y, 1.6, 1.8);
+          }
+          const pile = 3 + ph * 7;
+          g.fillStyle(0xc8a060, 0.7 * a); g.fillTriangle(cx - pile * 1.6, y0 + drop + 2, cx + pile * 1.6, y0 + drop + 2, cx, y0 + drop + 2 - pile * 0.7);
+          g.fillStyle(0xe8d0a0, 0.6 * a); g.fillTriangle(cx - pile * 0.7, y0 + drop + 1, cx + pile * 0.2, y0 + drop + 1, cx - pile * 0.1, y0 + drop + 2 - pile * 0.65);
+          const pf = (t * 2.2 + i) % 1;
+          g.fillStyle(0xe8d0a0, 0.3 * a * (1 - pf)); g.fillEllipse(cx + (i % 2 ? pf : -pf) * 8, y0 + drop - pf * 4, 4 + pf * 8, 2 + pf * 2);
+        }
+        for (let i = 0; i < 26; i++) {
+          const x = view.x + ((i * 151 + t * 5) % view.w), y = view.y + ((i * 103 + t * (30 + (i % 4) * 10)) % view.h);
+          g.fillStyle(0xe0c080, 0.4); g.fillRect(x, y, 1.2, 1.2);
+        }
+        break;
+      case 'sepia': {
+        // An old photograph: everything washed in a warm faded brown, darker at the corners, dust motes
+        // turning slowly in it, and now and then a film scratch flickering down the view.
+        g.fillStyle(0x7a5228, 0.16); g.fillRect(view.x, view.y, view.w, view.h);
+        g.fillStyle(0xf0d8a8, 0.04 + 0.015 * Math.sin(t * 7) * Math.sin(t * 2.3)); g.fillRect(view.x, view.y, view.w, view.h);
+        for (let e = 0; e < 5; e++) {
+          const d = 22 + e * 20; g.fillStyle(0x2a1808, 0.06);
+          g.fillRect(view.x, view.y, view.w, d); g.fillRect(view.x, view.y + view.h - d, view.w, d);
+          g.fillRect(view.x, view.y, d, view.h); g.fillRect(view.x + view.w - d, view.y, d, view.h);
+        }
+        for (let i = 0; i < 34; i++) {
+          const x = view.x + ((i * 179 + t * (5 + (i % 3) * 2)) % view.w) + Math.sin(t * 0.6 + i * 1.7) * 10;
+          const y = view.y + ((i * 109 + Math.sin(t * 0.3 + i) * 24 + view.h) % view.h);
+          const tw = 0.35 + 0.65 * Math.max(0, Math.sin(t * 1.1 + i * 2.3));
+          g.fillStyle(i % 4 ? 0xe8d0a0 : 0xfff0d0, 0.45 * tw); g.fillCircle(x, y, 0.9 + (i % 3) * 0.5);
+        }
+        for (let k = 0; k < 2; k++) {
+          const ph = (t * (0.37 + k * 0.21) + k * 0.5) % 1;
+          if (ph > 0.08) continue;
+          const n = Math.floor(t * (0.37 + k * 0.21) + k * 0.5), sx = view.x + ((n * 397 + k * 211) % view.w);
+          g.lineStyle(1, k ? 0x2a1808 : 0xfff4dc, 0.35 * (1 - ph / 0.08));
+          g.lineBetween(sx, view.y, sx + Math.sin(n) * 6, view.y + view.h);
+        }
+        if (Math.sin(t * 0.9) > 0.97) {
+          const bx = view.x + ((Math.floor(t * 0.9 / 6.283) * 331) % view.w), by = view.y + view.h * 0.4;
+          g.fillStyle(0x1a1008, 0.25); g.fillCircle(bx, by, 3); g.fillCircle(bx + 4, by + 2, 1.5);
+        }
+        break;
+      }
+      case 'ripples':
+        // Slow psychic rings pulsing outward through the air from points that come and go: a bright
+        // leading ring, a fainter echo behind it, and a pale glint at the source as each one is born.
+        for (let i = 0; i < 7; i++) {
+          const life = 5 + (i % 3) * 1.2, k = ((t + i * 1.13) % life) / life, n = Math.floor((t + i * 1.13) / life);
+          const cx = view.x + ((i * 271 + n * 389) % view.w), cy = view.y + ((i * 163 + n * 211) % view.h);
+          const R = 20 + k * (110 + (i % 3) * 30), a = Math.min(1, k * 8) * (1 - k);
+          const col = i % 2 ? 0xc8b0ff : 0x9ad8f0;
+          g.lineStyle(2, col, 0.4 * a); g.strokeEllipse(cx, cy, R * 2, R * 1.3);
+          g.lineStyle(1, 0xffffff, 0.25 * a); g.strokeEllipse(cx, cy, R * 2 - 4, R * 1.3 - 3);
+          if (R > 46) { g.lineStyle(1, col, 0.22 * a); g.strokeEllipse(cx, cy, (R - 26) * 2, (R - 26) * 1.3); }
+          if (R > 80) { g.lineStyle(1, col, 0.12 * a); g.strokeEllipse(cx, cy, (R - 52) * 2, (R - 52) * 1.3); }
+          if (k < 0.15) {
+            const b = 1 - k / 0.15;
+            g.fillStyle(col, 0.18 * b); g.fillCircle(cx, cy, 10); g.fillStyle(0xffffff, 0.7 * b); g.fillCircle(cx, cy, 2);
+          }
+        }
+        break;
+      case 'notes': {
+        // Music lifting off the air: faint five-line staves undulating across the view, and notes —
+        // crotchets, quavers, hollow minims and beamed pairs — swaying up off them and fading as they rise.
+        for (let s = 0; s < 3; s++) {
+          const sy = view.y + view.h * (0.22 + s * 0.28) + Math.sin(t * 0.3 + s * 2) * 10;
+          const a = 0.07 + 0.035 * Math.sin(t * 0.5 + s * 1.3);
+          g.lineStyle(1, 0xe8e0c8, a);
+          for (let l = 0; l < 5; l++) {
+            g.beginPath();
+            for (let k = 0; k <= 12; k++) {
+              const x = view.x + (k / 12) * view.w, y = sy + l * 5 + Math.sin(t * 0.8 + k * 0.6 + s) * 3;
+              if (k === 0) g.moveTo(x, y); else g.lineTo(x, y);
+            }
+            g.strokePath();
+          }
+        }
+        for (let i = 0; i < 22; i++) {
+          const life = 5 + (i % 4), k = ((t + i * 0.83) % life) / life, n = Math.floor((t + i * 0.83) / life);
+          const x = view.x + ((i * 197 + n * 263) % view.w) + Math.sin(t * 1.3 + i * 1.7) * 14 * k;
+          const y = view.y + view.h * 0.95 - ((i * 71 + n * 37) % (view.h * 0.4)) - k * 160;
+          const a = Math.min(1, k * 6) * Math.min(1, (1 - k) * 3) * 0.8;
+          if (a < 0.03) continue;
+          const lean = Math.sin(t * 2 + i) * 1.6;
+          const col = i % 5 === 0 ? 0xffd870 : i % 3 === 0 ? 0xc8d8ff : 0xf4ecd8;
+          const kind = i % 4;
+          g.fillStyle(col, 0.07 * a); g.fillCircle(x + 2, y - 6, 11);
+          const head = (hx: number, hy: number, hollow: boolean) => {
+            if (hollow) { g.lineStyle(1.4, col, a); g.strokeEllipse(hx, hy, 6.6, 4.6); }
+            else { g.fillStyle(col, a); g.fillEllipse(hx, hy, 6.6, 4.6); g.fillStyle(0xffffff, a * 0.5); g.fillCircle(hx - 1.3, hy - 0.9, 0.9); }
+            g.lineStyle(1.2, col, a); g.lineBetween(hx + 3, hy - 0.5, hx + 3 + lean, hy - 15);
+          };
+          if (kind === 3) {
+            head(x, y, false); head(x + 10, y - 2, false);
+            g.fillStyle(col, a);
+            g.fillTriangle(x + 3 + lean, y - 15, x + 13 + lean, y - 17, x + 13 + lean, y - 14);
+            g.fillTriangle(x + 3 + lean, y - 15, x + 13 + lean, y - 14, x + 3 + lean, y - 12);
+          } else {
+            head(x, y, kind === 2);
+            if (kind === 1) {
+              g.lineStyle(1.3, col, a);
+              g.beginPath(); g.moveTo(x + 3 + lean, y - 15);
+              g.lineTo(x + 6 + lean, y - 11); g.lineTo(x + 7.5 + lean, y - 7); g.lineTo(x + 6 + lean, y - 4); g.strokePath();
+            }
+          }
+        }
+        break;
+      }
+      case 'glowworms': {
+        // A cave roof strung with glowworms: blue-lit silk threads hanging from the top of the view,
+        // beaded with droplets that twinkle in slow waves running down each line, a soft glow at each
+        // worm's root, cool gloom over everything and stray motes of light drifting below.
+        g.fillStyle(0x061028, 0.2); g.fillRect(view.x, view.y, view.w, view.h);
+        for (let e = 0; e < 3; e++) { g.fillStyle(0x020814, 0.1); g.fillRect(view.x, view.y, view.w, 16 + e * 16); }
+        for (let i = 0; i < 30; i++) {
+          const x = view.x + ((i * 137 + (i % 3) * 41) % view.w);
+          const len = 40 + ((i * 53) % 140), sway = Math.sin(t * 0.6 + i * 1.3) * 3;
+          g.lineStyle(1, 0x8ad8ff, 0.22); g.lineBetween(x, view.y, x + sway, view.y + len);
+          g.fillStyle(0x4ab0ff, 0.22); g.fillEllipse(x, view.y + 2, 10, 4);
+          g.fillStyle(0xb8ecff, 0.6); g.fillEllipse(x, view.y + 2, 4, 1.8);
+          const beads = Math.floor(len / 9);
+          for (let b = 1; b <= beads; b++) {
+            const u = (b * 9) / len, bx = x + sway * u, by = view.y + b * 9;
+            const tw = 0.35 + 0.65 * Math.max(0, Math.sin(t * 1.6 - b * 0.5 + i * 2.1));
+            const r = b === beads ? 1.8 : 1.1;
+            g.fillStyle(0x6ac8ff, 0.12 * tw); g.fillCircle(bx, by, r + 2.6);
+            g.fillStyle(0xd8f4ff, 0.85 * tw); g.fillCircle(bx, by, r);
+          }
+        }
+        for (let i = 0; i < 18; i++) {
+          const x = view.x + ((i * 223 + t * (6 + (i % 3) * 3)) % view.w) + Math.sin(t * 0.7 + i) * 16;
+          const y = view.y + view.h * 0.35 + ((i * 131 + Math.sin(t * 0.4 + i) * 30 + view.h) % (view.h * 0.65));
+          const tw = Math.max(0, Math.sin(t * 1.2 + i * 2.7));
+          g.fillStyle(0x6ac8ff, 0.1 * tw); g.fillCircle(x, y, 5); g.fillStyle(0xc8f0ff, 0.7 * tw); g.fillCircle(x, y, 1);
+        }
+        break;
+      }
+      case 'lull': {
+        // The Hush: the whole view greyed and muffled as if under felt — a flat grey wash that drains
+        // the colour, heavier at the edges — and lint and down falling slow and soundless, each tuft of
+        // down turning on its quill as it drifts.
+        g.fillStyle(0x8a8a92, 0.3); g.fillRect(view.x, view.y, view.w, view.h);
+        g.fillStyle(0x2a2a30, 0.06 + 0.02 * Math.sin(t * 0.4)); g.fillRect(view.x, view.y, view.w, view.h);
+        for (let e = 0; e < 5; e++) {
+          const d = 22 + e * 22; g.fillStyle(0x6a6a72, 0.07);
+          g.fillRect(view.x, view.y, view.w, d); g.fillRect(view.x, view.y + view.h - d, view.w, d);
+          g.fillRect(view.x, view.y, d, view.h); g.fillRect(view.x + view.w - d, view.y, d, view.h);
+        }
+        for (let i = 0; i < 20; i++) {
+          const y = view.y + ((i * 113 + t * (9 + (i % 4) * 3)) % (view.h + 30)) - 15;
+          const x = view.x + ((i * 167 + t * 4) % view.w) + Math.sin(t * 0.5 + i * 1.9) * 24;
+          const spin = t * (0.6 + (i % 3) * 0.3) + i;
+          const s = 3 + (i % 3);
+          g.lineStyle(1, 0xe8e8ec, 0.55);
+          for (let f = 0; f < 7; f++) {
+            const a = spin + f * (Math.PI * 2 / 7), r = s * (0.7 + 0.3 * Math.sin(f * 2.3 + i));
+            g.lineBetween(x, y, x + Math.cos(a) * r, y + Math.sin(a) * r * 0.8);
+          }
+          g.lineStyle(1, 0xc8c8d0, 0.6); g.lineBetween(x, y, x - Math.cos(spin) * (s + 2), y + Math.sin(spin) * 2 + 2);
+          g.fillStyle(0xffffff, 0.6); g.fillCircle(x, y, 1);
+        }
+        for (let i = 0; i < 40; i++) {
+          const y = view.y + ((i * 79 + t * (5 + (i % 5) * 2)) % view.h);
+          const x = view.x + ((i * 151) % view.w) + Math.sin(t * 0.8 + i) * 8;
+          g.fillStyle(i % 3 ? 0xb8b8c0 : 0xe0e0e4, 0.45); g.fillRect(x, y, 1.2, 1.2);
+        }
+        break;
+      }
+      case 'sequins': {
+        // Masquerade glitter: long silk ribbons undulating across the view, their twist showing the
+        // darker underside, and sequins spinning down through them — little discs that narrow edge-on
+        // and flash white with a four-point glint when they turn face to the light.
+        for (let i = 0; i < 5; i++) {
+          const col = [0xd83a5a, 0x7a4ad8, 0xe8b830, 0x2ab8a8, 0xe85ab8][i];
+          const x0 = view.x + ((i * 331 + t * (24 + i * 6)) % (view.w + 300)) - 150;
+          const y0 = view.y + ((i * 149 + 60) % view.h) + Math.sin(t * 0.4 + i) * 30;
+          let px = x0, py = y0;
+          for (let k = 1; k <= 18; k++) {
+            const ph = t * 2 + k * 0.5 + i, nx = x0 - k * 9, ny = y0 + Math.sin(ph) * 10 + k * 1.2;
+            const w = 1 + Math.abs(Math.cos(ph)) * 4;
+            g.lineStyle(w, Math.cos(ph) > 0 ? col : dim(col, 0.45), 0.6 * (1 - k / 22));
+            g.lineBetween(px, py, nx, ny);
+            if (Math.cos(ph) > 0.7) { g.lineStyle(1, 0xffffff, 0.22); g.lineBetween(px, py - w * 0.3, nx, ny - w * 0.3); }
+            px = nx; py = ny;
+          }
+        }
+        for (let i = 0; i < 50; i++) {
+          const col = [0xffd870, 0xd8d8f0, 0xff7ab8, 0x8ad8ff, 0xc89aff][i % 5];
+          const y = view.y + ((i * 67 + t * (16 + (i % 4) * 6)) % (view.h + 20)) - 10;
+          const x = view.x + ((i * 149) % view.w) + Math.sin(t * 1.2 + i * 1.7) * 14;
+          const spin = Math.cos(t * (3 + (i % 4)) + i * 1.9), w = 3.4 * Math.abs(spin) + 0.6;
+          g.fillStyle(spin > 0 ? col : dim(col, 0.4), 0.9); g.fillEllipse(x, y, w, 3.4);
+          if (w > 2) { g.fillStyle(dim(col, 0.6), 0.9); g.fillCircle(x, y, 0.5); }
+          if (Math.abs(spin) > 0.95 && spin > 0) {
+            const gl = (Math.abs(spin) - 0.95) * 20;
+            g.fillStyle(0xffffff, 0.8 * gl); g.fillCircle(x, y, 1.4);
+            g.lineStyle(1, 0xffffff, 0.7 * gl); g.lineBetween(x - 5, y, x + 5, y); g.lineBetween(x, y - 5, x, y + 5);
+          }
+        }
+        break;
+      }
+      case 'incense': {
+        // Cathedral air: slanting shafts of stained-glass colour falling across the view from high
+        // windows, motes turning in them, and coils of incense smoke rising, curling and thinning.
+        const slant = 0.45;
+        for (let i = 0; i < 4; i++) {
+          const col = [0xd83a3a, 0x3a6ad8, 0xe8c040, 0x4ab86a][i];
+          const x = view.x + ((i * 263 + t * 3) % (view.w + 220)) - 160, w = 40 + (i % 2) * 26;
+          const a = 0.05 + 0.018 * Math.sin(t * 0.6 + i * 1.7), dx = slant * view.h;
+          g.fillStyle(col, a);
+          g.fillTriangle(x, view.y, x + w, view.y, x + w + dx, view.y + view.h);
+          g.fillTriangle(x, view.y, x + w + dx, view.y + view.h, x + dx, view.y + view.h);
+          g.fillStyle(0xfff4dc, a * 0.5);
+          g.fillTriangle(x + w * 0.35, view.y, x + w * 0.55, view.y, x + w * 0.55 + dx, view.y + view.h);
+          g.fillTriangle(x + w * 0.35, view.y, x + w * 0.55 + dx, view.y + view.h, x + w * 0.35 + dx, view.y + view.h);
+          for (let m = 0; m < 6; m++) {
+            const u = ((m * 0.17 + t * 0.03 + i * 0.3) % 1), my = view.y + u * view.h;
+            const mx = x + slant * u * view.h + ((m * 37) % w) + Math.sin(t + m) * 4;
+            g.fillStyle(lit(col, 0.5), 0.5 * Math.max(0, Math.sin(t * 1.4 + m * 2))); g.fillCircle(mx, my, 1);
+          }
+        }
+        for (let i = 0; i < 8; i++) {
+          const sx = view.x + ((i * 211 + 70) % view.w), sy = view.y + view.h * (0.62 + (i % 3) * 0.13);
+          const drift = Math.sin(i * 1.7) * 30;
+          let px = sx, py = sy;
+          for (let k = 1; k <= 16; k++) {
+            const u = k / 16, ny = sy - u * 150;
+            const nx = sx + Math.sin(t * 1.2 - u * 5 + i) * (3 + u * 20) + u * u * drift;
+            g.lineStyle(1.5 + u * 4, 0xd8d0c8, Math.sin(u * Math.PI) * 0.26);
+            g.lineBetween(px, py, nx, ny);
+            if (k % 4 === 0) { g.fillStyle(0xe0d8d0, 0.05); g.fillEllipse(nx, ny, 10 + u * 22, 6 + u * 10); }
+            px = nx; py = ny;
+          }
+        }
+        break;
+      }
+      case 'pages': {
+        // Loose manuscript sheets tumbling on the wind: each rocks, turns and flips as it goes, a cream
+        // face ruled with staves and inked notes, the back a darker leaf with the ink showing through.
+        const pt = (cx: number, cy: number, ca: number, sa: number, lx: number, ly: number): [number, number] => [cx + lx * ca - ly * sa, cy + lx * sa + ly * ca];
+        const quad = (cx: number, cy: number, hw: number, hh: number, ca: number, sa: number) => {
+          const p0 = pt(cx, cy, ca, sa, -hw, -hh), p1 = pt(cx, cy, ca, sa, hw, -hh), p2 = pt(cx, cy, ca, sa, hw, hh), p3 = pt(cx, cy, ca, sa, -hw, hh);
+          g.fillTriangle(p0[0], p0[1], p1[0], p1[1], p2[0], p2[1]); g.fillTriangle(p0[0], p0[1], p2[0], p2[1], p3[0], p3[1]);
+        };
+        for (let i = 0; i < 13; i++) {
+          const fall = view.y + ((i * 113 + t * (22 + (i % 4) * 6)) % (view.h + 60)) - 30;
+          const rock = Math.sin(t * 1.1 + i * 2.3);
+          const x = view.x + ((i * 199 + t * (30 + (i % 3) * 10)) % (view.w + 60)) - 30 + rock * 22;
+          const ang = rock * 0.5 + Math.sin(t * 0.3 + i) * 0.8, ca = Math.cos(ang), sa = Math.sin(ang);
+          const flip = Math.cos(t * (1.4 + (i % 3) * 0.4) + i * 1.3);
+          const hw = 8 * Math.max(0.1, Math.abs(flip)), hh = 10.5;
+          g.fillStyle(0x000000, 0.1); quad(x + 4, fall + 5, hw, hh, ca, sa);
+          g.fillStyle(0x5a4a30, 0.85); quad(x, fall, hw + 0.7, hh + 0.7, ca, sa);
+          g.fillStyle(flip > 0 ? 0xf2e8cc : 0xd4c6a4, 0.97); quad(x, fall, hw, hh, ca, sa);
+          if (hw > 3) {
+            const ink = flip > 0 ? 0x3a2a1a : 0x9a8a6a, ia = flip > 0 ? 0.6 : 0.3, sx = flip > 0 ? 1 : -1;
+            g.lineStyle(0.6, ink, ia);
+            for (let st = 0; st < 2; st++) for (let l = 0; l < 5; l++) {
+              const ly = -7 + st * 8 + l * 1.4, a0 = pt(x, fall, ca, sa, -hw * 0.8, ly), a1 = pt(x, fall, ca, sa, hw * 0.8, ly);
+              g.lineBetween(a0[0], a0[1], a1[0], a1[1]);
+            }
+            g.fillStyle(ink, ia + 0.2);
+            for (let nn = 0; nn < 4; nn++) {
+              const lx = sx * (-hw * 0.6 + nn * hw * 0.4), ly = -6 + ((nn * 3 + i) % 4) * 0.9 + (nn % 2) * 8;
+              const p = pt(x, fall, ca, sa, lx, ly); g.fillCircle(p[0], p[1], 0.9);
+            }
+          }
+          if (Math.abs(flip) > 0.96) { g.fillStyle(0xffffff, 0.4); const p = pt(x, fall, ca, sa, -hw * 0.5, -hh * 0.6); g.fillCircle(p[0], p[1], 1.2); }
+        }
+        break;
+      }
+      case 'sunbeams': {
+        // Noon light pouring in: broad slanting god-rays of warm white, each soft-edged (an outer haze,
+        // a body and a bright core) breathing slowly; dust drifting through them, glinting into little
+        // four-point stars where it crosses a shaft, and the faintest gold warmth over everything.
+        const slant = 0.38, dx = slant * view.h;
+        g.fillStyle(0xfff2c8, 0.035 + 0.01 * Math.sin(t * 0.3)); g.fillRect(view.x, view.y, view.w, view.h);
+        const shafts: [number, number][] = [];
+        for (let i = 0; i < 6; i++) {
+          const x = view.x + ((i * 233 + t * 4) % (view.w + 260)) - 200, w = 34 + (i % 3) * 22;
+          const a = 0.045 + 0.025 * Math.sin(t * 0.5 + i * 1.9);
+          shafts.push([x, w]);
+          const band = (x0: number, ww: number, col: number, al: number) => {
+            g.fillStyle(col, al);
+            g.fillTriangle(x0, view.y, x0 + ww, view.y, x0 + ww + dx, view.y + view.h);
+            g.fillTriangle(x0, view.y, x0 + ww + dx, view.y + view.h, x0 + dx, view.y + view.h);
+          };
+          band(x - w * 0.35, w * 1.7, 0xfff0c0, a * 0.45);
+          band(x, w, 0xfff4d8, a);
+          band(x + w * 0.38, w * 0.24, 0xffffff, a * 0.9);
+          if (i % 2 === 0) band(x + w * 0.1, 3, 0xffffff, a * 0.7);
+        }
+        for (let i = 0; i < 46; i++) {
+          const y = view.y + ((i * 89 + t * (3 + (i % 4) * 2)) % view.h);
+          const x = view.x + ((i * 157 + t * (5 + (i % 3) * 2)) % view.w) + Math.sin(t * 0.7 + i * 1.3) * 10;
+          let inShaft = 0;
+          for (const [sx, sw] of shafts) {
+            const off = x - (sx + slant * (y - view.y));
+            if (off > 0 && off < sw) inShaft = Math.max(inShaft, Math.sin((off / sw) * Math.PI));
+          }
+          const tw = 0.5 + 0.5 * Math.sin(t * 2.4 + i * 2.7);
+          if (inShaft > 0.05) {
+            const b = inShaft * tw;
+            g.fillStyle(0xfff4c8, 0.14 * b); g.fillCircle(x, y, 4);
+            g.fillStyle(0xffffff, 0.5 + 0.45 * b); g.fillCircle(x, y, 0.9 + b * 0.6);
+            if (b > 0.75) {
+              const s = (b - 0.75) * 4 * 5;
+              g.lineStyle(1, 0xffffff, 0.6 * (b - 0.5)); g.lineBetween(x - s, y, x + s, y); g.lineBetween(x, y - s, x, y + s);
+            }
+          } else {
+            g.fillStyle(0xe8d8a8, 0.25 * tw); g.fillRect(x, y, 1, 1);
+          }
+        }
+        break;
+      }
+      case 'glare': {
+        // The Endless Noon's glare: the edges of the view bleached white and blooming, the bloom swelling
+        // and shimmering in slow blotches along every side; wavering bands of heat-haze rising up the view,
+        // and now and then a hot white flare sliding along the brightest edge.
+        const pulse = 0.5 + 0.5 * Math.sin(t * 0.7);
+        g.fillStyle(0xfffbec, 0.05 + 0.02 * pulse); g.fillRect(view.x, view.y, view.w, view.h);
+        for (let e = 0; e < 6; e++) {
+          const d = 14 + e * 18, a = 0.06 - e * 0.006;
+          g.fillStyle(0xffffff, a);
+          g.fillRect(view.x, view.y, view.w, d); g.fillRect(view.x, view.y + view.h - d * 0.7, view.w, d * 0.7);
+          g.fillRect(view.x, view.y, d, view.h); g.fillRect(view.x + view.w - d, view.y, d, view.h);
+        }
+        // Blooming blotches along the four edges.
+        for (let i = 0; i < 16; i++) {
+          const side = i % 4, u = ((i * 0.37 + t * 0.012 * (1 + (i % 3))) % 1);
+          const sw = 0.5 + 0.5 * Math.sin(t * (0.9 + (i % 4) * 0.3) + i * 2.1);
+          const r = 50 + sw * 50 + (i % 3) * 20;
+          const x = side === 0 || side === 2 ? view.x + u * view.w : side === 1 ? view.x + view.w : view.x;
+          const y = side === 1 || side === 3 ? view.y + u * view.h : side === 0 ? view.y : view.y + view.h;
+          g.fillStyle(0xfff6d8, 0.05 * sw); g.fillCircle(x, y, r * 1.4);
+          g.fillStyle(0xffffff, 0.07 * sw); g.fillCircle(x, y, r);
+          g.fillStyle(0xffffff, 0.08 * sw); g.fillCircle(x, y, r * 0.5);
+        }
+        // Heat-haze: thin wavering bands that rise and dissolve.
+        for (let i = 0; i < 9; i++) {
+          const k = ((t * 0.08 + i / 9) % 1), y0 = view.y + view.h * (1 - k);
+          const a = Math.sin(k * Math.PI) * 0.09;
+          const xs = view.x + ((i * 191) % (view.w * 0.5)), len = view.w * (0.35 + (i % 3) * 0.12);
+          for (let l = 0; l < 2; l++) {
+            g.lineStyle(l ? 1 : 3, 0xffffff, l ? a * 1.2 : a * 0.6);
+            g.beginPath();
+            for (let s = 0; s <= 16; s++) {
+              const x = xs + (s / 16) * len, y = y0 + l * 4 + Math.sin(t * 3 + s * 0.9 + i) * 2.5 * Math.sin((s / 16) * Math.PI);
+              if (s === 0) g.moveTo(x, y); else g.lineTo(x, y);
+            }
+            g.strokePath();
+          }
+        }
+        // A flare skating along the top edge.
+        const fk = (t % 9) / 9;
+        if (fk < 0.35) {
+          const k = fk / 0.35, fx = view.x + k * view.w, fa = Math.sin(k * Math.PI);
+          g.fillStyle(0xffffff, 0.1 * fa); g.fillCircle(fx, view.y + 40, 60);
+          g.fillStyle(0xffffff, 0.35 * fa); g.fillCircle(fx, view.y + 40, 8);
+          g.lineStyle(2, 0xffffff, 0.3 * fa); g.lineBetween(fx - 90, view.y + 40, fx + 90, view.y + 40);
+          g.lineStyle(1, 0xffffff, 0.3 * fa); g.lineBetween(fx, view.y + 10, fx, view.y + 70);
+          for (let s = 1; s <= 3; s++) {
+            const gx = fx + (view.x + view.w / 2 - fx) * s * 0.5, gy = view.y + 40 + (view.h * 0.5 - 40) * s * 0.5;
+            g.lineStyle(1, [0xffe8a0, 0xa8e8ff, 0xffb8e8][s - 1], 0.25 * fa); g.strokeCircle(gx, gy, 6 + s * 5);
+          }
+        }
+        break;
+      }
+      case 'lanterns': {
+        // Paper sky-lanterns rising: each a tapered paper bag (wider at the crown), ribbed with bamboo,
+        // lit warm from the little flame in its open mouth so the paper glows brightest low down; they
+        // sway as they climb, the far ones smaller and dimmer, and fade as they leave the top of the view.
+        for (let i = 0; i < 18; i++) {
+          const far = i % 3 === 0, sc = far ? 0.55 : i % 3 === 1 ? 0.8 : 1;
+          const life = (far ? 26 : 18) + (i % 4) * 3, k = ((t + i * 2.3) % life) / life, n = Math.floor((t + i * 2.3) / life);
+          const x0 = view.x + ((i * 211 + n * 137) % view.w);
+          const sway = Math.sin(t * (0.7 + (i % 3) * 0.2) + i * 1.9), x = x0 + sway * 18 * sc + k * 40 * sc;
+          const y = view.y + view.h + 30 - k * (view.h + 80);
+          const a = Math.min(1, k * 8) * Math.min(1, (1 - k) * 4) * (far ? 0.6 : 1);
+          if (a < 0.03) continue;
+          const tilt = sway * 0.08, ct = Math.cos(tilt), st = Math.sin(tilt);
+          const P = (lx: number, ly: number): [number, number] => [x + (lx * ct - ly * st) * sc, y + (lx * st + ly * ct) * sc];
+          const flick = 0.85 + 0.15 * Math.sin(t * 13 + i * 3);
+          g.fillStyle(0xffa040, 0.07 * a * flick); g.fillCircle(x, y + 2 * sc, 26 * sc);
+          g.fillStyle(0xffc060, 0.1 * a * flick); g.fillCircle(x, y + 4 * sc, 15 * sc);
+          // Paper body.
+          const tl = P(-7, -11), tr = P(7, -11), br = P(5, 9), bl = P(-5, 9);
+          g.fillStyle(0xe8782a, 0.95 * a); g.fillTriangle(tl[0], tl[1], tr[0], tr[1], br[0], br[1]); g.fillTriangle(tl[0], tl[1], br[0], br[1], bl[0], bl[1]);
+          const ml = P(-6, -2), mr = P(6, -2);
+          g.fillStyle(0xffb050, 0.9 * a); g.fillTriangle(ml[0], ml[1], mr[0], mr[1], br[0], br[1]); g.fillTriangle(ml[0], ml[1], br[0], br[1], bl[0], bl[1]);
+          const il = P(-3.5, 2), ir = P(3.5, 2), ib = P(0, 9);
+          g.fillStyle(0xffe8a0, 0.85 * a * flick); g.fillTriangle(il[0], il[1], ir[0], ir[1], ib[0], ib[1]);
+          // Crown dome and ribs.
+          const cr = P(0, -11); g.fillStyle(0xc85a1a, a); g.fillEllipse(cr[0], cr[1], 14 * sc, 4 * sc);
+          g.lineStyle(1, 0x8a3a10, 0.55 * a);
+          for (const lx of [-3.5, 0, 3.5]) { const p0 = P(lx, -11), p1 = P(lx * 0.72, 9); g.lineBetween(p0[0], p0[1], p1[0], p1[1]); }
+          const hl0 = P(-5.5, -9), hl1 = P(-4, 6); g.lineStyle(1, 0xfff0c0, 0.5 * a); g.lineBetween(hl0[0], hl0[1], hl1[0], hl1[1]);
+          // Mouth hoop and flame.
+          const mo = P(0, 9); g.lineStyle(1, 0x6a3010, a); g.strokeEllipse(mo[0], mo[1], 10 * sc, 2.4 * sc);
+          const fl = P(0, 8);
+          g.fillStyle(0xffffff, a * flick); g.fillEllipse(fl[0], fl[1], 2.2 * sc, 3.2 * sc);
+          g.fillStyle(0xffd060, 0.8 * a); g.fillEllipse(fl[0], fl[1] - 1 * sc, 3.4 * sc, 5 * sc * flick);
+        }
+        break;
+      }
+      case 'sigils': {
+        // Spellcraft adrift: glowing sigil circles drifting across the view, each a double ring scored
+        // with rune-ticks, an inscribed star or hexagram and a smaller counter-turning ring at its heart,
+        // all slowly turning and pulsing; loose runes — little angular glyphs — float up between them.
+        const rot = (cx: number, cy: number, r: number, a: number): [number, number] => [cx + Math.cos(a) * r, cy + Math.sin(a) * r * 0.82];
+        for (let i = 0; i < 6; i++) {
+          const col = [0xffd870, 0xa8d8ff, 0xd8a8ff, 0xfff0c0, 0x8af0d8, 0xffb8d8][i];
+          const R = 22 + (i % 3) * 12;
+          const x = view.x + ((i * 307 + t * (6 + (i % 3) * 3)) % (view.w + 160)) - 80;
+          const y = view.y + ((i * 181 + Math.sin(t * 0.25 + i) * 40 + view.h) % view.h);
+          const spin = t * (0.25 + (i % 3) * 0.08) * (i % 2 ? -1 : 1) + i;
+          const pul = 0.6 + 0.4 * Math.sin(t * 1.3 + i * 1.7);
+          g.fillStyle(col, 0.05 * pul); g.fillEllipse(x, y, R * 2.6, R * 2.1);
+          g.lineStyle(2, col, 0.45 * pul); g.strokeEllipse(x, y, R * 2, R * 1.64);
+          g.lineStyle(1, col, 0.35 * pul); g.strokeEllipse(x, y, R * 1.7, R * 1.39);
+          for (let k = 0; k < 16; k++) {
+            const a = spin + k * (Math.PI / 8), p0 = rot(x, y, R * 0.86, a), p1 = rot(x, y, R * (k % 2 ? 0.93 : 0.97), a);
+            g.lineStyle(1, col, 0.55 * pul); g.lineBetween(p0[0], p0[1], p1[0], p1[1]);
+            if (k % 4 === 0) { const q = rot(x, y, R * 0.92, a + 0.2); g.fillStyle(lit(col, 0.5), 0.7 * pul); g.fillRect(q[0] - 1, q[1] - 1, 2, 2); }
+          }
+          const pts = i % 2 ? 6 : 5, step = pts === 5 ? 2 : 1;
+          g.lineStyle(1.2, col, 0.55 * pul);
+          if (pts === 5) {
+            for (let k = 0; k < 5; k++) {
+              const p0 = rot(x, y, R * 0.84, spin + k * step * (Math.PI * 2 / 5)), p1 = rot(x, y, R * 0.84, spin + (k + 1) * step * (Math.PI * 2 / 5));
+              g.lineBetween(p0[0], p0[1], p1[0], p1[1]);
+            }
+          } else {
+            for (let tri = 0; tri < 2; tri++) for (let k = 0; k < 3; k++) {
+              const a0 = spin + tri * Math.PI / 3 + k * (Math.PI * 2 / 3), a1 = a0 + Math.PI * 2 / 3;
+              const p0 = rot(x, y, R * 0.84, a0), p1 = rot(x, y, R * 0.84, a1); g.lineBetween(p0[0], p0[1], p1[0], p1[1]);
+            }
+          }
+          for (let k = 0; k < pts; k++) {
+            const p = rot(x, y, R * 0.84, spin + k * (Math.PI * 2 / pts));
+            g.fillStyle(col, 0.25 * pul); g.fillCircle(p[0], p[1], 3); g.fillStyle(0xffffff, 0.8 * pul); g.fillCircle(p[0], p[1], 1);
+          }
+          g.lineStyle(1, lit(col, 0.4), 0.5 * pul); g.strokeEllipse(x, y, R * 0.7, R * 0.57);
+          for (let k = 0; k < 4; k++) {
+            const a = -spin * 2 + k * (Math.PI / 2), p0 = rot(x, y, R * 0.35, a), p1 = rot(x, y, R * 0.18, a + 0.6);
+            g.lineBetween(p0[0], p0[1], p1[0], p1[1]);
+          }
+          g.fillStyle(0xffffff, 0.5 * pul); g.fillCircle(x, y, 1.6);
+        }
+        for (let i = 0; i < 16; i++) {
+          const life = 6 + (i % 3) * 2, k = ((t + i * 0.9) % life) / life, n = Math.floor((t + i * 0.9) / life);
+          const x = view.x + ((i * 173 + n * 251) % view.w) + Math.sin(t + i) * 8;
+          const y = view.y + view.h * 0.9 - ((i * 97 + n * 61) % (view.h * 0.5)) - k * 120;
+          const a = Math.sin(k * Math.PI) * 0.75, col = i % 3 ? 0xfff0b0 : 0xb8e0ff, s = 4;
+          const ang = t * 0.6 + i, c = Math.cos(ang), sn = Math.sin(ang);
+          const L = (ax: number, ay: number, bx: number, by: number) => g.lineBetween(x + (ax * c - ay * sn) * s, y + (ax * sn + ay * c) * s, x + (bx * c - by * sn) * s, y + (bx * sn + by * c) * s);
+          g.fillStyle(col, 0.1 * a); g.fillCircle(x, y, 7);
+          g.lineStyle(1.2, col, a);
+          switch (i % 4) {
+            case 0: L(0, -1, 0, 1); L(0, -0.3, 0.7, -1); L(0, 0.3, -0.7, 1); break;
+            case 1: L(-0.7, -1, 0.7, 1); L(0.7, -1, -0.7, 1); L(-0.7, 0, 0.7, 0); break;
+            case 2: L(-0.6, 1, 0, -1); L(0, -1, 0.6, 1); L(-0.3, 0.2, 0.3, 0.2); break;
+            default: L(0, -1, 0, 1); L(0, -1, 0.7, -0.4); L(0.7, -0.4, 0, 0.2); break;
+          }
+        }
+        break;
+      }
+      case 'prisms': {
+        // Light through cut glass: rainbow caustic ribbons wavering across the view (seven thin hue
+        // bands laid side by side, the whole ribbon twisting and narrowing), and prism flecks — tiny
+        // glass triangles tumbling on the air that throw a spark of spectrum when they catch the sun.
+        const spec = [0xff4a4a, 0xff9a3a, 0xffe84a, 0x5ae86a, 0x4ab8ff, 0x6a6aff, 0xc86aff];
+        for (let i = 0; i < 4; i++) {
+          const y0 = view.y + view.h * (0.15 + i * 0.23) + Math.sin(t * 0.35 + i * 2) * 30;
+          const a = 0.1 + 0.05 * Math.sin(t * 0.6 + i * 1.4);
+          const ph0 = t * (0.5 + i * 0.12) + i * 3;
+          for (let b = 0; b < 7; b++) {
+            g.lineStyle(2.2, spec[b], a);
+            g.beginPath();
+            for (let s = 0; s <= 20; s++) {
+              const u = s / 20, ph = ph0 + u * 5;
+              const w = 1.3 + Math.cos(ph * 0.8) * 1.1;
+              const x = view.x + u * view.w, y = y0 + Math.sin(ph) * 22 + Math.sin(u * 13 + t) * 4 + (b - 3) * w;
+              if (s === 0) g.moveTo(x, y); else g.lineTo(x, y);
+            }
+            g.strokePath();
+          }
+          for (let s = 0; s < 5; s++) {
+            const u = ((s * 0.21 + t * 0.05 + i * 0.13) % 1), ph = ph0 + u * 5;
+            const x = view.x + u * view.w, y = y0 + Math.sin(ph) * 22 + Math.sin(u * 13 + t) * 4;
+            const gl = Math.max(0, Math.sin(t * 2 + s * 2.3 + i));
+            g.fillStyle(0xffffff, 0.25 * gl); g.fillEllipse(x, y, 16, 6);
+          }
+        }
+        // Caustic net: faint bright cells shimmering on the ground.
+        for (let i = 0; i < 14; i++) {
+          const x = view.x + ((i * 211) % view.w) + Math.sin(t * 0.8 + i) * 12, y = view.y + ((i * 137) % view.h) + Math.cos(t * 0.7 + i * 1.3) * 10;
+          const sh = 0.5 + 0.5 * Math.sin(t * 1.7 + i * 2.2);
+          g.lineStyle(1, 0xffffff, 0.12 * sh);
+          g.beginPath(); g.moveTo(x - 14, y); g.lineTo(x - 4, y - 8 - sh * 3); g.lineTo(x + 10, y - 5); g.lineTo(x + 14, y + 4); g.lineTo(x + 2, y + 9); g.lineTo(x - 10, y + 7); g.closePath(); g.strokePath();
+        }
+        for (let i = 0; i < 30; i++) {
+          const y = view.y + ((i * 83 + t * (8 + (i % 4) * 4)) % (view.h + 20)) - 10;
+          const x = view.x + ((i * 167 + t * 6) % view.w) + Math.sin(t * 1.1 + i * 1.7) * 16;
+          const ang = t * (1.5 + (i % 3)) + i, c = Math.cos(ang), s = Math.sin(ang), sc = 2.6 + (i % 3);
+          const face = Math.abs(Math.sin(t * 2.2 + i * 1.3));
+          const p = (lx: number, ly: number): [number, number] => [x + (lx * c - ly * s) * sc, y + (lx * s + ly * c) * sc * (0.4 + face * 0.6)];
+          const a0 = p(0, -1), a1 = p(0.87, 0.5), a2 = p(-0.87, 0.5);
+          g.fillStyle(0xe8f4ff, 0.55); g.fillTriangle(a0[0], a0[1], a1[0], a1[1], a2[0], a2[1]);
+          g.lineStyle(0.8, 0xffffff, 0.8); g.lineBetween(a0[0], a0[1], a1[0], a1[1]);
+          if (face > 0.93) {
+            const k = (face - 0.93) / 0.07;
+            for (let b = 0; b < 7; b++) {
+              const ra = ang + 0.4 + b * 0.09;
+              g.lineStyle(1, spec[b], 0.6 * k); g.lineBetween(x, y, x + Math.cos(ra) * (10 + k * 8), y + Math.sin(ra) * (10 + k * 8));
+            }
+            g.fillStyle(0xffffff, 0.9 * k); g.fillCircle(x, y, 1.6);
+          }
+        }
+        break;
+      }
+      case 'pigment': {
+        // The colour-mills' breath: puffs of pigment powder thrown up on the air — each a cluster of
+        // soft lobes in one bright hue that swells, drifts and thins out into a speckle of grains — with
+        // loose grains of every colour sifting slowly down between them.
+        const pal = [0xe83a4a, 0x2a6ae8, 0xf0c020, 0x3ab85a, 0xe86ac8, 0xf07a20, 0x7a4ad8, 0x2ac8c8];
+        for (let i = 0; i < 12; i++) {
+          const col = pal[i % pal.length];
+          const life = 5 + (i % 4) * 1.2, k = ((t + i * 1.13) % life) / life, n = Math.floor((t + i * 1.13) / life);
+          const x0 = view.x + ((i * 233 + n * 179) % view.w), y0 = view.y + ((i * 151 + n * 97) % view.h);
+          const x = x0 + k * (30 + (i % 3) * 14) + Math.sin(t * 0.8 + i) * 6, y = y0 - k * 26;
+          const burst = Math.min(1, k * 5), fade = Math.pow(1 - k, 1.4);
+          const R = 8 + burst * 10 + k * 18;
+          for (let l = 0; l < 6; l++) {
+            const a = l * 1.05 + i + k * 0.8, d = R * (0.35 + 0.25 * ((l * 7 + i) % 3) / 2) * (0.6 + k * 0.6);
+            const lx = x + Math.cos(a) * d, ly = y + Math.sin(a) * d * 0.75, lr = R * (0.45 + ((l + i) % 3) * 0.12);
+            g.fillStyle(col, 0.13 * fade); g.fillCircle(lx, ly, lr);
+            g.fillStyle(lit(col, 0.35), 0.08 * fade); g.fillCircle(lx - lr * 0.25, ly - lr * 0.3, lr * 0.55);
+          }
+          g.fillStyle(col, 0.18 * fade * burst); g.fillCircle(x, y, R * 0.5);
+          for (let s = 0; s < 10; s++) {
+            const a = s * 2.4 + i, d = R * (0.5 + ((s * 13) % 7) / 7) * (0.8 + k), gy = y + Math.sin(a) * d * 0.8 + k * k * 10;
+            g.fillStyle(dim(col, 0.15), 0.7 * fade); g.fillRect(x + Math.cos(a) * d, gy, 1.3, 1.3);
+          }
+        }
+        for (let i = 0; i < 44; i++) {
+          const y = view.y + ((i * 71 + t * (7 + (i % 5) * 2)) % view.h);
+          const x = view.x + ((i * 149) % view.w) + Math.sin(t * 0.9 + i * 1.3) * 7;
+          g.fillStyle(pal[i % pal.length], 0.55); g.fillRect(x, y, 1.4, 1.4);
+        }
+        break;
+      }
       default: break;
     }
   }
@@ -1504,7 +2151,21 @@ export class IsleWorldScene extends Phaser.Scene {
         : gt.look === 'cable' ? 0xc87a3a : gt.look === 'magnet' ? 0xc83a3a : gt.look === 'lead' ? 0x6a6e78
         : gt.look === 'rubber' ? 0x2a2a2e : gt.look === 'phase' ? 0xb88aff
         : gt.look === 'fang' ? 0xf4eedc : gt.look === 'web' ? 0xe8ecf0 : gt.look === 'chain' ? 0x6a6e78
-        : gt.look === 'shadow' ? 0x0e0a16 : gt.look === 'lychgate' ? 0x5a4a38 : 0x3a3a42;
+        : gt.look === 'shadow' ? 0x0e0a16 : gt.look === 'lychgate' ? 0x5a4a38
+        : gt.look === 'dice' ? 0xf4ecd8 : gt.look === 'vault' ? 0x8a8e96 : gt.look === 'clock' ? 0xc8a050
+        : gt.look === 'locket' ? 0xe0b848 : gt.look === 'eye' ? 0xe8dcd0 : gt.look === 'palisade' ? 0x7a5a38
+        : gt.look === 'pipes' ? 0xc8ccd4 : gt.look === 'bell' ? 0xb8823a : gt.look === 'curtain' ? 0xa8182a
+        : gt.look === 'stalactite' ? 0x8a8070 : gt.look === 'stainedglass' ? 0x5a5660 : gt.look === 'scroll' ? 0xf0e6cc
+        : gt.look === 'mirror' ? 0xd8a838 : gt.look === 'sunbar' ? 0xfff0b0 : gt.look === 'lanterns' ? 0xa8e0ff
+        : gt.look === 'sigil' ? 0xffd870 : gt.look === 'lens' ? 0xd8a840 : gt.look === 'scaffold' ? 0x9a7448 : 0x3a3a42;
+      // Orientation helpers for the looks that lay out along the gate's long axis (u) and across it (v).
+      const horiz = r.w >= r.h, gL = horiz ? r.w : r.h, gC = horiz ? r.h : r.w;
+      const gP = (u: number, v: number): [number, number] => horiz ? [r.x + u, r.y + v] : [r.x + v, r.y + u];
+      const gR = (u: number, v: number, du: number, dv: number) => { const [x, y] = gP(u, v); if (horiz) g.fillRect(x, y, du, dv); else g.fillRect(x, y, dv, du); };
+      const gT = (u0: number, v0: number, u1: number, v1: number, u2: number, v2: number) => {
+        const a = gP(u0, v0), b = gP(u1, v1), c = gP(u2, v2); g.fillTriangle(a[0], a[1], b[0], b[1], c[0], c[1]);
+      };
+      const gLn = (u0: number, v0: number, u1: number, v1: number) => { const a = gP(u0, v0), b = gP(u1, v1); g.lineBetween(a[0], a[1], b[0], b[1]); };
       if (gt.look === 'portcullis' || gt.look === 'grate' || gt.look === 'sluice') {
         g.fillStyle(0x1a1a1e, 0.6); g.fillRect(r.x, r.y, r.w, r.h);
         g.lineStyle(4, col, 1);
@@ -1869,6 +2530,708 @@ export class IsleWorldScene extends Phaser.Scene {
         g.fillStyle(0xc8f0b0, 0.12 * fl); g.fillCircle(lx, ly, 16);
         g.fillStyle(0x2a2420, 1); g.fillRect(lx - 4, ly - 6, 8, 11);
         g.fillStyle(0xb8f08a, 0.85 * fl); g.fillRect(lx - 2.5, ly - 4, 5, 7);
+      } else if (gt.look === 'dice') {
+        // Giant ivory dice stacked across the way: a row of cubes (shaded side face, rounded top, worn
+        // highlight, inked pips) with a smaller die balanced on top that rocks on its edge.
+        const horiz = r.w >= r.h, long = horiz ? r.w : r.h, short = horiz ? r.h : r.w;
+        const n = Math.max(1, Math.round(long / Math.max(30, short * 0.9))), s = Math.min(short * 0.86, long / n - 4);
+        const die = (cx: number, cy: number, sz: number, v: number) => {
+          g.fillStyle(0x000000, 0.25); g.fillEllipse(cx + sz * 0.12, cy + sz * 0.58, sz * 1.1, sz * 0.3);
+          g.fillStyle(0xb8ac90, 1); g.fillRoundedRect(cx - sz / 2 + sz * 0.1, cy - sz / 2 + sz * 0.1, sz, sz, sz * 0.18);
+          g.fillStyle(col, 1); g.fillRoundedRect(cx - sz / 2, cy - sz / 2, sz, sz, sz * 0.18);
+          g.fillStyle(0xffffff, 0.55); g.fillRoundedRect(cx - sz / 2 + sz * 0.1, cy - sz / 2 + sz * 0.07, sz * 0.55, sz * 0.12, sz * 0.05);
+          g.lineStyle(1, 0x8a7e66, 0.8); g.strokeRoundedRect(cx - sz / 2, cy - sz / 2, sz, sz, sz * 0.18);
+          const q = sz * 0.27, pr = Math.max(1.5, sz * 0.085);
+          const spots: [number, number][] = v === 1 ? [[0, 0]] : v === 2 ? [[-1, -1], [1, 1]] : v === 3 ? [[-1, -1], [0, 0], [1, 1]]
+            : v === 4 ? [[-1, -1], [1, -1], [-1, 1], [1, 1]] : v === 5 ? [[-1, -1], [1, -1], [0, 0], [-1, 1], [1, 1]]
+            : [[-1, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [1, 1]];
+          for (const [sx, sy] of spots) {
+            g.fillStyle(v === 1 ? 0xb8202a : 0x1a1418, 1); g.fillCircle(cx + sx * q, cy + sy * q, v === 1 ? pr * 1.6 : pr);
+            g.fillStyle(0xffffff, 0.35); g.fillCircle(cx + sx * q - pr * 0.3, cy + sy * q - pr * 0.3, pr * 0.35);
+          }
+        };
+        for (let i = 0; i < n; i++) {
+          const u = (i + 0.5) / n;
+          const cx = horiz ? r.x + u * r.w : r.x + r.w / 2, cy = horiz ? r.y + r.h / 2 + 2 : r.y + u * r.h;
+          die(cx, cy, s, ((i * 4 + 2) % 6) + 1);
+        }
+        const rock = Math.sin(t * 1.7) * 2.5, ts = s * 0.62, mid = Math.floor(n / 2);
+        const tx = horiz ? r.x + ((mid + (n % 2 ? 0.5 : 0)) / n) * r.w + rock : r.x + r.w / 2 + rock, ty = horiz ? r.y + r.h / 2 + 2 - s / 2 - ts / 2 + 2 + Math.abs(rock) * 0.3 : r.y + r.h / 2 - s / 2 - ts / 2;
+        die(tx, ty, ts, 6 - (Math.floor(t / 3) % 6));
+      } else if (gt.look === 'vault') {
+        // A round bank-vault door set in a riveted steel wall: rings of polished steel, bolts shot out
+        // into the frame, a combination dial, and a spoked hand-wheel that turns a little back and forth.
+        const cx = r.x + r.w / 2, cy = r.y + r.h / 2, R = Math.min(r.w, r.h) * 0.5 + 6;
+        g.fillStyle(0x2a2c30, 1); g.fillRect(r.x, r.y, r.w, r.h);
+        g.fillStyle(0x4a4e56, 1); g.fillRect(r.x + 3, r.y + 3, r.w - 6, r.h - 6);
+        g.fillStyle(0x7a7e86, 1);
+        for (let x = r.x + 8; x < r.x + r.w - 4; x += 14) { g.fillCircle(x, r.y + 7, 1.6); g.fillCircle(x, r.y + r.h - 7, 1.6); }
+        g.fillStyle(0x000000, 0.35); g.fillCircle(cx + 3, cy + 4, R + 4);
+        g.fillStyle(0x3a3c42, 1); g.fillCircle(cx, cy, R + 3);
+        for (let k = 0; k < 8; k++) {
+          const a = k * (Math.PI / 4) + Math.PI / 8, bx = cx + Math.cos(a) * (R + 1), by = cy + Math.sin(a) * (R + 1);
+          g.lineStyle(5, 0xb8bcc4, 1); g.lineBetween(bx, by, bx + Math.cos(a) * 9, by + Math.sin(a) * 9);
+          g.lineStyle(1.5, 0xe8ecf0, 0.8); g.lineBetween(bx - Math.sin(a) * 1.5, by + Math.cos(a) * 1.5, bx + Math.cos(a) * 9 - Math.sin(a) * 1.5, by + Math.sin(a) * 9 + Math.cos(a) * 1.5);
+        }
+        g.fillStyle(col, 1); g.fillCircle(cx, cy, R);
+        g.lineStyle(2, dim(col, 0.35), 1); g.strokeCircle(cx, cy, R * 0.82); g.strokeCircle(cx, cy, R * 0.6);
+        g.lineStyle(1.5, lit(col, 0.4), 0.8);
+        g.beginPath(); g.arc(cx, cy, R - 2, Math.PI * 1.05, Math.PI * 1.55, false); g.strokePath();
+        g.beginPath(); g.arc(cx, cy, R * 0.7, Math.PI * 1.1, Math.PI * 1.45, false); g.strokePath();
+        // Dial, upper right, ticks round it and a red index mark.
+        const dx = cx + R * 0.5, dy = cy - R * 0.45, dr = R * 0.17;
+        g.fillStyle(0x1a1c20, 1); g.fillCircle(dx, dy, dr + 1.5); g.fillStyle(0xd8dce4, 1); g.fillCircle(dx, dy, dr);
+        g.lineStyle(1, 0x2a2c30, 1);
+        for (let k = 0; k < 12; k++) { const a = k * Math.PI / 6 + t * 0.2; g.lineBetween(dx + Math.cos(a) * dr * 0.6, dy + Math.sin(a) * dr * 0.6, dx + Math.cos(a) * dr, dy + Math.sin(a) * dr); }
+        g.fillStyle(0xc83a2a, 1); g.fillTriangle(dx - 2, dy - dr - 4, dx + 2, dy - dr - 4, dx, dy - dr + 1);
+        // The hand-wheel.
+        const wr = R * 0.42, ang = Math.sin(t * 0.7) * 0.35;
+        g.lineStyle(4, 0x2a2c30, 1); g.strokeCircle(cx + 1, cy + 2, wr);
+        g.lineStyle(3.5, 0xd8b048, 1); g.strokeCircle(cx, cy, wr);
+        for (let k = 0; k < 4; k++) {
+          const a = ang + k * (Math.PI / 2);
+          g.lineStyle(3, 0xb89038, 1); g.lineBetween(cx, cy, cx + Math.cos(a) * wr, cy + Math.sin(a) * wr);
+          g.fillStyle(0xe8c860, 1); g.fillCircle(cx + Math.cos(a) * (wr + 4), cy + Math.sin(a) * (wr + 4), 3.2);
+        }
+        g.fillStyle(0xe8c860, 1); g.fillCircle(cx, cy, 5); g.fillStyle(0xfff0b0, 0.8); g.fillCircle(cx - 1.5, cy - 1.5, 1.6);
+      } else if (gt.look === 'clock') {
+        // A great clock face set across the way, its hands grown into iron bars that run out to the frame:
+        // cream enamel, a brass bezel, tick marks and numerals, the second bar jerking round each second.
+        const cx = r.x + r.w / 2, cy = r.y + r.h / 2, R = Math.min(r.w, r.h) * 0.5 + 8, far = Math.hypot(r.w, r.h) / 2;
+        g.fillStyle(0x1a140c, 0.35); g.fillRect(r.x, r.y, r.w, r.h);
+        g.fillStyle(0x000000, 0.3); g.fillCircle(cx + 3, cy + 4, R + 2);
+        g.fillStyle(dim(col, 0.35), 1); g.fillCircle(cx, cy, R + 3);
+        g.fillStyle(col, 1); g.fillCircle(cx, cy, R);
+        g.fillStyle(0xf4ead0, 1); g.fillCircle(cx, cy, R - 4);
+        g.lineStyle(1.5, lit(col, 0.45), 0.9); g.beginPath(); g.arc(cx, cy, R - 1.5, Math.PI * 1.1, Math.PI * 1.6, false); g.strokePath();
+        for (let k = 0; k < 60; k++) {
+          const a = k * (Math.PI / 30), big = k % 5 === 0, r0 = R - 6, r1 = big ? R - 12 : R - 8;
+          g.lineStyle(big ? 2 : 1, 0x2a2018, big ? 1 : 0.6);
+          g.lineBetween(cx + Math.cos(a) * r0, cy + Math.sin(a) * r0, cx + Math.cos(a) * r1, cy + Math.sin(a) * r1);
+        }
+        g.lineStyle(1, 0xc8b898, 0.8); g.strokeCircle(cx, cy, R * 0.45);
+        // Bars: hour and minute hands run past the face to the frame, the second hand ticks.
+        const clamp = (a: number) => {
+          const ca = Math.cos(a), sa = Math.sin(a);
+          const dx = Math.abs(ca) > 1e-4 ? (r.w / 2) / Math.abs(ca) : Infinity, dy = Math.abs(sa) > 1e-4 ? (r.h / 2) / Math.abs(sa) : Infinity;
+          return Math.min(dx, dy, far);
+        };
+        const hA = -Math.PI / 2 + (t / 600) % (Math.PI * 2) + 2.2, mA = -Math.PI / 2 + (t / 50) % (Math.PI * 2), sA = -Math.PI / 2 + Math.floor(t % 60) * (Math.PI / 30);
+        for (const [a, w, c] of [[hA, 7, 0x2a2420], [mA, 5, 0x3a3430]] as const) {
+          const L = Math.max(R * 0.8, clamp(a)), B = Math.max(R * 0.3, clamp(a + Math.PI) * 0.5);
+          g.lineStyle(w + 2, 0x000000, 0.3); g.lineBetween(cx - Math.cos(a) * B + 2, cy - Math.sin(a) * B + 3, cx + Math.cos(a) * L + 2, cy + Math.sin(a) * L + 3);
+          g.lineStyle(w, c, 1); g.lineBetween(cx - Math.cos(a) * B, cy - Math.sin(a) * B, cx + Math.cos(a) * L, cy + Math.sin(a) * L);
+          g.lineStyle(1, 0x8a8278, 0.8); g.lineBetween(cx, cy, cx + Math.cos(a) * L, cy + Math.sin(a) * L - 1);
+          g.fillStyle(c, 1); g.fillCircle(cx + Math.cos(a) * L, cy + Math.sin(a) * L, w * 0.8);
+        }
+        g.lineStyle(1.5, 0xb8202a, 1); g.lineBetween(cx - Math.cos(sA) * R * 0.2, cy - Math.sin(sA) * R * 0.2, cx + Math.cos(sA) * (R - 8), cy + Math.sin(sA) * (R - 8));
+        g.fillStyle(col, 1); g.fillCircle(cx, cy, 5); g.fillStyle(0xfff0b0, 0.9); g.fillCircle(cx - 1.5, cy - 1.5, 1.6);
+      } else if (gt.look === 'locket') {
+        // A great gold locket lying open across the way: two hinged oval halves, a faded portrait in one and
+        // a coil of hair under glass in the other, engraved rims, the chain draped beside, a glint sweeping.
+        const horiz = r.w >= r.h, cx = r.x + r.w / 2, cy = r.y + r.h / 2;
+        const ow = horiz ? Math.min(r.w * 0.24, r.h * 0.75) : r.w * 0.75, oh = horiz ? r.h * 0.95 : Math.min(r.h * 0.24, r.w * 0.75);
+        const off = horiz ? ow * 0.56 : oh * 0.56;
+        // The chain: a sagging line of links along the far side.
+        g.lineStyle(1.5, dim(col, 0.2), 1);
+        for (let k = 0; k <= 16; k++) {
+          const u = k / 16, sag = Math.sin(u * Math.PI) * 8;
+          const lx = horiz ? r.x + u * r.w : r.x + 4 + sag, ly = horiz ? r.y + 4 + sag : r.y + u * r.h;
+          g.strokeEllipse(lx, ly, k % 2 ? 6 : 3, k % 2 ? 3 : 6);
+        }
+        const halves: [number, number][] = horiz ? [[cx - off, cy], [cx + off, cy]] : [[cx, cy - off], [cx, cy + off]];
+        g.fillStyle(dim(col, 0.4), 1); g.fillRect(horiz ? cx - 6 : cx - ow * 0.2, horiz ? cy - oh * 0.2 : cy - 6, horiz ? 12 : ow * 0.4, horiz ? oh * 0.4 : 12);
+        halves.forEach(([hx, hy], side) => {
+          g.fillStyle(0x000000, 0.3); g.fillEllipse(hx + 3, hy + 4, ow, oh);
+          g.fillStyle(dim(col, 0.3), 1); g.fillEllipse(hx, hy, ow, oh);
+          g.fillStyle(col, 1); g.fillEllipse(hx, hy, ow - 4, oh - 4);
+          g.lineStyle(1, dim(col, 0.45), 0.9);
+          for (let k = 0; k < 18; k++) { const a = k * (Math.PI / 9); g.fillStyle(lit(col, 0.3), 1); g.fillCircle(hx + Math.cos(a) * (ow / 2 - 4.5), hy + Math.sin(a) * (oh / 2 - 4.5), 1); }
+          g.fillStyle(side ? 0xe8dcc0 : 0xd8c8a0, 1); g.fillEllipse(hx, hy, ow * 0.7, oh * 0.7);
+          if (side === 0) {
+            // A faded portrait: head and shoulders in sepia.
+            g.fillStyle(0x8a6a4a, 0.75); g.fillCircle(hx, hy - oh * 0.08, Math.min(ow, oh) * 0.13);
+            g.fillEllipse(hx, hy + oh * 0.2, ow * 0.38, oh * 0.22);
+            g.fillStyle(0x6a4a2a, 0.6); g.fillEllipse(hx, hy - oh * 0.14, Math.min(ow, oh) * 0.28, Math.min(ow, oh) * 0.12);
+          } else {
+            g.lineStyle(1.5, 0x6a4a2a, 0.8);
+            g.beginPath();
+            for (let k = 0; k <= 24; k++) { const a = k * 0.5, rr = 1 + k * 0.45 * Math.min(ow, oh) / 60; const px = hx + Math.cos(a) * rr, py = hy + Math.sin(a) * rr; if (k === 0) g.moveTo(px, py); else g.lineTo(px, py); }
+            g.strokePath();
+          }
+          g.fillStyle(0xffffff, 0.3); g.fillEllipse(hx - ow * 0.14, hy - oh * 0.18, ow * 0.2, oh * 0.12);
+        });
+        const sweep = (t * 0.35) % 1.4;
+        if (sweep < 1) {
+          const [hx, hy] = halves[Math.floor(t * 0.35) % 2], ga = sweep * Math.PI * 2;
+          g.fillStyle(0xffffff, 0.8 * Math.sin(sweep * Math.PI)); g.fillCircle(hx + Math.cos(ga) * (ow / 2 - 3), hy + Math.sin(ga) * (oh / 2 - 3), 2);
+          g.lineStyle(1, 0xffffff, 0.5 * Math.sin(sweep * Math.PI));
+          const sx = hx + Math.cos(ga) * (ow / 2 - 3), sy = hy + Math.sin(ga) * (oh / 2 - 3);
+          g.lineBetween(sx - 5, sy, sx + 5, sy); g.lineBetween(sx, sy - 5, sx, sy + 5);
+        }
+      } else if (gt.look === 'eye') {
+        // A great lidded eye filling the way: veined white, a ringed gold iris whose pupil follows you,
+        // heavy lids with lashes that blink now and then, a wet highlight.
+        const cx = r.x + r.w / 2, cy = r.y + r.h / 2, ew = r.w * 0.94, eh = Math.min(r.h * 0.9, ew * 0.6);
+        const blinkPh = t % 6.5, open = blinkPh < 0.25 ? Math.abs(blinkPh - 0.125) / 0.125 : 1;
+        const lid = eh / 2 * open;
+        g.fillStyle(0x2a1a24, 0.5); g.fillEllipse(cx, cy, ew + 14, eh + 14);
+        g.fillStyle(0x8a6a6a, 1); g.fillEllipse(cx, cy, ew + 6, eh + 8);
+        if (lid > 1) {
+          const pts: Phaser.Math.Vector2[] = [];
+          for (let k = 0; k <= 20; k++) { const u = k / 20; pts.push(new Phaser.Math.Vector2(cx - ew / 2 + u * ew, cy - Math.sin(u * Math.PI) * lid)); }
+          for (let k = 20; k >= 0; k--) { const u = k / 20; pts.push(new Phaser.Math.Vector2(cx - ew / 2 + u * ew, cy + Math.sin(u * Math.PI) * lid * 0.9)); }
+          g.fillStyle(col, 1); g.fillPoints(pts, true);
+          g.lineStyle(1, 0xc84a4a, 0.5);
+          for (let k = 0; k < 6; k++) {
+            const sx = k % 2 ? cx - ew * 0.45 : cx + ew * 0.45, sy = cy + (k - 2.5) * lid * 0.12;
+            g.beginPath(); g.moveTo(sx, sy);
+            g.lineTo(sx + (k % 2 ? 1 : -1) * ew * 0.08, sy + Math.sin(k * 2.1) * 3); g.lineTo(sx + (k % 2 ? 1 : -1) * ew * 0.14, sy + Math.cos(k) * 4); g.strokePath();
+          }
+          const lx = Phaser.Math.Clamp((this.px - cx) / 300, -1, 1), ly = Phaser.Math.Clamp((this.py - cy) / 300, -1, 1);
+          // The iris squashes with the lids as they close, so it never pokes out of the opening.
+          const ir = Math.min(eh * 0.42, ew * 0.2), ix = cx + lx * (ew / 2 - ir) * 0.55;
+          const gap = lid * 0.9 * Math.sin(Math.PI * (0.5 + (ix - cx) / ew)), irH = Math.min(ir, gap * 0.95);
+          const iy = cy + ly * Math.max(0, gap - irH) * 0.5, sy = irH / ir;
+          g.fillStyle(0x6a4a10, 1); g.fillEllipse(ix, iy, ir * 2, irH * 2);
+          g.fillStyle(0xc8901a, 1); g.fillEllipse(ix, iy, ir * 1.76, irH * 1.76);
+          g.lineStyle(1, 0xffd860, 0.6);
+          for (let k = 0; k < 16; k++) { const a = k * (Math.PI / 8); g.lineBetween(ix + Math.cos(a) * ir * 0.4, iy + Math.sin(a) * ir * 0.4 * sy, ix + Math.cos(a) * ir * 0.85, iy + Math.sin(a) * ir * 0.85 * sy); }
+          const pr = ir * (0.38 + 0.06 * Math.sin(t * 1.3));
+          g.fillStyle(0x0a0608, 1); g.fillEllipse(ix, iy, pr * 2, pr * 2 * sy);
+          g.fillStyle(0xffffff, 0.85); g.fillCircle(ix - ir * 0.3, iy - irH * 0.32, ir * 0.16 * sy); g.fillCircle(ix + ir * 0.2, iy + irH * 0.24, ir * 0.06);
+        }
+        // Lid creases and lashes.
+        g.lineStyle(3, 0x4a2a30, 1);
+        g.beginPath();
+        for (let k = 0; k <= 20; k++) { const u = k / 20, px = cx - ew / 2 + u * ew, py = cy - Math.sin(u * Math.PI) * lid; if (k === 0) g.moveTo(px, py); else g.lineTo(px, py); }
+        g.strokePath();
+        g.lineStyle(1.5, 0x6a4a4a, 0.8);
+        g.beginPath(); for (let k = 0; k <= 20; k++) { const u = k / 20, px = cx - ew / 2 + u * ew, py = cy - Math.sin(u * Math.PI) * (eh / 2 + 4); if (k === 0) g.moveTo(px, py); else g.lineTo(px, py); } g.strokePath();
+        g.lineStyle(2, 0x1a0e12, 1);
+        for (let k = 2; k <= 18; k += 2) {
+          const u = k / 20, px = cx - ew / 2 + u * ew, py = cy - Math.sin(u * Math.PI) * lid, a = -Math.PI / 2 + (u - 0.5) * 1.6;
+          g.lineBetween(px, py, px + Math.cos(a) * 7, py + Math.sin(a) * 7 - 1);
+        }
+      } else if (gt.look === 'palisade') {
+        // A palisade of sharpened stakes lashed with rope, red-and-black checkered banners hung between
+        // them, fluttering, and a gilt boss on each.
+        const horiz = r.w >= r.h, long = horiz ? r.w : r.h;
+        g.fillStyle(0x000000, 0.25); g.fillRect(r.x + 3, r.y + 4, r.w, r.h);
+        const step = 13, posts: number[] = [];
+        for (let u = 6; u <= long - 6; u += step) posts.push(u);
+        for (const u of posts) {
+          const k = Math.round(u / step);
+          if (horiz) {
+            const x = r.x + u, top = r.y - 10 - (k % 3) * 4;
+            g.fillStyle(dim(col, 0.3), 1); g.fillRect(x - 5, top + 8, 10, r.y + r.h - top - 8);
+            g.fillStyle(col, 1); g.fillRect(x - 4, top + 8, 7, r.y + r.h - top - 8);
+            g.fillStyle(lit(col, 0.2), 1); g.fillTriangle(x - 5, top + 9, x + 5, top + 9, x, top);
+            g.fillStyle(0xd8c098, 1); g.fillTriangle(x - 2, top + 5, x + 1, top + 5, x, top);
+            g.lineStyle(1, dim(col, 0.5), 0.8); g.lineBetween(x - 1, top + 14, x - 1, r.y + r.h - 4);
+          } else {
+            const y = r.y + u, top = r.x - 10 - (k % 3) * 4;
+            g.fillStyle(dim(col, 0.3), 1); g.fillRect(top + 8, y - 5, r.x + r.w - top - 8, 10);
+            g.fillStyle(col, 1); g.fillRect(top + 8, y - 4, r.x + r.w - top - 8, 7);
+            g.fillStyle(lit(col, 0.2), 1); g.fillTriangle(top + 9, y - 5, top + 9, y + 5, top, y);
+          }
+        }
+        // Rope lashings.
+        g.lineStyle(2.5, 0xc8a870, 1);
+        for (const f of [0.3, 0.75]) {
+          if (horiz) g.lineBetween(r.x, r.y + r.h * f, r.x + r.w, r.y + r.h * f); else g.lineBetween(r.x + r.w * f, r.y, r.x + r.w * f, r.y + r.h);
+        }
+        // Banners every few stakes.
+        for (let i = 2; i + 1 < posts.length; i += 4) {
+          const a = posts[i], b = posts[i + 1], bw = b - a + step * 0.6;
+          const bx = horiz ? r.x + a - step * 0.3 : r.x + 2, by = horiz ? r.y + 2 : r.y + a - step * 0.3;
+          const bl = horiz ? r.h * 0.7 : r.w * 0.7;
+          for (let row = 0; row < 4; row++) for (let c = 0; c < 2; c++) {
+            const wave = Math.sin(t * 3 + i + row * 0.8) * (row + 1) * 0.8;
+            g.fillStyle((row + c) % 2 ? 0x1a1418 : 0xc8202a, 1);
+            if (horiz) g.fillRect(bx + c * bw / 2 + wave, by + row * bl / 4, bw / 2, bl / 4 + 0.5);
+            else g.fillRect(bx + row * bl / 4, by + c * bw / 2 + wave, bl / 4 + 0.5, bw / 2);
+          }
+          const tw = Math.sin(t * 3 + i + 3.2) * 4;
+          g.fillStyle(0xc8202a, 1);
+          if (horiz) g.fillTriangle(bx + tw, by + bl, bx + bw + tw, by + bl, bx + bw / 2 + tw, by + bl + 7);
+          else g.fillTriangle(bx + bl, by + tw, bx + bl, by + bw + tw, bx + bl + 7, by + bw / 2 + tw);
+          g.fillStyle(0xe8c050, 1); g.fillCircle(horiz ? bx + bw / 2 : bx + bl * 0.15, horiz ? by + bl * 0.15 : by + bw / 2, 2.5);
+        }
+      } else if (gt.look === 'pipes') {
+        // A rank of organ pipes standing across the way as bars: tin bodies of stepped heights rising to
+        // a tower in the middle of the flat, each with a dark mouth and lip low down, a conical foot and
+        // a gleam down its length, on an oak rail; the pipe that is sounding trembles and breathes rings.
+        const n = Math.max(3, Math.floor(gL / 14)), pw = gL / n, sounding = Math.floor(t * 1.4) % n;
+        g.fillStyle(0x000000, 0.25); g.fillRect(r.x + 3, r.y + 4, r.w, r.h);
+        for (let i = 0; i < n; i++) {
+          const mid = 1 - Math.abs((i + 0.5) / n - 0.5) * 2, hgt = gC + 8 + 26 * mid * mid + (i % 2) * 4;
+          const wob = i === sounding ? Math.sin(t * 50) * 0.6 : 0, u = (i + 0.5) * pw + wob, hw = pw * 0.4;
+          const top = gC - hgt, foot = gC - 9, mv = foot - 13;
+          g.fillStyle(dim(col, 0.5), 1); gR(u - hw - 1, top - 1, hw * 2 + 2, foot - top + 1);
+          g.fillStyle(col, 1); gR(u - hw, top, hw * 2, foot - top);
+          g.fillStyle(dim(col, 0.22), 1); gR(u + hw * 0.35, top, hw * 0.65, foot - top);
+          g.fillStyle(lit(col, 0.55), 0.9); gR(u - hw * 0.55, top + 2, 1.5, foot - top - 4);
+          g.fillStyle(lit(col, 0.3), 1); gR(u - hw - 1, top - 2, hw * 2 + 2, 2);
+          g.fillStyle(0x14141a, 1); gR(u - hw * 0.6, mv, hw * 1.2, 4);
+          g.fillStyle(dim(col, 0.35), 1); gT(u - hw * 0.6, mv + 4, u + hw * 0.6, mv + 4, u, mv + 7);
+          g.fillStyle(lit(col, 0.4), 0.8); gR(u - hw * 0.6, mv - 1, hw * 1.2, 1);
+          g.fillStyle(dim(col, 0.4), 1); gT(u - hw, foot, u + hw, foot, u, gC - 1);
+          g.fillStyle(col, 1); gT(u - hw + 1, foot, u + hw * 0.2, foot, u, gC - 2);
+          if (i === sounding) {
+            const [mx, my] = gP(u, mv + 2);
+            g.fillStyle(0xd8e8ff, 0.18 + 0.1 * Math.sin(t * 9)); g.fillCircle(mx, my, hw + 3);
+            for (let k = 0; k < 3; k++) {
+              const ph = (t * 1.6 + k / 3) % 1;
+              g.lineStyle(1.5, 0xd8e8ff, 0.5 * (1 - ph)); g.strokeEllipse(mx, my, 8 + ph * 34, 5 + ph * 20);
+            }
+          }
+        }
+        g.fillStyle(0x3a2418, 1); gR(-2, gC - 3, gL + 4, 5);
+        g.fillStyle(0xc8a050, 0.9); gR(-2, gC - 3, gL + 4, 1);
+      } else if (gt.look === 'bell') {
+        // A great bronze bell hung low in a timber frame across the way: flared waist and heavy lip,
+        // raised bands and a ring of inscription, green verdigris in the hollows, the clapper hanging in
+        // its dark mouth; it sways a little, and every few seconds a slow hum rolls off it.
+        const cx = r.x + r.w / 2, base = r.y + r.h + 4;
+        const bh = Math.max(50, Math.min(r.w, r.h) * 1.4), bw = Math.min(Math.max(r.w, r.h) * 0.55, bh * 1.1);
+        const piv = base - bh - 6, sw = Math.sin(t * 1.1) * 0.05, cs = Math.cos(sw), sn = Math.sin(sw);
+        const rot = (lx: number, ly: number) => new Phaser.Math.Vector2(cx + lx * cs - ly * sn, piv + lx * sn + ly * cs);
+        // Frame: posts at each end of the way, a beam over the bell.
+        g.fillStyle(0x000000, 0.28); g.fillEllipse(cx + 3, base + 4, bw * 1.1, 12);
+        g.fillStyle(0x3a2414, 1); gR(-2, -4, 8, gC + 8); gR(gL - 6, -4, 8, gC + 8);
+        g.fillStyle(0x5a3a20, 1); g.fillRect(cx - bw * 0.7, piv - 8, bw * 1.4, 8);
+        g.fillStyle(0x7a5430, 1); g.fillRect(cx - bw * 0.7, piv - 8, bw * 1.4, 2);
+        g.lineStyle(1, 0x2a180c, 0.8); g.lineBetween(cx - bw * 0.7, piv - 3, cx + bw * 0.7, piv - 3);
+        g.fillStyle(0x2a2a30, 1); g.fillRect(cx - 4, piv - 2, 8, 6);
+        // Bell profile (half-width by height from crown to lip).
+        const prof: [number, number][] = [[0.2, 0], [0.26, 0.05], [0.3, 0.18], [0.31, 0.4], [0.34, 0.62], [0.42, 0.82], [0.5, 0.95], [0.52, 1]];
+        const outline: Phaser.Math.Vector2[] = [], body: Phaser.Math.Vector2[] = [];
+        for (const [w, h] of prof) outline.push(rot(-w * bw - 2, 4 + h * bh));
+        for (let k = prof.length - 1; k >= 0; k--) outline.push(rot(prof[k][0] * bw + 2, 4 + prof[k][1] * bh));
+        for (const [w, h] of prof) body.push(rot(-w * bw, 6 + h * (bh - 3)));
+        for (let k = prof.length - 1; k >= 0; k--) body.push(rot(prof[k][0] * bw, 6 + prof[k][1] * (bh - 3)));
+        g.fillStyle(0x3a2410, 1); g.fillPoints(outline, true);
+        g.fillStyle(col, 1); g.fillPoints(body, true);
+        const shade: Phaser.Math.Vector2[] = [];
+        for (const [w, h] of prof) shade.push(rot(w * bw * 0.35, 6 + h * (bh - 3)));
+        for (let k = prof.length - 1; k >= 0; k--) shade.push(rot(prof[k][0] * bw, 6 + prof[k][1] * (bh - 3)));
+        g.fillStyle(dim(col, 0.3), 1); g.fillPoints(shade, true);
+        const gl = [rot(-0.22 * bw, 10), rot(-0.16 * bw, 10), rot(-0.24 * bw, 6 + 0.75 * bh), rot(-0.32 * bw, 6 + 0.75 * bh)];
+        g.fillStyle(lit(col, 0.45), 0.7); g.fillPoints(gl, true);
+        // Crown loops, raised bands, inscription, verdigris.
+        const crown = rot(0, 2); g.lineStyle(3, dim(col, 0.35), 1); g.strokeEllipse(crown.x, crown.y, 10, 7);
+        for (const [h, wd] of [[0.2, 0.3], [0.27, 0.31], [0.84, 0.44], [0.9, 0.48]] as const) {
+          const a = rot(-wd * bw, 6 + h * bh), b = rot(wd * bw, 6 + h * bh);
+          g.lineStyle(1.5, lit(col, 0.25), 0.9); g.lineBetween(a.x, a.y, b.x, b.y);
+          g.lineStyle(1, dim(col, 0.45), 0.8); g.lineBetween(a.x, a.y + 1.5, b.x, b.y + 1.5);
+        }
+        for (let k = 0; k < 9; k++) { const p = rot((-0.26 + k * 0.065) * bw, 6 + 0.235 * bh); g.fillStyle(dim(col, 0.5), 0.9); g.fillRect(p.x - 1, p.y - 1.2, k % 2 ? 2 : 1.4, 2.4); }
+        g.fillStyle(0x5aa88a, 0.45);
+        for (const [lx, ly, s] of [[-0.18, 0.5, 5], [0.12, 0.66, 4], [-0.32, 0.86, 3.5], [0.24, 0.3, 3]] as const) { const p = rot(lx * bw, 6 + ly * bh); g.fillEllipse(p.x, p.y, s * 1.6, s); }
+        // Mouth and clapper.
+        const m = rot(0, 6 + bh - 2); g.fillStyle(0x140c06, 1); g.fillEllipse(m.x, m.y, bw * 0.96, 7);
+        const cl = rot(Math.sin(t * 1.1 - 0.6) * bw * 0.06, 6 + bh + 1); g.fillStyle(0x2a2420, 1); g.fillCircle(cl.x, cl.y, 4); g.fillStyle(0x6a6058, 1); g.fillCircle(cl.x - 1, cl.y - 1, 1.4);
+        const hum = (t % 5) / 5;
+        if (hum < 0.5) {
+          const k = hum / 0.5, c = rot(0, 6 + bh * 0.6);
+          g.lineStyle(2, lit(col, 0.5), 0.4 * (1 - k)); g.strokeEllipse(c.x, c.y, bw + k * 90, bh * 0.8 + k * 50);
+          g.lineStyle(1, 0xffffff, 0.2 * (1 - k)); g.strokeEllipse(c.x, c.y, bw + k * 70, bh * 0.7 + k * 40);
+        }
+      } else if (gt.look === 'curtain') {
+        // A red theatre curtain drawn across the way: heavy velvet in deep folds that sway, meeting at a
+        // shadowed centre seam, a scalloped pelmet with gold braid and fringe over it, gold-tasselled hem.
+        g.fillStyle(0x000000, 0.3); g.fillRect(r.x + 3, r.y + 4, r.w, r.h);
+        const top = horiz ? -16 : 0;
+        for (let u = 0; u < gL; u += 5) {
+          const half = u < gL / 2 ? 0 : 1, sway = Math.sin(t * 1.3 + half * 2) * 0.8;
+          const sh = 0.5 + 0.5 * Math.sin(u * 0.55 + sway + (u / gL) * 2);
+          g.fillStyle(dim(col, 0.5 * (1 - sh)), 1); gR(u, top, 5.5, gC - top);
+          if (sh > 0.85) { g.fillStyle(lit(col, 0.22), 0.7); gR(u + 2, top, 1.5, gC - top); }
+        }
+        g.fillStyle(0x2a0408, 0.6); gR(gL / 2 - 3, top, 6, gC - top);
+        g.fillStyle(lit(col, 0.18), 0.5); gR(gL / 2 + 3, top, 2, gC - top);
+        // Pelmet.
+        g.fillStyle(dim(col, 0.35), 1); gR(-3, top - 9, gL + 6, 10);
+        for (let u = 4; u < gL; u += 10) { const [x, y] = gP(u, top + 1); g.fillCircle(x, y, 5); }
+        g.fillStyle(0xe8c050, 1); gR(-3, top - 8, gL + 6, 1.6); gR(-3, top - 3, gL + 6, 1);
+        g.lineStyle(1, 0xe8c050, 0.85);
+        for (let u = 2; u < gL; u += 3) gLn(u, top + 1, u + Math.sin(t * 2 + u) * 0.6, top + 5);
+        // Gold hem with tassels.
+        g.fillStyle(0xc8a040, 1); gR(0, gC - 2, gL, 2);
+        for (let u = 6; u < gL; u += 12) {
+          const s = Math.sin(t * 2 + u * 0.3) * 0.8;
+          g.fillStyle(0xe8c050, 1); gT(u - 2 + s, gC, u + 2 + s, gC, u + s, gC + 5);
+          const [x, y] = gP(u + s, gC); g.fillCircle(x, y, 1.6);
+        }
+      } else if (gt.look === 'stalactite') {
+        // Dripping cave teeth: a rough rock lintel across the way with stalactites of every length hanging
+        // from it and stubby stalagmites rising to meet them, wet-sheened, a drip gathering on each tip,
+        // falling and ringing out in a splash below.
+        g.fillStyle(0x0a0806, 0.45); g.fillRect(r.x, r.y, r.w, r.h);
+        const rng = mulberry(hashStr(`${this.def.id}:${r.x},${r.y}`));
+        g.fillStyle(dim(col, 0.45), 1); gR(-4, -10, gL + 8, 12);
+        for (let u = -2; u < gL + 4; u += 7) { const [x, y] = gP(u, -9 + rng() * 3); g.fillCircle(x, y, 4 + rng() * 3); }
+        g.fillStyle(col, 1); gR(-4, -6, gL + 8, 6);
+        g.fillStyle(lit(col, 0.2), 0.7); gR(-4, -6, gL + 8, 1.5);
+        let i = 0;
+        for (let u = 4; u < gL - 2; u += 9 + rng() * 5, i++) {
+          const w = 4 + rng() * 4, len = gC * (0.35 + rng() * 0.6);
+          g.fillStyle(dim(col, 0.4), 1); gT(u - w - 1, 0, u + w + 1, 0, u, len + 1);
+          g.fillStyle(col, 1); gT(u - w, 0, u + w * 0.6, 0, u - w * 0.1, len);
+          g.fillStyle(lit(col, 0.35), 0.6); gT(u - w * 0.7, 1, u - w * 0.3, 1, u - w * 0.2, len * 0.7);
+          for (let k = 1; k < 4; k++) { g.lineStyle(1, dim(col, 0.25), 0.6); gLn(u - w * (1 - k / 4), len * k / 4 * 0.4, u + w * 0.6 * (1 - k / 4), len * k / 4 * 0.4); }
+          if (i % 2 === 1 && len < gC * 0.7) {
+            const mh = Math.min(gC * 0.5, gC - len - 4) * (0.5 + rng() * 0.5), mw = w * 1.2;
+            g.fillStyle(dim(col, 0.4), 1); gT(u - mw - 1, gC, u + mw + 1, gC, u, gC - mh - 1);
+            g.fillStyle(col, 1); gT(u - mw, gC, u + mw * 0.5, gC, u - mw * 0.1, gC - mh);
+          }
+          if (horiz) {
+            const ph = ((t * 0.45 + i * 0.37) % 1), [tx, ty] = gP(u - w * 0.1, len);
+            if (ph < 0.6) { g.fillStyle(0xbfe0f0, 0.85); g.fillCircle(tx, ty + 1, 0.6 + ph * 2.4); }
+            else if (ph < 0.8) { const k = (ph - 0.6) / 0.2; g.fillStyle(0xbfe0f0, 0.85); g.fillEllipse(tx, ty + 2 + k * k * (gC - len + 6), 2.4, 3.6); }
+            else { const k = (ph - 0.8) / 0.2; g.lineStyle(1, 0xbfe0f0, 0.6 * (1 - k)); g.strokeEllipse(tx, r.y + r.h + 4, 4 + k * 12, 1.5 + k * 4); }
+            g.fillStyle(0xffffff, 0.35); g.fillCircle(tx - 1, ty - len * 0.4, 0.8);
+          }
+        }
+      } else if (gt.look === 'stainedglass') {
+        // A leaded stained-glass screen: stone mullions dividing pointed lancets of jewel-coloured quarries
+        // held in black lead, a trefoil rose over each arch, and a slow band of light passing through.
+        const top = horiz ? -18 : 0, cell = 7, lancet = Math.max(20, gL / Math.max(2, Math.round(gL / 28)));
+        const pal = [0xc8202a, 0x2a4ad8, 0xe8b830, 0x2a9a5a, 0x8a3ac8, 0x3aa8d8];
+        g.fillStyle(0x000000, 0.3); g.fillRect(r.x + 3, r.y + 4, r.w, r.h);
+        const band = ((t * 0.25) % 1.6) * gL * 1.2 - gL * 0.3;
+        for (let u = 0; u < gL; u += cell) for (let v = top + 8; v < gC; v += cell) {
+          const ci = Math.floor(u / cell), cj = Math.floor((v - top) / cell), h = (ci * 7 + cj * 13 + ((ci * cj) % 5)) % pal.length;
+          const lightK = Math.max(0, 1 - Math.abs(u + (v - top) * 0.5 - band) / 30);
+          g.fillStyle(lightK > 0 ? lit(pal[h], 0.45 * lightK) : pal[h], 0.88); gR(u, v, cell, cell);
+        }
+        g.lineStyle(1.2, 0x1a1a20, 1);
+        for (let u = 0; u <= gL; u += cell) gLn(u, top + 8, u, gC);
+        for (let v = top + 8; v <= gC; v += cell) gLn(0, v, gL, v);
+        for (let u = 0; u <= gL + 0.5; u += lancet) {
+          g.fillStyle(dim(col, 0.4), 1); gR(u - 3, top, 6, gC - top);
+          g.fillStyle(col, 1); gR(u - 2, top, 4, gC - top);
+          g.fillStyle(lit(col, 0.3), 0.7); gR(u - 2, top, 1, gC - top);
+          if (horiz && u + lancet <= gL + 0.5) {
+            const m = u + lancet / 2;
+            g.fillStyle(dim(col, 0.4), 1); gT(u, top + 8, u + lancet, top + 8, m, top - 8);
+            g.fillStyle(pal[Math.floor(u / lancet) % pal.length], 0.9); gT(u + 4, top + 8, u + lancet - 4, top + 8, m, top - 3);
+            const [rx, ry] = gP(m, top + 3); g.fillStyle(0xe8b830, 0.9); g.fillCircle(rx, ry, 3);
+            g.lineStyle(1, 0x1a1a20, 1); g.strokeCircle(rx, ry, 3); g.strokeCircle(rx - 2.5, ry + 1.5, 1.8); g.strokeCircle(rx + 2.5, ry + 1.5, 1.8);
+          }
+        }
+        g.fillStyle(dim(col, 0.35), 1); gR(-3, gC - 3, gL + 6, 5);
+      } else if (gt.look === 'scroll') {
+        // A giant score unrolled across the way between two oak rollers with brass knobs: cream paper,
+        // a little rippled, ruled with staves of inked notes and bar lines, a clef at the head, and a gold
+        // glow travelling along it as if the score were being read.
+        const top = horiz ? -12 : 0, ink = 0x2a1e14;
+        g.fillStyle(0x000000, 0.28); g.fillRect(r.x + 4, r.y + 5, r.w, r.h);
+        for (let u = 7; u < gL - 7; u += 6) {
+          const rip = Math.sin(u * 0.08 + t * 0.8) * 0.06;
+          g.fillStyle(rip > 0 ? lit(col, rip * 2) : dim(col, -rip * 1.6), 1); gR(u, top, 6.5, gC - top);
+        }
+        g.fillStyle(dim(col, 0.2), 1); gR(7, gC - 2, gL - 14, 2); gR(7, top, gL - 14, 1.5);
+        const head = ((t * 40) % (gL - 30)) + 15;
+        g.fillStyle(0xffd870, 0.16); gR(head - 6, top, 12, gC - top); g.fillStyle(0xffd870, 0.1); gR(head - 12, top, 24, gC - top);
+        const staves = Math.max(1, Math.floor((gC - top - 6) / 16));
+        for (let s = 0; s < staves; s++) {
+          const v0 = top + 5 + s * ((gC - top - 6) / staves);
+          g.lineStyle(0.8, ink, 0.55);
+          for (let l = 0; l < 5; l++) gLn(10, v0 + l * 2.2, gL - 10, v0 + l * 2.2);
+          g.lineStyle(1.2, ink, 0.8); gLn(12, v0 - 2, 12, v0 + 11);
+          g.lineStyle(1, ink, 0.8);
+          { const [cx2, cy2] = gP(15, v0 + 5); g.strokeEllipse(cx2, cy2, 4, 5); gLn(16, v0 - 3, 15, v0 + 11); }
+          let k = 0;
+          for (let u = 24; u < gL - 12; u += 7, k++) {
+            if (k % 6 === 5) { g.lineStyle(1, ink, 0.7); gLn(u, v0, u, v0 + 8.8); continue; }
+            const step = ((k * 5 + s * 3) % 9), vv = v0 + 8.8 - step * 1.1;
+            const near = Math.abs(u - head) < 8 && horiz;
+            const [nx, ny] = gP(u, vv);
+            g.fillStyle(near ? 0xb87a10 : ink, 0.9); g.fillEllipse(nx, ny, horiz ? 3.2 : 2.4, horiz ? 2.4 : 3.2);
+            g.lineStyle(0.8, near ? 0xb87a10 : ink, 0.85); gLn(u + 1.5, vv, u + 1.5, vv - 6);
+          }
+        }
+        for (const u of [0, gL - 7]) {
+          g.fillStyle(0x3a2414, 1); gR(u, top - 4, 7, gC - top + 8);
+          g.fillStyle(0x7a5030, 1); gR(u + 1, top - 4, 2, gC - top + 8);
+          g.fillStyle(0xc8a050, 1);
+          { const [kx, ky] = gP(u + 3.5, top - 6); g.fillCircle(kx, ky, 4); const [kx2, ky2] = gP(u + 3.5, gC + 6); g.fillCircle(kx2, ky2, 4); }
+          g.fillStyle(0xfff0b0, 0.7);
+          { const [kx, ky] = gP(u + 2.5, top - 7); g.fillCircle(kx, ky, 1.3); }
+        }
+      } else if (gt.look === 'mirror') {
+        // A wall of tall mirrors in a gilt frame: silvered panes with a cool sky-blue depth, a soft
+        // reflection of the white sky in their upper halves, a glare band sweeping across them in turn,
+        // carved gold mouldings with rosettes at the joins; the glare is thrown out in front as a bloom.
+        const top = horiz ? -26 : 0, n = Math.max(1, Math.round(gL / 30)), pw = gL / n;
+        g.fillStyle(0x000000, 0.3); g.fillRect(r.x + 4, r.y + 5, r.w, r.h);
+        const sweep = ((t * 0.32) % 1.8) * (gL + 60) - 30;
+        for (let i = 0; i < n; i++) {
+          const u0 = i * pw + 3, uw = pw - 6, h = gC - top;
+          g.fillStyle(0x5a7088, 1); gR(u0, top + 3, uw, h - 6);
+          for (let s = 0; s < 6; s++) { g.fillStyle(lit(0x7a94ac, s * 0.08), 1); gR(u0, top + 3 + (h - 6) * s / 6, uw, (h - 6) / 6 + 0.5); }
+          g.fillStyle(0xffffff, 0.22); gR(u0, top + 3, uw, (h - 6) * 0.35);
+          g.fillStyle(0xe8f4ff, 0.35); gT(u0, top + 3, u0 + uw * 0.45, top + 3, u0, top + 3 + (h - 6) * 0.6);
+          g.fillStyle(0xffffff, 0.3); gR(u0 + uw * 0.15, top + 5, 1.5, h - 12);
+          // Sweeping glare band (a slanted bright stripe clipped by the pane).
+          const c = sweep - u0;
+          if (c > -14 && c < uw + 14) {
+            const cl = (v: number) => Math.max(0, Math.min(uw, v));
+            const a0 = cl(c - 8), a1 = cl(c + 4), b0 = cl(c - 14), b1 = cl(c - 2);
+            g.fillStyle(0xffffff, 0.75);
+            gT(u0 + a0, top + 3, u0 + a1, top + 3, u0 + b1, gC - 3); gT(u0 + a0, top + 3, u0 + b1, gC - 3, u0 + b0, gC - 3);
+            const [fx, fy] = gP(u0 + cl(c - 5), top + (h * 0.4));
+            g.fillStyle(0xffffff, 0.25); g.fillCircle(fx, fy, 16);
+          }
+        }
+        // Gilt frame: outer moulding, inner bead, mullions, rosettes.
+        const gold = 0xd8a838;
+        g.fillStyle(dim(gold, 0.45), 1); gR(-4, top - 4, gL + 8, 6); gR(-4, gC - 3, gL + 8, 6);
+        g.fillStyle(gold, 1); gR(-4, top - 4, gL + 8, 4); gR(-4, gC - 3, gL + 8, 4);
+        g.fillStyle(0xfff0a0, 0.9); gR(-4, top - 4, gL + 8, 1); gR(-4, gC - 3, gL + 8, 1);
+        for (let i = 0; i <= n; i++) {
+          const u = i * pw;
+          g.fillStyle(dim(gold, 0.45), 1); gR(u - 3.5, top - 2, 7, gC - top + 3);
+          g.fillStyle(gold, 1); gR(u - 2.5, top - 2, 5, gC - top + 3);
+          g.fillStyle(0xfff0a0, 0.8); gR(u - 2.5, top - 2, 1, gC - top + 3);
+          for (const v of [top - 1, gC - 1]) {
+            const [x, y] = gP(u, v);
+            g.fillStyle(dim(gold, 0.35), 1); g.fillCircle(x, y, 4.5); g.fillStyle(gold, 1); g.fillCircle(x, y, 3.4);
+            g.fillStyle(0xfff4b0, 1); g.fillCircle(x - 0.8, y - 0.8, 1.2);
+          }
+        }
+        if (horiz) {
+          for (let i = 0; i < n; i++) {
+            const m = i * pw + pw / 2;
+            g.fillStyle(gold, 1); gT(m - 7, top - 4, m + 7, top - 4, m, top - 10);
+            g.fillStyle(0xfff0a0, 0.9); gT(m - 4, top - 4, m, top - 4, m, top - 8);
+          }
+        }
+        // Thrown glare in front of the wall.
+        const gp = 0.5 + 0.5 * Math.sin(t * 1.4);
+        const [gx, gy] = gP(gL / 2, horiz ? gC + 14 : gC / 2);
+        g.fillStyle(0xffffff, 0.06 + 0.05 * gp); g.fillEllipse(gx, gy, horiz ? gL * 1.1 : 70, horiz ? 40 : gL);
+        g.fillStyle(0xfff8e0, 0.06 + 0.04 * gp); g.fillEllipse(gx, gy, horiz ? gL * 0.6 : 40, horiz ? 22 : gL * 0.6);
+      } else if (gt.look === 'sunbar') {
+        // Bars of solid sunlight standing across the way: each a column of light — a gold halo, a pale
+        // body and a white-hot core — flickering, sparks crawling up it, a burning pool where it meets the
+        // ground and a brass collar socket at its foot and head that it pours between.
+        const n = Math.max(3, Math.floor(gL / 16)), pw = gL / n, top = horiz ? -20 : 0;
+        g.fillStyle(0xffd870, 0.08 + 0.03 * Math.sin(t * 3)); g.fillRect(r.x - 4, r.y - 4, r.w + 8, r.h + 8);
+        for (let i = 0; i < n; i++) {
+          const u = (i + 0.5) * pw, fl = 0.8 + 0.2 * Math.sin(t * 17 + i * 2.3) * Math.sin(t * 5 + i);
+          const h = gC - top;
+          g.fillStyle(0xffc840, 0.18 * fl); gR(u - 7, top, 14, h);
+          g.fillStyle(0xffe890, 0.5 * fl); gR(u - 4, top, 8, h);
+          g.fillStyle(0xfff8e0, 0.85 * fl); gR(u - 2.2, top, 4.4, h);
+          g.fillStyle(0xffffff, 1); gR(u - 0.9, top, 1.8, h);
+          // Shimmer bands travelling up.
+          for (let k = 0; k < 3; k++) {
+            const ph = ((t * 0.9 + k / 3 + i * 0.17) % 1), v = gC - ph * h;
+            g.fillStyle(0xffffff, 0.5 * Math.sin(ph * Math.PI)); gR(u - 4, v, 8, 2);
+          }
+          for (let k = 0; k < 2; k++) {
+            const ph = ((t * 1.3 + k * 0.5 + i * 0.29) % 1), v = gC - ph * h, side = Math.sin(ph * 9 + i) * 5;
+            const [sx, sy] = gP(u + side, v); g.fillStyle(0xffffff, 0.9 * (1 - ph)); g.fillCircle(sx, sy, 1.1);
+          }
+          // Burning pool at the foot.
+          const [px, py] = gP(u, gC);
+          g.fillStyle(0xffa030, 0.22 * fl); g.fillEllipse(px, py + (horiz ? 2 : 0), 18, 7);
+          g.fillStyle(0xffffff, 0.5 * fl); g.fillEllipse(px, py + (horiz ? 1 : 0), 7, 2.6);
+          // Brass sockets.
+          for (const v of [top - 3, gC - 2]) {
+            g.fillStyle(0x6a4a18, 1); gR(u - 5, v, 10, 5);
+            g.fillStyle(0xc8962a, 1); gR(u - 4.5, v, 9, 3.5);
+            g.fillStyle(0xfff0a0, 0.9); gR(u - 4.5, v, 9, 1);
+          }
+        }
+        g.fillStyle(0x4a3418, 1); gR(-3, gC + 2, gL + 6, 3);
+        g.fillStyle(0x4a3418, 1); gR(-3, top - 5, gL + 6, 3);
+      } else if (gt.look === 'lanterns') {
+        // A curtain of caught souls: a black iron rod across the way with strings of paper lanterns
+        // hanging from it at staggered lengths, each lantern ribbed and capped in brass and glowing pale
+        // blue from the soul inside — a faint face in the light — the strings swaying as if in a draught.
+        const top = horiz ? -18 : 0, n = Math.max(3, Math.floor(gL / 13)), pw = gL / n;
+        g.fillStyle(0x000000, 0.22); g.fillRect(r.x + 3, r.y + 4, r.w, r.h);
+        g.fillStyle(0x7ac8ff, 0.06 + 0.02 * Math.sin(t * 1.2)); g.fillRect(r.x - 6, r.y - 6, r.w + 12, r.h + 12);
+        g.fillStyle(0x1a1a22, 1); gR(-4, top - 2, gL + 8, 4);
+        g.fillStyle(0x5a5a6a, 1); gR(-4, top - 2, gL + 8, 1);
+        for (const u of [-4, gL + 1]) { const [x, y] = gP(u + 1.5, top); g.fillStyle(0x2a2a34, 1); g.fillCircle(x, y, 3.5); }
+        for (let i = 0; i < n; i++) {
+          const u0 = (i + 0.5) * pw, sway = Math.sin(t * 1.1 + i * 0.9) * 1.6;
+          const count = 1 + ((i * 7) % 3), span = gC - top;
+          g.lineStyle(1, 0x8a8a9a, 0.7); gLn(u0, top + 2, u0 + sway, top + span - 2);
+          for (let k = 0; k < count; k++) {
+            const v = top + 6 + ((k + 0.5) / count) * (span - 8) + ((i * 5) % 4), u = u0 + sway * ((v - top) / span);
+            const glow = 0.7 + 0.3 * Math.sin(t * 2 + i * 1.7 + k * 2.1);
+            const [lx, ly] = gP(u, v);
+            g.fillStyle(0x7ac8ff, 0.14 * glow); g.fillCircle(lx, ly, 10);
+            g.fillStyle(0x3a6a9a, 1); g.fillEllipse(lx, ly, 9, 11);
+            g.fillStyle(0xa8e0ff, 0.95 * glow); g.fillEllipse(lx, ly, 7.4, 9.6);
+            g.fillStyle(0xe8f8ff, 0.9 * glow); g.fillEllipse(lx, ly + 0.5, 4, 5.4);
+            g.lineStyle(0.7, 0x4a7aa8, 0.6); g.lineBetween(lx - 2, ly - 4.6, lx - 2, ly + 4.6); g.lineBetween(lx + 2, ly - 4.6, lx + 2, ly + 4.6);
+            g.lineStyle(0.6, 0x5a8ab8, 0.5); g.lineBetween(lx - 3.6, ly, lx + 3.6, ly);
+            // Faint soul face.
+            g.fillStyle(0x2a5a8a, 0.45 * glow); g.fillCircle(lx - 1, ly - 0.5, 0.7); g.fillCircle(lx + 1, ly - 0.5, 0.7); g.fillEllipse(lx, ly + 1.6, 1.2, 1.6);
+            g.fillStyle(0xc8962a, 1); g.fillRect(lx - 2.6, ly - 6.6, 5.2, 1.8); g.fillRect(lx - 2, ly + 5, 4, 1.6);
+            g.fillStyle(0xfff0a0, 0.8); g.fillRect(lx - 2.6, ly - 6.6, 5.2, 0.6);
+            g.lineStyle(0.8, 0x7ac8ff, 0.6); g.lineBetween(lx, ly + 6.6, lx + Math.sin(t * 3 + i) * 0.8, ly + 9.5);
+            // A wisp curling off the top now and then.
+            const wk = ((t * 0.4 + i * 0.31 + k * 0.5) % 1);
+            if (wk < 0.4) { const p = wk / 0.4; g.fillStyle(0xc8ecff, 0.5 * (1 - p)); g.fillCircle(lx + Math.sin(p * 6 + i) * 3, ly - 8 - p * 12, 1.2 + p); }
+          }
+        }
+      } else if (gt.look === 'sigil') {
+        // A sigil circle standing on edge across the way, slowly turning on its upright axis so it thins to
+        // a line and widens again: double rune-ringed, an inscribed star and a counter-turning inner ring,
+        // its face glowing gold-white, lightning-fine runes crawling round it, stood in a carved stone sill.
+        const cx = r.x + r.w / 2, R = Math.max(18, gL / 2);
+        const cy = horiz ? r.y + r.h - R * 0.95 : r.y + r.h / 2;
+        const turn = t * 0.45, sx = horiz ? Math.cos(turn) : 0.25 + 0.2 * Math.cos(turn), sy = horiz ? 1 : 1;
+        const face = Math.abs(sx), pul = 0.65 + 0.35 * Math.sin(t * 2.1);
+        const col = Math.cos(turn) >= 0 || !horiz ? 0xffd870 : 0xffb848;
+        const P = (a: number, rr: number): [number, number] => horiz
+          ? [cx + Math.cos(a) * rr * sx, cy + Math.sin(a) * rr * sy]
+          : [cx + Math.sin(a) * rr * sx, cy + Math.cos(a) * rr];
+        g.fillStyle(0x000000, 0.25); g.fillEllipse(cx + 3, r.y + r.h + 3, horiz ? R * 2 * Math.max(0.2, face) : 26, horiz ? 10 : gL);
+        g.fillStyle(col, (0.06 + 0.08 * face) * pul); g.fillCircle(cx, cy, R * 1.25);
+        const ring = (rr: number, w: number, a: number) => {
+          g.lineStyle(w, col, a); g.beginPath();
+          for (let k = 0; k <= 36; k++) { const p = P(k * Math.PI / 18, rr); if (k === 0) g.moveTo(p[0], p[1]); else g.lineTo(p[0], p[1]); }
+          g.strokePath();
+        };
+        ring(R, 3, 0.9 * pul); ring(R, 1, 1); ring(R * 0.84, 1.5, 0.75 * pul); ring(R * 0.36, 1.2, 0.8 * pul);
+        g.lineStyle(1, 0xffffff, 0.8 * pul); ring(R, 1, 0.6);
+        for (let k = 0; k < 24; k++) {
+          const a = k * (Math.PI / 12) + t * 0.2, p0 = P(a, R * 0.86), p1 = P(a, R * (k % 3 === 0 ? 0.99 : 0.94));
+          g.lineStyle(1, lit(col, 0.3), 0.8 * pul); g.lineBetween(p0[0], p0[1], p1[0], p1[1]);
+        }
+        g.lineStyle(1.4, col, 0.85 * pul);
+        for (let k = 0; k < 5; k++) {
+          const p0 = P(-Math.PI / 2 + k * 2 * (Math.PI * 2 / 5), R * 0.84), p1 = P(-Math.PI / 2 + (k + 1) * 2 * (Math.PI * 2 / 5), R * 0.84);
+          g.lineBetween(p0[0], p0[1], p1[0], p1[1]);
+        }
+        for (let k = 0; k < 5; k++) {
+          const p = P(-Math.PI / 2 + k * (Math.PI * 2 / 5), R * 0.84);
+          g.fillStyle(col, 0.4 * pul); g.fillCircle(p[0], p[1], 3.5); g.fillStyle(0xffffff, 0.95); g.fillCircle(p[0], p[1], 1.4);
+        }
+        for (let k = 0; k < 6; k++) {
+          const a = -t * 1.2 + k * (Math.PI / 3), p0 = P(a, R * 0.36), p1 = P(a + 0.5, R * 0.2);
+          g.lineStyle(1, col, 0.8 * pul); g.lineBetween(p0[0], p0[1], p1[0], p1[1]);
+        }
+        const c0 = P(0, 0); g.fillStyle(0xffffff, 0.7 * pul); g.fillCircle(c0[0], c0[1], 2.4);
+        // A spark running round the outer ring.
+        const sp = P(t * 2.4, R); g.fillStyle(0xffffff, 0.9); g.fillCircle(sp[0], sp[1], 1.8); g.fillStyle(col, 0.4); g.fillCircle(sp[0], sp[1], 4.5);
+        // Stone sill across the way.
+        g.fillStyle(0x8a8478, 1); gR(-3, gC - 5, gL + 6, 7);
+        g.fillStyle(0xd8d0c0, 1); gR(-3, gC - 5, gL + 6, 2);
+        g.fillStyle(0x5a5448, 1); gR(-3, gC + 1, gL + 6, 1);
+        g.lineStyle(1, col, 0.6 * pul);
+        for (let u = 6; u < gL - 4; u += 9) { gLn(u, gC - 2.5, u + 3, gC - 1.5); gLn(u + 3, gC - 1.5, u + 5, gC - 2.5); }
+      } else if (gt.look === 'lens') {
+        // A great lens in a brass ring on an iron stand, set across the way between brass rails: the glass
+        // faintly blue-green with curved highlights, its rim riveted, and the noon sun gathered through it
+        // into a shimmering white caustic spot on the stones behind, a glint star rolling round the ring.
+        const cx = r.x + r.w / 2, R = Math.max(16, Math.min(gL * 0.36, 60));
+        const cy = horiz ? r.y + r.h - R - 10 : r.y + r.h / 2, foot = r.y + r.h + 2;
+        g.fillStyle(0x000000, 0.28); g.fillEllipse(cx + 4, foot + 2, R * 1.8, 12);
+        // Rails filling the rest of the way.
+        g.fillStyle(0x6a4a1a, 1); gR(-2, gC * 0.3, gL + 4, 4); gR(-2, gC * 0.75, gL + 4, 4);
+        g.fillStyle(0xd8a840, 1); gR(-2, gC * 0.3, gL + 4, 2.5); gR(-2, gC * 0.75, gL + 4, 2.5);
+        g.fillStyle(0xfff0a0, 0.8); gR(-2, gC * 0.3, gL + 4, 0.8); gR(-2, gC * 0.75, gL + 4, 0.8);
+        for (const u of [0, gL]) { g.fillStyle(0x3a3a40, 1); gR(u - 3, -6, 6, gC + 8); g.fillStyle(0x7a7a84, 1); gR(u - 3, -6, 1.5, gC + 8); }
+        // Caustic spot on the ground behind the lens.
+        const ck = 0.75 + 0.25 * Math.sin(t * 6) * Math.sin(t * 2.3);
+        const spx = horiz ? cx : cx + R * 1.3, spy = horiz ? r.y - 6 : cy;
+        g.fillStyle(0xffe890, 0.18 * ck); g.fillEllipse(spx, spy, 22, 12);
+        g.fillStyle(0xffffff, 0.75 * ck); g.fillEllipse(spx, spy, 7, 4);
+        g.lineStyle(1, 0xfff0c0, 0.4 * ck); g.strokeEllipse(spx, spy, 30 + ck * 6, 15 + ck * 3);
+        // Stand: tripod legs and yoke.
+        g.fillStyle(0x2a2a30, 1);
+        g.fillTriangle(cx - 3, cy + R, cx + 3, cy + R, cx - R * 0.7, foot); g.fillTriangle(cx - 3, cy + R, cx + 3, cy + R, cx + R * 0.7, foot);
+        g.fillRect(cx - 2.5, cy + R, 5, foot - cy - R);
+        g.lineStyle(3, 0x3a3a42, 1); g.beginPath(); g.arc(cx, cy, R + 6, Math.PI * 0.15, Math.PI * 0.85); g.strokePath();
+        g.fillStyle(0x5a5a64, 1); g.fillCircle(cx - R - 5, cy + 2, 3); g.fillCircle(cx + R + 5, cy + 2, 3);
+        // Glass.
+        g.fillStyle(0x9ad8d0, 0.35); g.fillCircle(cx, cy, R);
+        g.fillStyle(0xd8fff8, 0.22); g.fillCircle(cx - R * 0.15, cy - R * 0.15, R * 0.7);
+        g.fillStyle(0xffffff, 0.12); g.fillCircle(cx + R * 0.2, cy + R * 0.25, R * 0.35);
+        g.lineStyle(2.5, 0xffffff, 0.55); g.beginPath(); g.arc(cx, cy, R * 0.78, Math.PI * 1.05, Math.PI * 1.45); g.strokePath();
+        g.lineStyle(1.2, 0xffffff, 0.4); g.beginPath(); g.arc(cx, cy, R * 0.62, Math.PI * 1.1, Math.PI * 1.3); g.strokePath();
+        g.lineStyle(1, 0xffffff, 0.25); g.beginPath(); g.arc(cx, cy, R * 0.8, Math.PI * 0.1, Math.PI * 0.35); g.strokePath();
+        // Converging rays through the glass.
+        const ra = 0.15 + 0.1 * Math.sin(t * 1.7);
+        g.lineStyle(1, 0xfff4c0, ra);
+        for (let k = -2; k <= 2; k++) g.lineBetween(cx + k * R * 0.35, cy + (horiz ? R * 0.6 : 0), spx, spy);
+        // Brass ring with rivets.
+        g.lineStyle(5, 0x6a4a1a, 1); g.strokeCircle(cx, cy, R + 1);
+        g.lineStyle(3.5, 0xd8a840, 1); g.strokeCircle(cx, cy, R + 1);
+        g.lineStyle(1, 0xfff0a0, 0.8); g.beginPath(); g.arc(cx, cy, R + 1.5, Math.PI * 0.95, Math.PI * 1.7); g.strokePath();
+        for (let k = 0; k < 12; k++) { const a = k * Math.PI / 6; g.fillStyle(0x8a6420, 1); g.fillCircle(cx + Math.cos(a) * (R + 1), cy + Math.sin(a) * (R + 1), 1.2); }
+        // Glint star rolling round the rim.
+        const ga = t * 0.9, gx = cx + Math.cos(ga) * (R + 1), gy = cy + Math.sin(ga) * (R + 1), gs = 4 + 2 * Math.sin(t * 5);
+        g.fillStyle(0xffffff, 0.9); g.fillCircle(gx, gy, 1.6);
+        g.lineStyle(1, 0xffffff, 0.8); g.lineBetween(gx - gs, gy, gx + gs, gy); g.lineBetween(gx, gy - gs, gx, gy + gs);
+      } else if (gt.look === 'scaffold') {
+        // Painters' scaffolding across the way: lashed timber poles and ledgers, cross-braces, a plank deck
+        // on top with paint pots and a brush, and dust-sheets hung between the poles, paint-spattered and
+        // stiff with old drips, their hems stirring.
+        const top = horiz ? -30 : 0, n = Math.max(2, Math.round(gL / 26)), bay = gL / n;
+        const rng = mulberry(hashStr(`${this.def.id}:scaf:${r.x},${r.y}`));
+        const pal = [0xe83a4a, 0x2a6ae8, 0xf0c020, 0x3ab85a, 0xe86ac8, 0xf07a20];
+        g.fillStyle(0x000000, 0.26); g.fillRect(r.x + 4, r.y + 5, r.w, r.h);
+        // Dust-sheets.
+        for (let b = 0; b < n; b++) {
+          const u0 = b * bay + 2, uw = bay - 4, v0 = top + 8;
+          for (let u = 0; u < uw; u += 3) {
+            const fold = 0.5 + 0.5 * Math.sin(u * 0.7 + b * 2 + Math.sin(t * 0.9 + b) * 0.6);
+            const hem = Math.sin(t * 1.5 + u * 0.3 + b) * 1.5;
+            g.fillStyle(fold > 0.5 ? 0xe8e0d0 : 0xc8bea8, 0.96); gR(u0 + u, v0, 3.4, gC - v0 - 2 + hem);
+          }
+          g.fillStyle(0x8a7e68, 0.5); gR(u0, v0, uw, 1.5);
+          for (let s = 0; s < 7; s++) {
+            const col = pal[Math.floor(rng() * pal.length)], su = u0 + 2 + rng() * (uw - 4), sv = v0 + 3 + rng() * (gC - v0 - 8);
+            const [x, y] = gP(su, sv), sr = 1 + rng() * 2.2;
+            g.fillStyle(col, 0.85); g.fillCircle(x, y, sr);
+            for (let d = 0; d < 3; d++) { const a = rng() * Math.PI * 2; g.fillCircle(x + Math.cos(a) * sr * 2, y + Math.sin(a) * sr * 2, 0.6); }
+            if (rng() < 0.5) { g.fillStyle(col, 0.7); gR(su - 0.5, sv, 1.2, 4 + rng() * 8); }
+          }
+        }
+        // Poles, ledgers, braces.
+        const wood = 0x9a7448;
+        for (let b = 0; b < n; b++) {
+          g.lineStyle(1.5, dim(wood, 0.25), 0.9); gLn(b * bay + 2, top + 10, (b + 1) * bay - 2, gC - 4); gLn((b + 1) * bay - 2, top + 10, b * bay + 2, gC - 4);
+        }
+        for (const v of [top + 6, (top + gC) / 2]) {
+          g.fillStyle(dim(wood, 0.4), 1); gR(-3, v, gL + 6, 4); g.fillStyle(wood, 1); gR(-3, v, gL + 6, 2.8);
+        }
+        for (let b = 0; b <= n; b++) {
+          const u = b * bay;
+          g.fillStyle(dim(wood, 0.45), 1); gR(u - 2.5, top - 2, 5, gC - top + 4);
+          g.fillStyle(wood, 1); gR(u - 2, top - 2, 3.5, gC - top + 4);
+          g.fillStyle(lit(wood, 0.3), 0.8); gR(u - 2, top - 2, 1, gC - top + 4);
+          for (const v of [top + 7, (top + gC) / 2 + 1]) { g.lineStyle(1, 0xd8c890, 0.9); gLn(u - 3, v - 1, u + 3, v + 2); gLn(u - 3, v + 2, u + 3, v - 1); }
+          const [fx, fy] = gP(u, gC + 2); g.fillStyle(0x5a4a3a, 1); g.fillRect(fx - 3.5, fy - 1, 7, 3);
+        }
+        // Plank deck with pots and a brush.
+        g.fillStyle(0x7a5a34, 1); gR(-4, top - 3, gL + 8, 5);
+        g.fillStyle(0xb8935a, 1); gR(-4, top - 3, gL + 8, 3);
+        g.lineStyle(0.6, 0x5a3e20, 0.7); for (let u = 10; u < gL; u += 20) gLn(u, top - 3, u, top + 2);
+        if (horiz) {
+          for (let b = 0; b < n; b++) {
+            const pu = b * bay + bay * (0.3 + rng() * 0.4), col = pal[(b * 2 + 1) % pal.length];
+            const [px, py] = gP(pu, top - 3);
+            g.fillStyle(0x8a8a90, 1); g.fillRect(px - 3, py - 7, 6, 7);
+            g.fillStyle(0xc8c8d0, 1); g.fillRect(px - 3, py - 7, 1.5, 7);
+            g.fillStyle(col, 1); g.fillEllipse(px, py - 7, 6, 2); g.fillRect(px + 1.5, py - 6, 1.5, 3 + (b % 2) * 2);
+            if (b % 2 === 0) { g.lineStyle(1.4, 0x7a5030, 1); g.lineBetween(px + 2, py - 7, px + 6, py - 13); g.fillStyle(col, 1); g.fillRect(px + 5, py - 15, 2.4, 3); }
+            const dk = ((t * 0.35 + b * 0.4) % 1);
+            const [dx, dy] = gP(pu + 2.2, top + 2 + dk * (gC - top));
+            if (dk < 0.9) { g.fillStyle(col, 0.85); g.fillEllipse(dx, dy, 1.6, 2.4); }
+          }
+        }
       } else if (gt.look === 'candy') {
         // Candy-cane bars, red-and-white striped.
         g.fillStyle(0xfff0f6, 0.5); g.fillRect(r.x, r.y, r.w, r.h);

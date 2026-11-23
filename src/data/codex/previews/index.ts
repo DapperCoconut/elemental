@@ -784,12 +784,12 @@ export const PREVIEWS: Record<string, PreviewScript> = {
   // ── Fate ──
   'fate:fate-card-throw': fate.cardThrow,
   'fate:fate-card-throw:up': fate.cardThrowUpgraded,
-  'fate:fate-reroll': fate.reroll,
-  'fate:fate-reroll:up': fate.rerollUpgraded,
-  'fate:fate-preserve': fate.preserve,
-  'fate:fate-preserve:up': fate.preserveUpgraded,
-  'fate:fate-enchant': fate.enchant,
-  'fate:fate-enchant:up': fate.enchantUpgraded,
+  'fate:fate-side-shuffle': fate.sideShuffle,
+  'fate:fate-side-shuffle:up': fate.sideShuffleUpgraded,
+  'fate:fate-dice-of-doom': fate.diceOfDoom,
+  'fate:fate-dice-of-doom:up': fate.diceOfDoomUpgraded,
+  'fate:fate-cursed-talisman': fate.cursedTalisman,
+  'fate:fate-cursed-talisman:up': fate.cursedTalismanUpgraded,
   'fate:fate-all-in': fate.allIn,
   'fate:fate-all-in:up': fate.allInUpgraded,
 

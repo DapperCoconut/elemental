@@ -308,8 +308,8 @@ export const MYTH_BANTER: Record<string, BanterSet> = {
   fate: {
     opener: [
       m('Fate. A hand of torn cards along the bottom of the screen, and no say in what it holds.'),
-      f('Eighteen cards. The click is whatever the deck says. I never choose. I manage.'),
-      m('Preserve the good ones, enchant the better ones, bet fifty health on a wheel.'),
+      f('Three cards at a time. The click is whatever the deck says. I never choose. I manage.'),
+      m('Shuffle aside, roll the die, curse the foe, and bet the whole hand on a wheel.'),
       f('You claim to decide your own fate, Myth. Pick a card. We will see.'),
     ],
     mid: [

@@ -14,6 +14,9 @@ import { AIR_ISLE } from './content/air';
 import { EARTH_ISLE } from './content/earth';
 import { ELECTRICITY_ISLE } from './content/electricity';
 import { SLIME_ISLE } from './content/slime';
+import { FATE_ISLE } from './content/fate';
+import { SOUND_ISLE } from './content/sound';
+import { LIGHT_ISLE } from './content/light';
 import { BOATS, DOCK_UPGRADES } from './content/sea';
 
 /**
@@ -21,7 +24,7 @@ import { BOATS, DOCK_UPGRADES } from './content/sea';
  * `BUNDLES`; nothing else in the engine names an isle.
  */
 
-const BUNDLES: IsleBundle[] = [FIRE_ISLE, WATER_ISLE, LIFE_ISLE, AIR_ISLE, EARTH_ISLE, ELECTRICITY_ISLE, SLIME_ISLE];
+const BUNDLES: IsleBundle[] = [FIRE_ISLE, WATER_ISLE, LIFE_ISLE, AIR_ISLE, EARTH_ISLE, ELECTRICITY_ISLE, SLIME_ISLE, FATE_ISLE, SOUND_ISLE, LIGHT_ISLE];
 
 export const ISLES: IsleDef[] = BUNDLES.map((b) => b.isle);
 

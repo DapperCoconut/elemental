@@ -62,6 +62,9 @@ only the overview (this file) and its own isle:
 | Bedrock Hold (earth) | `docs/ten-isles/earth.md` |
 | Voltreach (electricity) | `docs/ten-isles/electricity.md` |
 | Fangmire (slime / Venom) | `docs/ten-isles/slime.md` |
+| Lotterhaven (fate) | `docs/ten-isles/fate.md` |
+| Choirholm (sound) | `docs/ten-isles/sound.md` |
+| Solmara (light) | `docs/ten-isles/light.md` |
 
 A new isle gets a new file here before its builders launch.
 
@@ -193,6 +196,57 @@ A new isle gets a new file here before its builders launch.
   Step reads speed > 560); item scripts can't slow; Manacle Works calls `Fighter.lockAbility` directly; the liveness sim
   never dashes, so dash/speed rules go unexercised; Subterfuge Spray reports its cast at burst end; toxin/most statuses
   ignore `statusDmgMult`/`statusDurMult`; alternate ultimates aren't in the gene key map.
-- Not yet built: the other three isles; the
+- 2026-11-22: **Lotterhaven (Fate Isle) kicked off** — bible `docs/ten-isles/fate.md`, brief retargeted, isle registered
+  with placeholders (`outer: true`). Port Tosswater, dungeon the House (the Croupier-King's casino-palace, climbed cellar →
+  High Table), monarch Lucan (the Lot / the Draw / busted), wanderer Marlo Fairshake (+ magpie Tuppence); courts card(t1)
+  clockwork treasury remembrance mind war(t4, House door 1200,150). Contract adds weathers `cards`/`confetti`/`goldleaf`/
+  `sandfall`/`sepia`/`ripples`, gate looks `dice`/`vault`/`clock`/`locket`/`eye`/`palisade`, fishery kinds `gilded`/`lethe`
+  (both need `rod-fortune`, sold at Tosswater), hats `visor`/`jester`/`shako`. Sea beast **the Wheelback** (rolls dice that
+  tick down and burst) drops the **Fortune Helm** (spins every 7 s: gust / ward / broadside).
+- 2026-11-22: **Lotterhaven built** — 6 courts + Tosswater port + the House/Croupier-King Lucan + genes, all on Opus, ~37.8k
+  lines in `content/fate/`, validator clean (no Lotterhaven warnings), build clean, not runtime-tested. Engine: `BossToolkit.stun/
+  root` (real CC for signatures, routed through `boss/framework/CrowdControl.ts` to IslesFightKit's holds); Time's revolver and
+  Always Noon now report casts (`onKitCast`). Gaps builders worked around: signatures can't damage the boss (All In / Sacrifice
+  use `takenMult`), no shove immunity (Last Stand snaps Banneret back), Last Stand / the Deal write `tk.damageScale`, Roulette
+  writes `tk.player.x/y`, no dash signal (Tilt Yard reads speed > 560), no cooldown-swap hook (Mind Swap calls Fighter cooldown
+  methods), Lethe calls `Fighter.lockAbility`, no "struck the other" hook (Poker Face swaps on any hurt), validator has no gene
+  checks; Fate's Enchant/Throw/Preserve pay cooldown on a no-op.
+- 2026-11-22: **Choirholm (Sound Isle) kicked off** — bible `docs/ten-isles/sound.md`, brief retargeted, isle registered
+  with placeholders (`outer: true`). Port Carillon Quay, dungeon the Great Organ (climbed bellows → Console), monarch Maestro
+  Cadenza (the Part / the Hours / muted — voices sealed in the Organ), wanderer Lark Halloway (+ mynah Patter, who speaks in her
+  voice); courts brass(t1) cavern libretto masque hush cathedral(t4, Organ door 1200,150). Contract adds weathers `notes`/
+  `glowworms`/`lull`/`sequins`/`incense`/`pages`, gate looks `pipes`/`bell`/`curtain`/`stalactite`/`stainedglass`/`scroll`,
+  fishery kinds `resonant`/`still` (both need `rod-tuning`, sold at Carillon), hats `bandmaster`/`domino`/`earmuffs`. Sea beast
+  **the Cantor** (sound-rings with rests) drops the **Foghorn Bow** (every 8 s: pushes drift aside, holds hazards still 2 s).
+  Engine: `BossToolkit.silence` (real silence for signatures, through CrowdControl).
+  Genes landed first; gaps found: Sound's Baton has no rule (120 ms re-cast); Devotion faith ignores every multiplier
+  (no faith-gain hook); Holy Water bottles refill on the kit's 7 s clock, not cooldown cuts; Silence Run pays on a miss.
+- 2026-11-22: **Choirholm built** — 6 courts + Carillon Quay + the Great Organ/Maestro Cadenza + genes, all on Opus, ~36.4k
+  lines in `content/sound/`, validator clean (no Choirholm warnings), build clean, not runtime-tested. Masquerade first built the
+  Cathedral's Confessional by mistake; rebuilt as Gondola. Validator now length-checks quest offer/accept/complete lines (≈35
+  older-isle warnings surfaced, none over 140). Fixed Prince Squall's tornado crash (a 1-point path when it spawned off-field).
+  Gaps builders worked around: signatures can't shove (Sforzando uses `tk.pull`); gimmicks can't hide a fighter (Confessional/
+  Masked Quartet draw over + re-apply airborne/root), have no darkness layer (Sonar draws its own), can't tell who dealt a hit
+  (Prompter / Folio Storm), and toolkit bullets only hit the player (Call and Answer tracks its own shots); no dash signal
+  (Creaking Boards, Folio Storm read speed); signatures still aren't told their phase; item scripts can't silence (White Ribbon
+  stuns); shot handles have no identity (Hall of Mirrors debounces by position).
+- 2026-11-22: **Solmara (Light Isle) kicked off** — the last isle. Bible `docs/ten-isles/light.md`, brief retargeted, isle
+  registered with placeholders (`outer: true`). Port Meridian Quay, dungeon the Heliostat (the mirror-crown that pins the sun,
+  climbed base → Crown), monarch Despot Auriel (the Endless Noon / Clarity / Dusk Tickets / bleached into Clears), wanderer Sable
+  Merrow (a Clear, + luna moth Nocturne); courts noon(t1) lantern mural workshop arcane tribunal(t4, Heliostat door 1200,150).
+  Contract adds weathers `sunbeams`/`glare`/`lanterns`/`sigils`/`prisms`/`pigment`, gate looks `mirror`/`sunbar`/`lanterns`/`sigil`/
+  `lens`/`scaffold`, fishery kinds `sunpool`/`mana` (both need `rod-prism`, sold at Meridian), hats `wig`/`beret`/`wizard`. Sea beast
+  **the Lensback** (focuses burning spots on the sea) drops the **Burning Glass Prow** (every 7 s burns away the two nearest hazards
+  ahead). Engine: `ctx.dashing(f)` (the liveness sim now dashes), `tk.spawnBullet({ hits })` (bullets that strike the bot),
+  `tk.phase` for signatures.
+- 2026-11-22: **Solmara built — all ten isles exist.** 6 courts + Meridian Quay + the Heliostat/Despot Auriel (4 phases + hard
+  Second Sun) + genes, all on Opus, ~37.9k lines in `content/light/`, validator clean (0 placeholders, no Solmara warnings), build
+  clean, not runtime-tested. Engine: `tk.playerDashing()` for signatures. Engine findings (genes builder): Light Click/E never
+  report casts and Light's car ignores speed mults; Justice R/F, Soul Arise/Whistle/Turn and Paint's blank Still Life pay gene rules
+  on refused/no-op casts; Creation's charge abilities go through `triggerCooldown` (skips disarm/silence checks). Gaps worked around:
+  NpcLook has no translucency or pet (Sable drawn glass-pale, Nocturne only in area animation); signatures have no cast hook
+  (Blind Justice listens to the Fighter 'cast' event) and can't damage the boss (`takenMult`); Counterspell can't cancel a cast;
+  the bot's cast hook gives no key slot; Auriel's Sunset paints its own dusk instead of `gloom` (its fixed hole hides warnings).
+- Not yet built: the
   Obsidian Pinnacle + Obsidian King; revolts / anarchy / dark market; the meteor + hard mode (save has
   `hard`, fights already scale on it, but no 10-encounter courts or Fallen forms yet); online co-op.

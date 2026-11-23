@@ -1133,6 +1133,20 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   public viewTurnQuarter = 0;
   /** Fate Mastery — Vulnerable curse: the next hit taken is doubled, then this clears. */
   public vulnerableNextHit = false;
+  /**
+   * Fate's Cursed Talisman: while one orbits this fighter, every hit it takes has this chance to
+   * crit for 2x. Written only by FateKit (set on attach, zeroed when the talisman breaks).
+   */
+  public fateCurseCrit = 0;
+  /**
+   * Fate's Dice of Doom: the chance a hit misses outright (a held 5, a clicked 5), plus
+   * `fateSureDodges` — hits that are guaranteed to miss (the 5's dice barrage). Written only by
+   * FateKit; rolled by the victim, like the other outright-miss pools below.
+   */
+  public fateDodge = 0;
+  public fateSureDodges = 0;
+  /** FateKit's hook for a Dice of Doom dodge landing, so the miss can be shown on the body. */
+  public onFateDodge?: () => void;
 
   /** Timestamp until which healing is suppressed (mutations). Date.now() based. */
   public healStopUntil = 0;
@@ -1575,6 +1589,13 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       this.lastIncomingDamage = 0;
       return;
     }
+    // Fate's Dice of Doom: a banked sure-dodge first, then the rolled chance. Same rules.
+    if (!pierce && !opts?.selfInflicted && amount > 0 && (this.fateSureDodges > 0 || (this.fateDodge > 0 && Math.random() < this.fateDodge))) {
+      if (this.fateSureDodges > 0) this.fateSureDodges--;
+      this.lastIncomingDamage = 0;
+      this.onFateDodge?.();
+      return;
+    }
     // Savor's Fruit Punch. Same rules: the victim rolls.
     if (!pierce && !opts?.selfInflicted && amount > 0 && this.savorDodge > 0 && Math.random() < this.savorDodge) {
       this.lastIncomingDamage = 0;
@@ -1612,6 +1633,11 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       isCrit = effectiveCritChance > 0 && Math.random() < effectiveCritChance;
       if (isCrit) {
         amount = Math.round(amount * (critCtx?.mult ?? 2));
+      }
+      // Fate's Cursed Talisman: the cursed take a 2x crit on any hit, whoever threw it.
+      if (!isCrit && !opts?.selfInflicted && amount > 0 && this.fateCurseCrit > 0 && Math.random() < this.fateCurseCrit) {
+        isCrit = true;
+        amount = Math.round(amount * 2);
       }
 
       // Tallied here: after the crit roll (a crit really is a bigger hit) but before every

@@ -4,7 +4,10 @@ import { BaseAvatar } from '../../../elements/kits/ElementVisuals';
 import {
   FATE, FateAvatar, FateFx, HOUSE_TONES, TAROT_TONES, fateCardLayered, fateChip, fatePlayingCard, suitInk,
 } from '../../../elements/kits/FateVisuals';
-import { CARD_RANKS, CARD_SUITS, CARD_USES, PRESERVE_USES, FateCardType } from '../../../elements/kits/FateKit';
+import {
+  ALL_IN_PER_CARD, ALL_IN_PER_USE, BASE_HAND_SIZE, CARD_RANKS, CARD_SUITS, CARD_USES, DRAW_INTERVAL_MS,
+  FateCardType, SHUFFLE_DIST, UPGRADED_HAND_SIZE,
+} from '../../../elements/kits/FateKit';
 
 /**
  * Fate's showcases.
@@ -23,33 +26,28 @@ import { CARD_RANKS, CARD_SUITS, CARD_USES, PRESERVE_USES, FateCardType } from '
 
 // ── The kit's constants, mirrored ─────────────────────────────────────
 
-const BASE_HAND_SIZE = 6;
-const UPGRADED_HAND_SIZE = 8;
-const DRAW_INTERVAL_MS = 5000;
 const GREAT_ENCHANT_MULT = 4;
 const TAROT_COOLDOWN_MS = 20000;
 const CYCLE_BIN_TARGET = 3;
 const CYCLE_DRAW_COUNT = 2;
 
-const ALL_IN_WAGER = 50;
 const ALL_IN_ORBIT_MS = 3000;
 const ALL_IN_ORBIT_PLUS_MS = 5000;
 const ALL_IN_ORBIT_R = 100;
 const ALL_IN_RADIUS = 50;
 
-/** The eighteen cards, exactly as `FATE_CARD_DEFS` lists them. */
+/** The seventeen cards, exactly as `FATE_CARD_DEFS` lists them. */
 interface CardDef { type: string; name: string; emoji: string; color: number; blurb: string; dmg: number; nu: boolean }
 const CARDS: CardDef[] = [
   { type: 'laser', name: 'Laser', emoji: '🔴', color: 0xff3333, blurb: '15 dmg hitscan laser', dmg: 15, nu: false },
-  { type: 'burst', name: 'Burst', emoji: '💥', color: 0xff8800, blurb: '5× 5 dmg cone blast', dmg: 5, nu: false },
-  { type: 'barrier', name: 'Barrier', emoji: '🛡️', color: 0x4488ff, blurb: '15× 3 dmg bullet ring', dmg: 3, nu: false },
+  { type: 'burst', name: 'Burst', emoji: '💥', color: 0xff8800, blurb: '5× 7 dmg cone blast', dmg: 7, nu: false },
+  { type: 'barrier', name: 'Barrier', emoji: '🛡️', color: 0x4488ff, blurb: '18× 5 dmg ring + 1 shield', dmg: 5, nu: false },
   { type: 'explosion', name: 'Explosion', emoji: '💣', color: 0xcc2222, blurb: '20 dmg AoE bomb', dmg: 20, nu: false },
-  { type: 'infect', name: 'Infect', emoji: '☠️', color: 0x55cc55, blurb: '3× 5 dmg + poison', dmg: 5, nu: false },
+  { type: 'infect', name: 'Infect', emoji: '☠️', color: 0x55cc55, blurb: '3× 6 dmg + poison', dmg: 6, nu: false },
   { type: 'coin', name: 'Coin', emoji: '🪙', color: 0xffcc00, blurb: 'Reflects bullets ×2 dmg', dmg: 0, nu: false },
-  { type: 'heal', name: 'Heal', emoji: '💚', color: 0x44dd88, blurb: '12 orbs, 8 HP each', dmg: 8, nu: false },
-  { type: 'buff', name: 'Buff', emoji: '💪', color: 0xdd88ff, blurb: '+10% spd/dmg/DR (8s)', dmg: 0, nu: false },
+  { type: 'heal', name: 'Heal', emoji: '💚', color: 0x44dd88, blurb: '12 orbs, 10 HP each', dmg: 10, nu: false },
+  { type: 'buff', name: 'Buff', emoji: '💪', color: 0xdd88ff, blurb: '+20% spd/dmg/DR (8s)', dmg: 0, nu: false },
   { type: 'lightning', name: 'Lightning', emoji: '⚡', color: 0xffee44, blurb: '20 dmg + 2s stun', dmg: 20, nu: false },
-  { type: 'slots', name: 'Slots', emoji: '🎰', color: 0xff66cc, blurb: 'Summon a slot machine', dmg: 0, nu: false },
   { type: 'boomerang', name: 'Boomerang', emoji: '🪃', color: 0xb87333, blurb: 'Orbits you 3s, 15 dmg', dmg: 15, nu: true },
   { type: 'slash', name: 'Slash', emoji: '⚔️', color: 0x8b0000, blurb: 'Close red slash, 15 dmg', dmg: 15, nu: true },
   { type: 'phase', name: 'Phase', emoji: '💨', color: 0x00c2c7, blurb: 'Dash at cursor, 10 dmg', dmg: 10, nu: true },
@@ -137,11 +135,11 @@ function dummy(ctx: PreviewCtx, at: Mark): void {
 
 /**
  * The fan of cards along the bottom of the screen, exactly as the arena draws it — face, emoji,
- * blurb, the gold rim of a Preserve, the purple of an Enchant, the magenta of a Tarot, and the
+ * blurb, the gold rim of a wager, the purple of a glyph, the magenta of a Tarot, and the
  * highlight on whichever one the click will throw.
  */
 interface HandCard {
-  def: CardDef; preserved: boolean; enchanted: boolean; great: boolean; curse: number;
+  def: CardDef; enchanted: boolean; great: boolean; curse: number;
   uses: number; wear: number; seed: number;
 }
 
@@ -150,7 +148,7 @@ const PREVIEW_CARD_SCALE = 0.62;
 
 function hand(
   ctx: PreviewCtx,
-  read: () => { cards: HandCard[]; selected: number; hovered?: number },
+  read: () => { cards: HandCard[]; selected: number; hovered?: number; wagered?: Set<number> },
 ): void {
   const papers: Phaser.GameObjects.Graphics[] = [];
   const texts: Phaser.GameObjects.Text[] = [];
@@ -181,15 +179,16 @@ function hand(
       const c = st.cards[i];
       const x = ctx.w / 2 + (i - (n - 1) / 2) * step;
       const sel = i === st.selected;
-      const cy = y - (sel ? 6 : 0);
+      const bet = !!st.wagered?.has(i);
+      const cy = y - (bet ? 10 : sel ? 6 : 0);
       const suit = CARD_SUITS[c.def.type as FateCardType];
-      // The three coats: gold for preserved, purple for enchanted, magenta for a Tarot card.
+      // The three coats: gold for wagered, purple for a glyph, magenta for a Tarot card.
       const pulse = 0.5 + 0.5 * Math.sin(t * 6 + i);
-      const border = c.great ? FATE.great : c.enchanted ? FATE.enchant : c.preserved ? FATE.gold : FATE.ash;
+      const border = bet ? FATE.gold : c.great ? FATE.great : c.enchanted ? FATE.enchant : FATE.ash;
       const p = papers[i].setVisible(true).setPosition(x, cy);
       const dmg = fatePlayingCard(p, {
         w: cw, h: ch, suit, face: c.def.color, border,
-        borderWidth: (c.great || c.enchanted || c.preserved) ? 2 + pulse : 1.4,
+        borderWidth: (bet || c.great || c.enchanted) ? 2 + pulse : 1.4,
         wear: c.wear, seed: c.seed, selected: sel, uses: c.uses,
       });
       if (st.hovered === i) {
@@ -214,7 +213,7 @@ function randomCard(pool: CardDef[] = CARDS.filter((c) => !c.nu)): HandCard {
 
 function fresh(def: CardDef): HandCard {
   return {
-    def, preserved: false, enchanted: false, great: false, curse: -1,
+    def, enchanted: false, great: false, curse: -1,
     uses: CARD_USES, wear: 0, seed: Math.floor(Math.random() * 0x7fffffff),
   };
 }
@@ -222,7 +221,6 @@ function fresh(def: CardDef): HandCard {
 /** Spends one of a card's uses, tearing it; on its last one it is shredded out of the hand. */
 function wearCard(ctx: PreviewCtx, s: Stage, cards: HandCard[], i: number): boolean {
   const c = cards[i];
-  c.preserved = false;
   c.uses -= 1;
   c.wear += 1;
   if (c.uses > 0) return false;
@@ -278,8 +276,8 @@ function throwLoop(ctx: PreviewCtx, opts: { newCards: boolean }): void {
   });
 
   label(ctx, ctx.w * 0.5, 12,
-    opts.newCards ? `18 card types in the pool · Emperor is 10× rarer than any of them`
-      : `10 card types · one draw every ${DRAW_INTERVAL_MS / 1000}s · 0.35s between throws`,
+    opts.newCards ? `17 card types in the pool · Emperor is 10× rarer than any of them`
+      : `9 card types · one draw every ${DRAW_INTERVAL_MS / 1000}s · 0.35s between throws`,
     FATE.mint);
 }
 
@@ -297,205 +295,328 @@ export const cardThrowUpgraded: PreviewScript = {
   run(ctx) { throwLoop(ctx, { newCards: true }); },
 };
 
-// ── E — Reroll ────────────────────────────────────────────────────────
+// ── E — Side Shuffle ──────────────────────────────────────────────────
 
-function rerollLoop(ctx: PreviewCtx, opts: { face: boolean }): void {
-  const s = stageIt(ctx);
-  // Force the Hand of Fate: Ace is laser / coin / infect / striker.
+function shuffleLoop(ctx: PreviewCtx, opts: { face: boolean }): void {
+  const home: Mark = { x: ctx.w * 0.36, y: ctx.h * 0.36 };
+  const s = drivenCaster(ctx, home);
+  const foe: Mark = { x: ctx.w * 0.82, y: ctx.h * 0.36 };
+  dummy(ctx, foe);
+  // Force the Hand of Fate: Ace is laser / coin / infect / striker — the decoys draw from it too.
   const acePool = CARDS.filter((c) => ['laser', 'coin', 'infect', 'striker'].includes(c.type));
   const pool = opts.face ? acePool : CARDS.filter((c) => !c.nu);
-  let cards: HandCard[] = Array.from({ length: BASE_HAND_SIZE }, () => randomCard(pool));
-  let selected = 0;
-  hand(ctx, () => ({ cards, selected }));
-
+  const cards: HandCard[] = [randomCard(pool)];
+  hand(ctx, () => ({ cards, selected: 0 }));
   if (opts.face) {
     label(ctx, ctx.w * 0.5, 12, '♠️ ACE — laser · coin · infect · striker', 0xd0d0e0);
-    label(ctx, ctx.w * 0.5, 26, 'chosen once, at the start of the match', FATE.mint);
+    label(ctx, ctx.w * 0.5, 26, 'every card the decoys draw comes from the chosen face', FATE.mint);
   }
 
-  // Enchant one, then throw the hand away — the buff goes with it.
-  ctx.at(700, () => {
-    cards[1].enchanted = true;
-    selected = 1;
-    s.fx.ring(ctx.cx, ctx.cy, 52, 18, FATE.enchant, 400, 4, 5);
-    tick(ctx, ctx.cx, ctx.cy - 34, '🔮 ENCHANTED', FATE.enchant);
-  });
-  for (let i = 0; i < 3; i++) {
-    ctx.at(2000 + i * 1900, () => {
-      s.av.play('clap');
-      s.fx.riffle(ctx.cx, ctx.cy - 6, 46, 10, HOUSE_TONES);
-      s.fx.ring(ctx.cx, ctx.cy, 8, 48, FATE.mint, 340, 3, 5);
-      cards = Array.from({ length: BASE_HAND_SIZE }, () => randomCard(pool));
-      selected = 0;
-      tick(ctx, ctx.cx, ctx.cy - 34, '🔄 REROLL!', FATE.mint);
-      if (i === 0) tick(ctx, ctx.cx, ctx.cy - 52, 'the enchantment went with it', FATE.ash);
-    });
-  }
-
-  label(ctx, ctx.w * 0.5, ctx.h - 52,
-    opts.face ? 'four types instead of eighteen — the element\'s only answer to its own randomness'
-      : 'a whole new hand, and everything on the old one is discarded with it',
-    FATE.teal);
-}
-
-export const reroll: PreviewScript = {
-  duration: 7000,
-  scale: 0.9,
-  caption: 'E — throw the hand away and deal six fresh. Enchantments and preservations go too',
-  run(ctx) { rerollLoop(ctx, { face: false }); },
-};
-
-export const rerollUpgraded: PreviewScript = {
-  duration: 7000,
-  scale: 0.9,
-  caption: 'Force the Hand of Fate — pick a face card at match start and the deck may only give you those',
-  run(ctx) { rerollLoop(ctx, { face: true }); },
-};
-
-// ── R — Preserve ──────────────────────────────────────────────────────
-
-function preserveLoop(ctx: PreviewCtx, opts: { wonder: boolean }): void {
-  const s = stageIt(ctx);
-  const foe: Mark = { x: ctx.w * 0.78, y: ctx.h * 0.32 };
-  dummy(ctx, foe);
-
-  const size = opts.wonder ? UPGRADED_HAND_SIZE : BASE_HAND_SIZE;
-  const cards: HandCard[] = Array.from({ length: size }, () => randomCard());
-  // A card worth keeping, so the ability has a point.
-  // A card worth keeping, already on its last use — so the ability has a point.
-  cards[2] = fresh(CARDS.find((c) => c.type === 'lightning')!);
-  cards[2].uses = 1;
-  cards[2].wear = CARD_USES - 1;
-  let selected = 2;
-  hand(ctx, () => ({ cards, selected }));
-
-  ctx.at(600, () => {
-    cards[2].enchanted = true;
-    s.av.play('flex');
-    s.fx.ring(ctx.cx, ctx.cy, 52, 18, FATE.enchant, 400, 4, 5);
-    s.fx.sparkle(ctx.cx, ctx.cy - 10, 9, 30, 10, FATE.enchant);
-    tick(ctx, ctx.cx, ctx.cy - 34, '🔮 ENCHANTED · ×2', FATE.enchant);
-  });
-  ctx.at(1700, () => {
-    cards[2].preserved = true;
-    cards[2].uses += PRESERVE_USES;
-    if (opts.wonder) tick(ctx, ctx.cx, ctx.cy - 52, 'its next throw keeps the enchantment', FATE.great);
-    s.av.play('flex');
-    s.fx.ring(ctx.cx, ctx.cy, 50, 16, FATE.gold, 400, 4, 5);
-    s.fx.sparkle(ctx.cx, ctx.cy - 10, 9, 30, 10, FATE.gold);
-    tick(ctx, ctx.cx, ctx.cy - 34, `✨ PRESERVED · +${PRESERVE_USES} USES`, FATE.gold);
-  });
-  // Thrown on what would have been its last use — and it stays, tearing further.
-  ctx.at(3200, () => {
-    throwCard(ctx, s, { x: ctx.cx, y: ctx.cy }, foe, cards[2]);
-    // Wonder Preserve: the gilded throw keeps the purple for one more.
-    if (!opts.wonder) cards[2].enchanted = false;
-    wearCard(ctx, s, cards, 2);
-    ctx.at(500, () => {
-      s.fx.sparkle(ctx.cx, ctx.cy - 10, 6, 24, 10, FATE.gold);
-      tick(ctx, ctx.cx, ctx.cy - 34, `✨ AND IT STAYED · ${cards[2]?.uses ?? 0} LEFT`, FATE.gold);
-    });
-  });
-  // …and again, more ragged every time.
-  ctx.at(5200, () => {
-    throwCard(ctx, s, { x: ctx.cx, y: ctx.cy }, foe, cards[2]);
-    cards[2].enchanted = false;
-    wearCard(ctx, s, cards, 2);
-  });
-
-  label(ctx, ctx.w * 0.5, 12,
-    opts.wonder ? `hand of ${UPGRADED_HAND_SIZE} · +${PRESERVE_USES} uses, and it keeps the purple`
-      : `hand of ${BASE_HAND_SIZE} · +${PRESERVE_USES} uses on a ${CARD_USES}-use card`, FATE.gold);
-}
-
-export const preserve: PreviewScript = {
-  duration: 7000,
-  scale: 0.9,
-  caption: 'R — the highlighted card turns gold and gains 3 more uses before it is shredded',
-  run(ctx) { preserveLoop(ctx, { wonder: false }); },
-};
-
-export const preserveUpgraded: PreviewScript = {
-  duration: 7000,
-  scale: 0.9,
-  caption: 'Wonder Preserve — the gilded throw keeps its enchantment, and the hand is eight cards wide',
-  run(ctx) { preserveLoop(ctx, { wonder: true }); },
-};
-
-// ── F — Enchant ───────────────────────────────────────────────────────
-
-function enchantLoop(ctx: PreviewCtx, opts: { wonder: boolean }): void {
-  const s = stageIt(ctx);
-  const foe: Mark = { x: ctx.w * 0.78, y: ctx.h * 0.32 };
-  dummy(ctx, foe);
-
-  const barrier = CARDS.find((c) => c.type === 'barrier')!;
-  const cards: HandCard[] = Array.from({ length: BASE_HAND_SIZE }, () => randomCard());
-  cards[3] = fresh(barrier);
-  let selected = 3;
-  hand(ctx, () => ({ cards, selected }));
-
-  // The ring of bullets Barrier makes, so the ×2 and the Wonder Enchant slowdown are visible.
-  interface Bullet { a: number; r: number; speed: number }
-  const bullets: Bullet[] = [];
-  const g = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
-  ctx.onFrame((dt) => {
+  interface Decoy { x: number; y: number; a: number; born: number; dead: boolean }
+  interface Shot { x: number; y: number; vx: number; vy: number; dead: boolean }
+  const decoys: Decoy[] = [];
+  const shots: Shot[] = [];
+  const g = ctx.adopt(ctx.scene.add.graphics().setDepth(4));
+  const air = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
+  let dashUntil = -1, dashVy = 0;
+  ctx.onFrame((dt, elapsed) => {
     const step = dt / 1000;
-    g.clear();
-    for (let i = bullets.length - 1; i >= 0; i--) {
-      const b = bullets[i];
-      b.r += b.speed * step;
-      if (b.r > Math.max(ctx.w, ctx.h)) { bullets.splice(i, 1); continue; }
-      const x = ctx.cx + Math.cos(b.a) * b.r;
-      const y = ctx.cy + Math.sin(b.a) * b.r;
-      g.fillStyle(ctx.tint(barrier.color), 0.95);
-      g.fillCircle(x, y, 3.4);
-      g.fillStyle(ctx.tint(FATE.white), 0.5);
-      g.fillCircle(x - 1, y - 1, 1.3);
+    if (elapsed < dashUntil) home.y += dashVy * step;
+    g.clear(); air.clear();
+    for (const d of decoys) {
+      if (d.dead) continue;
+      const drop = Phaser.Math.Clamp((elapsed - d.born) / 140, 0, 1);
+      fateCardLayered(g, ctx.tint, HOUSE_TONES, d.x, d.y - (1 - drop) * 14, d.a, 13, 18, 1, 0.9 * drop, { faceDown: true });
+      g.lineStyle(1.2, ctx.tint(FATE.mint), 0.35);
+      g.strokeCircle(d.x, d.y, 18);
+    }
+    for (const b of shots) {
+      if (b.dead) continue;
+      b.x += b.vx * step; b.y += b.vy * step;
+      const hitDecoy = decoys.find((d) => !d.dead && Phaser.Math.Distance.Between(b.x, b.y, d.x, d.y) <= 18);
+      if (hitDecoy) {
+        b.dead = true; hitDecoy.dead = true;
+        s.fx.flash(hitDecoy.x, hitDecoy.y, 18, 8, FATE.mint);
+        s.fx.sparkle(home.x, home.y - 10, 6, 22, 9, FATE.mint);
+        if (cards.length < BASE_HAND_SIZE) cards.push(randomCard(pool));
+        tick(ctx, hitDecoy.x, hitDecoy.y - 18, '🂠 DODGED · +1 CARD', FATE.mint);
+        continue;
+      }
+      if (b.x < home.x - 60) { b.dead = true; continue; }
+      air.fillStyle(ctx.tint(0xff5566), 0.95);
+      air.fillCircle(b.x, b.y, 5);
     }
   });
 
-  const cast = (at: number, enchanted: boolean): void => {
-    ctx.at(at, () => {
-      const count = enchanted ? 30 : 15;
-      // Wonder Enchant doubles the count and slows them 300% into a wall you stand inside.
-      const speed = enchanted && opts.wonder ? 70 : 260;
-      for (let i = 0; i < count; i++) bullets.push({ a: (i / count) * Math.PI * 2, r: 14, speed });
-      s.av.play('punch', 0);
-      s.fx.ring(ctx.cx, ctx.cy, 8, 44, barrier.color, 360, 4, 6);
-      tick(ctx, ctx.cx, ctx.cy - 40,
-        `🛡️ ${count} × ${3 * (enchanted ? 2 : 1)}`, enchanted ? FATE.enchant : barrier.color);
-      if (enchanted && opts.wonder) tick(ctx, ctx.cx, ctx.cy - 58, '300% SLOWER — A WALL', FATE.enchant);
-    });
-  };
-
-  cast(600, false);
-  ctx.at(2600, () => {
-    cards[3].enchanted = true;
-    s.av.play('flex');
-    s.fx.ring(ctx.cx, ctx.cy, 52, 18, FATE.enchant, 400, 4, 5);
-    s.fx.sparkle(ctx.cx, ctx.cy - 10, 9, 30, 10, FATE.enchant);
-    tick(ctx, ctx.cx, ctx.cy - 34, '🔮 ENCHANTED', FATE.enchant);
+  const shuffle = (at: number) => ctx.at(at, () => {
+    // Aiming right at the foe, so "right of the aim" is straight down the screen.
+    dashUntil = at + 190; dashVy = SHUFFLE_DIST * 0.55 / 0.19;
+    s.av.play('dash', Math.PI / 2);
+    s.fx.ring(home.x, home.y, 10, 34, FATE.mint, 260, 3, 5);
+    for (let i = 0; i < 5; i++) {
+      ctx.at(i * 38, () => decoys.push({ x: home.x, y: home.y, a: Math.PI / 2 + (Math.random() - 0.5) * 0.9, born: at + i * 38, dead: false }));
+    }
   });
-  cast(3400, true);
+  const fire = (at: number, aimY: () => number) => ctx.at(at, () => {
+    const a = Math.atan2(aimY() - foe.y, home.x - foe.x);
+    shots.push({ x: foe.x, y: foe.y, vx: Math.cos(a) * 380, vy: Math.sin(a) * 380, dead: false });
+  });
+  // The foe shoots where you were standing; you shuffle out and the decoys eat it.
+  fire(600, () => home.y);
+  shuffle(1050);
+  fire(3000, () => home.y);
+  ctx.at(3300, () => { home.y = ctx.h * 0.36; decoys.length = 0; });
+  shuffle(3450);
 
-  label(ctx, ctx.w * 0.5, 12,
-    opts.wonder ? 'Wonder Enchant — every card has its own second gift on top of the doubling'
-      : '×2 on everything the card does, count as well as damage', FATE.enchant);
+  label(ctx, ctx.w * 0.5, ctx.h - 52,
+    'a sidestep right of your aim, five decoy cards left behind · a decoy that is shot draws you a card',
+    FATE.teal);
 }
 
-export const enchant: PreviewScript = {
-  duration: 6600,
+export const sideShuffle: PreviewScript = {
+  duration: 6000,
   scale: 0.9,
-  caption: 'F — the card turns purple and its next use is worth double, count and all',
-  run(ctx) { enchantLoop(ctx, { wonder: false }); },
+  bodyTexture: '',
+  caption: 'E — sidestep, and leave decoy cards where you stood. Every one that gets shot is a free draw',
+  run(ctx) { shuffleLoop(ctx, { face: false }); },
 };
 
-export const enchantUpgraded: PreviewScript = {
-  duration: 6600,
+export const sideShuffleUpgraded: PreviewScript = {
+  duration: 6000,
   scale: 0.9,
-  caption: 'Wonder Enchant — and Barrier\'s 30 bullets are 300% slower, which is a wall you stand in',
-  run(ctx) { enchantLoop(ctx, { wonder: true }); },
+  bodyTexture: '',
+  caption: 'Force the Hand of Fate — pick a face card at match start and the deck may only give you those',
+  run(ctx) { shuffleLoop(ctx, { face: true }); },
+};
+
+// ── R — Dice of Doom ──────────────────────────────────────────────────
+
+/** A die floating above the caster, rolling first and then holding its face. */
+function heldDie(ctx: PreviewCtx, read: () => { face: number; rolledAt: number; at: Mark } | null): void {
+  const g = ctx.adopt(ctx.scene.add.graphics().setDepth(11));
+  ctx.onFrame((_dt, elapsed) => {
+    g.clear();
+    const d = read();
+    if (!d) return;
+    const t = elapsed / 1000;
+    const rollT = Phaser.Math.Clamp((elapsed - d.rolledAt) / 520, 0, 1);
+    const rolling = rollT < 1;
+    const y = d.at.y - 50 + Math.sin(t * 4) * 2 - (rolling ? Math.sin(rollT * Math.PI) * 14 : 0);
+    if (!rolling) {
+      g.fillStyle(ctx.tint(FATE.gold), 0.18);
+      g.fillCircle(d.at.x, y, 18);
+    }
+    FateFx.drawDie(g, ctx.tint, d.at.x, y, 17, rolling ? 1 + Math.floor((t * 22) % 6) : d.face,
+      rolling ? rollT * 9 : 0, { tumble: rolling ? (rollT * 4) % 1 : 0, rim: rolling ? undefined : FATE.gold, shadow: false });
+  });
+}
+
+function diceLoop(ctx: PreviewCtx, opts: { wonder: boolean }): void {
+  const s = stageIt(ctx);
+  const home: Mark = { x: ctx.cx, y: ctx.cy + 10 };
+  const foe: Mark = { x: ctx.w * 0.8, y: ctx.h * 0.3 };
+  dummy(ctx, foe);
+  const barrier = CARDS.find((c) => c.type === 'barrier')!;
+  const size = opts.wonder ? UPGRADED_HAND_SIZE : BASE_HAND_SIZE;
+  const cards: HandCard[] = Array.from({ length: size }, () => randomCard());
+  cards[1] = fresh(barrier);
+  cards[0].uses = 1; cards[0].wear = 2;
+  let selected = 1;
+  hand(ctx, () => ({ cards, selected }));
+
+  let die: { face: number; rolledAt: number; at: Mark } | null = null;
+  heldDie(ctx, () => die);
+  const roll = (at: number, face: number) => ctx.at(at, () => {
+    die = { face, rolledAt: at, at: home };
+    s.av.play('raise', -Math.PI / 2, 500);
+  });
+
+  // 1 — clicked: glyph the highlighted card.
+  roll(300, 1);
+  ctx.at(1300, () => {
+    die = null;
+    cards[1].enchanted = true;
+    s.fx.chips(home.x, home.y - 50, 6, 26, 9, FATE.gold);
+    s.fx.sparkle(home.x, home.y, 8, 30, 9, FATE.enchant);
+    tick(ctx, home.x, home.y - 70, 'CLICK 1 · GLYPH: ×2', FATE.enchant);
+  });
+  // The glyphed Barrier — and with Wonder Glyphs, its 36 slow bullets.
+  interface Bullet { a: number; r: number; speed: number }
+  const bullets: Bullet[] = [];
+  const bg = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
+  ctx.onFrame((dt) => {
+    bg.clear();
+    for (let i = bullets.length - 1; i >= 0; i--) {
+      const b = bullets[i];
+      b.r += b.speed * dt / 1000;
+      if (b.r > Math.max(ctx.w, ctx.h)) { bullets.splice(i, 1); continue; }
+      bg.fillStyle(ctx.tint(barrier.color), 0.95);
+      bg.fillCircle(home.x + Math.cos(b.a) * b.r, home.y + Math.sin(b.a) * b.r, 3.2);
+    }
+  });
+  ctx.at(1900, () => {
+    const count = opts.wonder ? 36 : 18;
+    const speed = opts.wonder ? 70 : 260;
+    for (let i = 0; i < count; i++) bullets.push({ a: (i / count) * Math.PI * 2, r: 14, speed });
+    s.av.play('flex');
+    s.fx.ring(home.x, home.y, 8, 44, barrier.color, 360, 4, 6);
+    tick(ctx, home.x, home.y - 40, `🛡️ ${count} × 10 + 2 SHIELDS`, FATE.enchant);
+    wearCard(ctx, s, cards, 1);
+  });
+  // 2 — clicked: repair the worn card.
+  roll(2900, 2);
+  ctx.at(3700, () => {
+    die = null; selected = 0;
+    cards[0].uses = CARD_USES; cards[0].wear = 0;
+    s.fx.chips(home.x, home.y - 50, 6, 26, 9, FATE.gold);
+    tick(ctx, home.x, home.y - 70, 'CLICK 2 · REPAIRED', FATE.gold);
+  });
+  // 6 — dragged: a very slow, very heavy die.
+  roll(4400, 6);
+  const shotG = ctx.adopt(ctx.scene.add.graphics().setDepth(10));
+  let shot: { x: number; y: number; t0: number } | null = null;
+  ctx.onFrame((_dt, elapsed) => {
+    shotG.clear();
+    if (!shot) return;
+    const k = Phaser.Math.Clamp((elapsed - shot.t0) / 1600, 0, 1);
+    const x = home.x + (foe.x - home.x) * k;
+    const y = home.y - 50 + (foe.y - home.y + 50) * k;
+    FateFx.drawDie(shotG, ctx.tint, x, y, 24, 6, elapsed / 300, { shadow: false });
+    if (k >= 1) {
+      shot = null;
+      s.fx.payout(foe.x, foe.y, 56, { cards: 8, chips: 6, litter: false, depth: 9, face: FATE.gold, tones: HOUSE_TONES });
+      tick(ctx, foe.x, foe.y - 16, '55', FATE.gold);
+    }
+  });
+  ctx.at(5200, () => {
+    die = null;
+    shot = { x: home.x, y: home.y, t0: 5200 };
+    s.av.play('punch', Math.atan2(foe.y - home.y, foe.x - home.x));
+    tick(ctx, home.x, home.y - 70, 'DRAG 6 · 55 DAMAGE, VERY SLOW', FATE.gold);
+  });
+
+  label(ctx, ctx.w * 0.5, 12,
+    opts.wonder ? 'Wonder Glyphs — a glyphed card gets its own second gift · the hand is four wide'
+      : 'click it, drag it, or keep it held — six faces, three uses each', FATE.gold);
+}
+
+export const diceOfDoom: PreviewScript = {
+  duration: 7600,
+  scale: 0.9,
+  caption: 'R — roll a die over your head: click it for a boost, drag it to throw it, or hold it for a passive',
+  run(ctx) { diceLoop(ctx, { wonder: false }); },
+};
+
+export const diceOfDoomUpgraded: PreviewScript = {
+  duration: 7600,
+  scale: 0.9,
+  caption: 'Wonder Glyphs — glyphed cards gain a second gift (Barrier: 36 bullets, 300% slower) and a 4th card slot',
+  run(ctx) { diceLoop(ctx, { wonder: true }); },
+};
+
+// ── F — Cursed Talisman ───────────────────────────────────────────────
+
+function talismanLoop(ctx: PreviewCtx, opts: { hex: boolean }): void {
+  const s = stageIt(ctx);
+  const foe: Mark = { x: ctx.w * 0.74, y: ctx.h * 0.36 };
+  dummy(ctx, foe);
+  const burst = CARDS.find((c) => c.type === 'burst')!;
+  const cards: HandCard[] = [fresh(burst), randomCard(), randomCard()];
+  hand(ctx, () => ({ cards, selected: 0 }));
+  const pullR = (opts.hex ? 170 : 110) * 0.55;
+  const hp = opts.hex ? 66 : 33;
+
+  const g = ctx.adopt(ctx.scene.add.graphics().setDepth(10));
+  let flyFrom = -1;
+  let stuckAt = -1;
+  let ang = Math.PI;
+  const tal: Mark = { x: ctx.cx, y: ctx.cy };
+  interface Shot { x: number; y: number; vx: number; vy: number; caught: number; spin: number; dead: boolean }
+  const shots: Shot[] = [];
+  ctx.onFrame((dt, elapsed) => {
+    const step = dt / 1000;
+    const t = elapsed / 1000;
+    g.clear();
+    if (flyFrom >= 0 && stuckAt < 0) {
+      const k = Phaser.Math.Clamp((elapsed - flyFrom) / 420, 0, 1);
+      tal.x = ctx.cx + (foe.x - ctx.cx) * k;
+      tal.y = ctx.cy + (foe.y - ctx.cy) * k;
+      FateFx.drawTalisman(g, ctx.tint, tal.x, tal.y, Math.PI, t);
+      if (k >= 1) {
+        stuckAt = elapsed;
+        s.fx.ring(foe.x, foe.y, 10, 44, FATE.curse, 380, 4, 8);
+        tick(ctx, foe.x, foe.y - 16, '12', FATE.curse);
+        tick(ctx, foe.x, foe.y - 34, `🧧 CURSED · ${opts.hex ? 25 : 15}% CRITS`, FATE.great);
+      }
+    }
+    if (stuckAt >= 0) {
+      ang += step * 2.4;
+      tal.x = foe.x + Math.cos(ang) * 24;
+      tal.y = foe.y + Math.sin(ang) * 24;
+      g.lineStyle(1, ctx.tint(FATE.great), 0.18);
+      g.strokeCircle(tal.x, tal.y, pullR);
+      FateFx.drawTalisman(g, ctx.tint, tal.x, tal.y, ang + Math.PI / 2, t, 0);
+    }
+    for (const b of shots) {
+      if (b.dead) continue;
+      if (b.caught < 0 && stuckAt >= 0 && Phaser.Math.Distance.Between(b.x, b.y, tal.x, tal.y) <= pullR) {
+        b.caught = elapsed; b.spin = Math.atan2(b.y - tal.y, b.x - tal.x);
+      }
+      if (b.caught >= 0) {
+        if (elapsed - b.caught < 340) {
+          b.spin += 0.32;
+          b.x = tal.x + Math.cos(b.spin) * 11; b.y = tal.y + Math.sin(b.spin) * 11;
+        } else {
+          b.dead = true;
+          const crit = Math.random() < (opts.hex ? 0.25 : 0.15) * 2.5;
+          tick(ctx, foe.x + (Math.random() - 0.5) * 20, foe.y - 14, crit ? '14 CRIT' : '7', crit ? FATE.great : burst.color);
+          s.fx.cards(foe.x, foe.y, 2, { face: burst.color, tones: HOUSE_TONES, depth: 9 });
+          continue;
+        }
+      } else {
+        b.x += b.vx * step; b.y += b.vy * step;
+        if (b.x > ctx.w + 10 || b.y < -10 || b.y > ctx.h + 10) { b.dead = true; continue; }
+      }
+      g.fillStyle(ctx.tint(burst.color), 0.95);
+      g.fillCircle(b.x, b.y, 3.4);
+    }
+  });
+
+  ctx.at(500, () => {
+    flyFrom = 500;
+    s.av.play('punch', Math.atan2(foe.y - ctx.cy, foe.x - ctx.cx));
+    s.fx.flick(ctx.cx, ctx.cy, Math.atan2(foe.y - ctx.cy, foe.x - ctx.cx), FATE.curse, 1, 9, TAROT_TONES);
+  });
+  // A Burst thrown wide of the foe — the talisman drags the pellets back in.
+  for (let n = 0; n < 2; n++) {
+    ctx.at(1800 + n * 1500, () => {
+      const base = Math.atan2(foe.y - 40 - ctx.cy, foe.x - ctx.cx) - 0.18;
+      for (const deg of [-24, -12, 0, 12, 24]) {
+        const a = base + deg * Math.PI / 180;
+        shots.push({ x: ctx.cx, y: ctx.cy, vx: Math.cos(a) * 300, vy: Math.sin(a) * 300, caught: -1, spin: 0, dead: false });
+      }
+      s.av.play('sweep', base);
+      wearCard(ctx, s, cards, 0);
+    });
+  }
+
+  label(ctx, ctx.w * 0.5, 12,
+    `the curse orbits them · your shots within ${opts.hex ? 170 : 110}px are dragged in · ${hp} HP — they can shoot it off`,
+    FATE.great);
+}
+
+export const cursedTalisman: PreviewScript = {
+  duration: 6200,
+  scale: 0.9,
+  caption: 'F — a talisman sticks to the foe: 15% crits, and your near-misses are dragged in to hit',
+  run(ctx) { talismanLoop(ctx, { hex: false }); },
+};
+
+export const cursedTalismanUpgraded: PreviewScript = {
+  duration: 6200,
+  scale: 0.9,
+  caption: 'Hex Talisman — 66 HP, 25% crits, and it grabs your shots from 170px away',
+  run(ctx) { talismanLoop(ctx, { hex: true }); },
 };
 
 // ── Q — All In! ───────────────────────────────────────────────────────
@@ -505,15 +626,19 @@ function allInLoop(ctx: PreviewCtx, opts: { roulette: boolean }): void {
   const foe: Mark = { x: ctx.w * 0.72, y: ctx.h * 0.36 };
   dummy(ctx, foe);
   const cards: HandCard[] = Array.from({ length: BASE_HAND_SIZE }, () => randomCard());
-  hand(ctx, () => ({ cards, selected: 0 }));
+  cards[2].uses = 1; cards[2].wear = 2;
+  const picked = new Set<number>();
+  hand(ctx, () => ({ cards, selected: -1, wagered: picked }));
 
-  const wager = opts.roulette ? 90 : ALL_IN_WAGER;
+  const stakeHp = opts.roulette ? 40 : 0;
+  const cardWorth = (c: HandCard) => (ALL_IN_PER_CARD + ALL_IN_PER_USE * c.uses) * (c.enchanted ? 2 : 1);
+  let wager = 0;
   const orbitMs = opts.roulette ? ALL_IN_ORBIT_PLUS_MS : ALL_IN_ORBIT_MS;
   let spinFrom = -1;
   const wheel: Mark = { x: ctx.cx + ALL_IN_ORBIT_R * 0.5, y: ctx.cy };
   const g = ctx.adopt(ctx.scene.add.graphics().setDepth(10));
 
-  // The health bar, with the gamble marker on it — the upgrade's whole interface.
+  // The health bar with the stake marker on it — the upgrade's whole interface.
   const bar = ctx.adopt(ctx.scene.add.graphics().setDepth(19));
   ctx.onFrame(() => {
     bar.clear();
@@ -525,18 +650,16 @@ function allInLoop(ctx: PreviewCtx, opts: { roulette: boolean }): void {
     bar.fillRect(x - 1, y - 1, w + 2, 7);
     bar.fillStyle(0x44dd66, 1);
     bar.fillRect(x, y, w, 5);
-    // The gambled portion turns yellow.
     bar.fillStyle(ctx.tint(FATE.gold), 1);
-    bar.fillRect(x + w - (w * wager) / 200, y, (w * wager) / 200, 5);
+    bar.fillRect(x + w - (w * stakeHp) / 200, y, (w * stakeHp) / 200, 5);
     bar.fillStyle(ctx.tint(FATE.glint), 1);
-    bar.fillRect(x + w - (w * wager) / 200 - 1, y - 3, 2, 11);
+    bar.fillRect(x + w - (w * stakeHp) / 200 - 1, y - 3, 2, 11);
   });
 
   ctx.onFrame((_dt, elapsed) => {
     const t = elapsed / 1000;
     g.clear();
     if (spinFrom < 0) return;
-    // The wheel orbits at 100px and follows the cursor for the whole spin.
     const a = Math.sin((elapsed - spinFrom) / 700) * 1.1 - 0.4;
     wheel.x = ctx.cx + Math.cos(a) * ALL_IN_ORBIT_R * 0.55;
     wheel.y = ctx.cy + Math.sin(a) * ALL_IN_ORBIT_R * 0.55;
@@ -544,55 +667,46 @@ function allInLoop(ctx: PreviewCtx, opts: { roulette: boolean }): void {
     FateFx.drawWheel(g, ctx.tint, wheel.x, wheel.y, ALL_IN_RADIUS * 0.55, t, ready, false, 1);
   });
 
-  ctx.at(500, () => {
-    spinFrom = 500;
+  // Q opens the table, the cards are clicked onto it one by one, Q again bets them.
+  ctx.at(300, () => { s.fx.ring(ctx.cx, ctx.cy, 70, 30, FATE.gold, 360, 3, 5); tick(ctx, ctx.cx, ctx.cy - 34, 'Q · PICK THE WAGER', FATE.gold); });
+  [0, 1].forEach((i, k) => ctx.at(800 + k * 450, () => { picked.add(i); s.fx.sparkle(ctx.cx, ctx.cy - 10, 4, 16, 10, FATE.gold); }));
+  const spinAt = 1900;
+  ctx.at(spinAt, () => {
+    const bet = [...picked].map((i) => cards[i]);
+    wager = bet.reduce((n, c) => n + cardWorth(c), 0) + stakeHp;
+    for (const i of [...picked].sort((a, b) => b - a)) cards.splice(i, 1);
+    picked.clear();
+    spinFrom = spinAt;
     s.av.play('raise', -Math.PI / 2, 900);
     s.fx.ante(ctx.cx, ctx.cy, 52, Math.min(1200, orbitMs), () => ({ x: ctx.cx, y: ctx.cy }), 5, HOUSE_TONES);
     s.fx.ring(ctx.cx, ctx.cy, 10, 96, FATE.gold, 480, 5, 5);
-    tick(ctx, ctx.cx, ctx.cy - 34, `🎰 ALL IN! (${wager} HP)`, FATE.gold);
+    tick(ctx, ctx.cx, ctx.cy - 34, `🎰 ALL IN! 2 CARDS${stakeHp ? ` + ${stakeHp} HP` : ''} = ${wager}`, FATE.gold);
   });
-  ctx.at(500 + orbitMs, () => {
+  ctx.at(spinAt + orbitMs, () => {
     spinFrom = -1;
-    const hit = Phaser.Math.Distance.Between(wheel.x, wheel.y, foe.x, foe.y) <= ALL_IN_RADIUS * 0.55;
-    if (hit) {
-      s.fx.payout(wheel.x, wheel.y, ALL_IN_RADIUS, { cards: 14, chips: 12, depth: 9, face: FATE.gold, tones: HOUSE_TONES });
-      s.fx.dealtBeam(wheel.x, wheel.y, foe.x, foe.y, FATE.gold, 10, HOUSE_TONES, 6);
-      ctx.scene.cameras.main.shake(180, 0.005);
-      tick(ctx, foe.x, foe.y - 16, `${wager}`, FATE.gold);
-      tick(ctx, ctx.cx, ctx.cy - 44, `🎰 HIT! ${wager}`, 0xffee44);
-      return;
-    }
-    s.fx.cards(wheel.x, wheel.y, 9, { speed: 130, size: 11, life: 700, fall: 90, depth: 8, face: FATE.ash, tones: HOUSE_TONES });
-    s.fx.litter(wheel.x, wheel.y, ALL_IN_RADIUS, 1, HOUSE_TONES);
-    tick(ctx, ctx.cx, ctx.cy - 44, `🎰 MISS! -${wager} HP`, 0xff8888);
-  });
-  // The chip stack that says what is on the table.
-  const chips = ctx.adopt(ctx.scene.add.graphics().setDepth(6));
-  ctx.onFrame((_dt, elapsed) => {
-    chips.clear();
-    if (spinFrom < 0) return;
-    for (let i = 0; i < 4; i++) {
-      fateChip(chips, ctx.tint, ctx.cx - 22, ctx.cy + 20 - i * 3, 6, FATE.gold, 0.9, elapsed / 400 + i);
-    }
+    s.fx.payout(wheel.x, wheel.y, ALL_IN_RADIUS, { cards: 14, chips: 12, depth: 9, face: FATE.gold, tones: HOUSE_TONES });
+    s.fx.dealtBeam(wheel.x, wheel.y, foe.x, foe.y, FATE.gold, 10, HOUSE_TONES, 6);
+    ctx.scene.cameras.main.shake(180, 0.005);
+    tick(ctx, foe.x, foe.y - 16, `${wager}`, FATE.gold);
   });
 
   label(ctx, ctx.w * 0.5, 12,
-    opts.roulette ? `${ALL_IN_ORBIT_PLUS_MS / 1000}s of orbit, and the marker sets the stake anywhere on your bar`
-      : `${ALL_IN_ORBIT_MS / 1000}s of orbit at ${ALL_IN_ORBIT_R}px · ${ALL_IN_WAGER} either way`,
+    opts.roulette ? `${ALL_IN_ORBIT_PLUS_MS / 1000}s of orbit, and HP staked on top of the cards — lost on a miss`
+      : `each card is worth ${ALL_IN_PER_CARD} + ${ALL_IN_PER_USE} per use left · a miss throws them away`,
     FATE.gold);
 }
 
 export const allIn: PreviewScript = {
-  duration: 6000,
+  duration: 6400,
   scale: 0.9,
-  caption: 'Q — 50 HP on a wheel you steer with the cursor. Land it or eat it',
+  caption: 'Q — pick cards to wager and steer the wheel onto them. Land it for their worth, miss and they are gone',
   run(ctx) { allInLoop(ctx, { roulette: false }); },
 };
 
 export const allInUpgraded: PreviewScript = {
-  duration: 8000,
+  duration: 8400,
   scale: 0.9,
-  caption: 'Roulette Expert — drag a marker on your own health bar to size the bet, and two more seconds to aim',
+  caption: 'Roulette Expert — stake HP on top of the cards with a marker on your bar, and two more seconds to aim',
   run(ctx) { allInLoop(ctx, { roulette: true }); },
 };
 
@@ -601,13 +715,13 @@ export const allInUpgraded: PreviewScript = {
 export const theHand: PreviewScript = {
   duration: 9000,
   scale: 0.9,
-  caption: 'Six cards, dealt at random, one back every five seconds — and one of them is highlighted',
+  caption: 'Three cards, dealt at random, one back every 2.5 seconds — and one of them is highlighted',
   run(ctx) {
     const s = stageIt(ctx);
     const cards: HandCard[] = Array.from({ length: BASE_HAND_SIZE }, () => randomCard());
     // The card thrown at the end is already on its last use, torn from the two before it.
-    cards[5].uses = 1;
-    cards[5].wear = CARD_USES - 1;
+    cards[2].uses = 1;
+    cards[2].wear = CARD_USES - 1;
     let selected = 0;
     hand(ctx, () => ({ cards, selected }));
 
@@ -620,7 +734,7 @@ export const theHand: PreviewScript = {
 
     for (let i = 0; i < 6; i++) {
       ctx.at(400 + i * 700, () => {
-        selected = i % Math.max(1, cards.length);
+        selected = (i % 3) % Math.max(1, cards.length);
         s.fx.sparkle(ctx.cx, ctx.cy - 10, 4, 18, 10, FATE.mint);
       });
     }
@@ -646,7 +760,7 @@ export const theHand: PreviewScript = {
 export const theDeck: PreviewScript = {
   duration: 11000,
   scale: 0.83,
-  caption: 'Eighteen card types in one pool, and the Emperor is ten times rarer than any of them',
+  caption: 'Seventeen card types in one pool, and the Emperor is ten times rarer than any of them',
   run(ctx) {
     stageIt(ctx);
     const g = ctx.adopt(ctx.scene.add.graphics().setDepth(8));
@@ -655,14 +769,14 @@ export const theDeck: PreviewScript = {
       color: '#ffffff', align: 'center',
     }).setOrigin(0.5).setDepth(9)));
 
-    // Every card in the pool, laid out — base ten on the top row, New Cards! below.
+    // Every card in the pool, laid out — base nine on the top row, New Cards! below.
     ctx.onFrame((_dt, elapsed) => {
       const t = elapsed / 1000;
       g.clear();
       CARDS.forEach((c, i) => {
         const row = c.nu ? 1 : 0;
-        const col = c.nu ? i - 10 : i;
-        const per = c.nu ? 8 : 10;
+        const col = c.nu ? i - 9 : i;
+        const per = c.nu ? 8 : 9;
         const x = ctx.w * 0.5 + (col - (per - 1) / 2) * (ctx.w * 0.09);
         const y = ctx.h * (row === 0 ? 0.4 : 0.74);
         const lit = Math.floor(elapsed / 550) % CARDS.length === i;
@@ -676,10 +790,10 @@ export const theDeck: PreviewScript = {
       });
     });
 
-    label(ctx, ctx.w * 0.5, ctx.h * 0.4 - 30, 'the base ten — always drawable', FATE.mint);
+    label(ctx, ctx.w * 0.5, ctx.h * 0.4 - 30, 'the base nine — always drawable', FATE.mint);
     label(ctx, ctx.w * 0.5, ctx.h * 0.74 - 30, 'New Cards! — only with the Click upgrade', FATE.gold);
     label(ctx, ctx.w * 0.5, ctx.h - 10,
-      '👑 Emperor is 10× rarer than anything else · 🪙 🪃 💚 💪 🎰 deal no damage at all', FATE.teal);
+      '👑 Emperor is 10× rarer than anything else · 🪙 💚 💪 deal no damage at all', FATE.teal);
   },
 };
 
@@ -798,7 +912,7 @@ export const masteryTarotOfFate: PreviewScript = {
       tick(ctx, home.x, home.y - 52, `×${GREAT_ENCHANT_MULT} · ${CURSES[curseIdx].emoji} ${CURSES[curseIdx].name.toUpperCase()}`, FATE.curse);
     });
     ctx.at(2400, () => {
-      // A plain Enchant is refused outright rather than combining.
+      // A second Tarot is refused outright rather than stacking.
       tick(ctx, home.x, home.y - 34, '🔮 ALREADY GREATLY ENCHANTED', FATE.enchant);
     });
 

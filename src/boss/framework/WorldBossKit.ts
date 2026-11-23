@@ -1036,6 +1036,7 @@ export class WorldBossKit {
   private beginPhase(time: number, idx: number): void {
     this.flow = 'fight';
     this.phaseIdx = idx;
+    if (this.tk) this.tk.phase = idx;
     this.cycleIdx = 0;
     this.harassIdx = 0;
     this.enrageAnnounced = false;

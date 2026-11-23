@@ -1198,6 +1198,8 @@ export class TimeKit {
       this.timelessActive = true;
       this.timelessEnd = time + 5000;
       this.timelessCharge = 0;
+      // Fired straight from input, never through castAbility — report it so cast hooks see it.
+      player.onKitCast?.('time-timeless');
       this.rifleShotsRemaining = 3;
       this.rifleBeams = [];
       this.timelessFrozenProjs.clear();
@@ -1323,6 +1325,8 @@ export class TimeKit {
   private fireRevolverShot(owner: 'player' | 'npc', tx: number, ty: number, time: number): void {
     const { scene, projectiles } = this.arena;
     const caster = owner === 'player' ? this.arena.player : this.arena.npc;
+    // The revolver fires straight from input, never through castAbility — report it so cast hooks see it.
+    caster.onKitCast?.('time-barrage');
     const dx = tx - caster.x, dy = ty - caster.y;
     const len = Math.sqrt(dx * dx + dy * dy) || 1;
     const bullet = new Projectile(scene, caster.x, caster.y, 'proj-time-bullet', BULLET_BASE_DMG, owner === 'player');

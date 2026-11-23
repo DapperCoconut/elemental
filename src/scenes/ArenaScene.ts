@@ -6116,9 +6116,9 @@ export class ArenaScene extends Phaser.Scene {
       'purge':              0x66ff33,
       'acid-apocalypse':    0x225511,
       'fate-card-throw':   0x88eecc,
-      'fate-reroll':       0x44aacc,
-      'fate-preserve':     0xffee44,
-      'fate-enchant':      0xaa44ff,
+      'fate-side-shuffle': 0x44aacc,
+      'fate-dice-of-doom': 0xffcc44,
+      'fate-cursed-talisman': 0x7733cc,
       'fate-all-in':       0xff4400,
       'baton':              0xa82c48,
       'crescendo':          0xf0c04e,
@@ -6678,9 +6678,9 @@ export class ArenaScene extends Phaser.Scene {
       creationSelfDestruct: () => this.creationKit.selfDestruct('player'),
       // Fate
       fateThrowCard: (tx, ty) => this.fateKit.doThrowCard(tx, ty, 'player'),
-      fateReroll: () => this.fateKit.doReroll('player'),
-      fatePreserve: () => this.fateKit.doPreserve('player'),
-      fateEnchant: () => this.fateKit.doEnchant('player'),
+      fateSideShuffle: () => this.fateKit.doSideShuffle('player'),
+      fateDiceOfDoom: () => this.fateKit.doDice('player'),
+      fateCursedTalisman: () => this.fateKit.doTalisman('player'),
       fateAllIn: () => this.fateKit.doAllIn('player'),
       // Magnet
       magnetCoin: (tx, ty) => this.magnetKit.doCoin('player', tx, ty),
@@ -7096,9 +7096,9 @@ export class ArenaScene extends Phaser.Scene {
       creationSelfDestruct: () => this.creationKit.selfDestruct('npc'),
       // Fate
       fateThrowCard: (tx, ty) => this.fateKit.doThrowCard(tx, ty, 'npc'),
-      fateReroll: () => this.fateKit.doReroll('npc'),
-      fatePreserve: () => this.fateKit.doPreserve('npc'),
-      fateEnchant: () => this.fateKit.doEnchant('npc'),
+      fateSideShuffle: () => this.fateKit.doSideShuffle('npc'),
+      fateDiceOfDoom: () => this.fateKit.doDice('npc'),
+      fateCursedTalisman: () => this.fateKit.doTalisman('npc'),
       fateAllIn: () => this.fateKit.doAllIn('npc'),
       // Magnet
       magnetCoin: (tx, ty) => this.magnetKit.doCoin('npc', tx, ty),
@@ -7463,9 +7463,9 @@ export class ArenaScene extends Phaser.Scene {
       creationSelfDestruct: () => false,
       // Fate (raid stubs)
       fateThrowCard: () => {},
-      fateReroll: () => {},
-      fatePreserve: () => {},
-      fateEnchant: () => {},
+      fateSideShuffle: () => {},
+      fateDiceOfDoom: () => {},
+      fateCursedTalisman: () => {},
       fateAllIn: () => {},
       // Echo (raid stubs)
       echoEcholocation: () => {},
@@ -11088,7 +11088,7 @@ export class ArenaScene extends Phaser.Scene {
       this.playerSpeedMult = this.slimeKit.getPlayerSpeedMult();
     } else if (this.elementId === 'fate') {
       this.playerSpeedMult = 1;
-      // Kit applies Buff/Slots speed mods via applyPlayerSpeedMult
+      // Kit applies Buff/Dice of Doom speed mods via applyPlayerSpeedMult
     } else if (this.elementId === 'light') {
       // Light Lance drives the player body directly (car-mode physics) while held —
       // see LightKit.update(). This mult only matters for the moments it isn't.
@@ -12045,6 +12045,7 @@ export class ArenaScene extends Phaser.Scene {
       npcTimeTimelessReady: this.timeKit.getNpcTimelessCharge() >= 10000,
       // Fate
       fateNpcHandTypes: this.npcElement.id === 'fate' ? this.fateKit.getNpcHandTypes() : undefined,
+      fateNpcHints: this.npcElement.id === 'fate' ? this.fateKit.getNpcAiHints() : undefined,
       npcMetalHasFlail: this.metalKit.hasFlail('npc'),
       npcMetalFlailSwinging: this.metalKit.isFlailSwinging('npc'),
       npcMetalBlood: this.metalKit.getBlood('npc'),
@@ -13076,7 +13077,7 @@ export class ArenaScene extends Phaser.Scene {
         entry.fill.setSize(entry.maxWidth * this.silenceKit.getPuppetmasterCooldownRatio(time), entry.fill.height);
       } else if (entry.abilityId === 'tarot-of-fate') {
         entry.fill.setSize(entry.maxWidth * this.fateKit.getTarotCooldownRatio(time), entry.fill.height);
-      } else if ((entry.abilityId === 'fate-preserve' || entry.abilityId === 'fate-enchant')
+      } else if ((entry.abilityId === 'fate-dice-of-doom' || entry.abilityId === 'fate-cursed-talisman')
           && this.playerIs('fate') && this.fateKit.isCurseLocked(entry.abilityId)) {
         // Purging curse holds these shut for 20s, well past their own cooldowns.
         entry.fill.setSize(entry.maxWidth * this.fateKit.getCurseLockRatio(entry.abilityId, time), entry.fill.height);

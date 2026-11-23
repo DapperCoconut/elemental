@@ -23,6 +23,9 @@ const WATER_TINT: Record<FisheryDef['kind'], number> = {
   cloud: 0xf4f8ff, aurora: 0x8ae8d8, sand: 0xe0c080, cavern: 0x2a4a5a,
   charged: 0x8ad8ff, coolant: 0x7aff8a, quantum: 0xc8a8ff,
   venom: 0x9ae04a, blackwater: 0x1a1a24,
+  gilded: 0xffd24a, lethe: 0xd8dce8,
+  resonant: 0x7ab8e8, still: 0xb8c4d0,
+  sunpool: 0xfff2b8, mana: 0x9ad8ff,
 };
 
 export class Fishing {
@@ -76,7 +79,13 @@ export class Fishing {
         : fy.kind === 'coolant' ? 'The line glows, then goes brittle and snaps. Only an insulated rod holds in coolant.'
         : fy.kind === 'quantum' ? 'Your hook is in the well and also not. Only an insulated rod settles the question.'
         : fy.kind === 'venom' ? 'The line hisses and eats through where it touches. Only an antivenin rod fishes the fen.'
-        : fy.kind === 'blackwater' ? 'Your line goes into the black and comes back without a shadow. Only an antivenin rod holds.' : `Your ${rod?.name ?? 'rod'} can't handle ${fy.kind} water.`;
+        : fy.kind === 'blackwater' ? 'Your line goes into the black and comes back without a shadow. Only an antivenin rod holds.'
+        : fy.kind === 'gilded' ? 'The hook just rings off the coins and comes up bare. Only a fortune rod fishes gilded water.'
+        : fy.kind === 'lethe' ? 'You cast, and forget why you are holding a rod. Only a fortune rod remembers the line.'
+        : fy.kind === 'resonant' ? 'The pool rings when the line touches and the fish scatter. Only a tuning rod casts in tune.'
+        : fy.kind === 'still' ? 'Your cast shatters the mirror and nothing will rise to it. Only a tuning rod falls silent.'
+        : fy.kind === 'sunpool' ? 'The glare off the pool blinds you; you cannot even find your float. Only a prism rod splits it.'
+        : fy.kind === 'mana' ? 'The line unravels into light where it touches the font. Only a prism rod holds in it.' : `Your ${rod?.name ?? 'rod'} can't handle ${fy.kind} water.`;
     }
     return null;
   }

@@ -389,7 +389,8 @@ const tornado = (tk: BossToolkit): SignatureMove => {
           const x = sx + Math.cos(a) * len * u - Math.sin(a) * w;
           const y = sy + Math.sin(a) * len * u + Math.cos(a) * w;
           pts.push({ x, y });
-          if (x < -30 || x > tk.W + 30 || y < FIELD_TOP - 30 || y > tk.H + 30) break;
+          // Never stop before two points: a path with one point has no segment to walk.
+          if (k >= 2 && (x < -30 || x > tk.W + 30 || y < FIELD_TOP - 30 || y > tk.H + 30)) break;
         }
         let L = 0;
         for (let k = 1; k < pts.length; k++) L += Math.hypot(pts[k].x - pts[k - 1].x, pts[k].y - pts[k - 1].y);

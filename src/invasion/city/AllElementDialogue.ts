@@ -317,7 +317,7 @@ export const DREAM_LINES: Record<string, DreamLines> = {
     ],
     milestones: [
       'Five waves. You drew badly and won anyway. I saw the hand. That was not a winning hand.',
-      'Ten. That card you preserved has torn edges. It has been very busy.',
+      'Ten. That card you starred has torn edges. It has been very busy.',
       'Fifteen. The odds say we should have lost by now. The odds have stopped talking to me.',
     ],
     hurt: 'Bad draw, Fate. They are on me. Play something. Anything.',

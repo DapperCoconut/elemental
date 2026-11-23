@@ -173,9 +173,9 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
 
   // ── Fate ──
   'fate-card-throw': 'card-throw',
-  'fate-reroll': 'card-shuffle',
-  'fate-preserve': ['sparkle', 0.85],
-  'fate-enchant': 'sparkle',
+  'fate-side-shuffle': 'card-shuffle',
+  'fate-dice-of-doom': ['sparkle', 0.85],
+  'fate-cursed-talisman': 'card-throw',
   'fate-all-in': 'jackpot',
 
   // ── Magic ──

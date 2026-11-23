@@ -259,6 +259,8 @@ export interface NpcAiState {
   npcTimeTimelessReady?: boolean;
   // Fate (alt-life)
   fateNpcHandTypes?: string[];
+  /** FateKit.getNpcAiHints — the kit's read of its own synergies (dodge window, curse window, counter-aim). */
+  fateNpcHints?: { shuffleThreat: boolean; targetCursed: boolean; talismanOnMe: { x: number; y: number } | null; wagerCards: number };
   // Metal
   npcMetalHasFlail?: boolean;
   npcMetalFlailSwinging?: boolean;
@@ -3907,26 +3909,38 @@ export class NpcOpponent extends Fighter {
     void target;
     const skip = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
     const hand = aiState.fateNpcHandTypes ?? [];
-    const attackTypes = ['laser', 'burst', 'barrier', 'explosion', 'infect', 'lightning'];
+    const hints = aiState.fateNpcHints;
 
-    if (!skip) {
-      // 1. Enchant a strong attack card occasionally
-      if (hand.some((t) => ['explosion', 'lightning', 'barrier'].includes(t)) && Math.random() < 0.15) {
-        if (this.castAbility('fate-enchant', buildContext(this.x, this.y))) return 'fate-enchant';
+    if (!skip && hints) {
+      // 1. Synergy: a shot is about to land — Side Shuffle drops its decoys across the line, which
+      //    is both the dodge and a free card.
+      if (hints.shuffleThreat) {
+        if (this.castAbility('fate-side-shuffle', buildContext(aimX, aimY))) return 'fate-side-shuffle';
       }
-
-      // 2. All In when desperate or opportunistic and in range
-      if ((hpRatio < 0.30 || Math.random() < 0.08) && dist < 300) {
+      // 2. Counterplay: the player's talisman is orbiting us — shoot it off before it crits us.
+      if (hints.talismanOnMe && hand.length > 0 && Math.random() < 0.55) {
+        const t = hints.talismanOnMe;
+        if (this.castAbility('fate-card-throw', buildContext(t.x, t.y))) return 'fate-card-throw';
+      }
+      // 3. Synergy: the curse is on the player — All In now, while the wager can crit for 2x.
+      if (hints.targetCursed && hints.wagerCards >= 2 && dist < 320) {
         if (this.castAbility('fate-all-in', buildContext(aimX, aimY))) return 'fate-all-in';
       }
-
-      // 3. Reroll a hand with no attack cards
-      if (hand.length > 0 && !hand.some((t) => attackTypes.includes(t))) {
-        if (this.castAbility('fate-reroll', buildContext(this.x, this.y))) return 'fate-reroll';
+      // 4. Curse the player once they are in throwing range and not already cursed.
+      if (!hints.targetCursed && dist < 440) {
+        if (this.castAbility('fate-cursed-talisman', buildContext(aimX, aimY))) return 'fate-cursed-talisman';
+      }
+      // 5. Roll the die whenever it is up; the kit spends it (card faces, launches, held boosts).
+      if (dist < 600) {
+        if (this.castAbility('fate-dice-of-doom', buildContext(this.x, this.y))) return 'fate-dice-of-doom';
+      }
+      // 6. Desperation All In, on whatever is left.
+      if (hpRatio < 0.3 && hints.wagerCards >= 1 && dist < 260) {
+        if (this.castAbility('fate-all-in', buildContext(aimX, aimY))) return 'fate-all-in';
       }
     }
 
-    // 4. Throw a card as the primary attack
+    // 7. Throw a card as the primary attack
     if (hand.length > 0 && (this.aiState === 'attack' || this.aiState === 'chase')) {
       if (this.castAbility('fate-card-throw', buildContext(aimX, aimY))) return 'fate-card-throw';
     }

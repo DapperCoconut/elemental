@@ -38,6 +38,9 @@ export const ABILITY_TAGS: Record<string, readonly AbilityTag[]> = {
   'hunt-hook': ['recast'],
   // Time
   'time-barrage': ['hold'],
+  // Fate
+  'fate-dice-of-doom': ['hold', 'recast'],
+  'fate-all-in': ['recast'],
   'time-timeless': ['recast'],
   // Gravity
   'space-slash': ['hold'],

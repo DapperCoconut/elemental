@@ -35,7 +35,7 @@ Solid = { kind:'rect'; x; y; w; h } | { kind:'circle'; x; y; r }
 NpcLook { body; accent; hand?; hat?: NpcHat; traits?: NpcTrait[]; size?: 0.7–1.4 (1); eye? }
 NpcHat  = none cap tophat hood helmet crown bandana chef wizard tricorn beanie veil goggles straw mitre candle
           diving souwester wreath antlers mushroom aviator nightcap plume miner headwrap coif antenna hazmat propeller
-          cowl plague snake   // cowl hides the face (two eye-glints); snake's tongue flicks
+          cowl plague snake visor jester shako bandmaster domino earmuffs   // cowl hides the face (two eye-glints)
 NpcTrait= apron beard cane satchel pipe scarf glasses eyepatch lantern pack brand bandage rod book tool mask
 Talk    { when?: Cond; lines: string[]; sets?: flag }   // list most-specific first; `sets` flag set when block finishes
 NpcRole = 'shop'|'bakery'|'dock'|'tackle'|'banker'
@@ -60,7 +60,8 @@ AreaDef {
 WeatherKind = none ash embers steam smoke sparks wax rain snow motes spray fog bubbles ink
               pollen spores petals leaves sugar fireflies wind clouds feathers stars storm dreams
               dust sandstorm grit glints static aurora glow flicker balloons
-              miasma drip gossamer murk wisps   // murk is an overlay that dims the view
+              miasma drip gossamer murk wisps cards confetti goldleaf sandfall sepia ripples
+              notes glowworms lull sequins incense pages   // murk, sepia, lull are overlays that grade the view
 AreaPainter {
   ground(g, rng): void                                  // baked once into a texture, under everything
   pieces?: { x; y; w; h; draw(g, rng): void; when?: Cond }[]  // own Graphics at depth = y; `when`: shown only while it holds
@@ -91,6 +92,7 @@ WorldHazard =   // no HP in the world: a hit = back to last checkpoint
 WorldGate { rect; open: Cond; look; label? }   // wall until `open` holds
   look = portcullis grate wax rubble barrier ice coral sluice thorn roots bone candy cloud lightning orrery veil book
          boulder crystal kiln dune iron tomb cable magnet lead rubber phase fang web chain shadow lychgate
+         dice vault clock locket eye palisade pipes bell curtain stalactite stainedglass scroll
 ```
 
 ## Fights
@@ -124,6 +126,7 @@ target({ x, y, r, onStruck(by: 'player'|'npc', amount), passThrough? }): StrikeT
                            // { x; y; alive; moveTo(x,y); setRadius(r); remove() }. passThrough: shots fly on.
 facing(f): radians         // player: toward the mouse; bot: its walking heading (toward its foe when still)
 airborne(f, ms); isAirborne(f)   // nothing hits them (shots pass under, damage refused); root them to "fly"
+dashing(f): boolean        // ~120 ms after any dash / blink / leap / launch (moved faster than a walk) — never read speeds
 shotsNear(x, y, r): ShotHandle[] // both sides' shots in flight: { x; y; owner; damage; block(); reflect(nx?, ny?, keepOwner?) }
                            // reflect bounces a shared projectile and turns it on its owner (false = kit-local, blocked)
 ```
@@ -196,7 +199,7 @@ ShopDef   { id; name; stock: itemId[]; buys? /*buys fish/materials at `sell`*/ }
 RecipeDef { id; name; inputs: { item; count }[]; coins; output: itemId; makes? (1) }
 BakeryDef { id; name; recipes: RecipeDef[] }
 FishDef   { id /*= an IsleItemDef kind 'fish'*/; fisheries: id[]; weight; fight: 1–5; size: [minCm, maxCm]; rod?; when?: Cond }
-FisheryDef{ id; name; kind }  kind = sea lava pond wax steam oil ice ink abyss bog syrup cloud aurora sand cavern charged coolant quantum (cloud/aurora need skyline rod; sand/cavern delver rod; charged/coolant/quantum insulated rod)
+FisheryDef{ id; name; kind }  kind = sea lava pond wax steam oil ice ink abyss bog syrup cloud aurora sand cavern charged coolant quantum venom blackwater gilded lethe resonant still (cloud/aurora need skyline rod; sand/cavern delver rod; charged/coolant/quantum insulated rod; venom/blackwater antivenin; gilded/lethe fortune; resonant/still tuning rod)
 RodDef    { id; name; control /*widens catch bar*/; kinds: FisheryDef['kind'][] }
 ```
 
@@ -265,6 +268,8 @@ SignatureMove {
   onBossHurt?(amount)                     // every blow on the boss body (compare tk.player's position for "from behind")
 }
 tk.spawnTarget(def) / tk.strikeTargetsNear(x, y, reach, by, amount) / tk.shotsNear(x, y, r)  // for signatures (see GimmickCtx)
+tk.playerDashing()                      // ~120 ms after the player dashes / blinks / is launched (signatures' ctx.dashing)
+tk.phase                                // current phase index (0-based; hard extra phase = last) — set as each phase begins
 BossGesture = punch slam raise sweep clap flex point recoil
 BossHold    = spray charge draw brace reach conduct | null
 BossLook (BossRig.ts:45) { crest: BossCrest; pattern: BossPattern; aura?: BossAura; hands?: BossHands;
@@ -290,13 +295,18 @@ hitPlayer(amount, x, y)       // the chokepoint: × damageScale, min 1; player o
 explode(x, y, radius, damage, color = palette.main)   // boom + hitPlayer if inside
 boom(x, y, radius, color?)    // visual only
 slowPlayer(mult, durationMs)  // min of active slows; pulled into player speed
+stun(ms, f = player)          // real stun via the fight kit (tray, disarm, body held); unstoppable ignores
+root(ms, f = player)          // real root (body held, may cast) — never fake CC with slowPlayer
+silence(ms, f = player)       // real silence (abilities locked, may move)
 getPlayerSpeedMult()
 pull(x, y, strengthPxPerSec, durationMs)   // capped at 130 px/s; stops within 30px
 sfx(name)                      // panned at bossX
 healBoss(amount, x?, y?)       // npc.heal + floating "+n"
 schedule(delayMs, fn)          // dies on clearHazards / fight stop — use for multi-beat moves
 warn(ms) => ms × telegraphScale
-spawnBullet({ x, y, angle, speed, damage, lifeMs? 6000, r? 5, turn? /*rad/s homing*/, color? })
+spawnBullet({ x, y, angle, speed, damage, lifeMs? 6000, r? 5, turn? /*rad/s homing*/, color?, hits?: Fighter[] })
+                           // hits: who it can strike (default [player]); [ctx.npc] / both for shots aimed at the bot
+hitFighter(f, amount, x, y)  // toolkit-scaled damage to either fighter
 spawnLane({ x, y, angle, halfW, warnMs, fireMs? 380, damage })   // infinite line through x,y; hits once
 spawnZone({ x, y, radius, warnMs, damage, slowMult?, slowMs?, fall?, poolMs?, poolDamage? })  // clock telegraph
 spawnSanctuary({ warnMs, damage, safeR, idealDist? 380 })  // all but one circle detonates

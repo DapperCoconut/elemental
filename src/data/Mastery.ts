@@ -646,7 +646,7 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
       {
         key: 'cardsDrawn',
         label: 'Fortune Teller',
-        howTo: 'Draw cards — every card that enters your hand counts, so a Reroll (E) is worth a whole hand at once',
+        howTo: 'Draw cards — every card that enters your hand counts, including the ones Side Shuffle (E) draws when its decoys are shot',
         target: 250,
       },
       {
@@ -658,7 +658,7 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
       {
         key: 'allInHits',
         label: 'High Roller',
-        howTo: 'Land All In (Q) on an enemy instead of eating the wager yourself',
+        howTo: 'Land All In (Q) on an enemy instead of throwing the wagered cards away',
         target: 5,
       },
       {
@@ -679,7 +679,7 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
         name: 'Tarot of Fate',
         bindable: true,
         hudDescription: 'Greatly enchant the hovered card — 4x power, one curse',
-        description: 'The card your mouse is hovering becomes GREATLY ENCHANTED: 4x a normal card, overruling (and never stacking with) a plain Enchant. It also picks up a curse, shown as a small emoji on the bottom line of the card, which fires the moment you play it. Painful 🩹 deals you 30. Immolating 🔥 burns every other card out of your hand. Weakening 🦠 slows you 33% for 10s. Confusing 🌀 inverts your WASD for 5s. Vulnerable 🦴 makes the next hit you take double. Cursed 💀 rains 15 purple bullets at you from the sides of the arena for 3 each. Stunning ⭐ locks you out of playing cards for 5s. Cocky 😈 makes All In wager your entire health bar for the rest of the match. Purging ✨ strips enchant, great enchant and preserve off your whole hand and puts Tarot, Preserve and Enchant on 20s cooldowns. 20 second cooldown.',
+        description: 'The card your mouse is hovering becomes GREATLY ENCHANTED for its next throw: 4x a normal card, overruling (and never stacking with) a glyph. It also picks up a curse, shown as a small emoji on the card, which fires the moment you play it (or wager it). Painful 🩹 deals you 30. Immolating 🔥 burns every other card out of your hand. Weakening 🦠 slows you 33% for 10s. Confusing 🌀 inverts your WASD for 5s. Vulnerable 🦴 makes the next hit you take double. Cursed 💀 rains 15 purple bullets at you from the sides of the arena for 3 each. Stunning ⭐ locks you out of playing cards for 5s. Cocky 😈 makes All In stake your entire health bar on top of the cards for the rest of the match. Purging ✨ strips glyphs and great enchants off your whole hand and puts Tarot, Dice of Doom and Cursed Talisman on 20s cooldowns. 20 second cooldown.',
       },
     ],
   },
