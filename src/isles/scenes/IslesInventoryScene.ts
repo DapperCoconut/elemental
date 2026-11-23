@@ -4,7 +4,7 @@ import { allSelectableElements } from '../../data/ElementRoster';
 import * as Save from '../IslesSave';
 import { MAX_CHARMS } from '../IslesSave';
 import {
-  getIsleItem, allCourts, allFish, getRod, ISLES, getGeneTree, PINNACLE, routeOpen, councilSeatCount, benchSeats, allAreas, getEncounter,
+  getIsleItem, allCourts, allFish, getRod, ISLES, getGeneTree, PINNACLE, routeOpen, councilSeatCount, benchSeats, allAreas, getEncounter, courtChampions,
 } from '../IslesRegistry';
 import type { IsleItemDef } from '../IslesTypes';
 import { LedgerPanel, Row, itemDetail } from '../world/Counters';
@@ -150,15 +150,16 @@ export class IslesInventoryScene extends Phaser.Scene {
       const freed = s.monarchs.includes(isle.monarch.id);
       rows.push({
         icon: freed ? '👑' : '🏝️', name: isle.name, right: freed ? 'FREE' : `${isle.monarch.name}`, rightColor: freed ? '#9dffb0' : '#ff8a6a',
-        detail: [`${isle.monarch.name}, ${isle.monarch.title}`, freed ? 'Fallen.' : 'Still on the throne.', '', `Hard mode: ${s.hard ? 'ON' : 'not yet'}`],
+        detail: [`${isle.monarch.name}, ${isle.monarch.title}`, freed ? 'Fallen.' : 'Still on the throne.', '', s.hard ? '☄ You are inside the Fall.' : Save.hasFlag(Save.FLAG_METEOR_OPEN) ? 'The Fall waits at Fallpoint.' : ''],
         verb: null,
       });
       for (const c of allCourts().filter((x) => x.isle === isle.id)) {
-        const n = c.encounters.filter((e) => s.encounters.includes(e.id)).length;
+        const all = courtChampions(c);
+        const n = all.filter((e) => s.encounters.includes(e.id)).length;
         const free = s.princes.includes(c.prince.id);
         rows.push({
-          icon: free ? '🏳️' : '⚔️', name: `   ${c.name}`, right: free ? 'FREED' : `${n}/5`, rightColor: free ? '#9dffb0' : '#ffd27a',
-          detail: [`${c.prince.name}, ${c.prince.title}`, '', ...c.encounters.map((e) => `${s.encounters.includes(e.id) ? '✔' : '·'} ${e.name} — ${e.foeName}`)],
+          icon: free ? '🏳️' : '⚔️', name: `   ${c.name}`, right: free ? 'FREED' : `${n}/${all.length}`, rightColor: free ? '#9dffb0' : '#ffd27a',
+          detail: [`${c.prince.name}, ${c.prince.title}`, '', ...all.map((e) => `${s.encounters.includes(e.id) ? '✔' : '·'} ${e.fallen ? '☄ ' : ''}${e.name} — ${e.foeName}`)],
           verb: null,
         });
       }

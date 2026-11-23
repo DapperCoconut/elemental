@@ -3,6 +3,7 @@ import { BOILERWORKS_AREA } from './area';
 import { GAUGE_BOSS } from './boss';
 import { BOILERWORKS_ENCOUNTERS } from './encounters';
 import { BOILERWORKS_FLOOR } from './floor';
+import { FALLEN } from './fallen';
 import { CONVEYOR_FLOOR } from './gimmicks/conveyorFloor';
 import { OVERPRESSURE } from './gimmicks/overpressure';
 import { PISTON_PRESS } from './gimmicks/pistonPress';
@@ -38,6 +39,7 @@ export const BOILERWORKS_COURT: CourtBundle = {
   area: BOILERWORKS_AREA,
   gimmicks: [VALVE_RACE, CONVEYOR_FLOOR, STEAM_BATH, PISTON_PRESS, OVERPRESSURE],
   boss: GAUGE_BOSS,
+  fallen: FALLEN,
   items: BOILERWORKS_ITEMS,
   scripts: BOILERWORKS_SCRIPTS,
   shops: [{

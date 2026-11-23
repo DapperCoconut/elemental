@@ -53,10 +53,39 @@ export interface IslesSlot {
   /** Areas whose waystone has been touched — fast travel targets. */
   waystones: string[];
   chests: string[];
+  /**
+   * True inside the Fall (hard mode). `encounters` / `princes` / `monarchs` and the world flags always
+   * describe the world you are standing in; the other world's wait in `shelf`. Flip it with `setFall`.
+   */
   hard: boolean;
+  /** The other world's progress — the waking world's while you are in the Fall, the Fall's while awake. */
+  shelf: WorldProgress;
   /** Fights won / lost, for the journal. */
   stats: { wins: number; losses: number; fish: number; voyages: number; sunk: number };
 }
+
+/** The part of a save that differs between the waking world and the Fall. */
+export interface WorldProgress {
+  encounters: string[];
+  princes: string[];
+  monarchs: string[];
+  /** Only the world-state flags (`isWorldFlag`). */
+  flags: string[];
+}
+
+/**
+ * Flags that say how far a world has been freed — these swap with the progress lists when you step into
+ * or out of the Fall. Every other flag (cutscenes seen, levers, dialogue, the meteor) is the player's and stays.
+ */
+export const isWorldFlag = (f: string): boolean =>
+  f.startsWith('freed-') || f.startsWith('broken-') || f === 'shroud-broken' || f === 'king-fallen';
+
+/** Set (for good) the first time the Obsidian King falls: the second star is down, and Fallpoint can be reached. */
+export const FLAG_STAR_FELL = 'star-fell';
+/** The meteor's locks have been turned. */
+export const FLAG_METEOR_OPEN = 'meteor-open';
+/** The Fallen King has been beaten inside the Fall. */
+export const FLAG_FALL_WON = 'fall-won';
 
 interface IslesData {
   activeSlot: number | null;
@@ -90,11 +119,16 @@ function load(): IslesData {
 /** Fill any field an older save is missing, so content can add fields freely. */
 function normalise(s: IslesSlot): IslesSlot {
   const d = freshSlot(s.name ?? 'Wanderer', s.element ?? 'fire');
-  return {
+  const out: IslesSlot = {
     ...d, ...s,
     boat: { ...d.boat, ...(s.boat ?? {}) },
     stats: { ...d.stats, ...(s.stats ?? {}) },
+    shelf: { ...d.shelf, ...(s.shelf ?? {}) },
   };
+  // A save that beat the King before the meteor existed: the star has fallen for it too.
+  const kingDown = (out.hard ? out.shelf.flags : out.flags).includes('king-fallen');
+  if (kingDown && !out.flags.includes(FLAG_STAR_FELL)) out.flags.push(FLAG_STAR_FELL);
+  return out;
 }
 
 export function persist(): void {
@@ -112,6 +146,7 @@ export function freshSlot(name: string, element: string): IslesSlot {
     fishLog: {}, genes: {},
     boat: { owned: null, upgrades: {}, ubers: [], uber: null },
     wastesBest: 0, waystones: ['emberport'], chests: [], hard: false,
+    shelf: { encounters: [], princes: [], monarchs: [], flags: [] },
     stats: { wins: 0, losses: 0, fish: 0, voyages: 0, sunk: 0 },
   };
 }
@@ -218,6 +253,38 @@ export function markMonarch(id: string): void {
   if (!s.monarchs.includes(id)) { s.monarchs.push(id); persist(); }
 }
 
+/**
+ * Step into the Fall (`true`) or wake from it (`false`): the progress lists and world flags trade places
+ * with the shelf, so every `Cond` in the game — dialogue, gates, exits, the Shroud — reads the world you
+ * are now in without knowing there are two. Coins, keys, orbs, items, genes, quests, chests and waystones
+ * are the player's and do not change.
+ */
+export function setFall(on: boolean): void {
+  const s = S();
+  if (s.hard === on) return;
+  const mine: WorldProgress = {
+    encounters: s.encounters, princes: s.princes, monarchs: s.monarchs, flags: s.flags.filter(isWorldFlag),
+  };
+  const theirs = s.shelf;
+  s.encounters = theirs.encounters;
+  s.princes = theirs.princes;
+  s.monarchs = theirs.monarchs;
+  s.flags = [...s.flags.filter((f) => !isWorldFlag(f)), ...theirs.flags];
+  s.shelf = mine;
+  s.hard = on;
+  persist();
+}
+
+/** True inside the Fall. */
+export const inFall = (): boolean => hasActive() && S().hard;
+
+export function spendKeys(n: number): boolean {
+  if (S().keys < n) return false;
+  S().keys -= n;
+  persist();
+  return true;
+}
+
 export function setPlace(area: string, pos: Pt): void {
   const s = S();
   s.area = area;
@@ -304,6 +371,7 @@ export function test(c: Cond | undefined): boolean {
   if ('princesOfIsle' in c) return islePrinces(c.princesOfIsle).filter((p) => s.princes.includes(p)).length >= c.count;
   if ('monarchs' in c) return s.monarchs.filter((m) => m !== 'obsidian-king').length >= c.monarchs;
   if ('seats' in c) return seatsWon() >= c.seats;
+  if ('fall' in c) return s.hard === c.fall;
   if ('not' in c) return !test(c.not);
   if ('all' in c) return c.all.every(test);
   if ('any' in c) return c.any.some(test);

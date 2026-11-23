@@ -41,6 +41,11 @@ export type Cond =
   | { monarchs: number }
   /** At least this many of the Pinnacle's sixty councilors have been unseated. */
   | { seats: number }
+  /**
+   * Which world this is: `{ fall: true }` holds inside the Fall (hard mode — the Fallen King's retrial, every
+   * crown back on its head), `{ fall: false }` in the waking world. See `docs/ten-isles/fall.md`.
+   */
+  | { fall: boolean }
   | { not: Cond }
   | { all: Cond[] }
   | { any: Cond[] };
@@ -254,7 +259,12 @@ export type Poi =
   /** The dock's mooring — where `SeaVoyageScene` starts from. */
   | { kind: 'mooring'; at: Pt; isle: string }
   /** Pull it to set `flag` (opens the gates that wait on it). One-way. */
-  | { kind: 'lever'; at: Pt; flag: string; label: string };
+  | { kind: 'lever'; at: Pt; flag: string; label: string }
+  /**
+   * The fallen star at Fallpoint. Sealed until its locks are turned with keys; after that it is the door
+   * between the waking world and the Fall. The engine runs the whole exchange from the bundle's `MeteorDef`.
+   */
+  | { kind: 'meteor'; at: Pt };
 
 /**
  * Dungeon dangers in the walkable world. There is no health out here: a hazard that catches
@@ -446,6 +456,11 @@ export interface EncounterDef {
   perk?: string;
   /** Councilor: the seat it holds — "Seat of Embers". Shown on the fight card and the result. */
   seat?: string;
+  /**
+   * Set by the registry on a court's Fallen Five: this champion stands only inside the Fall (hard mode), is
+   * drawn star-scarred, and fights with every upgrade of its element and its mastery.
+   */
+  fallen?: boolean;
 }
 
 /** What a gimmick may touch. Built per fight by `IslesFightKit`. */
@@ -847,8 +862,22 @@ export interface CourtBundle {
   bakeries?: BakeryDef[];
   fish?: FishDef[];
   fisheries?: FisheryDef[];
+  /** The court's Fallen Five (hard mode). Absent until its builder lands; the validator lists what is missing. */
+  fallen?: FallenBundle;
   /** A stand-in from `content/placeholder.ts` while its builder works; the validator skips it. */
   placeholder?: boolean;
+}
+
+/**
+ * A court's Fallen Five — the five extra champions that stand in it inside the Fall (hard mode), which
+ * makes ten with the court's own. Each court folder exports one (`<COURT>_FALLEN`, from `fallen/index.ts`)
+ * and lists it as its bundle's `fallen`.
+ */
+export interface FallenBundle {
+  /** Exactly five; `court` is the court's id, ids are `fallen-<court>-<slug>`. */
+  encounters: EncounterDef[];
+  /** Their five gimmicks, ids `fallen-<court>-<slug>`. */
+  gimmicks: GimmickDef[];
 }
 
 /** An isle's port, as its builder exports it (`<ISLE>_PORT`); the isle's `isle/index.ts` folds it in. */
@@ -1010,5 +1039,39 @@ export interface PinnacleSummitBundle {
   /** The King's artifact, and anything else found in the hall. */
   items: IsleItemDef[];
   scripts: Record<string, ItemScriptFactory>;
+  cutscenes: CutsceneDef[];
+}
+
+// ── The meteor ─────────────────────────────────────────────────────────
+
+/** What the fallen star says and costs. The engine runs the exchange; the words are content. */
+export interface MeteorDef {
+  /** Keys its locks take, all at once. */
+  keys: number;
+  /** Name over the dialogue box before it is opened, and after. */
+  sealedName: string;
+  openName: string;
+  /** Walking up to it sealed (the last line is followed by the offer to turn the keys). */
+  sealed: string[];
+  /** Said when you have too few keys. `{n}` is how many you hold, `{need}` how many it takes. */
+  short: string[];
+  /** Opened, in the waking world: the Fallen King's offer of the Fall. */
+  offer: string[];
+  /** Opened, inside the Fall: said before the choice to wake. */
+  inFall: string[];
+  /** Inside the Fall after the Fallen King has been beaten there. */
+  won: string[];
+}
+
+/** Fallpoint and the meteor, as its builder exports it (`METEOR_BUNDLE`). */
+export interface MeteorBundle {
+  area: AreaDef;
+  meteor: MeteorDef;
+  /** The Ferryman's lines out here (folded into the Pinnacle wanderer's `byArea.fallpoint`). */
+  ferryman: Talk[];
+  /** The artifact the Fallen King drops, and anything else found here. */
+  items: IsleItemDef[];
+  scripts: Record<string, ItemScriptFactory>;
+  /** `cine-meteor` (the locks turn), `cine-fall` (the first step into the Fall), `cine-fall-end` (the true ending). */
   cutscenes: CutsceneDef[];
 }

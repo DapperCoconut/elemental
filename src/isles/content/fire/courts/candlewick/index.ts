@@ -3,6 +3,7 @@ import { CANDLEWICK_AREA } from './area';
 import { TALLOW_BOSS } from './boss';
 import { CANDLEWICK_ENCOUNTERS } from './encounters';
 import { candlewickFloor } from './floor';
+import { FALLEN } from './fallen';
 import { BOTH_ENDS } from './gimmicks/bothEnds';
 import { DRIP } from './gimmicks/drip';
 import { EFFIGIES } from './gimmicks/effigies';
@@ -41,4 +42,5 @@ export const CANDLEWICK_COURT: CourtBundle = {
   bakeries: CANDLEWICK_BAKERIES,
   fish: CANDLEWICK_FISH,
   fisheries: CANDLEWICK_FISHERIES,
+  fallen: FALLEN,
 };

@@ -4,8 +4,10 @@ import { Sfx } from '../../audio';
 import { describeEffect } from '../../data/Items';
 import * as Save from '../IslesSave';
 import { MAX_CHARMS } from '../IslesSave';
+import { isCheatMode } from '../../data/Cheats';
 import {
   getShop, getBakery, getIsleItem, boats, dockUpgrades, getUber, getRod, ISLES, ALL_ISLE_IDS, routeOpen, getIsle, PINNACLE,
+  meteorArea, getMeteor,
 } from '../IslesRegistry';
 import type { IsleItemDef } from '../IslesTypes';
 import * as Quests from '../systems/Quests';
@@ -400,6 +402,22 @@ export function openDock(p: LedgerPanel, accent: number, here: string, setSail: 
         verb: open && has ? 'SET SAIL' : null,
         dim: !open,
         act: () => { setSail(PINNACLE.id); return null; },
+      });
+    }
+    // The second star: once it is down the Ferryman waits at every dock, and rows you out for nothing.
+    if (Save.hasFlag(Save.FLAG_STAR_FELL) || isCheatMode()) {
+      const fp = meteorArea();
+      const open = Save.hasFlag(Save.FLAG_METEOR_OPEN);
+      rows.push({
+        icon: '☄️', name: fp.name, right: 'THE FERRYMAN ROWS', rightColor: '#ff9a78',
+        detail: [
+          'Where the second star came down: a ring of fused glass in open water.', '',
+          open ? (s().hard ? 'The star is open. You are inside the Fall — it is the way back out.' : 'The star is open. The Fall waits inside it.')
+            : `Something lies in the crater, shut with ${getMeteor().keys} locks. You hold ${s().keys} 🗝️.`,
+          'No boat needed. He will not take a coin for it.',
+        ],
+        verb: 'GO',
+        act: () => { setSail(fp.id); return null; },
       });
     }
     const uncharted = ALL_ISLE_IDS.length - ISLES.length;

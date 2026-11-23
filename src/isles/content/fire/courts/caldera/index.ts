@@ -10,6 +10,7 @@ import { eruptionClockGimmick } from './gimmicks/eruptionClock';
 import { coolingRainGimmick } from './gimmicks/coolingRain';
 import { magmaTideGimmick } from './gimmicks/magmaTide';
 import { pumiceBrawlGimmick } from './gimmicks/pumiceBrawl';
+import { FALLEN } from './fallen';
 
 /**
  * The Caldera Court — Brandmark's tier-4 court, inside the crater on the isle's peak. Prince
@@ -41,4 +42,5 @@ export const CALDERA_COURT: CourtBundle = {
   shops: CALDERA_SHOPS,
   fish: CALDERA_FISH,
   fisheries: CALDERA_FISHERIES,
+  fallen: FALLEN,
 };

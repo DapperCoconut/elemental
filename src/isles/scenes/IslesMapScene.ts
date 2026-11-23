@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import { FONT_DISPLAY, FONT_UI } from '../../ui';
 import { Sfx } from '../../audio';
 import * as Save from '../IslesSave';
-import { getArea, courtOfArea, isleOf, getIsle, ALL_ISLE_IDS, ISLES, benchSeats } from '../IslesRegistry';
+import { getArea, courtOfArea, isleOf, getIsle, ALL_ISLE_IDS, ISLES, benchSeats, courtChampions } from '../IslesRegistry';
 import { benchOf } from '../content/pinnacle/spec';
 import { drawPinnacle, OBS } from '../art/PinnacleArt';
 import { findElementDef } from '../../data/ElementRoster';
@@ -665,7 +665,7 @@ export class IslesMapScene extends Phaser.Scene {
         const court = courtOfArea(id);
         const label = a?.name ?? id;
         let sub = '';
-        if (court) sub = s.princes.includes(court.prince.id) ? 'freed' : `${court.encounters.filter((e) => s.encounters.includes(e.id)).length}/5 · ${court.prince.name}`;
+        if (court) sub = s.princes.includes(court.prince.id) ? 'freed' : `${courtChampions(court).filter((e) => s.encounters.includes(e.id)).length}/${courtChampions(court).length} · ${court.prince.name}`;
         else if (benchSeats(id).length) sub = `${benchSeats(id).filter((e) => s.encounters.includes(e)).length}/${benchSeats(id).length} seats`;
         const t = txt(p.x, p.y + 24, `${label}${sub ? `\n${sub}` : ''}`, { fontFamily: FONT_UI, fontSize: '12px', color: id === this.sel ? '#1a0a00' : '#3a2412', align: 'center', fontStyle: id === this.sel ? 'bold' : 'normal' }).setOrigin(0.5, 0);
         const z = this.add.zone(p.x, p.y, 48, 48).setInteractive({ useHandCursor: true });

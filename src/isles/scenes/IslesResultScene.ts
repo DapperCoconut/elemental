@@ -4,7 +4,9 @@ import { Music, Sfx } from '../../audio';
 import * as Save from '../IslesSave';
 import {
   getEncounter, getCourt, courtOfPrince, getIsle, getIsleItem, ISLES, getIslesBoss, ALL_ISLE_IDS, PINNACLE, benchSeats, getArea, getCutscene,
+  courtChampions,
 } from '../IslesRegistry';
+import { CINE_FALL_END, FALLEN_ARTIFACT } from '../content/meteor/spec';
 import * as Quests from '../systems/Quests';
 import type { IslesFightPayload } from '../IslesTypes';
 
@@ -59,7 +61,7 @@ export class IslesResultScene extends Phaser.Scene {
     this.events.once('shutdown', () => this.events.off('update', tick));
 
     const king = this.payload.kind === 'monarch' && this.payload.id === PINNACLE.monarch.id;
-    const title = this.won ? (king ? 'THE THRONE IS EMPTY' : this.payload.kind === 'councilor' ? 'SEAT EMPTIED' : this.payload.kind === 'monarch' ? 'THE CROWN FALLS' : this.payload.kind === 'prince' ? 'PRINCE DEFEATED' : 'VICTORY') : 'DRIVEN BACK';
+    const title = this.won ? (king ? (this.payload.hard ? 'THE CASE IS CLOSED' : 'THE THRONE IS EMPTY') : this.payload.kind === 'councilor' ? 'SEAT EMPTIED' : this.payload.kind === 'monarch' ? 'THE CROWN FALLS' : this.payload.kind === 'prince' ? 'PRINCE DEFEATED' : 'VICTORY') : 'DRIVEN BACK';
     this.add.text(W / 2, 92, title, {
       fontFamily: FONT_DISPLAY, fontSize: '46px', color: this.won ? '#ffd27a' : '#e07a7a',
       stroke: '#1a0a04', strokeThickness: 8,
@@ -166,8 +168,21 @@ export class IslesResultScene extends Phaser.Scene {
           push(`Artifact: ${art.emoji} ${art.name}`, '#ff9d5c', true);
         }
         Save.setFlag('king-fallen');
-        push('The ten isles are free. All of them. For good.', '#9dffb0', true);
-        if (getCutscene('cine-ending')) this.cine = 'cine-ending';
+        if (p.hard) {
+          // The Fallen King, beaten inside the Fall: the retrial is lost for good.
+          Save.setFlag(Save.FLAG_FALL_WON);
+          const star = getIsleItem(FALLEN_ARTIFACT);
+          if (star && Save.count(star.id) === 0) {
+            Save.give(star.id, 1);
+            push(`Artifact: ${star.emoji} ${star.name}`, '#ff9d5c', true);
+          }
+          push('The Fall is broken. There is nothing left to appeal to.', '#ffb49a', true);
+          if (getCutscene(CINE_FALL_END)) this.cine = CINE_FALL_END;
+        } else {
+          Save.setFlag(Save.FLAG_STAR_FELL);
+          push('The ten isles are free. All of them. For good.', '#9dffb0', true);
+          if (getCutscene('cine-ending')) this.cine = 'cine-ending';
+        }
       }
     } else if (p.kind === 'encounter' || p.kind === 'warden') {
       const e = getEncounter(p.id);
@@ -178,11 +193,14 @@ export class IslesResultScene extends Phaser.Scene {
       push(`+${coins} 🪙 coins${first ? '' : ' (rematch)'}`, '#ffd27a', true);
       if (first && e && !e.quest) {
         const court = getCourt(e.court);
+        // One of the Fallen Five pays in orbs as well: the star's own light, shaken loose.
+        if (e.fallen) { Save.addOrbs(2); push('+2 🔮 orbs', '#d0a8ff'); }
         if (court && Save.courtReady(court.id)) {
           push(`${court.name}: the prince's gate is open!`, '#ff9d5c', true);
         } else if (court) {
-          const n = court.encounters.filter((x) => Save.S().encounters.includes(x.id)).length;
-          push(`${court.name}: ${n}/${court.encounters.length} champions beaten`, '#e8c8a0');
+          const all = courtChampions(court);
+          const n = all.filter((x) => Save.S().encounters.includes(x.id)).length;
+          push(`${court.name}: ${n}/${all.length} champions beaten`, '#e8c8a0');
         }
       }
       for (const l of Quests.notify({ kind: 'defeat', encounter: p.id })) push(l, '#9dd8ff');

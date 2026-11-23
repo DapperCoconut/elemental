@@ -5,6 +5,7 @@ import type { KingPart } from './contract';
 import { KING_THRONE } from './throne';
 import { KING_DUEL } from './duel';
 import { KING_STAR, KING_OUTRO } from './star';
+import { KING_FALLEN } from './fallen';
 
 /**
  * The Obsidian King — the campaign's last fight, one body in three acts.
@@ -15,10 +16,16 @@ import { KING_STAR, KING_OUTRO } from './star';
  *  III. THE STAR UNSHELLED — the hall bursts, the shell falls away, and the thing that fell into
  *       the sea burns in the middle of its own rings.
  *
+ *  IV.  THE FALLEN KING — inside the Fall only (hard mode's extra phase): what is left when the star is
+ *       spent. Man-sized, no throne, no glass. See `docs/ten-isles/fall.md`.
+ *
  * Each act is its own file (a `KingPart`); this one only folds them together.
  */
-const PARTS = [KING_THRONE, KING_DUEL, KING_STAR].filter((p): p is KingPart => !!p);
-const READY = PARTS.length === 3;
+const ACTS = [KING_THRONE, KING_DUEL, KING_STAR].filter((p): p is KingPart => !!p);
+const READY = ACTS.length === 3;
+const FALLEN: KingPart | null = READY ? (KING_FALLEN as KingPart | null) : null;
+// Phase index 3 is the hard extra phase, so the fourth part lines up with it.
+const PARTS = FALLEN ? [...ACTS, FALLEN] : ACTS;
 // The star is a wall: nobody walks into it (its act paints the burn; the engine holds the line).
 if (READY) PARTS[2].phase.style = { ...PARTS[2].phase.style, solid: true };
 const part = (i: number): KingPart | undefined => PARTS[Math.min(i, PARTS.length - 1)];
@@ -47,8 +54,8 @@ export const OBSIDIAN_KING: WorldBossDef = {
   defeatLine: 'THE STAR GOES OUT',
   resumeLine: 'Another. Send them all — the glass is patient.',
   // Until all three acts have landed the def stands empty, and the validator lists it as a placeholder.
-  phases: READY ? PARTS.map((p) => p.phase) : [],
-  hard: { hpMult: 1.3, damageMult: 1.2, restMult: 0.75, introLine: 'THE GLASS REMEMBERS YOU' },
+  phases: READY ? ACTS.map((p) => p.phase) : [],
+  hard: { hpMult: 1.3, damageMult: 1.2, restMult: 0.75, introLine: 'THE GLASS REMEMBERS YOU', extraPhase: FALLEN?.phase },
   signatures: Object.assign({}, ...PARTS.map((p) => p.signatures)),
   look: { crest: 'crown', pattern: 'facets', aura: 'none', hands: 'gauntlet', torsoR: 40, eyes: 2, eyeColor: OBS.seamLit, mouth: 'none' },
   drawDecor: (g, s) => part(s.phaseIdx)?.drawDecor?.(g, s),

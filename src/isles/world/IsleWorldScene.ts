@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { FONT_DISPLAY, FONT_UI, FONT_MONO } from '../../ui';
 import { Music, Sfx } from '../../audio';
 import * as PlayerData from '../../data/PlayerData';
+import { isCheatMode } from '../../data/Cheats';
 import { BossRig, BossRigFrame } from '../../boss/framework/BossRig';
 import type { WorldBossDef } from '../../boss/framework/BossDefs';
 import { TownWalker } from '../../campaign/town/TownWalker';
@@ -9,7 +10,9 @@ import * as Save from '../IslesSave';
 import {
   getArea, getEncounter, getIslesBoss, bossIdFor, getWanderer, isleOf,
   allQuests, getIsle, allAreas, getIsleItem, courtOfArea, getCourt, getCutscene, councilSeatCount,
+  courtChampions, getMeteor,
 } from '../IslesRegistry';
+import { FALLPOINT, FALLPOINT_LANDING, CINE_METEOR, CINE_FALL } from '../content/meteor/spec';
 import { councilMask, OBS, seam, shard, crackPath, starGlow } from '../art/PinnacleArt';
 import { buildNpcLoadout } from '../../data/NpcLoadout';
 import { getPerksForElement } from '../../data/Perks';
@@ -411,7 +414,7 @@ export class IsleWorldScene extends Phaser.Scene {
 
   private buildChampions(): void {
     const court = courtOfArea(this.def.id);
-    const encs: EncounterDef[] = court ? [...court.encounters] : [];
+    const encs: EncounterDef[] = court ? [...courtChampions(court)] : [];
     for (const p of this.def.pois) if (p.kind === 'encounter') { const e = getEncounter(p.id); if (e && !encs.includes(e)) encs.push(e); }
     // A quest's own foe stands here only while that quest is waiting on the fight.
     for (const e of Quests.duelsIn(this.def.id)) if (!encs.includes(e)) encs.push(e);
@@ -422,10 +425,15 @@ export class IsleWorldScene extends Phaser.Scene {
     const beaten = !enc.quest && Save.S().encounters.includes(enc.id);
     const walker = new TownWalker(this, enc.foeElement, enc.at.x, enc.at.y, { bare: true });
     if (beaten) walker.container.setAlpha(0.55);
-    const plate = this.add.text(enc.at.x, enc.at.y - 62, beaten ? `${enc.foeName}` : `⚔ ${enc.foeName}\n${enc.mastered ? enc.seat ?? enc.name : enc.name}`, {
-      fontFamily: FONT_UI, fontSize: '11px', color: beaten ? '#a8a090' : enc.mastered ? '#c9b0ff' : enc.quest ? '#9dd8ff' : '#ffcf9a', stroke: '#000', strokeThickness: 3, align: 'center',
+    const plate = this.add.text(enc.at.x, enc.at.y - 62, beaten ? `${enc.foeName}` : `${enc.fallen ? '☄' : '⚔'} ${enc.foeName}\n${enc.mastered ? enc.seat ?? enc.name : enc.name}`, {
+      fontFamily: FONT_UI, fontSize: '11px', color: beaten ? '#a8a090' : enc.mastered ? '#c9b0ff' : enc.fallen ? '#ff9a78' : enc.quest ? '#9dd8ff' : '#ffcf9a', stroke: '#000', strokeThickness: 3, align: 'center',
     }).setOrigin(0.5, 1).setDepth(9200);
     const c: Champion = { enc, walker, plate, beaten };
+    if (enc.fallen) {
+      // One of the Fallen Five: the scorch of the star under their feet, cold once they are beaten.
+      c.mask = this.add.graphics().setDepth(enc.at.y - 0.5);
+      fallenScar(c.mask, enc.at.x, enc.at.y, beaten);
+    }
     if (enc.mastered) {
       // The Council's regalia: a shard of the King's shell over the face — split, once the seat is empty.
       c.mask = this.add.graphics().setDepth(enc.at.y + 0.5);
@@ -517,6 +525,13 @@ export class IsleWorldScene extends Phaser.Scene {
           break;
         case 'lever':
           list.push({ x: p.at.x, y: p.at.y, r: REACH - 10, prio: 2, label: () => (Save.hasFlag(p.flag) ? `${p.label} (pulled)` : `Pull: ${p.label}`), use: () => this.pullLever(p) });
+          break;
+        case 'meteor':
+          list.push({
+            x: p.at.x, y: p.at.y, r: REACH + 40, prio: 2,
+            label: () => (!Save.hasFlag(Save.FLAG_METEOR_OPEN) ? `${getMeteor().sealedName} — sealed` : Save.inFall() ? 'Wake from the Fall' : `Speak to ${getMeteor().openName}`),
+            use: () => this.useMeteor(),
+          });
           break;
         case 'mooring':
           list.push({ x: p.at.x, y: p.at.y, r: REACH + 10, prio: 3, label: () => 'Mooring — boats & sailing', use: () => this.openDockPanel() });
@@ -651,6 +666,8 @@ export class IsleWorldScene extends Phaser.Scene {
   }
 
   private sail(dest: string): void {
+    // Fallpoint is not sailed to: the Ferryman rows you, boat or no boat.
+    if (dest === FALLPOINT) { this.travel(FALLPOINT, { pos: { ...FALLPOINT_LANDING } }); return; }
     if (!Save.S().boat.owned) { this.toast('You need a boat.'); return; }
     Save.setPlace(this.def.id, { x: this.px, y: this.py });
     this.leaving = true;
@@ -669,10 +686,11 @@ export class IsleWorldScene extends Phaser.Scene {
     const lines = c.beaten ? e.beaten : e.challenge;
     const gimmick = e.mastered
       ? `${e.seat ?? 'Councilor'} — decree: “${e.name}” — PERFECTED`
+      : e.fallen ? `“${e.name}” — ☄ FALLEN — every upgrade, mastered`
       : `“${e.name}” — difficulty ${'★'.repeat(e.difficulty)}${'☆'.repeat(5 - e.difficulty)}`;
     const kind: IslesFightPayload['kind'] = e.mastered ? 'councilor' : getCourt(e.court) ? 'encounter' : 'warden';
     this.dialogue.open({
-      name: e.foeName, title: gimmick, portrait, accent: e.mastered ? OBS.seam : 0xff7a4a, lines,
+      name: e.foeName, title: gimmick, portrait, accent: e.mastered ? OBS.seam : e.fallen ? 0xff5a3a : 0xff7a4a, lines,
       choices: [
         { label: c.beaten ? 'Rematch' : 'Fight!', pick: () => this.launchFight({ kind, id: e.id, court: e.court }, e.foeElement, e.difficulty, e) },
         { label: 'Not yet', pick: () => {} },
@@ -686,10 +704,11 @@ export class IsleWorldScene extends Phaser.Scene {
       const court = courtOfArea(this.def.id) ?? [...allAreas()].map((a) => courtOfArea(a.id)).find((c) => c?.prince.id === b.id);
       const ready = court ? Save.courtReady(court.id) : true;
       if (!ready && court) {
-        const n = court.encounters.filter((e) => Save.S().encounters.includes(e.id)).length;
+        const all = courtChampions(court);
+        const n = all.filter((e) => Save.S().encounters.includes(e.id)).length;
         this.dialogue.open({
           name: b.def.name, title: b.def.title, portrait, accent: b.def.color,
-          lines: [b.def.intro[0] ?? '…', `(The gate stays shut until all five of ${court.name}'s champions fall — ${n}/5.)`],
+          lines: [b.def.intro[0] ?? '…', `(The gate stays shut until all ${all.length === 10 ? 'ten' : 'five'} of ${court.name}'s champions fall — ${n}/${all.length}.)`],
         });
         return;
       }
@@ -737,6 +756,8 @@ export class IsleWorldScene extends Phaser.Scene {
         bossId: boss ? bossIdFor(p.id) : undefined,
         isles: payload,
         playerPerk: PlayerData.getEquippedPerk(s.element),
+        // One of the Fallen Five: every upgrade and the mastery, but no perk — that is the Council's.
+        ...(enc?.fallen ? { npcLoadout: buildNpcLoadout(foeElement, 5) } : {}),
         // A councilor is the element perfected: every upgrade, its mastery, its bound enhancement and a perk.
         ...(enc?.mastered ? {
           npcLoadout: buildNpcLoadout(foeElement, 5),
@@ -775,6 +796,78 @@ export class IsleWorldScene extends Phaser.Scene {
       return;
     }
     this.travel(p.to, { pos: p.arrive });
+  }
+
+  /**
+   * The fallen star. Sealed: it wants its keys, all at once. Open: it is the door between the waking
+   * world and the Fall — stepping through trades the save's progress lists (`Save.setFall`) and reloads here.
+   */
+  private useMeteor(): void {
+    const m = getMeteor();
+    const s = Save.S();
+    // A cheat save opens the locks for nothing, so the Fall can be tested without a finished campaign.
+    const cost = isCheatMode() ? 0 : m.keys;
+    const portrait = (g: Phaser.GameObjects.Graphics, x: number, y: number, t: number) => {
+      const open = Save.hasFlag(Save.FLAG_METEOR_OPEN);
+      g.fillStyle(0x140c10, 1); g.fillCircle(x, y - 26, 34);
+      g.lineStyle(2, open ? 0xff8a4a : 0x6a5a78, 1); g.strokeCircle(x, y - 26, 34);
+      starGlow(g, x, y - 26, open ? 20 : 8, t, open ? 1 : 0.35);
+    };
+    const reload = (cine?: string) => {
+      const next = { key: 'IsleWorldScene', data: { area: FALLPOINT, pos: { x: this.px, y: this.py } } };
+      Save.setPlace(FALLPOINT, { x: this.px, y: this.py });
+      this.leaving = true;
+      this.cameras.main.fadeOut(600, 255, 240, 220);
+      this.cameras.main.once('camerafadeoutcomplete', () => {
+        if (cine && getCutscene(cine)) this.scene.start('IslesCutsceneScene', { id: cine, next });
+        else this.scene.start(next.key, next.data);
+      });
+    };
+    if (!Save.hasFlag(Save.FLAG_METEOR_OPEN)) {
+      this.dialogue.open({
+        name: m.sealedName, portrait, accent: 0x8a7aa8, lines: [...m.sealed],
+        choices: [
+          { label: `Turn the locks — ${cost} 🗝️ (you hold ${s.keys})`, pick: () => {
+            if (!Save.spendKeys(cost)) {
+              Sfx.play('ui-denied');
+              const fill = (l: string) => l.replace('{n}', `${s.keys}`).replace('{need}', `${m.keys}`);
+              this.dialogue.open({ name: m.sealedName, portrait, accent: 0x8a7aa8, lines: m.short.map(fill) });
+              return;
+            }
+            Save.setFlag(Save.FLAG_METEOR_OPEN);
+            Sfx.play('unlock');
+            this.cameras.main.shake(900, 0.008);
+            reload(CINE_METEOR);
+          } },
+          { label: 'Leave it', pick: () => {} },
+        ],
+      });
+      return;
+    }
+    if (!Save.inFall()) {
+      this.dialogue.open({
+        name: m.openName, title: 'what is left of the Obsidian King', portrait, accent: 0xff7a4a, lines: [...m.offer],
+        choices: [
+          { label: '☄ Step into the Fall (hard mode)', pick: () => {
+            const first = !Save.hasFlag('fall-entered');
+            Save.setFlag('fall-entered');
+            Save.setFall(true);
+            Sfx.play('boss-intro');
+            reload(first ? CINE_FALL : undefined);
+          } },
+          { label: 'Not yet', pick: () => {} },
+        ],
+      });
+      return;
+    }
+    this.dialogue.open({
+      name: m.openName, title: 'the Fall', portrait, accent: 0xff7a4a,
+      lines: [...(Save.hasFlag(Save.FLAG_FALL_WON) ? m.won : m.inFall)],
+      choices: [
+        { label: 'Wake — back to the free isles', pick: () => { Save.setFall(false); Sfx.play('teleport'); reload(); } },
+        { label: 'Stay in the Fall', pick: () => {} },
+      ],
+    });
   }
 
   private pullLever(p: Extract<Poi, { kind: 'lever' }>): void {
@@ -2219,6 +2312,17 @@ export class IsleWorldScene extends Phaser.Scene {
           const open = Save.test(p.open);
           g.fillStyle(open ? 0xffa040 : 0x5a2a1a, open ? 0.2 + Math.sin(t * 2) * 0.1 : 0.15);
           g.fillCircle(at!.x, at!.y - 30, 48);
+          break;
+        }
+        case 'meteor': {
+          // Only the light is the engine's — the star itself is the area painter's. Cold and faint while
+          // sealed; a slow warm breath once open; hot and quick inside the Fall.
+          const open = Save.hasFlag(Save.FLAG_METEOR_OPEN), fall = Save.S().hard;
+          const beat = 0.5 + 0.5 * Math.sin(t * (fall ? 3.4 : 1.3));
+          g.fillStyle(fall ? 0xff4a2a : open ? 0xffb060 : 0x8a7ab8, (open ? 0.1 : 0.05) + beat * (open ? 0.1 : 0.03));
+          g.fillCircle(at!.x, at!.y - 20, 120 + beat * 16);
+          g.fillStyle(fall ? 0xff8a5a : open ? 0xffe0a8 : 0xb0a8d8, (open ? 0.14 : 0.05) + beat * 0.08);
+          g.fillCircle(at!.x, at!.y - 20, 60 + beat * 8);
           break;
         }
         case 'mooring':
@@ -3740,9 +3844,11 @@ export class IsleWorldScene extends Phaser.Scene {
     const court = courtOfArea(this.def.id);
     let sub = this.def.name;
     if (court) {
-      const n = court.encounters.filter((e) => s.encounters.includes(e.id)).length;
-      sub += s.princes.includes(court.prince.id) ? '  ·  FREED' : `  ·  champions ${n}/5`;
+      const all = courtChampions(court);
+      const n = all.filter((e) => s.encounters.includes(e.id)).length;
+      sub += s.princes.includes(court.prince.id) ? '  ·  FREED' : `  ·  champions ${n}/${all.length}`;
     }
+    if (s.hard) sub = `☄ THE FALL  ·  ${sub}`;
     this.hudArea.setText(sub);
     const rows = Quests.tracker(this.def.id).slice(0, 4);
     this.hudTracker.setText(rows.map((r) => `${r.ready ? '✔' : '◆'} ${r.name}\n${r.hint}`).join('\n'));
@@ -3864,4 +3970,22 @@ function signPortrait(g: Phaser.GameObjects.Graphics, x: number, y: number): voi
   g.fillStyle(0x8a6a44, 1); g.fillRoundedRect(x - 50, y - 110, 100, 56, 6);
   g.lineStyle(3, 0x3a2614, 1);
   for (let i = 0; i < 3; i++) g.lineBetween(x - 36, y - 96 + i * 14, x + 30 - i * 10, y - 96 + i * 14);
+}
+
+/** The mark under one of the Fallen Five: a scorched star burnt into the ground, embers in it until they are beaten. */
+function fallenScar(g: Phaser.GameObjects.Graphics, x: number, y: number, cold: boolean): void {
+  g.fillStyle(0x0c0606, 0.5); g.fillEllipse(x, y + 4, 62, 22);
+  g.fillStyle(0x1a0c0a, 0.75);
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2 + 0.2, r = i % 2 ? 34 : 20;
+    const a0 = a - 0.16, a1 = a + 0.16;
+    g.fillTriangle(x + Math.cos(a) * r, y + 4 + Math.sin(a) * r * 0.36, x + Math.cos(a0) * 9, y + 4 + Math.sin(a0) * 3.4, x + Math.cos(a1) * 9, y + 4 + Math.sin(a1) * 3.4);
+  }
+  if (cold) return;
+  g.fillStyle(0xff5a2a, 0.5); g.fillEllipse(x, y + 4, 26, 9);
+  g.fillStyle(0xffc27a, 0.75); g.fillEllipse(x, y + 4, 12, 4);
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2 + 0.2, r = i % 2 ? 27 : 15;
+    g.fillStyle(0xff7a3a, 0.8); g.fillCircle(x + Math.cos(a) * r, y + 4 + Math.sin(a) * r * 0.36, 1.4);
+  }
 }

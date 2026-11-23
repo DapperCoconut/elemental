@@ -12,7 +12,8 @@ section current as work lands.
 - **Open world.** Isles and courts are walked, never menued. Menus only for inventory, genes, the
   isle map / fast travel, and shop / dock / bakery counters (which are drawn in-world as overlays).
 - **Every fight is its own fight.** Each of the 300 court encounters has a named, bespoke *gimmick*
-  (an arena rule with art), never a stat remix of another. Hard mode adds a further, different 600.
+  (an arena rule with art), never a stat remix of another. Hard mode (the Fall) adds a further, different 300 —
+  five more per court, ten to a gate.
 - **Princes have two distinct phases (three on hard);** monarchs have four or more plus a dungeon.
 - **Items do things,** not just stats — each runs a bespoke script.
 - **Dialogue reacts.** Every NPC has lines per world state (default → quest stages → court freed →
@@ -66,6 +67,7 @@ only the overview (this file) and its own isle:
 | Choirholm (sound) | `docs/ten-isles/sound.md` |
 | Solmara (light) | `docs/ten-isles/light.md` |
 | **The Obsidian Pinnacle** (the finale) | `docs/ten-isles/pinnacle.md` — builder brief `docs/ten-isles-pinnacle-brief.md` |
+| **The meteor and the Fall** (hard mode) | `docs/ten-isles/fall.md` — builder brief `docs/ten-isles-fall-brief.md` |
 
 A new isle gets a new file here before its builders launch.
 
@@ -272,5 +274,18 @@ A new isle gets a new file here before its builders launch.
   or read a kit's own state; `drawPinnacle`'s `alpha` option does nothing. Two decrees were sent back for repeating
   another bench's idea (Subterfuge auction → Forged Warrant; Silence bell jar → the voice flies for the Vault); Quantum's
   Superposed Law deliberately runs two of its bench's other decrees at once.
-- Not yet built: revolts / anarchy / dark market; the meteor + hard mode (save has
-  `hard`, fights already scale on it, but no 10-encounter courts or Fallen forms yet); online co-op.
+- 2026-11-23: **the meteor and the Fall (hard mode) kicked off** — bible `docs/ten-isles/fall.md`, brief
+  `docs/ten-isles-fall-brief.md`. Engine built: beating the King sets `star-fell`; every dock then lists **Fallpoint**
+  (the Ferryman rows; area `fallpoint`, `content/meteor/`, rides the Pinnacle bundle); the `meteor` POI takes 60 keys
+  (the first key sink), then is the door into / out of the Fall. **Two worlds on one save**: `IslesSave.setFall` trades
+  `encounters` / `princes` / `monarchs` + world flags with `shelf`, so every Cond works unchanged in the Fall; currencies,
+  items, genes, quests, chests and waystones carry across. In the Fall each court's gate wants **ten** champions — its
+  five plus `CourtBundle.fallen` (the Fallen Five: `fallen-<court>-<slug>`, star-scarred, full upgrades + mastery, +2 orbs
+  each; `courtChampions`). Cond `{ fall }`; the King's hard extra phase is `king/fallen.ts` (act IV, the Fallen King);
+  Fall win → `fall-won`, `art-fallen-star`, `cine-fall-end`. Validator: Fallen rules (five, ids, unique elements and
+  fight names, spacing, hard smoke run), Fallpoint rules, and a `☄ Fallen Five: n/60` pending line. Content is being
+  built in waves of one isle (6 court builders) + Fallpoint + the Fallen King.
+- Hard mode reading of "10 encounters per court": the court's own five (already hard-tuned in every gimmick) **plus
+  five new** — 300 new fights, not the 600 the Pillars line once said. A further five per court can be layered on later
+  through the same `fallen` bundle if wanted.
+- Not yet built: revolts / anarchy / dark market; online co-op.

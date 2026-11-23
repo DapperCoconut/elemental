@@ -1,10 +1,10 @@
 import type {
   AreaDef, ArenaFloor, BakeryDef, BoatDef, CourtDef, CutsceneDef, DockUpgradeDef, EncounterDef, FishDef, FisheryDef,
-  GeneTree, GimmickDef, IsleBundle, IsleDef, IsleItemDef, ItemScriptFactory, QuestDef, RodDef,
+  GeneTree, GimmickDef, IsleBundle, IsleDef, IsleItemDef, ItemScriptFactory, MeteorDef, QuestDef, RodDef,
   ShopDef, UberDef, WandererDef,
 } from './IslesTypes';
 import type { WorldBossDef } from '../boss/framework/BossDefs';
-import { bindRegistry, S } from './IslesSave';
+import { bindRegistry, hasActive, S } from './IslesSave';
 import { isCheatMode } from '../data/Cheats';
 import { registerBossResolver } from '../boss/bosses';
 import { FIRE_ISLE } from './content/fire';
@@ -18,6 +18,8 @@ import { FATE_ISLE } from './content/fate';
 import { SOUND_ISLE } from './content/sound';
 import { LIGHT_ISLE } from './content/light';
 import { PINNACLE_ISLE } from './content/pinnacle';
+import { METEOR_BUNDLE } from './content/meteor';
+import { FALLPOINT } from './content/meteor/spec';
 import { BOATS, DOCK_UPGRADES } from './content/sea';
 
 /**
@@ -56,6 +58,8 @@ const wanderers = new Map<string, WandererDef>();
 const floors = new Map<string, ArenaFloor>();
 const isleOfArea = new Map<string, string>();
 const cutscenes = new Map<string, CutsceneDef>();
+/** A court's Fallen Five (hard mode), by court id. */
+const fallenByCourt = new Map<string, EncounterDef[]>();
 
 function put<T>(m: Map<string, T>, id: string, v: T, what: string): void {
   if (m.has(id)) console.warn(`[isles] duplicate ${what} id: ${id}`);
@@ -89,6 +93,12 @@ for (const b of BUNDLES) {
     for (const e of c.encounters) put(encounters, e.id, e, 'encounter');
     for (const q of c.quests) put(quests, q.id, q, 'quest');
     for (const g of cb.gimmicks) put(gimmicks, g.id, g, 'gimmick');
+    if (cb.fallen) {
+      const five = cb.fallen.encounters.map((e) => ({ ...e, fallen: true }));
+      fallenByCourt.set(c.id, five);
+      for (const e of five) put(encounters, e.id, e, 'encounter');
+      for (const g of cb.fallen.gimmicks) put(gimmicks, g.id, g, 'gimmick');
+    }
     put(bosses, cb.boss.worldId, cb.boss, 'boss');
     for (const it of cb.items) put(items, it.id, it, 'item');
     for (const [k, f] of Object.entries(cb.scripts)) put(scripts, k, f, 'script');
@@ -98,6 +108,14 @@ for (const b of BUNDLES) {
     for (const f of cb.fisheries ?? []) put(fisheries, f.id, f, 'fishery');
   }
 }
+
+// Fallpoint — the meteor's shoal — rides the Pinnacle's bundle (the Ferryman is its wanderer there too).
+put(areas, METEOR_BUNDLE.area.id, METEOR_BUNDLE.area, 'area');
+isleOfArea.set(METEOR_BUNDLE.area.id, PINNACLE_ISLE.isle.id);
+for (const it of METEOR_BUNDLE.items) put(items, it.id, it, 'item');
+for (const [k, f] of Object.entries(METEOR_BUNDLE.scripts)) put(scripts, k, f, 'script');
+for (const c of METEOR_BUNDLE.cutscenes) put(cutscenes, c.id, c, 'cutscene');
+if (METEOR_BUNDLE.ferryman.length) PINNACLE_ISLE.wanderer.byArea[FALLPOINT] = METEOR_BUNDLE.ferryman;
 
 // Quest duel foes fight through the encounter pipeline, so they live in the same table.
 for (const q of quests.values()) {
@@ -116,9 +134,25 @@ for (const e of PINNACLE_ISLE.encounters) {
 }
 const allSeats = [...seatsByBench.values()].flat();
 
+/**
+ * The champions standing in a court *in the world the save is in*: its five, and inside the Fall its
+ * Fallen Five as well. Everything that counts champions (the prince's gate, the HUD, the map) asks this.
+ */
+export function courtChampions(court: CourtDef): EncounterDef[] {
+  const fall = hasActive() && S().hard;
+  return fall ? [...court.encounters, ...(fallenByCourt.get(court.id) ?? [])] : court.encounters;
+}
+/** A court's Fallen Five whatever world the save is in (empty until its builder lands). */
+export const fallenFive = (courtId: string): EncounterDef[] => fallenByCourt.get(courtId) ?? [];
+export const getMeteor = (): MeteorDef => METEOR_BUNDLE.meteor;
+export const meteorArea = (): AreaDef => METEOR_BUNDLE.area;
+
 bindRegistry({
-  // A court's five champions — or a Pinnacle bench's six seats, so `{ courtReady: '<bench>' }` gates its stair.
-  courtEncounters: (court) => courts.get(court)?.encounters.map((e) => e.id) ?? seatsByBench.get(court) ?? [],
+  // A court's champions (ten inside the Fall) — or a Pinnacle bench's six seats, so `{ courtReady: '<bench>' }` gates its stair.
+  courtEncounters: (court) => {
+    const c = courts.get(court);
+    return c ? courtChampions(c).map((e) => e.id) : seatsByBench.get(court) ?? [];
+  },
   islePrinces: (isle) => [...courts.values()].filter((c) => c.isle === isle).map((c) => c.prince.id),
   councilSeats: () => allSeats,
 });

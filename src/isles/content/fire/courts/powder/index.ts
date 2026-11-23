@@ -10,6 +10,7 @@ import { CANNON_RIDGE } from './gimmicks/cannonRidge';
 import { TWENTY_PACES } from './gimmicks/twentyPaces';
 import { SMOKE_SCREEN } from './gimmicks/smokeScreen';
 import { MINEFIELD_DRILL } from './gimmicks/minefieldDrill';
+import { FALLEN } from './fallen';
 
 /**
  * THE POWDER COURT — Brandmark's gunpowder court, a star-fort magazine town governed by Prince
@@ -37,4 +38,5 @@ export const POWDER_COURT: CourtBundle = {
   shops: POWDER_SHOPS,
   fish: POWDER_FISH,
   fisheries: POWDER_FISHERIES,
+  fallen: FALLEN,
 };

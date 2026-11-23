@@ -6,6 +6,7 @@ import { CORONA_ENCOUNTERS } from './encounters';
 import { CORONA_QUESTS } from './quests';
 import { CORONA_GIMMICKS } from './gimmicks';
 import { FLUX_BOSS } from './boss';
+import { FALLEN } from './fallen';
 import { CORONA_FISH, CORONA_FISHERIES, CORONA_ITEMS, CORONA_SCRIPTS, CORONA_SHOPS } from './items';
 
 /**
@@ -37,4 +38,5 @@ export const CORONA_COURT: CourtBundle = {
   shops: CORONA_SHOPS,
   fish: CORONA_FISH,
   fisheries: CORONA_FISHERIES,
+  fallen: FALLEN,
 };

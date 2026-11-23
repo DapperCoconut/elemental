@@ -442,3 +442,23 @@ tk.spawnAdd({ x, y, hp, speed, damage, behavior?: 'melee'|'ranged'|'charger', ra
 ```
 The body's hitbox is a circle of `look.torsoR` (or `phase.bodyR`). The player CAN walk through a boss body unless the
 phase style sets `solid: true` (the player is pushed back out to `torsoR + 20` every frame — the King's star act has it).
+
+## The Fall additions (2026-11-23) — hard mode, `docs/ten-isles/fall.md`
+
+```ts
+Cond also: { fall: true | false }      // inside the Fall (hard mode) / in the waking world
+           { flag: 'star-fell' }       // the King has fallen once (for good) — Fallpoint can be reached
+           { flag: 'meteor-open' }     // the meteor's sixty locks are turned      { flag: 'fall-won' }  // Fallen King beaten
+Poi also:  { kind: 'meteor'; at }      // the fallen star; the engine runs the exchange from MeteorDef
+EncounterDef also: fallen?             // set by the registry on a court's Fallen Five (stands only in the Fall; full
+                                       // upgrades + mastery, no perk; star-scar + ☄ plate drawn by the engine)
+CourtBundle also: fallen?: FallenBundle { encounters: EncounterDef[5]; gimmicks: GimmickDef[5] }   // <court>/fallen/index.ts
+MeteorBundle { area; meteor: MeteorDef; ferryman: Talk[]; items; scripts; cutscenes }             // content/meteor/index.ts
+MeteorDef    { keys; sealedName; openName; sealed[]; short[] /*{n} {need}*/; offer[]; inFall[]; won[] }
+```
+- Ids: `fallen-<court>-<slug>` for a Fallen champion **and** its gimmick (`fallenId` in `content/meteor/spec.ts`).
+- In the Fall the save's `encounters` / `princes` / `monarchs` and world flags (`freed-*`, `broken-*`,
+  `shroud-broken`, `king-fallen`) are the Fall's own (`IslesSave.setFall` trades them with `shelf`), so every Cond
+  reads the world you stand in. `courtChampions(court)` (registry) is the live list: 5, or 10 in the Fall.
+- Every Fall fight has `ctx.hard === true` (foe HP ×1.3, `tk.damageScale` 1.25; bot +1 difficulty).
+- The Obsidian King's hard extra phase is `king/fallen.ts` (`KING_FALLEN: KingPart`), phase index 3.

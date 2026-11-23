@@ -2,6 +2,7 @@ import type { CourtBundle } from '../../../../IslesTypes';
 import { HEARTH_AREA } from './area';
 import { HEARTH_ENCOUNTERS, HEARTH_GIMMICKS } from './encounters';
 import { HEARTH_FLOOR } from './floor';
+import { FALLEN } from './fallen';
 import { HEARTH_FISH, HEARTH_FISHERIES, HEARTH_ITEMS, HEARTH_SCRIPTS, HEARTH_SHOPS } from './items';
 import { EMBER } from './palette';
 import { KINDLE_BOSS } from './prince';
@@ -35,4 +36,5 @@ export const HEARTH_COURT: CourtBundle = {
   shops: HEARTH_SHOPS,
   fish: HEARTH_FISH,
   fisheries: HEARTH_FISHERIES,
+  fallen: FALLEN,
 };

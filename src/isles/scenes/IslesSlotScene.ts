@@ -161,7 +161,7 @@ export class IslesSlotScene extends Phaser.Scene {
       const area = getArea(s.area);
       this.text(W / 2 - 276, y + 16, `${s.name}`, { fontFamily: FONT_DISPLAY, fontSize: '20px', color: '#ffe2b0' });
       this.text(W / 2 - 276, y + 46, `${s.element.toUpperCase()}  ·  ${area?.name ?? s.area}${isle ? `, ${isle.name}` : ''}`, { fontFamily: FONT_UI, fontSize: '15px', color: '#d8b888' });
-      this.text(W / 2 - 276, y + 70, `Princes ${s.princes.length}/60   Monarchs ${s.monarchs.length}/10   Quests ${Object.values(s.quests).filter((q) => q.done).length}`, { fontFamily: FONT_UI, fontSize: '13px', color: '#a88868' });
+      this.text(W / 2 - 276, y + 70, `${s.hard ? '☄ THE FALL   ' : ''}Princes ${s.princes.length}/60   Monarchs ${s.monarchs.filter((m) => m !== 'obsidian-king').length}/10   Quests ${Object.values(s.quests).filter((q) => q.done).length}`, { fontFamily: FONT_UI, fontSize: '13px', color: '#a88868' });
       this.text(W / 2 + 276, y + 18, `🪙 ${s.coins}\n🔮 ${s.orbs}\n🗝️ ${s.keys}`, { fontFamily: FONT_MONO, fontSize: '14px', color: '#ffd27a', align: 'right' }).setOrigin(1, 0);
     });
     const help = this.mode === 'confirmDelete'

@@ -56,7 +56,7 @@ let errors = 0, warns = 0;
 const ONLY_IDS = ONLY ? [ONLY] : [];
 if (ONLY) {
   const court = R.allCourts().find((c) => c.id === ONLY || c.area === ONLY);
-  if (court) ONLY_IDS.push(`isle:${court.prince.id}`, `art-${court.prince.id}`);
+  if (court) ONLY_IDS.push(`isle:${court.prince.id}`, `art-${court.prince.id}`, `fallen-${court.id}-`);
   for (const isle of R.ISLES) {
     const dungeonArea = R.allAreas().find((a) => a.id === ONLY && a.isle === isle.id && !a.court && a.id !== isle.port);
     if (dungeonArea) ONLY_IDS.push(`isle:${isle.monarch.id}`, isle.monarch.artifact);
@@ -70,6 +70,9 @@ if (ONLY) {
   if (ONLY === 'pin-summit' || ONLY === 'king') ONLY_IDS.push('isle:obsidian-king', 'art-obsidian-king', 'cine-throne');
   if (ONLY === 'pin-landing') ONLY_IDS.push('cine-landfall');
   if (ONLY === 'cine') ONLY_IDS.push('cine-');
+  // The Fall: `--only fallpoint` shows the meteor's area, cinematics and artifact; `--only king` the Fallen King too.
+  if (ONLY === 'fallpoint') ONLY_IDS.push('cine-meteor', 'cine-fall', 'art-fallen-star', 'meteor');
+  if (ONLY === 'king') ONLY_IDS.push('Fallen King');
 }
 const say = (m) => { if (!ONLY || ONLY_IDS.some((id) => m.includes(id))) console.log(m); };
 const err = (m) => { errors++; say(`  ✗ ${m}`); };
@@ -173,7 +176,7 @@ for (const a of areas) {
       if (hit) err(`${a.id}: exit ${e.side} → ${e.to} — a solid blocks its edge strip`);
     }
   }
-  for (const c of R.allCourts()) if (!phCourts.has(c.id)) for (const e of c.encounters) place(c.area, e.at, `champion ${e.id}`, REACH);
+  for (const c of R.allCourts()) if (!phCourts.has(c.id)) for (const e of [...c.encounters, ...R.fallenFive(c.id)]) place(c.area, e.at, `champion ${e.id}`, REACH);
   for (const q of R.allQuests()) for (const st of q.stages) {
     const o = st.objective;
     if (o.kind === 'duel') place(o.area, o.foe.at, `duel foe ${o.foe.id}`, REACH);
@@ -226,6 +229,59 @@ for (const isle of R.ISLES) {
   for (const c of isle.courts) if (!R.getCourt(c)) err(`isle ${isle.id}: court ${c} not registered`);
   if (!item(isle.monarch.artifact)) err(`isle ${isle.id}: monarch artifact ${isle.monarch.artifact} missing`);
   if (!R.getIslesBoss(`isle:${isle.monarch.id}`)) err(`isle ${isle.id}: monarch boss missing`);
+}
+
+// The Fall (hard mode): every court's Fallen Five, Fallpoint and the Fallen King.
+const fallPending = [];
+{
+  const names = new Map();
+  for (const c of R.allCourts()) {
+    if (phCourts.has(c.id)) continue;
+    const five = R.fallenFive(c.id);
+    if (!five.length) { fallPending.push(c.id); continue; }
+    const area = R.getArea(c.area);
+    if (five.length !== 5) err(`fallen-${c.id}-: ${five.length} Fallen champions (want 5)`);
+    const gims = new Set();
+    // Who else stands in the court: its five, its prince, its people — a Fallen champion needs room of its own.
+    const others = [...c.encounters.map((e) => [e.id, e.at]), ...(area?.npcs ?? []).map((n) => [`npc ${n.id}`, n.at]),
+      ...(area?.pois ?? []).filter((p) => p.at && p.kind !== 'sign').map((p) => [`${p.kind} poi`, p.at])];
+    for (const e of five) {
+      if (!e.id.startsWith(`fallen-${c.id}-`)) err(`${e.id}: Fallen id must start fallen-${c.id}-`);
+      if (e.court !== c.id) err(`${e.id}: court is ${e.court} (want ${c.id})`);
+      if (e.gimmick !== e.id) err(`${e.id}: gimmick id must equal the encounter id (got ${e.gimmick})`);
+      if (!R.getGimmick(e.gimmick)) err(`${e.id}: gimmick ${e.gimmick} missing`);
+      if (gims.has(e.gimmick)) err(`${e.id}: gimmick used twice`);
+      gims.add(e.gimmick);
+      if (!ELEMENT_DATA_MAP[e.foeElement]) err(`${e.id}: unknown element ${e.foeElement}`);
+      if (e.difficulty < 4) err(`${e.id}: difficulty ${e.difficulty} (the Fallen are 4 or 5)`);
+      if ((e.challenge?.length ?? 0) < 2 || (e.beaten?.length ?? 0) < 1) err(`${e.id}: needs 2+ challenge lines and 1+ beaten line`);
+      if ((R.getGimmick(e.gimmick)?.rules ?? '').length > 150) err(`${e.id}: rules text over 150 chars`);
+      if (area && (e.at.x < 0 || e.at.y < 0 || e.at.x > area.w || e.at.y > area.h)) err(`${e.id}: at out of bounds`);
+      for (const [who, at] of others) if (Math.hypot(at.x - e.at.x, at.y - e.at.y) < 90) err(`${e.id}: stands ${Math.round(Math.hypot(at.x - e.at.x, at.y - e.at.y))}px from ${who} (keep 90+)`);
+      for (const o of five) if (o !== e && Math.hypot(o.at.x - e.at.x, o.at.y - e.at.y) < 140) err(`${e.id}: stands within 140px of ${o.id}`);
+      const k = e.name.toLowerCase();
+      if (names.has(k)) err(`${e.id}: fight name "${e.name}" is already used by ${names.get(k)}`); else names.set(k, e.id);
+    }
+    // The court's own five keep their names too.
+    for (const e of c.encounters) { const k = e.name.toLowerCase(); if (names.has(k) && names.get(k).startsWith('fallen-')) err(`${names.get(k)}: fight name "${e.name}" belongs to ${e.id}`); }
+  }
+  const fp = R.meteorArea();
+  if (!fp.placeholder) {
+    if (!fp.pois.some((p) => p.kind === 'meteor')) err(`fallpoint: no meteor poi`);
+    if (!fp.pois.some((p) => p.kind === 'door' && p.to === 'emberport')) err(`fallpoint: no door back to emberport (the Ferryman's skiff)`);
+    for (const id of ['cine-meteor', 'cine-fall', 'cine-fall-end']) if (!R.getCutscene(id)) err(`fallpoint: cutscene ${id} is not registered`);
+    const star = item('art-fallen-star');
+    if (!star) err(`fallpoint: art-fallen-star missing`); else if (star.kind !== 'artifact' || !star.script) err(`art-fallen-star must be an artifact with a script`);
+    const m = R.getMeteor();
+    for (const k of ['sealed', 'short', 'offer', 'inFall', 'won']) {
+      if (!m[k]?.length) err(`fallpoint: meteor.${k} has no lines`);
+      for (const l of m[k] ?? []) if (l.length > 140) err(`fallpoint: meteor.${k} line over 140 chars`);
+    }
+  }
+  const king = R.getIslesBoss(`isle:${R.PINNACLE.monarch.id}`);
+  if (king && king.phases.length && king.hard?.extraPhase) {
+    for (const mv of king.hard.extraPhase.cycle) if (mv.startsWith('sig:') && !king.signatures[mv.slice(4)]) err(`isle:obsidian-king: the Fallen King's cycle ${mv} has no signature`);
+  }
 }
 
 // The Obsidian Pinnacle: sixty seats, one per element, six to a bench.
@@ -334,7 +390,7 @@ for (const q of R.allQuests()) {
 {
   const byCourt = new Map();
   const add = (court, el, who) => { if (!byCourt.has(court)) byCourt.set(court, []); byCourt.get(court).push([el, who]); };
-  for (const c of R.allCourts()) for (const e of c.encounters) add(c.id, e.foeElement, e.id);
+  for (const c of R.allCourts()) for (const e of [...c.encounters, ...R.fallenFive(c.id)]) add(c.id, e.foeElement, e.id);
   for (const q of R.allQuests()) for (const st of q.stages) if (st.objective.kind === 'duel') add(st.objective.foe.court, st.objective.foe.foeElement, st.objective.foe.id);
   for (const [court, list] of byCourt) {
     const seen = new Map();
@@ -479,7 +535,7 @@ for (const c of R.allCourts()) {
     // strike a random one — so lever / prism / balloon rules get exercised.
     const targets = [];
     const aloft = new Map();
-    const ctx = { scene, W: 960, H: 640, tk, player, npc, top: 96, hard: false, rng,
+    const ctx = { scene, W: 960, H: 640, tk, player, npc, top: 96, hard: !!e.fallen, rng,
       hit: act((f, n) => { f.hp -= n; }), heal: act(() => {}), nudge: act((f, dx, dy) => { f.x += dx; f.y += dy; }), stun: act(() => {}), root: act(() => {}), silence: act(() => {}),
       float: act(() => {}), flash: act(() => {}), banner: act(() => {}), sfx: () => {}, victory: () => {},
       target: (def) => { const t = { def, x: def.x, y: def.y, alive: true, moveTo(x, y) { t.x = x; t.y = y; }, setRadius(r) { def.r = r; }, remove() { t.alive = false; } }; targets.push(t); return t; },
@@ -549,6 +605,17 @@ import('node:child_process').then(({ execSync }) => {
   }
   const standing = [...phAreas];
   if (standing.length) console.log(`\n⚠ ${standing.length} placeholder(s) still standing (skipped): ${standing.join(', ')}`);
+  // A clean `--only <court>` run prints nothing else, so say what was actually looked at.
+  if (ONLY && R.getCourt(ONLY)) {
+    const five = R.fallenFive(ONLY);
+    console.log(five.length ? `☄ ${ONLY}: ${five.length} Fallen checked and smoke-run (${five.map((e) => e.name).join(' · ')})` : `☄ ${ONLY}: no Fallen Five registered yet`);
+  }
+  if (!ONLY || fallPending.includes(ONLY)) {
+    const kingDef = R.getIslesBoss(`isle:${R.PINNACLE.monarch.id}`);
+    const built = R.allCourts().length - fallPending.length;
+    if (fallPending.length) console.log(`☄ Fallen Five: ${built}/${R.allCourts().length} courts built — pending: ${fallPending.join(', ')}`);
+    if (!kingDef?.hard?.extraPhase) console.log('☄ The Fallen King (the Obsidian King\'s hard extra phase) is not built yet');
+  }
   console.log(errors ? `\n${errors} error(s), ${warns} warning(s)` : `\nOK — ${warns} warning(s)`);
   process.exit(errors ? 1 : 0);
 });
