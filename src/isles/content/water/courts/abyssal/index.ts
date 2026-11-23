@@ -10,6 +10,7 @@ import { crushDepthGimmick } from './gimmicks/crushDepth';
 import { whaleFallGimmick } from './gimmicks/whaleFall';
 import { bioluminescenceGimmick } from './gimmicks/bioluminescence';
 import { leviathanShadowGimmick } from './gimmicks/leviathanShadow';
+import { FALLEN } from './fallen';
 
 /**
  * The Abyssal Court — the Drowned Reach's tier-4 court, a city inside one vast air bubble at
@@ -42,4 +43,5 @@ export const ABYSSAL_COURT: CourtBundle = {
   shops: ABYSSAL_SHOPS,
   fish: ABYSSAL_FISH,
   fisheries: ABYSSAL_FISHERIES,
+  fallen: FALLEN,
 };

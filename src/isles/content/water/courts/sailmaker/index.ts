@@ -2,6 +2,7 @@ import type { CourtBundle } from '../../../../IslesTypes';
 import { SAILMAKER_AREA } from './area';
 import { HEM_BOSS } from './boss';
 import { SAILMAKER_ENCOUNTERS } from './encounters';
+import { FALLEN } from './fallen';
 import { sailmakerFloor } from './floor';
 import { DRYING_LINES } from './gimmicks/dryingLines';
 import { FULL_SAIL } from './gimmicks/fullSail';
@@ -40,4 +41,5 @@ export const SAILMAKER_COURT: CourtBundle = {
   shops: SAILMAKER_SHOPS,
   fish: SAILMAKER_FISH,
   fisheries: SAILMAKER_FISHERIES,
+  fallen: FALLEN,
 };

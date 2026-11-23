@@ -2,6 +2,7 @@ import type { CourtBundle } from '../../../../IslesTypes';
 import { TIDEWATER_AREA } from './area';
 import { TIDEWATER_ENCOUNTERS, TIDEWATER_GIMMICKS } from './encounters';
 import { TIDEWATER_FLOOR } from './floor';
+import { FALLEN } from './fallen';
 import {
   ART_EBB, TIDEWATER_BAKERIES, TIDEWATER_FISH, TIDEWATER_FISHERIES, TIDEWATER_ITEMS, TIDEWATER_SCRIPTS,
   TIDEWATER_SHOPS,
@@ -40,4 +41,5 @@ export const TIDEWATER_COURT: CourtBundle = {
   bakeries: TIDEWATER_BAKERIES,
   fish: TIDEWATER_FISH,
   fisheries: TIDEWATER_FISHERIES,
+  fallen: FALLEN,
 };

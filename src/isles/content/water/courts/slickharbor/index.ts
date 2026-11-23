@@ -3,6 +3,7 @@ import { SLICKHARBOR_AREA } from './area';
 import { CRUDE_BOSS } from './boss';
 import { SLICKHARBOR_ENCOUNTERS } from './encounters';
 import { SLICKHARBOR_FLOOR } from './floor';
+import { FALLEN } from './fallen';
 import { CRANE_HOOK } from './gimmicks/craneHook';
 import { GUSHER } from './gimmicks/gusher';
 import { SLICK } from './gimmicks/slick';
@@ -38,6 +39,7 @@ export const SLICKHARBOR_COURT: CourtBundle = {
   area: SLICKHARBOR_AREA,
   gimmicks: [SLICK, GUSHER, TAR_PIT, SPARK_HAZARD, CRANE_HOOK],
   boss: CRUDE_BOSS,
+  fallen: FALLEN,
   items: SLICKHARBOR_ITEMS,
   scripts: SLICKHARBOR_SCRIPTS,
   shops: [{

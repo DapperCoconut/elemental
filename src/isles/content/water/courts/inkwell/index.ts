@@ -6,6 +6,7 @@ import { INKWELL_ENCOUNTERS } from './encounters';
 import { INKWELL_QUESTS } from './quests';
 import { INKWELL_GIMMICKS } from './gimmicks';
 import { BLOT_BOSS } from './boss';
+import { FALLEN } from './fallen';
 import { INKWELL_FISH, INKWELL_FISHERIES, INKWELL_ITEMS, INKWELL_SCRIPTS, INKWELL_SHOPS } from './items';
 
 /**
@@ -38,4 +39,5 @@ export const INKWELL_COURT: CourtBundle = {
   shops: INKWELL_SHOPS,
   fish: INKWELL_FISH,
   fisheries: INKWELL_FISHERIES,
+  fallen: FALLEN,
 };

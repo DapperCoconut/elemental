@@ -10,6 +10,7 @@ import { ICEBREAKER } from './gimmicks/icebreaker';
 import { FROSTBITE } from './gimmicks/frostbite';
 import { ICICLE_GALLERY } from './gimmicks/icicleGallery';
 import { SNOW_FORTS } from './gimmicks/snowForts';
+import { FALLEN } from './fallen';
 
 /**
  * THE RIMEFAST COURT — the Drowned Reach's ice court, a harbour Queen Maresa had frozen solid so
@@ -37,4 +38,5 @@ export const RIMEFAST_COURT: CourtBundle = {
   shops: RIMEFAST_SHOPS,
   fish: RIMEFAST_FISH,
   fisheries: RIMEFAST_FISHERIES,
+  fallen: FALLEN,
 };
