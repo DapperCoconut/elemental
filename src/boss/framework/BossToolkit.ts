@@ -141,6 +141,8 @@ export class BossToolkit {
    * what to paint brighter; their `drawAir` layer already sits above the dark.
    */
   dark = false;
+  /** False during the intro, a phase-entry cinematic and the fall — signatures pause their own clocks on it. */
+  fighting = true;
   /**
    * The boss's current phase, 0-based (a hard fight's extra phase is the last index). Set by the
    * host as each phase begins; signatures read it instead of guessing from `drawDecor`.
@@ -470,13 +472,32 @@ export class BossToolkit {
     });
   }
 
-  spawnAdd(o: { x: number; y: number; hp: number; speed: number; damage: number; ranged?: boolean; maxAlive?: number }): Husk | null {
+  /**
+   * A minion — a real enemy every kit can hit, auto-aim and charge an ultimate off. `behavior`
+   * picks its brain (`melee` chases and bites, `ranged` holds `range` and lobs shots, `charger`
+   * telegraphs a lane and dashes it). `hidden` leaves the body invisible with no health bar, for a
+   * caller that draws its own soldier over `husk.x / husk.y` (read `husk.hp / husk.maxHp`, and
+   * `husk.active` to know it still stands). `biteMs` is the beat between blows.
+   */
+  spawnAdd(o: {
+    x: number; y: number; hp: number; speed: number; damage: number; ranged?: boolean; maxAlive?: number;
+    behavior?: 'melee' | 'ranged' | 'charger'; range?: number; size?: number; hidden?: boolean; biteMs?: number;
+  }): Husk | null {
     if (this.adds.length >= (o.maxAlive ?? 6)) return null;
+    const base = o.ranged ? THRALL_RANGED : THRALL;
+    const variant: HuskVariantDef = o.behavior || o.size || o.range
+      ? { ...base, behavior: o.behavior ?? base.behavior, sizeMult: o.size ?? 1, preferredRange: o.range ?? base.preferredRange }
+      : base;
     const husk = new Husk(
       this.scene, this.clampX(o.x, 70), this.clampY(o.y, 70),
-      o.hp, o.speed, o.damage, 950, o.ranged ? THRALL_RANGED : THRALL,
+      o.hp, o.speed, o.damage, o.biteMs ?? 950, variant,
     );
     husk.world = this.huskWorld;
+    if (o.hidden) {
+      husk.forceInvisible = true;
+      husk.setAlpha(0);
+      husk.hideHealthBar();
+    }
     this.host.addEnemy(husk);
     this.adds.push(husk);
     husk.once('defeated', () => this.removeAdd(husk));

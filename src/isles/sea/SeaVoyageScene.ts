@@ -3,7 +3,9 @@ import { FONT_DISPLAY, FONT_UI, FONT_MONO } from '../../ui';
 import { Music, Sfx } from '../../audio';
 import { findElementDef, ELEMENT_DATA_MAP } from '../../data/ElementRoster';
 import * as Save from '../IslesSave';
-import { boats, getUber, allUbers, getIsle, getArea } from '../IslesRegistry';
+import { boats, getUber, allUbers, getIsle, getArea, ISLES } from '../IslesRegistry';
+import { OBS, shard, seam, crackPath, drawPinnacle, starfield, mixC, lit, dim } from '../art/PinnacleArt';
+import { mulberry } from '../art/IsleArt';
 import type { BoatDef, IsleDef, Pt } from '../IslesTypes';
 
 /**
@@ -19,6 +21,11 @@ import type { BoatDef, IsleDef, Pt } from '../IslesTypes';
  * ends in landfall at that isle's port once `CROSSING_M` metres are behind you. A crossing to one
  * of the abstract isles (`IsleDef.outer`) runs the Outer Sea instead: longer, in black water, with a
  * swell that shoves the boat about, storm flashes, and breakers rolling in to thread.
+ *
+ * `dest: 'pinnacle'` is the Last Crossing, the final voyage of the game: the longest crossing of all,
+ * over water gone still and black as glass, the spire growing on the horizon the whole way, the
+ * Muster's ten boats sailing alongside, and hazards of its own — drifting obsidian shards that split
+ * when shot, glass reefs that surface after a seam-flash warning, and the Shroud's last squalls.
  */
 
 /** How long a crossing between two isles is. */
@@ -27,6 +34,13 @@ const CROSSING_M = 2600;
 const COAST_M = 480;
 /** A crossing of the Outer Sea, out to the abstract isles beyond the Breakwater. */
 const OUTER_CROSSING_M = 3800;
+/** The Last Crossing, out to the Obsidian Pinnacle. */
+const LAST_CROSSING_M = 4600;
+/** Seconds a glass reef shows its seam-flash before it breaks the surface. */
+const REEF_RISE = 1.3;
+/** Seconds a squall's marked strike glows before the bolt lands, and how wide the bolt hits. */
+const SQUALL_WARN = 0.95;
+const SQUALL_HIT = 42;
 /** Seconds a venom glob is in the air before it lands as a slick, and how long the slick lasts after. */
 const SLICK_FLIGHT = 0.9;
 const SLICK_LIFE = 7.5;
@@ -95,9 +109,13 @@ const BEASTS: Record<string, { name: string; shot: number; bar: number; spawn: '
 /** `die`: a boat-sized die the Wheelback rolls onto the sea — it tumbles in from `seed` (an x) for `DIE_ROLL` s and lands at `x` showing `maxHp` pips; `armed` is the pips left, one ticking off every `DIE_TICK` s (`tick` counts down to the next), and at zero it bursts in a ring of spray `DIE_RING` wide that damages a boat inside it. It CAN be shot: each hit knocks a pip off (a tumbling die is knocked flat where it is), so shooting it out early bursts it well ahead of the boat. */
 /** `ring`: a sound-ring the Cantor sings — centred where it sounded (it does not drift with the sea), its radius `r` spreading at `RING_SPEED` from `t` 0, broken by two rests at the angles in `gaps` (each `RING_REST` either side); a boat it meets outside a rest loses a plank and is shoved outward (`armed` 1 once it has met the boat). It cannot be shot. */
 /** `burn`: a burning spot the Lensback focuses on the sea — fixed where it was aimed (it does not drift with the sea); a glint swells for `BURN_WARN` s, then the beam lands for `BURN_BEAM` s and the scorch burns `BURN_LINGER` s more; a boat inside `r` while it burns loses a plank (`armed` 1 once it has; `tick` set once the beam has landed). It cannot be shot. */
-type HazardKind = 'rock' | 'reef' | 'mine' | 'whirl' | 'drift' | 'tentacle' | 'spout' | 'bramble' | 'gust' | 'boulder' | 'breaker' | 'arc' | 'slick' | 'die' | 'ring' | 'burn';
+type HazardKind = 'rock' | 'reef' | 'mine' | 'whirl' | 'drift' | 'tentacle' | 'spout' | 'bramble' | 'gust' | 'boulder' | 'breaker' | 'arc' | 'slick' | 'die' | 'ring' | 'burn'
+  /** The Last Crossing: `obshard` a drifting slab of obsidian (splits when broken); `glassreef` surfaces after a
+   * seam-flash; `squall` a storm cell of the Shroud crossing the sea, calling bolts down on marked water. */
+  | 'obshard' | 'glassreef' | 'squall';
 /** `held`: seconds the Foghorn Bow still holds this hazard (its own motion and timers stop; it still drifts with the sea). */
-interface Hazard { kind: HazardKind; x: number; y: number; r: number; hp: number; maxHp: number; t: number; seed: number; dead: boolean; armed?: number; tick?: number; gaps?: number[]; held?: number }
+/** `vx`: sideways drift (split shards, squalls); `spot`: a squall's marked strike (screen space, where the boat was); `flash`: seconds since its last bolt. */
+interface Hazard { kind: HazardKind; x: number; y: number; r: number; hp: number; maxHp: number; t: number; seed: number; dead: boolean; armed?: number; tick?: number; gaps?: number[]; held?: number; vx?: number; spot?: Pt; flash?: number }
 interface Loot { kind: 'crate' | 'barrel' | 'orb' | 'bottle'; x: number; y: number; t: number; taken: boolean }
 interface Shot { x: number; y: number; vx: number; vy: number; dmg: number; life: number; big?: boolean; foe?: boolean }
 interface Beast {
@@ -113,6 +131,13 @@ const BANDS = [
   { at: 900, name: 'The Grey Reach', sea: 0x1a3448, deep: 0x0e2234, foam: 0x7ab8d8 },
   { at: 2000, name: 'The Drowned Dark', sea: 0x10202e, deep: 0x08121c, foam: 0x5a8aa8 },
   { at: 3400, name: 'The Abyssal Line', sea: 0x080e18, deep: 0x04060c, foam: 0x4a6aa0 },
+];
+
+/** The Last Crossing's bands: water like black glass, darkening to a mirror under the spire. */
+const LAST_BANDS = [
+  { at: 0, name: 'The Last Crossing', sea: 0x0c0b18, deep: 0x06050c, foam: 0x8f84b8 },
+  { at: 1500, name: "The Shroud's Wake", sea: 0x0a0914, deep: 0x050410, foam: 0xa898d8 },
+  { at: 3100, name: 'The Black Mirror', sea: 0x07060e, deep: 0x030208, foam: 0xc9b0ff },
 ];
 
 /** The Outer Sea's bands: darker, colder blues with bright whitecaps; a crossing goes all three deep. */
@@ -174,6 +199,10 @@ export class SeaVoyageScene extends Phaser.Scene {
   /** Seconds since the last storm flash (drawn as the fork of lightning). */
   private flashT = 9;
   private flashX = 480;
+  /** True on the Last Crossing (`dest: 'pinnacle'`). */
+  private last = false;
+  /** Pixels of sea until the Shroud's next squall. */
+  private nextSquall = 0;
 
   constructor() { super({ key: 'SeaVoyageScene' }); }
 
@@ -183,7 +212,9 @@ export class SeaVoyageScene extends Phaser.Scene {
     this.fromPos = data?.pos ?? { x: -1, y: -1 };
     this.crossing = this.dest === 'wastes' ? null : getIsle(this.dest) ?? null;
     if (!this.crossing) this.dest = 'wastes';
-    this.rough = !!this.crossing?.outer;
+    this.last = !!this.crossing?.pinnacle;
+    this.rough = !!this.crossing?.outer && !this.last;
+    this.nextSquall = 2200;
     this.swellT = 0; this.nextBreaker = 1400; this.nextFlash = 4; this.flashT = 9;
     this.bowWaveT = 9; this.hornT = 9; this.glassT = 9; this.glassHits = [];
     this.slickDrag = 0; this.prowReady = [0, 0, 0];
@@ -221,17 +252,17 @@ export class SeaVoyageScene extends Phaser.Scene {
     this.cameras.main.fadeIn(400, 0, 0, 0);
   }
 
-  private bands(): typeof BANDS { return this.rough ? OUTER_BANDS : BANDS; }
+  private bands(): typeof BANDS { return this.last ? LAST_BANDS : this.rough ? OUTER_BANDS : BANDS; }
 
   private band(): number {
     let b = 0;
     this.bands().forEach((x, i) => { if (this.dist >= x.at) b = i; });
     // A crossing keeps to the charted lanes: never deeper than the Grey Reach. The Outer Sea has no lanes.
-    return this.crossing && !this.rough ? Math.min(b, 1) : b;
+    return this.crossing && !this.rough && !this.last ? Math.min(b, 1) : b;
   }
 
   /** Metres left to landfall on a crossing (Infinity in the Wastes). */
-  private toLand(): number { return this.crossing ? (this.rough ? OUTER_CROSSING_M : CROSSING_M) - this.dist : Infinity; }
+  private toLand(): number { return this.crossing ? (this.last ? LAST_CROSSING_M : this.rough ? OUTER_CROSSING_M : CROSSING_M) - this.dist : Infinity; }
 
   update(time: number, deltaRaw: number): void {
     const dt = Math.min(deltaRaw, 40) / 1000;
@@ -262,7 +293,8 @@ export class SeaVoyageScene extends Phaser.Scene {
     // Scroll the world toward the boat.
     const scroll = fwd * dt;
     for (const h of this.hazards) {
-      if (h.kind !== 'ring' && h.kind !== 'burn') h.y += scroll;
+      if (h.kind === 'squall') h.y += scroll * 0.35;
+      else if (h.kind !== 'ring' && h.kind !== 'burn') h.y += scroll;
       if ((h.held ?? 0) > 0) h.held = (h.held ?? 0) - dt; else h.t += dt;
     }
     for (const l of this.loot) { l.y += scroll; l.t += dt; }
@@ -277,6 +309,7 @@ export class SeaVoyageScene extends Phaser.Scene {
       this.nextSpawn = Math.max(90, 260 - bi * 45 - this.dist * 0.01) * (0.7 + this.rng() * 0.6) * (this.rough ? 0.8 : 1);
     }
     if (this.rough) this.roughWater(dt, scroll, bi);
+    if (this.last) this.lastWater(dt, scroll, bi);
     this.nextLoot -= scroll;
     if (this.nextLoot <= 0) {
       const r = this.rng();
@@ -308,7 +341,7 @@ export class SeaVoyageScene extends Phaser.Scene {
       const ring = this.add.circle(this.bx, this.by, 170, this.elementColor, 0.25).setScale(0.2);
       this.tweens.add({ targets: ring, scale: 1, alpha: 0, duration: 380, onComplete: () => ring.destroy() });
       for (const h of this.hazards) if (h.kind === 'die' && !h.dead && Math.hypot(h.x - this.bx, h.y - this.by) < 170) this.knockDie(h, 2);
-      for (const h of this.hazards) if (Math.hypot(h.x - this.bx, h.y - this.by) < 170 && h.kind !== 'die' && h.kind !== 'reef' && h.kind !== 'gust' && h.kind !== 'breaker' && h.kind !== 'arc' && h.kind !== 'slick' && h.kind !== 'ring' && h.kind !== 'burn') this.damageHazard(h, 4);
+      for (const h of this.hazards) if (Math.hypot(h.x - this.bx, h.y - this.by) < 170 && h.kind !== 'die' && h.kind !== 'reef' && h.kind !== 'gust' && h.kind !== 'breaker' && h.kind !== 'arc' && h.kind !== 'slick' && h.kind !== 'ring' && h.kind !== 'burn' && h.kind !== 'glassreef' && h.kind !== 'squall') this.damageHazard(h, 4);
       if (this.beast && Math.hypot(this.beast.x - this.bx, this.beast.y - this.by) < 230) this.hitBeast(6);
     }
     this.bowWaveT += dt;
@@ -324,7 +357,7 @@ export class SeaVoyageScene extends Phaser.Scene {
         continue;
       }
       for (const h of this.hazards) {
-        if (h.dead || h.kind === 'whirl' || h.kind === 'reef' || h.kind === 'gust' || h.kind === 'boulder' || h.kind === 'breaker' || h.kind === 'arc' || h.kind === 'slick' || h.kind === 'ring' || h.kind === 'burn') continue;
+        if (h.dead || h.kind === 'whirl' || h.kind === 'reef' || h.kind === 'gust' || h.kind === 'boulder' || h.kind === 'breaker' || h.kind === 'arc' || h.kind === 'slick' || h.kind === 'ring' || h.kind === 'burn' || h.kind === 'glassreef' || h.kind === 'squall') continue;
         if (h.kind === 'die') {
           const at = this.dieAt(h);
           if (Math.hypot(sh.x - at.x, sh.y - at.y) < h.r + 6) { this.knockDie(h, 1); sh.life = 0; break; }
@@ -343,7 +376,14 @@ export class SeaVoyageScene extends Phaser.Scene {
       const d = Math.hypot(h.x - this.bx, h.y - this.by);
       // Held by the Foghorn: only the solid things still bar the way; everything that moves or counts waits.
       const held = (h.held ?? 0) > 0;
-      if (held && h.kind !== 'rock' && h.kind !== 'reef' && h.kind !== 'drift' && h.kind !== 'bramble' && h.kind !== 'mine') continue;
+      if (held && h.kind !== 'rock' && h.kind !== 'reef' && h.kind !== 'drift' && h.kind !== 'bramble' && h.kind !== 'mine' && h.kind !== 'obshard' && h.kind !== 'glassreef') continue;
+      if (h.kind === 'glassreef') { this.reefTouch(h, d); continue; }
+      if (h.kind === 'squall') { this.squallTouch(h, d, dt); continue; }
+      if (h.kind === 'obshard' && h.vx && !held) {
+        // A split shard skates off sideways, slowing, glancing off the edges of the sea.
+        h.x += h.vx * dt; h.vx *= Math.pow(0.45, dt);
+        if (h.x < 30 || h.x > 930) { h.x = Phaser.Math.Clamp(h.x, 30, 930); h.vx = -h.vx; }
+      }
       if (h.kind === 'ring') { this.ringTouch(h, d); continue; }
       if (h.kind === 'burn') { this.burnTouch(h, d); continue; }
       if (h.kind === 'whirl') {
@@ -502,6 +542,7 @@ export class SeaVoyageScene extends Phaser.Scene {
   }
 
   private spawnRow(bi: number): void {
+    if (this.last) { this.spawnLastRow(bi); return; }
     const r = this.rng;
     const n = 1 + Math.floor(r() * (2 + bi));
     for (let i = 0; i < n; i++) {
@@ -526,6 +567,7 @@ export class SeaVoyageScene extends Phaser.Scene {
     if (h.hp <= 0 && !h.dead) {
       h.dead = true;
       if (h.kind === 'mine') { this.explode(h.x, h.y, 80); if (Math.hypot(h.x - this.bx, h.y - this.by) < 80) this.damageBoat(2); }
+      else if (h.kind === 'obshard') this.splitShard(h);
       else { this.explode(h.x, h.y, h.r + 10); Sfx.play('stone-slam'); if (h.kind === 'rock' && this.rng() < 0.3) this.loot.push({ kind: 'crate', x: h.x, y: h.y, t: 0, taken: false }); }
     } else Sfx.play('hit-light');
   }
@@ -586,7 +628,7 @@ export class SeaVoyageScene extends Phaser.Scene {
    */
   private uberMast(): void {
     const ahead = this.hazards
-      .filter((h) => !h.dead && h.y < this.by && h.y > -20 && (h.kind === 'rock' || h.kind === 'drift' || h.kind === 'mine' || h.kind === 'bramble'))
+      .filter((h) => !h.dead && h.y < this.by && h.y > -20 && (h.kind === 'rock' || h.kind === 'obshard' || h.kind === 'drift' || h.kind === 'mine' || h.kind === 'bramble'))
       .sort((a, b) => Math.hypot(a.x - this.bx, a.y - this.by) - Math.hypot(b.x - this.bx, b.y - this.by))
       .slice(0, 3);
     this.mastBolts = ahead.map((h) => ({ x: h.x, y: h.y }));
@@ -638,7 +680,7 @@ export class SeaVoyageScene extends Phaser.Scene {
       const m = this.prowMount(i), hx = this.bx + m.x, hy = this.by + m.y;
       let best: Hazard | null = null, bd = PROW_REACH;
       for (const h of this.hazards) {
-        if (h.dead || !(h.kind === 'rock' || h.kind === 'drift' || h.kind === 'mine' || h.kind === 'bramble' || h.kind === 'tentacle')) continue;
+        if (h.dead || !(h.kind === 'rock' || h.kind === 'obshard' || h.kind === 'drift' || h.kind === 'mine' || h.kind === 'bramble' || h.kind === 'tentacle')) continue;
         const dx = h.x - this.bx;
         const side = dx < -34 ? 0 : dx > 34 ? 2 : 1;
         if (side !== i || h.y > this.by + 10) continue;
@@ -776,7 +818,7 @@ export class SeaVoyageScene extends Phaser.Scene {
    */
   private uberGlass(): void {
     const at = (h: Hazard): Pt => (h.kind === 'die' ? this.dieAt(h) : h);
-    const burnable = (h: Hazard) => h.kind === 'rock' || h.kind === 'drift' || h.kind === 'mine' || h.kind === 'bramble'
+    const burnable = (h: Hazard) => h.kind === 'rock' || h.kind === 'obshard' || h.kind === 'drift' || h.kind === 'mine' || h.kind === 'bramble'
       || h.kind === 'tentacle' || h.kind === 'die' || (h.kind === 'slick' && h.t >= SLICK_FLIGHT);
     const ahead = this.hazards
       .filter((h) => {
@@ -875,7 +917,7 @@ export class SeaVoyageScene extends Phaser.Scene {
   private thornBurst(): void {
     const R = 150;
     for (const h of this.hazards) {
-      if (h.dead || h.kind === 'whirl' || h.kind === 'reef' || h.kind === 'tentacle' || h.kind === 'spout' || h.kind === 'gust' || h.kind === 'boulder' || h.kind === 'breaker' || h.kind === 'arc' || h.kind === 'slick' || h.kind === 'ring' || h.kind === 'burn') continue;
+      if (h.dead || h.kind === 'whirl' || h.kind === 'reef' || h.kind === 'tentacle' || h.kind === 'spout' || h.kind === 'gust' || h.kind === 'boulder' || h.kind === 'breaker' || h.kind === 'arc' || h.kind === 'slick' || h.kind === 'ring' || h.kind === 'burn' || h.kind === 'glassreef' || h.kind === 'squall') continue;
       if (Math.hypot(h.x - this.bx, h.y - this.by) < R + h.r) { if (h.kind === 'die') this.knockDie(h, 1); else this.damageHazard(h, 3); }
     }
     if (this.beast?.phase === 'fight' && Math.hypot(this.beast.x - this.bx, this.beast.y - this.by) < 260) this.hitBeast(4);
@@ -899,7 +941,7 @@ export class SeaVoyageScene extends Phaser.Scene {
       if (dy > -20 || dy < -reach || Math.abs(dx) > 70 + (-dy) * 0.45) continue;
       any = true;
       if (h.kind === 'whirl') { h.dead = true; this.explode(h.x, h.y, h.r * 1.6); continue; }
-      if (h.kind === 'reef' || h.kind === 'tentacle' || h.kind === 'spout' || h.kind === 'gust' || h.kind === 'boulder' || h.kind === 'breaker' || h.kind === 'arc' || h.kind === 'slick' || h.kind === 'ring' || h.kind === 'burn') continue;
+      if (h.kind === 'reef' || h.kind === 'tentacle' || h.kind === 'spout' || h.kind === 'gust' || h.kind === 'boulder' || h.kind === 'breaker' || h.kind === 'arc' || h.kind === 'slick' || h.kind === 'ring' || h.kind === 'burn' || h.kind === 'glassreef' || h.kind === 'squall') continue;
       if (h.kind === 'die') { if (h.t >= DIE_ROLL) h.x = Phaser.Math.Clamp(h.x + (Math.sign(dx) || 1) * 70, 30, 930); this.knockDie(h, 1); continue; }
       h.x = Phaser.Math.Clamp(h.x + (Math.sign(dx) || 1) * 70, 30, 930);
       this.damageHazard(h, 2);
@@ -917,7 +959,7 @@ export class SeaVoyageScene extends Phaser.Scene {
   private uberTurret(): void {
     let best: { x: number; y: number } | null = null, bd = 380;
     for (const h of this.hazards) {
-      if (h.dead || h.kind === 'whirl' || h.kind === 'reef' || h.kind === 'spout' || h.kind === 'tentacle' || h.kind === 'gust' || h.kind === 'boulder' || h.kind === 'breaker' || h.kind === 'arc' || h.kind === 'slick' || h.kind === 'ring' || h.kind === 'burn' || h.y > this.by) continue;
+      if (h.dead || h.kind === 'whirl' || h.kind === 'reef' || h.kind === 'spout' || h.kind === 'tentacle' || h.kind === 'gust' || h.kind === 'boulder' || h.kind === 'breaker' || h.kind === 'arc' || h.kind === 'slick' || h.kind === 'ring' || h.kind === 'burn' || h.kind === 'glassreef' || h.kind === 'squall' || h.y > this.by) continue;
       const d = Math.hypot(h.x - this.bx, h.y - this.by);
       if (d < bd) { bd = d; best = h; }
     }
@@ -1135,6 +1177,15 @@ export class SeaVoyageScene extends Phaser.Scene {
     this.from = isle.port;
     this.fromPos = at;
     Sfx.play('reward-big');
+    if (this.last) {
+      this.cameras.main.flash(700, 220, 200, 255);
+      this.endCard('THE PINNACLE', [
+        first ? 'The Muster runs its boats up the black shingle of Glasswater Landing.' : 'Glasswater Landing, under the spire again.',
+        `Hold: +${this.haul} 🪙${this.orbs ? `  +${this.orbs} 🔮` : ''}`,
+        `Hull ${this.hull}/${this.maxHull}`,
+      ], '#c9b0ff');
+      return;
+    }
     this.cameras.main.flash(500, 255, 250, 230);
     this.endCard('LANDFALL', [
       first ? `${isle.name} — first landing.` : `${isle.name} again.`,
@@ -1183,13 +1234,15 @@ export class SeaVoyageScene extends Phaser.Scene {
       g.fillStyle(B.foam, 0.18); g.fillEllipse(x, y, 14, 3);
     }
     if (this.rough) this.drawRoughWater(g, t, B);
+    if (this.last) this.drawLastWater(g, t, B);
     // Wake
     for (let i = 1; i < this.wake.length; i++) {
       const a = this.wake[i - 1], b = this.wake[i];
       g.lineStyle(10 - i * 0.3, 0xffffff, 0.25 * (1 - i / this.wake.length));
       g.lineBetween(a.x, a.y, b.x, b.y);
     }
-    if (this.crossing && this.toLand() < COAST_M + 200) this.drawCoast(g, t);
+    if (this.crossing && this.toLand() < COAST_M + 200) { if (this.last) this.drawLastCoast(g, t); else this.drawCoast(g, t); }
+    if (this.last) this.drawMuster(g, t);
     for (const l of this.loot) this.drawLoot(g, l, t);
     for (const h of this.hazards) this.drawHazard(g, h, t);
     if (this.beast) {
@@ -1204,6 +1257,7 @@ export class SeaVoyageScene extends Phaser.Scene {
       else if (this.beast.kind === 'lensback') this.drawLensback(g, this.beast, t);
       else this.drawBeast(g, this.beast, t);
     }
+    if (this.last) this.drawLastSky(g, t);
     if (this.thornT < 0.45) {
       this.thornT += 1 / 60;
       const k = this.thornT / 0.45;
@@ -1530,6 +1584,9 @@ export class SeaVoyageScene extends Phaser.Scene {
     const { x, y, r } = h;
     if ((h.held ?? 0) > 0) this.drawHeld(g, h, t);
     switch (h.kind) {
+      case 'obshard': this.drawObshard(g, h, t); break;
+      case 'glassreef': this.drawGlassReef(g, h, t); break;
+      case 'squall': this.drawSquall(g, h, t); break;
       case 'burn': {
         if (h.t < 0) break;
         // A Lensback burning spot. Glint: the sea inside the focus whitens and shimmers, a ring of light
@@ -2677,6 +2734,410 @@ export class SeaVoyageScene extends Phaser.Scene {
     if (b.phase === 'fight') {
       g.fillStyle(0x000000, 0.6); g.fillRect(280, 70, 400, 12);
       g.fillStyle(BEASTS.wyrm.bar, 1); g.fillRect(282, 72, 396 * Math.max(0, b.hp / b.maxHp), 8);
+    }
+  }
+
+  // ── The Last Crossing ────────────────────────────────────────────────
+
+  /**
+   * The Last Crossing's weather: the Shroud's last squalls rolling across the sea from either side
+   * (thickest in the Shroud's Wake), and a violet flash now and then from what is left of the storm wall.
+   */
+  private lastWater(dt: number, scroll: number, bi: number): void {
+    this.nextSquall -= scroll;
+    if (this.nextSquall <= 0 && this.toLand() > COAST_M + 300) {
+      const fromLeft = this.rng() < 0.5, r = 100 + this.rng() * 40;
+      this.hazards.push({
+        kind: 'squall', x: fromLeft ? -r * 0.6 : 960 + r * 0.6, y: 170 + this.rng() * 120, r, hp: 999, maxHp: 999, t: 0,
+        seed: this.rng() * 1000, dead: false, vx: (fromLeft ? 1 : -1) * (60 + this.rng() * 40), tick: 1.4,
+      });
+      this.nextSquall = (bi === 1 ? 1500 : 2700) * (0.75 + this.rng() * 0.5);
+    }
+    this.flashT += dt;
+    this.nextFlash -= dt;
+    if (this.nextFlash <= 0 && bi < 2) {
+      this.nextFlash = 7 + this.rng() * 9;
+      this.flashT = 0; this.flashX = 80 + this.rng() * 800;
+      this.cameras.main.flash(160, 150, 110, 230);
+      Sfx.play('thunder');
+    }
+  }
+
+  /** A row of the Last Crossing's sea: mostly drifting obsidian, glass reefs coming up ahead, the odd wreck of an older challenger. */
+  private spawnLastRow(bi: number): void {
+    const r = this.rng;
+    const n = 1 + Math.floor(r() * (2 + bi * 0.8));
+    for (let i = 0; i < n; i++) {
+      const roll = r(), x = 50 + r() * 860;
+      if (roll < 0.16 + bi * 0.05) {
+        this.hazards.push({ kind: 'glassreef', x, y: 170 + r() * 100, r: 34 + r() * 22, hp: 999, maxHp: 999, t: 0, seed: r() * 1000, dead: false });
+      } else if (roll < 0.3 + bi * 0.04) {
+        this.hazards.push({ kind: 'drift', x, y: -60 - r() * 120, r: 14, hp: 1, maxHp: 1, t: 0, seed: r() * 1000, dead: false });
+      } else {
+        const rr = 16 + r() * 16 + bi * 3, hp = Math.ceil(rr / 10) + bi;
+        this.hazards.push({ kind: 'obshard', x, y: -60 - r() * 120, r: rr, hp, maxHp: hp, t: 0, seed: r() * 1000, dead: false, vx: (r() - 0.5) * 30 });
+      }
+    }
+  }
+
+  /** A broken obsidian shard: a big one cracks into two smaller shards that skate apart; a small one is gone. */
+  private splitShard(h: Hazard): void {
+    this.explode(h.x, h.y, h.r + 8);
+    Sfx.play('crystal-shatter');
+    if (h.r < 15) { if (this.rng() < 0.2) this.loot.push({ kind: 'crate', x: h.x, y: h.y, t: 0, taken: false }); return; }
+    const r = h.r * 0.6, hp = Math.max(1, Math.ceil(h.maxHp / 2) - 1);
+    for (const dir of [-1, 1]) {
+      this.hazards.push({ kind: 'obshard', x: h.x + dir * r, y: h.y, r, hp, maxHp: hp, t: 0, seed: this.rng() * 1000, dead: false, vx: dir * (120 + this.rng() * 70) });
+    }
+  }
+
+  /** A glass reef: harmless while its seams flash under the water; once it breaks the surface it is a wall of spikes. */
+  private reefTouch(h: Hazard, d: number): void {
+    if (h.t < REEF_RISE) return;
+    if (!h.armed) { h.armed = 1; this.explode(h.x, h.y, h.r + 10); Sfx.play('crystal-shatter'); }
+    if (d < h.r + 14) {
+      this.damageBoat(2);
+      this.bvx = Math.sign(this.bx - h.x || 1) * 280;
+    }
+  }
+
+  /**
+   * A squall of the Shroud: it drifts across the sea, its wind leans on a boat under it, and every so
+   * often it marks the water where the boat is (a violet ring, tightening) and calls a bolt down on
+   * that spot — steer off the mark.
+   */
+  private squallTouch(h: Hazard, d: number, dt: number): void {
+    h.x += (h.vx ?? 0) * dt;
+    h.flash = (h.flash ?? 9) + dt;
+    if (h.t > 3 && !h.spot && (h.x < -h.r * 1.4 || h.x > 960 + h.r * 1.4)) { h.dead = true; return; }
+    if (d < h.r) this.bvx += Math.sign(h.vx ?? 1) * 240 * dt;
+    if (h.spot) {
+      h.armed = (h.armed ?? 0) + dt;
+      if (h.armed < SQUALL_WARN) return;
+      const { x: sx, y: sy } = h.spot;
+      h.flash = 0; h.gaps = [sx, sy]; h.spot = undefined; h.armed = undefined; h.tick = 1.5 + this.rng() * 1.2;
+      Sfx.play('thunder'); this.cameras.main.shake(140, 0.004);
+      if (Math.hypot(this.bx - sx, this.by - sy) < SQUALL_HIT) { this.damageBoat(1); this.float(this.bx, this.by - 36, 'struck!', '#c9b0ff'); }
+      return;
+    }
+    h.tick = (h.tick ?? 1) - dt;
+    if (h.tick > 0) return;
+    h.tick = 0.4;
+    if (d < h.r * 1.15) { h.spot = { x: this.bx, y: this.by }; h.armed = 0; Sfx.play('electric-charge'); }
+  }
+
+  /** Where the spire stands on the Last Crossing's horizon: the horizon line, the spire's foot and its height — growing the whole way. */
+  private lastSpire(): { hz: number; x: number; h: number; p: number } {
+    const p = Phaser.Math.Clamp(this.dist / LAST_CROSSING_M, 0, 1);
+    return { hz: 64 + p * 96, x: 520 - p * 40, h: 44 + Math.pow(p, 2.1) * 330, p };
+  }
+
+  /**
+   * The Last Crossing's water: still and black as glass. The spire stands mirrored in it, its
+   * throne-light laid down the water as a column of broken streaks; long mirror glints slide past;
+   * the stars lie reflected and barely shiver; and faint violet seams — like cracks in a pane — drift
+   * by under the keel.
+   */
+  private drawLastWater(g: Phaser.GameObjects.Graphics, t: number, B: (typeof BANDS)[number]): void {
+    const W = this.scale.width, H = this.scale.height;
+    const { hz, x, h } = this.lastSpire();
+    const k = h / 400, tipX = x + 14 * k;
+    const open = Save.test({ monarch: 'obsidian-king' });
+    g.fillStyle(B.deep, 0.5); g.fillRect(0, hz, W, H - hz);
+    // The spire mirrored, darker than the water.
+    g.fillStyle(0x000000, 0.4); g.fillTriangle(x - 75 * k, hz, x + 75 * k, hz, tipX, hz + h * 0.85);
+    g.fillStyle(0x000000, 0.25); g.fillTriangle(x - 150 * k, hz, x + 150 * k, hz, x, hz + h * 0.3);
+    g.lineStyle(1, OBS.edge, 0.12); g.lineBetween(x + 10 * k, hz, tipX, hz + h * 0.85);
+    // The throne-light's road down the water.
+    for (let y = hz + 4; y < H; y += 6) {
+      const f = (y - hz) / (H - hz);
+      const w = 8 + f * 90 + Math.sin(y * 0.3 + t * 2) * 8 * f;
+      const a = (1 - f) * 0.4 * (0.55 + 0.45 * Math.sin(y * 0.11 - t * 3));
+      const jx = Math.sin(y * 0.07 + t * 1.3) * 6 * f;
+      g.lineStyle(1.5, open ? OBS.star : OBS.seamLit, a); g.lineBetween(tipX - w / 2 + jx, y, tipX + w / 2 + jx, y);
+    }
+    // Reflected stars.
+    const rs = mulberry(5150);
+    for (let i = 0; i < 46; i++) {
+      const sx = rs() * W, sy = hz + 6 + rs() * (H - hz), tw = 0.4 + 0.6 * Math.abs(Math.sin(t * (0.5 + rs()) + i));
+      const sm = 2 + Math.sin(t * 1.7 + i) * 1.5;
+      g.lineStyle(1, 0xdce4ff, 0.22 * tw); g.lineBetween(sx - sm, sy, sx + sm, sy);
+    }
+    // Long mirror glints sliding past with the sea.
+    const off = (this.dist * 10) % 110;
+    for (let y = hz - 110 + off; y < H; y += 110) {
+      if (y < hz + 4) continue;
+      for (let i = 0; i < 3; i++) {
+        const gx = ((i * 331 + Math.floor((this.dist * 10) / 110) * 97 + y * 0.3) % W + W) % W, gw = 60 + i * 50;
+        g.lineStyle(1, OBS.edge, 0.12); g.lineBetween(gx, y + i * 23, gx + gw, y + i * 23);
+        g.lineStyle(1, 0xffffff, 0.08); g.lineBetween(gx + gw * 0.3, y + i * 23 - 1, gx + gw * 0.55, y + i * 23 - 1);
+      }
+    }
+    // Seams in the glass of the sea.
+    for (let i = 0; i < 6; i++) {
+      const span = H + 240, raw = i * 211 + this.dist * 10, n = Math.floor(raw / span);
+      const yy = (raw % span) - 120;
+      if (yy < hz) continue;
+      const rng = mulberry(i * 7919 + n * 131 + 3);
+      const x0 = rng() * W;
+      seam(g, crackPath({ x: x0, y: yy }, { x: x0 + (rng() - 0.5) * 320, y: yy + (rng() - 0.5) * 70 }, rng, 9, 6), 1, 0.22 + 0.1 * Math.sin(t + i), 0);
+    }
+  }
+
+  /**
+   * The sky over the Last Crossing, laid over the far sea: night going violet toward the horizon,
+   * stars, the torn last banks of the Shroud low along the sea (thinning as you near), and the spire —
+   * small at first, then the whole sky — with a lamp on every bench you have broken. The Shroud's
+   * lightning forks down out of it now and then.
+   */
+  private drawLastSky(g: Phaser.GameObjects.Graphics, t: number): void {
+    const W = this.scale.width;
+    const { hz, x, h, p } = this.lastSpire();
+    const steps = 10;
+    for (let i = 0; i < steps; i++) {
+      const f = i / (steps - 1);
+      g.fillStyle(mixC(OBS.sky, OBS.skyGlow, f * f), 1); g.fillRect(0, (hz * i) / steps, W, hz / steps + 1);
+    }
+    starfield(g, 0, 0, W, hz - 6, mulberry(1717), 90, t);
+    const open = Save.test({ monarch: 'obsidian-king' });
+    // A haze of light round the spire's crown, wider as it nears.
+    const k = h / 400, tipX = x + 14 * k, tipY = hz - h;
+    g.fillStyle(open ? OBS.star : OBS.seam, 0.06); g.fillCircle(tipX, Math.max(tipY, -60), 40 + h * 0.35);
+    // The Shroud's last banks along the horizon.
+    const shroud = 1 - p;
+    for (let i = 0; i < 12; i++) {
+      const dir = i % 2 ? 1 : -1, bw = 140 + (i % 4) * 40;
+      const cx = ((i * 97 + t * 5 * dir) % (W + bw) + W + bw) % (W + bw) - bw / 2;
+      g.fillStyle(i % 3 ? 0x1a1626 : 0x262036, 0.6 * shroud); g.fillEllipse(cx, hz - 8 - (i % 3) * 9, bw, 18 + (i % 3) * 6);
+      g.fillStyle(OBS.sheen, 0.12 * shroud); g.fillEllipse(cx - bw * 0.1, hz - 14 - (i % 3) * 9, bw * 0.6, 5);
+    }
+    drawPinnacle(g, x, hz + 2, h, { t, lit: Math.floor(Save.seatsWon() / 6), storm: 0.45 * shroud, open });
+    // The sea line.
+    g.lineStyle(4, OBS.seam, 0.08); g.lineBetween(0, hz + 2, W, hz + 2);
+    g.lineStyle(1.2, OBS.edge, 0.5); g.lineBetween(0, hz + 1, W, hz + 1);
+    if (this.flashT < 0.3) {
+      const a = 1 - this.flashT / 0.3;
+      let lx = this.flashX, ly = -4;
+      for (const [w, c, al] of [[5, OBS.seam, 0.4], [1.8, OBS.seamLit, 1]] as const) {
+        lx = this.flashX; ly = -4;
+        g.lineStyle(w, c, al * a); g.beginPath(); g.moveTo(lx, ly);
+        for (let i = 0; i < 6; i++) { lx += Math.sin(this.flashX + i * 5.1) * 26; ly += (hz + 2) / 6; g.lineTo(lx, ly); }
+        g.strokePath();
+      }
+      g.fillStyle(OBS.seamLit, 0.15 * a); g.fillRect(0, 0, W, hz);
+    }
+  }
+
+  /**
+   * The Muster alongside: the ten wanderers' boats, five to a side, each under a sail of its isle's
+   * colour with a pennant streaming and a stern lantern lit, bobbing on the glass and keeping
+   * station with you — and, as the beach comes up, surging ahead to ground first.
+   */
+  private drawMuster(g: Phaser.GameObjects.Graphics, t: number): void {
+    const H = this.scale.height;
+    const surge = this.toLand() < COAST_M ? Math.pow(1 - Math.max(0, this.toLand()) / COAST_M, 1.5) : 0;
+    ISLES.slice(0, 10).forEach((isle, i) => {
+      const side = i % 2 === 0 ? -1 : 1, rank = Math.floor(i / 2);
+      const x = side < 0 ? 22 + (rank % 2) * 13 : 938 - (rank % 2) * 13;
+      const y = 200 + rank * 90 + Math.sin(t * 0.4 + i * 1.7) * 14 - surge * (300 + rank * 50);
+      if (y < -40 || y > H + 40) return;
+      const roll = Math.sin(t * 1.6 + i * 1.1);
+      // Wake on the glass.
+      for (let w = 0; w < 4; w++) {
+        const k = (t * 0.8 + w * 0.25 + i * 0.13) % 1;
+        g.lineStyle(1.2, 0xd8d0f0, 0.22 * (1 - k));
+        g.lineBetween(x - 5 - k * 8, y + 14 + k * 30, x - 3 - k * 5, y + 10 + k * 30);
+        g.lineBetween(x + 5 + k * 8, y + 14 + k * 30, x + 3 + k * 5, y + 10 + k * 30);
+      }
+      g.fillStyle(0x000000, 0.35); g.fillEllipse(x + 3, y + 4, 15, 34);
+      const hull = [[0, -17], [6.5, -7], [7, 9], [3, 15], [-3, 15], [-7, 9], [-6.5, -7]].map(([dx, dy]) => new Phaser.Geom.Point(x + dx + roll * 0.6, y + dy));
+      g.fillStyle(0x2e2218, 1); g.fillPoints(hull, true);
+      g.fillStyle(0x6a4a2e, 1); g.fillPoints(hull.map((p) => new Phaser.Geom.Point(x + (p.x - x) * 0.72, y + (p.y - y) * 0.78)), true);
+      g.lineStyle(0.8, 0x3a2a1a, 0.8); for (const dy of [-4, 2, 8]) g.lineBetween(x - 4, y + dy, x + 4, y + dy);
+      // Lantern at the stern.
+      g.fillStyle(OBS.star, 0.16); g.fillCircle(x, y + 13, 9);
+      g.fillStyle(OBS.star, 1); g.fillCircle(x, y + 13, 1.7);
+      // Sail: a bellied bar across the mast, the isle's colour, with a lit belly.
+      const belly = 3 + roll * 1.2;
+      g.fillStyle(dim(isle.color, 0.35), 1); g.fillEllipse(x + roll, y - 3 + belly * 0.4, 24, 8);
+      g.fillStyle(isle.color, 1); g.fillEllipse(x + roll, y - 4, 22, 6 + belly * 0.4);
+      g.fillStyle(0xffffff, 0.35); g.fillEllipse(x + roll - 3, y - 5, 10, 2);
+      g.fillStyle(0x2a1a10, 1); g.fillCircle(x + roll * 0.5, y - 2, 1.6);
+      // Pennant from the masthead, streaming astern.
+      const fl = Math.sin(t * 6 + i) * 2;
+      g.fillStyle(lit(isle.color, 0.3), 1); g.fillTriangle(x, y - 3, x + 2, y - 3, x + 1 + fl, y + 9);
+    });
+  }
+
+  /**
+   * Glasswater Landing coming up at the end of the Last Crossing: a beach of black-glass shingle,
+   * every pebble catching a pale point, violet seams running up it, the ribs of older challengers'
+   * wrecks, and violet-white surf breaking softly on the glass.
+   */
+  private drawLastCoast(g: Phaser.GameObjects.Graphics, t: number): void {
+    const W = this.scale.width;
+    const k = Phaser.Math.Clamp(1 - this.toLand() / (COAST_M + 200), 0, 1);
+    const shore = -40 + k * 300;
+    const edgeY = (x: number) => shore + Math.sin(x * 0.012 + 1.3) * 22;
+    g.fillStyle(OBS.glass, 1);
+    g.beginPath(); g.moveTo(0, -10);
+    for (let x = 0; x <= W; x += 32) g.lineTo(x, edgeY(x));
+    g.lineTo(W, -10); g.closePath(); g.fillPath();
+    g.fillStyle(OBS.facet, 0.7);
+    g.beginPath(); g.moveTo(0, -10);
+    for (let x = 0; x <= W; x += 32) g.lineTo(x, edgeY(x) - 16);
+    g.lineTo(W, -10); g.closePath(); g.fillPath();
+    const rng = mulberry(9091);
+    for (let i = 0; i < 150; i++) {
+      const px = rng() * W, py = shore - 8 - rng() * 420, s = 2 + rng() * 4, tone = rng();
+      if (py > edgeY(px) - 6 || py < -10) continue;
+      g.fillStyle(tone > 0.6 ? OBS.sheen : OBS.glass, 1); g.fillEllipse(px, py, s * 1.6, s);
+      if (tone > 0.75) { g.fillStyle(0xffffff, 0.5 + 0.4 * Math.sin(t * 2 + i)); g.fillCircle(px - s * 0.3, py - s * 0.2, 0.8); }
+    }
+    for (let i = 0; i < 4; i++) {
+      const x0 = 120 + i * 230 + rng() * 60;
+      const pts = crackPath({ x: x0, y: edgeY(x0) - 8 }, { x: x0 + (rng() - 0.5) * 140, y: shore - 200 - rng() * 140 }, rng, 10, 6);
+      seam(g, pts, 1.2, 0.55, 0.5 + 0.5 * Math.sin(t * 1.4 + i));
+    }
+    // Wrecks: the ribs of old boats run up on the glass.
+    for (const [wx, dy] of [[170, 60], [640, 90], [860, 40]] as const) {
+      const wy = shore - dy;
+      if (wy < -30) continue;
+      g.fillStyle(0x000000, 0.3); g.fillEllipse(wx + 4, wy + 4, 70, 18);
+      g.lineStyle(3, 0x2e2218, 1); g.lineBetween(wx - 30, wy, wx + 30, wy - 4);
+      for (let r = 0; r < 5; r++) {
+        const rx = wx - 22 + r * 11, ry = wy - r * 0.8;
+        g.lineStyle(2.4, 0x3a2a1e, 1); g.beginPath(); g.arc(rx, ry, 9, Math.PI * 1.05, Math.PI * 1.95, false); g.strokePath();
+        g.lineStyle(0.8, 0x6a4a2e, 0.8); g.beginPath(); g.arc(rx, ry, 9, Math.PI * 1.15, Math.PI * 1.5, false); g.strokePath();
+      }
+    }
+    for (let x = 0; x <= W; x += 36) {
+      const k2 = (t * 0.5 + x * 0.01) % 1;
+      g.fillStyle(0xe8e0ff, 0.45 * (1 - k2)); g.fillEllipse(x + Math.sin(t + x) * 6, edgeY(x) + 6 - k2 * 6, 28, 4);
+    }
+    g.lineStyle(1.2, OBS.edge, 0.6);
+    g.beginPath(); for (let x = 0; x <= W; x += 32) { if (x === 0) g.moveTo(x, edgeY(x)); else g.lineTo(x, edgeY(x)); } g.strokePath();
+  }
+
+  /** A drifting slab of obsidian from above: a jagged black-glass plate turning slowly, facets lit toward the sky, a pale edge, a water-line — violet cracks open as it is struck. */
+  private drawObshard(g: Phaser.GameObjects.Graphics, h: Hazard, t: number): void {
+    const { x, y, r } = h;
+    const rot = h.seed + t * 0.25 * (h.seed % 2 > 1 ? 1 : -1) + (h.vx && Math.abs(h.vx) > 20 ? h.t * 3 : 0);
+    const n = 6;
+    const pts: Phaser.Geom.Point[] = [];
+    for (let i = 0; i < n; i++) {
+      const a = rot + (i / n) * Math.PI * 2, kk = 0.62 + ((Math.sin(h.seed * 1.7 + i * 2.9) + 1) / 2) * 0.5;
+      pts.push(new Phaser.Geom.Point(x + Math.cos(a) * r * kk, y + Math.sin(a) * r * kk * 0.8));
+    }
+    const ripple = Math.sin(t * 2 + h.seed);
+    g.fillStyle(0xffffff, 0.07); g.fillEllipse(x, y + 2, r * 2.6, r * 1.6);
+    g.lineStyle(1, OBS.edge, 0.22 + 0.12 * ripple); g.strokeEllipse(x, y + 2, r * 2.3 + ripple * 3, r * 1.4 + ripple * 2);
+    if (h.vx && Math.abs(h.vx) > 20) {
+      const d = -Math.sign(h.vx);
+      for (let i = 0; i < 3; i++) { g.lineStyle(1.4, 0xe8e0ff, 0.35 - i * 0.1); g.lineBetween(x + d * r * (0.8 + i * 0.4), y - 4 + i * 4, x + d * r * (1.6 + i * 0.5), y - 4 + i * 4); }
+    }
+    g.fillStyle(0x000000, 0.35); g.fillPoints(pts.map((p) => new Phaser.Geom.Point(p.x + 3, p.y + 4)), true);
+    g.fillStyle(OBS.glass, 1); g.fillPoints(pts, true);
+    const cx = x - r * 0.08, cy = y - r * 0.1;
+    for (let i = 0; i < n; i++) {
+      const a = pts[i], b = pts[(i + 1) % n];
+      const mid = Math.atan2((a.y + b.y) / 2 - y, (a.x + b.x) / 2 - x);
+      const face = 0.5 + 0.5 * Math.cos(mid + 2.2);
+      g.fillStyle(mixC(OBS.glass, OBS.sheen, face * 0.85), 1); g.fillTriangle(cx, cy, a.x, a.y, b.x, b.y);
+      g.lineStyle(0.8, OBS.edge, 0.18); g.lineBetween(cx, cy, a.x, a.y);
+    }
+    g.lineStyle(1.3, OBS.edge, 0.7); g.strokePoints(pts, true);
+    g.fillStyle(0xffffff, 0.6); g.fillCircle(cx - r * 0.25, cy - r * 0.2, Math.max(0.8, r * 0.06));
+    if (h.hp < h.maxHp) {
+      const rng = mulberry(Math.floor(h.seed * 1000));
+      const dmg = 1 - h.hp / h.maxHp;
+      const a = pts[0], b = pts[3];
+      const end = { x: a.x + (b.x - a.x) * (0.4 + dmg * 0.6), y: a.y + (b.y - a.y) * (0.4 + dmg * 0.6) };
+      seam(g, crackPath(a, end, rng, r * 0.15, 4), 1.2, 1, dmg);
+    }
+  }
+
+  /** A glass reef: first its seams flash violet under the water and the sea darkens; then a crown of obsidian spikes bursts up through the surface. */
+  private drawGlassReef(g: Phaser.GameObjects.Graphics, h: Hazard, t: number): void {
+    const { x, y, r } = h;
+    const rng = mulberry(Math.floor(h.seed * 977));
+    if (h.t < REEF_RISE) {
+      const k = h.t / REEF_RISE, fl = Math.sin(t * (10 + k * 18)) > 0 ? 1 : 0.45;
+      g.fillStyle(0x000000, 0.2 + k * 0.3); g.fillEllipse(x, y, r * 2.2, r * 1.3);
+      g.lineStyle(1.2, OBS.seam, 0.25 + 0.4 * k); g.strokeEllipse(x, y, r * 2.2 * (1.25 - k * 0.25), r * 1.3 * (1.25 - k * 0.25));
+      for (let i = 0; i < 7; i++) {
+        const a = rng() * Math.PI * 2, b = a + (rng() - 0.5) * 1.4;
+        const p0 = { x: x + Math.cos(a) * r * 0.12, y: y + Math.sin(a) * r * 0.08 };
+        const p1 = { x: x + Math.cos(b) * r * (0.6 + rng() * 0.45), y: y + Math.sin(b) * r * (0.35 + rng() * 0.3) };
+        seam(g, crackPath(p0, p1, rng, 5, 4), 1.2, (0.3 + 0.7 * k) * fl, k);
+      }
+      for (let i = 0; i < 6; i++) {
+        const b = (t * 1.5 + i * 0.17) % 1;
+        g.lineStyle(1, 0xe8e0ff, 0.5 * (1 - b)); g.strokeCircle(x + Math.sin(i * 2.3) * r * 0.7, y + Math.cos(i * 1.7) * r * 0.35 - b * 4, 1 + b * 2);
+      }
+      return;
+    }
+    const rise = Math.min(1, (h.t - REEF_RISE) / 0.25);
+    g.fillStyle(0xffffff, 0.1); g.fillEllipse(x, y + 4, r * 2.5, r * 1.3);
+    g.lineStyle(2, 0xe8e0ff, 0.3 + 0.15 * Math.sin(t * 3 + h.seed)); g.strokeEllipse(x, y + 4, r * 2.3, r * 1.15);
+    g.fillStyle(OBS.seam, 0.14); g.fillEllipse(x, y + 4, r * 2, r * 0.9);
+    const spikes: { dx: number; dy: number; h: number; w: number; lean: number; tone: number }[] = [];
+    for (let i = 0; i < 8; i++) {
+      const dx = (rng() - 0.5) * r * 1.6;
+      spikes.push({ dx, dy: (rng() - 0.5) * r * 0.6, h: (18 + rng() * 30) * (1 - (Math.abs(dx) / r) * 0.45), w: 11 + rng() * 10, lean: (rng() - 0.5) * 12, tone: rng() * 0.6 });
+    }
+    spikes.sort((a, b) => a.dy - b.dy);
+    for (const s of spikes) shard(g, x + s.dx, y + s.dy + 6, s.w, s.h * rise, s.lean, s.tone);
+    seam(g, [{ x: x - r * 0.7, y: y + 8 }, { x: x - r * 0.2, y: y + 12 }, { x: x + r * 0.3, y: y + 9 }, { x: x + r * 0.7, y: y + 6 }], 1.1, 0.6, 0.5 + 0.5 * Math.sin(t * 2 + h.seed));
+    if (rise < 1) {
+      g.lineStyle(3 * (1 - rise) + 1, 0xffffff, 0.7 * (1 - rise)); g.strokeEllipse(x, y + 4, r * (2 + rise * 1.2), r * (1 + rise * 0.6));
+    }
+  }
+
+  /** A squall of the Shroud from above: a cell of dark violet cloud over a curtain of slanting rain, wind streaks off its leading edge — and, when it has marked the water, a tightening ring and the bolt. */
+  private drawSquall(g: Phaser.GameObjects.Graphics, h: Hazard, t: number): void {
+    const { x, y, r } = h;
+    const dir = Math.sign(h.vx ?? 1) || 1;
+    g.fillStyle(0x000000, 0.22); g.fillEllipse(x + 10, y + 18, r * 2.2, r * 1.5);
+    for (let i = 0; i < 46; i++) {
+      const u = (i * 0.6180339 + h.seed) % 1, v = (i * 0.37 + t * 1.8 + h.seed * 0.1) % 1;
+      const px = x + (u - 0.5) * r * 1.9, py = y + (v - 0.5) * r * 1.3;
+      const ex = (px - x) / (r * 0.95), ey = (py - y) / (r * 0.65);
+      if (ex * ex + ey * ey > 1) continue;
+      g.lineStyle(1, 0xb8b0d8, 0.35); g.lineBetween(px, py, px + dir * 5, py + 12);
+    }
+    for (let i = 0; i < 9; i++) {
+      const a = i * 0.7 + h.seed, d = r * (0.25 + ((i * 37) % 5) / 9);
+      const lx = x + Math.cos(a + t * 0.15) * d, ly = y + Math.sin(a + t * 0.15) * d * 0.6 - 12;
+      const lr = r * (0.36 + ((i * 13) % 4) * 0.06);
+      g.fillStyle(i % 2 ? 0x1a1626 : 0x262036, 0.55); g.fillCircle(lx, ly, lr);
+      g.fillStyle(OBS.sheen, 0.22); g.fillCircle(lx - lr * 0.25, ly - lr * 0.3, lr * 0.5);
+    }
+    if (Math.sin(t * 7 + h.seed) > 0.85) { g.fillStyle(OBS.seamLit, 0.14); g.fillCircle(x, y - 12, r * 0.6); }
+    for (let i = 0; i < 5; i++) {
+      const k = (t * 1.2 + i * 0.2) % 1, sy = y - r * 0.4 + i * r * 0.2, sx = x + dir * (r * 0.9 + k * 60);
+      g.lineStyle(1.5, 0xd8d0f0, 0.35 * (1 - k)); g.lineBetween(sx, sy, sx + dir * 24, sy);
+    }
+    if (h.spot) {
+      const k = Math.min(1, (h.armed ?? 0) / SQUALL_WARN), { x: sx, y: sy } = h.spot, s = 1.6 - 0.6 * k;
+      g.fillStyle(OBS.seam, 0.1 + 0.2 * k); g.fillEllipse(sx, sy, SQUALL_HIT * 2, SQUALL_HIT * 1.1);
+      g.lineStyle(2, OBS.seamLit, 0.5 + 0.5 * k); g.strokeEllipse(sx, sy, SQUALL_HIT * 2 * s, SQUALL_HIT * 1.1 * s);
+      g.lineStyle(1, OBS.seamLit, 0.6 * k);
+      g.lineBetween(sx - SQUALL_HIT * 1.2, sy, sx - SQUALL_HIT * 0.6, sy); g.lineBetween(sx + SQUALL_HIT * 0.6, sy, sx + SQUALL_HIT * 1.2, sy);
+      g.lineStyle(1, OBS.seamLit, 0.15 + 0.35 * k); g.lineBetween(x, y - 12, sx, sy);
+    }
+    if ((h.flash ?? 9) < 0.3 && h.gaps) {
+      const a = 1 - (h.flash ?? 0) / 0.3, [sx, sy] = h.gaps;
+      for (const [w, c, al] of [[6, OBS.seam, 0.45], [2, 0xffffff, 1]] as const) {
+        g.lineStyle(w, c, al * a); g.beginPath(); g.moveTo(x, y - r * 0.3);
+        for (let i = 1; i <= 6; i++) {
+          const u = i / 6;
+          g.lineTo(Phaser.Math.Linear(x, sx, u) + (i < 6 ? Math.sin(h.seed + i * 4.3) * 16 : 0), Phaser.Math.Linear(y - r * 0.3, sy, u));
+        }
+        g.strokePath();
+      }
+      g.lineStyle(2, OBS.seamLit, a); g.strokeEllipse(sx, sy, SQUALL_HIT * (1 + (1 - a) * 1.5), SQUALL_HIT * 0.55 * (1 + (1 - a) * 1.5));
+      g.fillStyle(0xffffff, 0.6 * a); g.fillCircle(sx, sy, 8 * a + 2);
     }
   }
 

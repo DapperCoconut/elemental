@@ -120,7 +120,7 @@ export class IslesFightKit {
       }
     }
 
-    if (payload.kind === 'encounter' || payload.kind === 'warden') {
+    if (payload.kind === 'encounter' || payload.kind === 'warden' || payload.kind === 'councilor') {
       const enc = getEncounter(payload.id);
       if (enc) {
         if (enc.hpMult && enc.hpMult !== 1) {
@@ -218,7 +218,7 @@ export class IslesFightKit {
     if (this.gimmick || payload.kind === 'encounter') {
       const enc = getEncounter(payload.id);
       const g = enc ? getGimmick(enc.gimmick) : undefined;
-      if (enc) this.banner(enc.name.toUpperCase(), '#ffd27a', g?.rules);
+      if (enc) this.banner(enc.mastered ? `DECREE: ${enc.name.toUpperCase()}` : enc.name.toUpperCase(), enc.mastered ? '#c9b0ff' : '#ffd27a', g?.rules);
     }
   }
 
@@ -538,7 +538,7 @@ const mixDark = (c: number): number => {
  * (before the fighters exist). A prince's own `drawArena` paints over this where it has one.
  */
 export function paintIslesFloor(scene: Phaser.Scene, payload: IslesFightPayload, W: number, H: number): void {
-  const key = payload.court ?? (payload.kind === 'warden' ? getEncounter(payload.id)?.court : undefined) ?? 'kiln';
+  const key = payload.court ?? (payload.kind === 'warden' || payload.kind === 'councilor' ? getEncounter(payload.id)?.court : undefined) ?? 'kiln';
   const floor = getFloor(key) ?? getFloor('kiln');
   const g = scene.add.graphics().setDepth(-100);
   if (floor) {

@@ -22,6 +22,7 @@ import { IslesResultScene } from './isles/scenes/IslesResultScene';
 import { IslesInventoryScene } from './isles/scenes/IslesInventoryScene';
 import { IslesGeneScene } from './isles/scenes/IslesGeneScene';
 import { IslesMapScene } from './isles/scenes/IslesMapScene';
+import { IslesCutsceneScene } from './isles/scenes/IslesCutsceneScene';
 import { SeaVoyageScene } from './isles/sea/SeaVoyageScene';
 import { GauntletElementSelectScene } from './scenes/GauntletElementSelectScene';
 import { InventoryScene } from './scenes/InventoryScene';
@@ -62,7 +63,7 @@ const config: Phaser.Types.Core.GameConfig = {
       debug: false,
     },
   },
-  scene: [BootScene, TitleScene, MenuScene, ShopScene, LabScene, ArenaScene, GameOverScene, GauntletSelectScene, GauntletIntermediaryScene, PauseMenuScene, CampaignSlotSelectScene, CampaignWorldMapScene, CampaignWorldScene, CampaignFightMenuScene, CampaignShopScene, CampaignPortalScene, CampaignElementSelectScene, GauntletElementSelectScene, InventoryScene, VaultScene, OnlineLobbyScene, AchievementsScene, DisgracedLabScene, QuantumLabScene, AudioSettingsScene, ConquestMenuScene, DialogueScene, StrongholdSetupScene, StrongholdScene, StrongholdJournalScene, RankedScene, RankedBanScene, RankedSelectScene, RankedIntermissionScene, IslesSlotScene, IsleWorldScene, IslesResultScene, IslesInventoryScene, IslesGeneScene, IslesMapScene, SeaVoyageScene],
+  scene: [BootScene, TitleScene, MenuScene, ShopScene, LabScene, ArenaScene, GameOverScene, GauntletSelectScene, GauntletIntermediaryScene, PauseMenuScene, CampaignSlotSelectScene, CampaignWorldMapScene, CampaignWorldScene, CampaignFightMenuScene, CampaignShopScene, CampaignPortalScene, CampaignElementSelectScene, GauntletElementSelectScene, InventoryScene, VaultScene, OnlineLobbyScene, AchievementsScene, DisgracedLabScene, QuantumLabScene, AudioSettingsScene, ConquestMenuScene, DialogueScene, StrongholdSetupScene, StrongholdScene, StrongholdJournalScene, RankedScene, RankedBanScene, RankedSelectScene, RankedIntermissionScene, IslesSlotScene, IsleWorldScene, IslesResultScene, IslesInventoryScene, IslesGeneScene, IslesMapScene, IslesCutsceneScene, SeaVoyageScene],
 };
 
 const game = new Phaser.Game(config);

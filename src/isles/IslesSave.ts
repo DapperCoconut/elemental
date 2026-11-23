@@ -261,13 +261,22 @@ export function logFish(id: string, size: number): void {
  */
 let courtEncounters: (court: string) => string[] = () => [];
 let islePrinces: (isle: string) => string[] = () => [];
+let councilSeats: () => string[] = () => [];
 
 export function bindRegistry(r: {
   courtEncounters: (court: string) => string[];
   islePrinces: (isle: string) => string[];
+  councilSeats: () => string[];
 }): void {
   courtEncounters = r.courtEncounters;
   islePrinces = r.islePrinces;
+  councilSeats = r.councilSeats;
+}
+
+/** How many of the Pinnacle's councilors this save has unseated. */
+export function seatsWon(): number {
+  const won = S().encounters;
+  return councilSeats().filter((id) => won.includes(id)).length;
 }
 
 export function courtReady(court: string): boolean {
@@ -293,6 +302,8 @@ export function test(c: Cond | undefined): boolean {
   if ('flag' in c) return s.flags.includes(c.flag);
   if ('item' in c) return (s.inv[c.item] ?? 0) >= (c.count ?? 1);
   if ('princesOfIsle' in c) return islePrinces(c.princesOfIsle).filter((p) => s.princes.includes(p)).length >= c.count;
+  if ('monarchs' in c) return s.monarchs.filter((m) => m !== 'obsidian-king').length >= c.monarchs;
+  if ('seats' in c) return seatsWon() >= c.seats;
   if ('not' in c) return !test(c.not);
   if ('all' in c) return c.all.every(test);
   if ('any' in c) return c.any.some(test);

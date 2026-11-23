@@ -382,3 +382,63 @@ motes(g, view: Rect, t, n, color, fall, sway, size, seed = 0)   // for animateOv
   script hook after the factory are NOT guarded: a throw there breaks the frame.
 - **Hard mode** for a boss: tk.telegraphScale ×0.86 and damage ×`hard.damageMult`; for an encounter gimmick read
   `ctx.hard` yourself (foe HP ×1.3 and `tk.damageScale` 1.25 are already applied; `ctx.hit` is NOT scaled).
+
+## Pinnacle additions (2026-11-22)
+
+```ts
+Cond also: { monarchs: n }   // ≥ n of the ten monarchs fallen      { seats: n }  // ≥ n of the 60 councilors unseated
+           { courtReady: '<bench id>' }  // all six seats of a Pinnacle bench
+           { monarch: 'obsidian-king' }  // the King has fallen
+EncounterDef also: mastered? /*every upgrade + mastery + perk; masked in the world*/; perk? /*perk id*/; seat? /*'Seat of Embers'*/
+AreaDef also: intro?: cutsceneId       // played once on first entry, then the area loads
+NpcHat 'councilmask' · WeatherKind 'glassrain' 'starmotes' · WorldGate.look 'obsidian' 'starseal'
+```
+
+### Cutscenes (`CutsceneDef` in a bundle's `cutscenes`; screen space 960×640; `IslesTypes.ts`)
+```ts
+CutsceneDef  { id; shots: CutsceneShot[]; music?: 'title'|'menu'|'campaign'|'arena'|'boss'|'gauntlet'|… }
+CutsceneShot { ms;                       // runs at least this long AND until its last line is read
+               draw(g, k: CutsceneKit);  // paints the WHOLE frame every tick (g is cleared for you)
+               lines?: { who?; text; color? }[];   // subtitles, one at a time; no `who` = narration (italic)
+               enter?: 'cut'|'fade'|'white' (fade); cues?: { at /*ms*/; sfx?; shake?; ms?; flash? /*0xRRGGBB*/ }[];
+               full? /*no letterbox bars — title cards*/ }
+CutsceneKit  { W; H; t /*s into shot*/; p /*0–1 of ms, holds at 1*/; T /*s into cutscene*/; line /*index on screen, -1 none*/;
+               rng(): () => number   // SAME numbers every frame — call once at the top of draw for still scenery
+               test(c: Cond); hero: { element; color };
+               text(x, y, str, { size?, color?, alpha?, align? /*0|0.5|1*/, display? /*false = body font*/, spacing? }) }
+```
+Bars cover y < 62 and y > 578 unless `full`; subtitles sit in the lower bar. Keep a frame under ~1500 shapes.
+`src/isles/art/CineArt.ts`: `ease(v, a, b)` smoothstep · `mix` · `sky(g, x, y, w, h, top, bottom, bands)` ·
+`sea(g, W, y0, y1, t, deep, crest, calm)` · `vignette` · `wash(g, W, H, color, a)` · `cineHero(g, x, y, r, color,
+{ face, t, walk, alpha, back })` · `crowd(g, x0, x1, y, n, r, colors, t, cheer)` · `boat(g, x, y, s, hull, sail, t, face)`.
+
+### PinnacleArt (`src/isles/art/PinnacleArt.ts`) — the Pinnacle's one look
+`OBS` { glass facet sheen edge seam seamLit star starCore starDeep sea seaLit sky skyGlow } ·
+`shard(g, x, y, w, h, lean, tone)` · `slab(g, x, y, w, h, rng?, cracks)` (x centre, y base) ·
+`seam(g, pts, w, alpha, pulse, color)` + `crackPath(a, b, rng, jag, steps)` · `councilMask(g, x, y, s, { slit, crack, alpha, glow })` ·
+`starGlow(g, x, y, r, tSec, heat)` · `drawPinnacle(g, x, baseY, h, { t, lit /*0–10 benches*/, storm /*0–1*/, open })` ·
+`throne(g, x, y, s, { sword, glow, t })` · `glassFloor(g, x, y, w, h, tile, rng)` · `starfield(g, x, y, w, h, rng, n, tSec)`.
+
+### Boss additions (BossDefs.ts)
+```ts
+BossPhaseStyle also: anchorAt?: { x; y }   // where an `anchor` body holds its post
+                     hideRig?: boolean     // rig not drawn — drawDecor paints the whole body
+WorldBossPhase also: entry?: BossEntry     // the cinematic INTO this phase (replaces the 2.8 s interlude; on phase 0 stretches the intro)
+WorldBossDef also:   drawArena(g, W, H, phaseIdx) · drawBackdrop?(g, s, W, H) /*every frame, depth -40*/ · outro?: BossEntry
+BossEntry { ms; drawGround?(g, k); drawOver?(g, k);   // depth 4 (under fighters) / depth 28 (over everything, under the bars)
+            cues?: { at; sfx?; shake?; ms?; flash?; say? /*line over the body*/; banner? }[];
+            bodyTo?: { x; y }      // the body glides there across the entry
+            hideBody?: boolean     // rig + decor hidden; the entry paints him
+            letterbox? (true)      // black bars over the HUD strips
+            swapAt? (1) }          // fraction at which the NEW phase's look / palette / floor / decor appear (hide it behind a flash)
+BossEntryKit { p; t /*ms*/; time; W; H; x; y; fromX; fromY; player: { x; y } }
+tk.fighting                      // false during intro / entries / the fall — pause your own clocks on it
+tk.spawnAdd({ x, y, hp, speed, damage, behavior?: 'melee'|'ranged'|'charger', range?, size?, hidden?, biteMs?, maxAlive? }): Husk | null
+   // NOTE: nothing runs a toolkit add's own AI (`husk.update` is never called) and its bite has no damage handler —
+   // drive it yourself (setPosition, `husk.tickStatus(time, delta)` for DOTs + CC) as king/throneHost.ts does.
+   // a REAL enemy (every kit hits it, auto-aim finds it, it charges ultimates). `hidden`: invisible, no bar — draw your own
+   // soldier at husk.x / husk.y; read husk.hp / husk.maxHp / husk.active; husk.setPosition(x, y) to blink it;
+   // husk.once('defeated', fn). All adds die with tk.clearHazards() (every phase change).
+```
+The body's hitbox is a circle of `look.torsoR` (or `phase.bodyR`). The player CAN walk through a boss body unless the
+phase style sets `solid: true` (the player is pushed back out to `torsoR + 20` every frame — the King's star act has it).

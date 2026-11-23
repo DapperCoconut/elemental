@@ -65,6 +65,7 @@ only the overview (this file) and its own isle:
 | Lotterhaven (fate) | `docs/ten-isles/fate.md` |
 | Choirholm (sound) | `docs/ten-isles/sound.md` |
 | Solmara (light) | `docs/ten-isles/light.md` |
+| **The Obsidian Pinnacle** (the finale) | `docs/ten-isles/pinnacle.md` — builder brief `docs/ten-isles-pinnacle-brief.md` |
 
 A new isle gets a new file here before its builders launch.
 
@@ -247,6 +248,29 @@ A new isle gets a new file here before its builders launch.
   NpcLook has no translucency or pet (Sable drawn glass-pale, Nocturne only in area animation); signatures have no cast hook
   (Blind Justice listens to the Fighter 'cast' event) and can't damage the boss (`takenMult`); Counterspell can't cancel a cast;
   the bot's cast hook gives no key slot; Auriel's Sunset paints its own dusk instead of `gloom` (its fixed hole hides warnings).
-- Not yet built: the
-  Obsidian Pinnacle + Obsidian King; revolts / anarchy / dark market; the meteor + hard mode (save has
+- 2026-11-22: **the Obsidian Pinnacle kicked off** — bible `docs/ten-isles/pinnacle.md`, brief
+  `docs/ten-isles-pinnacle-brief.md`, content `src/isles/content/pinnacle/`. It rides the registry as an eleventh bundle
+  marked `IsleDef.pinnacle` (not in `ISLES`; `PINNACLE` / `getIsle('pinnacle')`): a landing, ten benches of six councilors
+  (`seat-<element>`, sixty in all, each `mastered` — every upgrade, mastery, a perk — under a named Decree), the Crownless
+  Hall, and the Obsidian King in three acts (`king/{throne,duel,star}.ts` folded by `king/index.ts`). Its route opens when
+  the tenth monarch falls. Engine: **cinematics** (`IslesCutsceneScene`, `CutsceneDef`s in a bundle's `cutscenes`,
+  `AreaDef.intro` played once on first entry; `cine-shroud` after the tenth crown, `cine-ending` after the King); councilor
+  fights (payload kind `councilor`, masked champions, `buildNpcLoadout(el, 5)` + perk); Conds `{ monarchs }`, `{ seats }`,
+  `courtReady: <bench id>`; boss **phase entries** (`WorldBossPhase.entry` / `WorldBossDef.outro`: in-arena cinematics with
+  cues, `bodyTo`, `swapAt`, letterbox), `drawBackdrop` (a living floor), `drawArena(…, phaseIdx)`, style `anchorAt` /
+  `hideRig` / `solid`, `tk.fighting`, `tk.spawnAdd({ hidden, behavior })` (real minions with bespoke drawn bodies); shared
+  art `art/PinnacleArt.ts` + `art/CineArt.ts`; validator rules for the sixty seats, cutscenes and entries.
+- 2026-11-23: **the Obsidian Pinnacle built — the campaign can be finished.** 17 Opus builders (ten benches, the King's
+  three acts, landing, summit, cinematics, engine art), ~40k lines in `content/pinnacle/`; validator clean (0 placeholders,
+  no Pinnacle warnings, 71 bosses), build clean, not runtime-tested. Sixty councilors under sixty decrees; the King =
+  the Throne (the Host in waves behind the Aegis) → the Cracked Mask (sword and turning shield) → the Star Unshelled (ring
+  disc in space, nine cosmic signatures, the Supernova) + outro; cinematics `cine-shroud` / `cine-landfall` / ten bench
+  intros / `cine-throne` / `cine-ending` (ends on the falling star: flag for the meteor). The Last Crossing (4600 m, own
+  hazards) in SeaVoyageScene; spire chart + sea-chart spire in IslesMapScene. Validator now flood-fills every Pinnacle area
+  (spawn → both stairs, every seat / chest / NPC). Findings: nothing runs a `tk.spawnAdd` minion's own AI (the Throne act
+  drives its Host itself); `tk.phase` was never set on a resumed fight (fixed); gimmicks still cannot tell who dealt a hit
+  or read a kit's own state; `drawPinnacle`'s `alpha` option does nothing. Two decrees were sent back for repeating
+  another bench's idea (Subterfuge auction → Forged Warrant; Silence bell jar → the voice flies for the Vault); Quantum's
+  Superposed Law deliberately runs two of its bench's other decrees at once.
+- Not yet built: revolts / anarchy / dark market; the meteor + hard mode (save has
   `hard`, fights already scale on it, but no 10-encounter courts or Fallen forms yet); online co-op.

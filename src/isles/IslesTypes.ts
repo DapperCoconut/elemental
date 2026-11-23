@@ -29,7 +29,7 @@ export type Cond =
   | { prince: string }
   | { monarch: string }
   | { encounter: string }
-  /** All five of a court's encounters won (the prince's gate opens). */
+  /** All five of a court's encounters won (the prince's gate opens) — or all six seats of a Pinnacle bench (its area id). */
   | { courtReady: string }
   /** The quest has been accepted. With `stage`, it has reached at least that stage. */
   | { quest: string; stage?: number }
@@ -37,6 +37,10 @@ export type Cond =
   | { flag: string }
   | { item: string; count?: number }
   | { princesOfIsle: string; count: number }
+  /** At least this many of the ten monarchs have fallen. */
+  | { monarchs: number }
+  /** At least this many of the Pinnacle's sixty councilors have been unseated. */
+  | { seats: number }
   | { not: Cond }
   | { all: Cond[] }
   | { any: Cond[] };
@@ -45,6 +49,8 @@ export type Cond =
 
 export type NpcHat =
   | 'none' | 'cap' | 'tophat' | 'hood' | 'helmet' | 'crown' | 'bandana' | 'chef'
+  /** The Obsidian Council's regalia: a tall black-glass mask over the whole face, one violet slit for the eyes. */
+  | 'councilmask'
   /** A tall pointed wizard's hat, star-spangled, its tip flopping (mages, spellwrights, familiar-sellers). */
   | 'wizard'
   | 'tricorn' | 'beanie' | 'veil' | 'goggles' | 'straw' | 'mitre' | 'candle'
@@ -269,6 +275,9 @@ export interface WorldGate {
   rect: Rect;
   open: Cond;
   look: 'portcullis' | 'grate' | 'wax' | 'rubble' | 'barrier' | 'ice' | 'coral' | 'sluice'
+    /** The Pinnacle: `obsidian` a slab of black glass with a violet seam that splits it; `starseal` the throne door,
+     * a disc of sixty mask-seals ringed round a sleeping star. */
+    | 'obsidian' | 'starseal'
     | 'thorn' | 'roots' | 'bone' | 'candy'
     | 'cloud' | 'lightning' | 'orrery' | 'veil' | 'book'
     | 'boulder' | 'crystal' | 'kiln' | 'dune' | 'iron' | 'tomb'
@@ -364,7 +373,10 @@ export type WeatherKind = 'none' | 'ash' | 'embers' | 'steam' | 'smoke' | 'spark
   | 'miasma' | 'drip' | 'gossamer' | 'murk' | 'wisps'
   | 'cards' | 'confetti' | 'goldleaf' | 'sandfall' | 'sepia' | 'ripples'
   | 'notes' | 'glowworms' | 'lull' | 'sequins' | 'incense' | 'pages'
-  | 'sunbeams' | 'glare' | 'lanterns' | 'sigils' | 'prisms' | 'pigment';
+  | 'sunbeams' | 'glare' | 'lanterns' | 'sigils' | 'prisms' | 'pigment'
+  /** The Pinnacle: `glassrain` slivers of black glass falling, each catching violet as it turns; `starmotes` slow
+   * motes of cold starlight drifting upward. */
+  | 'glassrain' | 'starmotes';
 
 export interface AreaDef {
   id: string;
@@ -395,6 +407,8 @@ export interface AreaDef {
   gates?: WorldGate[];
   /** Respawn points for hazards; the last one you walked within 60px of is used. */
   checkpoints?: Pt[];
+  /** A cutscene (id in the bundle's `cutscenes`) played once, the first time this area is entered. */
+  intro?: string;
   /** A stand-in from `content/placeholder.ts` while its builder works; the validator skips it. */
   placeholder?: boolean;
 }
@@ -423,6 +437,15 @@ export interface EncounterDef {
   coins: number;
   /** Set by the registry on a quest's duel foe: the quest it belongs to. */
   quest?: string;
+  /**
+   * A councilor of the Obsidian Pinnacle: the foe fights *perfected* — every upgrade of its element, its
+   * mastery (mastered look, passive and bound enhancement) and a perk — and is drawn masked in the world.
+   */
+  mastered?: boolean;
+  /** Perk the foe wears (a perk id of its element). Default for a `mastered` foe: one of its element's, at random. */
+  perk?: string;
+  /** Councilor: the seat it holds — "Seat of Embers". Shown on the fight card and the result. */
+  seat?: string;
 }
 
 /** What a gimmick may touch. Built per fight by `IslesFightKit`. */
@@ -789,6 +812,8 @@ export interface IsleDef {
   color: number;
   /** Position on the sea chart, 0–1. */
   chart: Pt;
+  /** The Obsidian Pinnacle: not one of the ten isles (no courts, no genes, not on the dock's isle list). */
+  pinnacle?: boolean;
   /**
    * One of the five abstract isles beyond the Breakwater. Crossings to it run the Outer Sea:
    * longer, darker water, a swell that shoves the boat about, and breakers to thread.
@@ -799,7 +824,7 @@ export interface IsleDef {
 /** What rides ArenaScene's `isles` payload. */
 export interface IslesFightPayload {
   slot: number;
-  kind: 'encounter' | 'prince' | 'monarch' | 'warden';
+  kind: 'encounter' | 'prince' | 'monarch' | 'warden' | 'councilor';
   /** Encounter id, prince id or monarch id. */
   id: string;
   court?: string;
@@ -878,6 +903,112 @@ export interface IsleBundle {
   ubers: UberDef[];
   /** Floor for non-court fights (dungeon wardens, the monarch). */
   floors: Record<string, ArenaFloor>;
+  /** Cinematics this isle plays (area intros, endings). */
+  cutscenes?: CutsceneDef[];
+}
+
+// ── Cutscenes ──────────────────────────────────────────────────────────
+
+/** What a shot's painter is handed every frame. All drawing is in 960×640 screen space. */
+export interface CutsceneKit {
+  W: number;
+  H: number;
+  /** Seconds since this shot began. */
+  t: number;
+  /** 0–1 through the shot's `ms` (holds at 1 while its lines are still being read). */
+  p: number;
+  /** Seconds since the cutscene began. */
+  T: number;
+  /** Index of the line on screen (-1 before the first / with no lines). */
+  line: number;
+  /** A fresh seeded generator every frame — the same numbers each call, so "random" scenery holds still. */
+  rng(): () => number;
+  /** Save queries (false with no save). */
+  test(c: Cond): boolean;
+  /** The player's element id and colour — draw the hero with `cineHero` from `art/CineArt`. */
+  hero: { element: string; color: number };
+  /** Immediate-mode text: call it every frame you want the text up. `size` px; `align` 0 left, 0.5 centre, 1 right. */
+  text(x: number, y: number, str: string, o?: { size?: number; color?: string; alpha?: number; align?: number; display?: boolean; spacing?: number }): void;
+}
+
+export interface CutsceneCue {
+  /** ms into the shot. */
+  at: number;
+  sfx?: string;
+  /** Camera shake intensity (0.002 gentle – 0.02 violent) for `ms` (default 400). */
+  shake?: number;
+  ms?: number;
+  /** Full-screen flash of this colour. */
+  flash?: number;
+}
+
+export interface CutsceneLine {
+  /** Speaker — shown as a name plate; absent = narration (centred italic). */
+  who?: string;
+  text: string;
+  /** Name-plate / text colour (css). */
+  color?: string;
+}
+
+export interface CutsceneShot {
+  /** The shot's length in ms. It runs at least this long, and until its last line has been read. */
+  ms: number;
+  /** Paints the whole frame (the Graphics is cleared for you). Runs every frame — keep it under ~1500 shapes. */
+  draw(g: Phaser.GameObjects.Graphics, k: CutsceneKit): void;
+  /** Subtitles, one at a time: typed out, held, then the next (SPACE / click hurries them along). */
+  lines?: CutsceneLine[];
+  /** How the shot arrives: a hard cut, a fade up from black (default for the first shot), or a white-out. */
+  enter?: 'cut' | 'fade' | 'white';
+  cues?: CutsceneCue[];
+  /** No letterbox bars for this shot (title cards, credits). */
+  full?: boolean;
+}
+
+/** A cinematic: a string of painted shots with subtitles. Played by `IslesCutsceneScene`; ESC twice skips. */
+export interface CutsceneDef {
+  id: string;
+  shots: CutsceneShot[];
+  /** Music track key (`Music.play`). Default: silence falls, the campaign theme returns after. */
+  music?: string;
+}
+
+/** One bench of the Obsidian Pinnacle, as its builder exports it (`PIN_<TIER>`). */
+export interface PinnacleTierBundle {
+  area: AreaDef;
+  /** The six councilors — `court` is the tier's area id, `mastered: true`, one per element of the tier. */
+  encounters: EncounterDef[];
+  /** The six Decrees. */
+  gimmicks: GimmickDef[];
+  /** Arena backdrop for the six fights (registered under the tier's area id). */
+  floor: ArenaFloor;
+  /** The bench's relic (a charm) and anything else. */
+  items: IsleItemDef[];
+  scripts: Record<string, ItemScriptFactory>;
+  /** The tier's intro cinematic (its id is the area's `intro`). */
+  cutscenes: CutsceneDef[];
 }
 
 export type { ItemEffect };
+
+/** The foot of the Pinnacle, as its builder exports it (`PIN_LANDING_BUNDLE`). */
+export interface PinnacleLandingBundle {
+  area: AreaDef;
+  /** Who climbs with you — lines for the landing, every bench and the summit. */
+  wanderer: WandererDef;
+  items: IsleItemDef[];
+  scripts: Record<string, ItemScriptFactory>;
+  shops: ShopDef[];
+  bakeries: BakeryDef[];
+  cutscenes: CutsceneDef[];
+}
+
+/** The throne hall, as its builder exports it (`PIN_SUMMIT_BUNDLE`). */
+export interface PinnacleSummitBundle {
+  area: AreaDef;
+  /** The hall floor under the King's fight (registered under the summit's area id). */
+  floor: ArenaFloor;
+  /** The King's artifact, and anything else found in the hall. */
+  items: IsleItemDef[];
+  scripts: Record<string, ItemScriptFactory>;
+  cutscenes: CutsceneDef[];
+}

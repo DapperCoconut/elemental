@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import { Fighter } from '../../entities/Fighter';
 import { Sfx } from '../../audio';
 import {
-  BossBodyState, BossGimmick, BossMovement, BossPhaseStyle, BossResumeState, BossTint,
+  BossBodyState, BossEntry, BossEntryKit, BossGimmick, BossMovement, BossPhaseStyle, BossResumeState, BossTint,
   HarassId, LibTuning, LibMoveId, MoveRef, SignatureMove, WorldBossDef, WorldBossPhase, hardKnobs,
 } from './BossDefs';
 import { BossPalette, BossToolkit, BossToolkitHost } from './BossToolkit';
@@ -176,6 +176,25 @@ export class WorldBossKit {
   private barG: Phaser.GameObjects.Graphics | null = null;
   private barLabel: Phaser.GameObjects.Text | null = null;
   private tellLabel: Phaser.GameObjects.Text | null = null;
+  private backG: Phaser.GameObjects.Graphics | null = null;
+  private entryG: Phaser.GameObjects.Graphics | null = null;
+  private entryOverG: Phaser.GameObjects.Graphics | null = null;
+  private barsG: Phaser.GameObjects.Graphics | null = null;
+
+  /** The phase-entry cinematic in flight (see `BossEntry`), and its clock. */
+  private entry: BossEntry | null = null;
+  private entryFrom = 0;
+  private entryUntil = 0;
+  private entryFromX = 0;
+  private entryFromY = 0;
+  private entryCue = 0;
+  /** Phase the entry is leading into; its look is applied at `swapAt`. */
+  private entryInto = 0;
+  private entrySwapped = false;
+  /** The def's `outro` is playing: the Sovereign is down, the cinematic of its fall runs on. */
+  private outroLive = false;
+  /** The phase whose look / floor / decor is showing — runs ahead of `phaseIdx` once an entry swaps. */
+  private visualIdx = 0;
 
   constructor(private arena: WorldBossArenaApi) {}
 
@@ -201,6 +220,9 @@ export class WorldBossKit {
     this.phaseIdx = resume
       ? Phaser.Math.Clamp(resume.phaseIdx, 0, this.phases.length - 1)
       : 0;
+    this.visualIdx = this.phaseIdx;
+    this.entry = null;
+    this.outroLive = false;
     this.cycleIdx = 0;
     this.harassIdx = 0;
     this.banterIdx = 0;
@@ -257,6 +279,8 @@ export class WorldBossKit {
       shotsNear: (x, y, r) => this.arena.shotsNear?.(x, y, r) ?? [],
     };
     this.tk = new BossToolkit(host, this.palette, hard);
+    // A resumed (pledge) fight starts mid-def: signatures must be told the phase they wake in.
+    this.tk.phase = this.phaseIdx;
     this.tk.damageScale = (def.damageMult ?? 1) * LETHALITY
       * (hard ? hardKnobs(def).damageMult : 1);
     this.tk.telegraphScale = TELEGRAPH * (hard ? 0.86 : 1);
@@ -271,6 +295,10 @@ export class WorldBossKit {
     // the arena dressing sits over it, telegraphs under the fighters (5),
     // the body just over them, the gloom over the room but under projectiles.
     this.arenaG = scene.add.graphics().setDepth(-50);
+    this.backG = scene.add.graphics().setDepth(-40);
+    this.entryG = scene.add.graphics().setDepth(4);
+    this.entryOverG = scene.add.graphics().setDepth(28);
+    this.barsG = scene.add.graphics().setDepth(60).setScrollFactor(0);
     this.groundG = scene.add.graphics().setDepth(3);
     this.bodyG = scene.add.graphics().setDepth(6);
     this.gloomG = scene.add.graphics().setDepth(15);
@@ -302,6 +330,13 @@ export class WorldBossKit {
     npc.on('defeated', () => this.onBodyDefeated());
 
     this.applyPhaseStyle(this.phaseIdx, now);
+    // A Sovereign that holds a post starts on it (a king already on his throne).
+    if (this.style.movement === 'anchor') {
+      this.bx = this.anchorX;
+      this.by = this.anchorY;
+      this.rig.reset(this.bx, this.by);
+      body.reset(this.bx, this.by);
+    }
     this.paintArena();
 
     // ── HUD: the boss bar sits just above the ability tray, which owns the
@@ -329,6 +364,17 @@ export class WorldBossKit {
       });
       scene.cameras.main.shake(300, 0.003);
       return;
+    }
+
+    // A first phase with an entry of its own: the intro runs as long as the cinematic does.
+    const opening = this.currentPhase().entry;
+    if (opening) {
+      const ms = Math.max(INTRO_MS, opening.ms);
+      this.nextMoveAt = now + ms;
+      this.harassNextAt = now + ms + HARASS_GRACE_MS;
+      this.nextBanterAt = now + ms + BANTER_MIN_MS;
+      this.beginEntry(now, opening, this.phaseIdx);
+      this.entrySwapped = true;
     }
 
     this.banner(`${def.name.toUpperCase()}`, hex(def.colorLit), 32);
@@ -387,6 +433,9 @@ export class WorldBossKit {
   private clearWorld(): void {
     for (const g of [this.arenaG, this.groundG, this.bodyG, this.gloomG, this.projG, this.barG]) g?.destroy();
     this.arenaG = this.groundG = this.bodyG = this.gloomG = this.projG = this.barG = null;
+    for (const g of [this.backG, this.entryG, this.entryOverG, this.barsG]) g?.destroy();
+    this.backG = this.entryG = this.entryOverG = this.barsG = null;
+    this.entry = null;
     this.barLabel?.destroy();
     this.barLabel = null;
     this.tellLabel?.destroy();
@@ -427,8 +476,8 @@ export class WorldBossKit {
     this.setBodyRadius(phase.bodyR ?? this.look.torsoR ?? this.def.bodyR ?? 34);
 
     // Gimmick setup.
-    this.anchorX = this.arena.width / 2;
-    this.anchorY = this.arena.height * 0.34;
+    this.anchorX = this.style.anchorAt?.x ?? this.arena.width / 2;
+    this.anchorY = this.style.anchorAt?.y ?? this.arena.height * 0.34;
     this.gimmick = this.style.gimmick ?? 'none';
     if (this.tk) this.tk.dark = this.gimmick === 'gloom';
     this.gimmickClock = time + 2600;
@@ -444,7 +493,13 @@ export class WorldBossKit {
   // ── Frame ──────────────────────────────────────────────────────────
 
   update(time: number, delta: number): void {
-    if (!this.tk || this.flow === 'done') return;
+    if (!this.tk) return;
+    if (this.flow === 'done') {
+      // The fall itself may be a cinematic (`def.outro`): keep it, and the floor under it, alive.
+      if (this.entry) { this.updateEntry(time); this.draw(time); }
+      return;
+    }
+    this.tk.fighting = this.flow === 'fight';
     const dt = delta / 1000;
 
     if (this.flow === 'intro' && time >= this.nextMoveAt) {
@@ -458,6 +513,7 @@ export class WorldBossKit {
     if (this.flow === 'interlude' && time >= this.interludeEndsAt) {
       this.beginPhase(time, this.phaseIdx + 1);
     }
+    if (this.entry) this.updateEntry(time);
 
     if (this.flow === 'fight') {
       this.driveBody(time, dt);
@@ -480,6 +536,7 @@ export class WorldBossKit {
       this.rig.setHold(this.activeHold, this.facingAngle());
     }
 
+    if (this.style.solid) this.keepPlayerOut();
     this.tk.update(time, delta);
     for (const sig of this.signatures.values()) sig.update?.(time, dt);
     let taken = 1;
@@ -489,6 +546,95 @@ export class WorldBossKit {
     this.draw(time);
     this.drawBossBar();
     this.updateTell(time);
+  }
+
+  // ── Phase entries ──────────────────────────────────────────────────
+
+  private beginEntry(time: number, e: BossEntry, into: number): void {
+    this.entry = e;
+    this.entryFrom = time;
+    this.entryUntil = time + e.ms;
+    this.entryFromX = this.bx;
+    this.entryFromY = this.by;
+    this.entryCue = 0;
+    this.entryInto = into;
+    this.entrySwapped = false;
+    if (e.letterbox !== false) { this.barG?.setVisible(false); this.barLabel?.setVisible(false); }
+  }
+
+  private endEntry(): void {
+    this.entry = null;
+    this.entryG?.clear();
+    this.entryOverG?.clear();
+    this.barsG?.clear();
+    this.barG?.setVisible(true);
+    this.barLabel?.setVisible(true);
+  }
+
+  private updateEntry(time: number): void {
+    const e = this.entry;
+    if (!e) return;
+    if (this.flow === 'done' && !this.outroLive) { this.endEntry(); return; }
+    const scene = this.arena.scene;
+    const t = time - this.entryFrom;
+    const p = Phaser.Math.Clamp(t / Math.max(1, e.ms), 0, 1);
+
+    const cues = e.cues ?? [];
+    while (this.entryCue < cues.length && cues[this.entryCue].at <= t) {
+      const c = cues[this.entryCue++];
+      if (c.sfx) Sfx.playAt(c.sfx, this.bx);
+      if (c.shake) scene.cameras.main.shake(c.ms ?? 400, c.shake);
+      if (c.flash !== undefined) scene.cameras.main.flash(c.ms ?? 300, (c.flash >> 16) & 255, (c.flash >> 8) & 255, c.flash & 255);
+      if (c.say) this.speak(c.say);
+      if (c.banner) this.banner(c.banner, hex(this.palette.lit), 26);
+    }
+
+    if (e.bodyTo) {
+      const k = p * p * (3 - 2 * p);
+      this.bx = this.entryFromX + (e.bodyTo.x - this.entryFromX) * k;
+      this.by = this.entryFromY + (e.bodyTo.y - this.entryFromY) * k;
+      this.vx = this.vy = 0;
+      this.syncHitbox();
+    }
+
+    // The new phase's look, palette and floor arrive mid-cinematic (behind a flash, usually).
+    if (!this.entrySwapped && p >= (e.swapAt ?? 1) && this.entryInto !== this.visualIdx) {
+      this.entrySwapped = true;
+      this.visualIdx = this.entryInto;
+      this.applyPhaseStyle(this.entryInto, time);
+      this.arena.npc.bossWardIncomingMult = 1;
+      this.paintArena();
+    }
+
+    const kit: BossEntryKit = {
+      p, t, time, W: this.arena.width, H: this.arena.height, x: this.bx, y: this.by,
+      fromX: this.entryFromX, fromY: this.entryFromY,
+      player: { x: this.arena.player.x, y: this.arena.player.y },
+    };
+    if (this.entryG) { this.entryG.clear(); e.drawGround?.(this.entryG, kit); }
+    if (this.entryOverG) { this.entryOverG.clear(); e.drawOver?.(this.entryOverG, kit); }
+    if (this.barsG && e.letterbox !== false) {
+      const W = this.arena.width, H = this.arena.height;
+      const k = Math.min(1, t / 350, Math.max(0, (e.ms - t) / 350));
+      this.barsG.clear();
+      this.barsG.fillStyle(0x000000, 1);
+      this.barsG.fillRect(0, 0, W, 96 * k);
+      this.barsG.fillRect(0, H - 100 * k, W, 100 * k + 2);
+    }
+    if (time >= this.entryUntil) this.endEntry();
+  }
+
+  /** A `solid` body: the player cannot stand inside it. */
+  private keepPlayerOut(): void {
+    const p = this.arena.player;
+    if (!p.active || p.hp <= 0) return;
+    const r = (this.look.torsoR ?? 34) + 20;
+    const dx = p.x - this.bx, dy = p.y - this.by;
+    const d = Math.hypot(dx, dy);
+    if (d >= r) return;
+    const nx = d > 0.01 ? dx / d : 0, ny = d > 0.01 ? dy / d : 1;
+    p.x = this.bx + nx * r;
+    p.y = this.by + ny * r;
   }
 
   private facingAngle(): number {
@@ -984,7 +1130,9 @@ export class WorldBossKit {
   private beginInterlude(time: number): void {
     if (!this.tk) return;
     this.flow = 'interlude';
-    this.interludeEndsAt = time + INTERLUDE_MS;
+    const nextEntry = this.phases[this.phaseIdx + 1].entry ?? null;
+    const interludeMs = nextEntry?.ms ?? INTERLUDE_MS;
+    this.interludeEndsAt = time + interludeMs;
     const npc = this.arena.npc;
     npc.isInvincible = true;
     npc.bossWardIncomingMult = 1;
@@ -1023,7 +1171,9 @@ export class WorldBossKit {
     }
 
     const next = this.phases[this.phaseIdx + 1];
-    scene.time.delayedCall(900, () => {
+    if (nextEntry) this.beginEntry(time, nextEntry, this.phaseIdx + 1);
+    // With a cinematic, the phase is named as it ends rather than over the top of it.
+    scene.time.delayedCall(nextEntry ? Math.max(900, interludeMs - 1500) : 900, () => {
       if (this.flow === 'done') return;
       this.banner(next.name.toUpperCase(), hex(this.palette.lit), 26);
       if (next.line) scene.time.delayedCall(900, () => {
@@ -1036,6 +1186,8 @@ export class WorldBossKit {
   private beginPhase(time: number, idx: number): void {
     this.flow = 'fight';
     this.phaseIdx = idx;
+    const swapped = this.visualIdx === idx;
+    this.visualIdx = idx;
     if (this.tk) this.tk.phase = idx;
     this.cycleIdx = 0;
     this.harassIdx = 0;
@@ -1055,9 +1207,9 @@ export class WorldBossKit {
     this.blinkAt = time + 1800;
     this.scheduleNext(time, 500);
     this.harassNextAt = time + HARASS_GRACE_MS * 0.7;
-    // Repaint the hall in the new phase's colours.
+    // Repaint the hall in the new phase's colours (an entry that swapped early already has).
     this.paintArena();
-    if (this.arenaG) {
+    if (this.arenaG && !swapped) {
       this.arenaG.setAlpha(0);
       this.arena.scene.tweens.add({ targets: this.arenaG, alpha: 1, duration: 600 });
     }
@@ -1066,6 +1218,7 @@ export class WorldBossKit {
   private beginVictory(time: number): void {
     if (!this.tk) return;
     this.flow = 'done';
+    this.tk.fighting = false;
     const scene = this.arena.scene;
     this.tk.clearHazards();
     this.arena.npc.bossWardIncomingMult = 1;
@@ -1082,8 +1235,13 @@ export class WorldBossKit {
         this.tk?.boom(this.bx + Math.cos(a) * 44, this.by - 30 + Math.sin(a) * 30, 28, this.palette.main);
       });
     }
-    scene.time.delayedCall(1600, () => this.arena.bossVictory());
-    void time;
+    const outro = this.def.outro;
+    if (outro) {
+      this.outroLive = true;
+      this.beginEntry(time, outro, this.visualIdx);
+      this.entrySwapped = true;
+    }
+    scene.time.delayedCall(outro ? Math.max(1600, outro.ms) : 1600, () => this.arena.bossVictory());
   }
 
   // ── Presentation ───────────────────────────────────────────────────
@@ -1140,7 +1298,7 @@ export class WorldBossKit {
     g.clear();
     const W = this.arena.width;
     const H = this.arena.height;
-    if (this.def.drawArena) this.def.drawArena(g, W, H);
+    if (this.def.drawArena) this.def.drawArena(g, W, H, this.visualIdx);
     else this.drawDefaultArena(g, W, H, this.palette);
   }
 
@@ -1216,10 +1374,11 @@ export class WorldBossKit {
       : Phaser.Math.Clamp((this.busyUntil - time) / 600, 0, 1) * 0.5;
     const facing = this.facingAngle();
 
-    this.rig.draw(bG, {
+    const hideBody = this.entry?.hideBody === true;
+    if (!hideBody && !this.style.hideRig) this.rig.draw(bG, {
       x: this.bx, y: this.by, t: time, facing,
       look: this.look, palette: this.palette,
-      hpRatio, enraged, hurt, castGlow, phaseIdx: this.phaseIdx,
+      hpRatio, enraged, hurt, castGlow, phaseIdx: this.visualIdx,
     });
 
     // Staggered: the body sags and a ring of broken light hangs over it.
@@ -1232,20 +1391,24 @@ export class WorldBossKit {
       }
     }
 
-    const state: BossBodyState | null = this.def.drawDecor || this.def.drawLit ? {
+    const state: BossBodyState | null = this.def.drawDecor || this.def.drawLit || this.def.drawBackdrop ? {
       x: this.bx, y: this.by, t: time, hpRatio, enraged, hurt,
-      phaseIdx: this.phaseIdx, hard: this.hard, facing, castGlow,
+      phaseIdx: this.visualIdx, hard: this.hard, facing, castGlow,
       radius: this.look.torsoR ?? 34,
       palette: this.palette,
       look: this.look,
       hands: [0, 1, 2, 3].slice(0, this.look.arms ?? 2).map((i) => this.rig.handAt(i)),
       inGloom: this.gimmick === 'gloom',
     } : null;
-    if (state) this.def.drawDecor?.(bG, state);
+    if (this.backG) {
+      this.backG.clear();
+      if (state) this.def.drawBackdrop?.(this.backG, state, this.arena.width, this.arena.height);
+    }
+    if (state && !hideBody) this.def.drawDecor?.(bG, state);
 
     this.drawGloom(time);
     // Over the dark: the projectile layer sits above the gloom, so what is lit goes there.
-    if (state) this.def.drawLit?.(pG, state);
+    if (state && !hideBody) this.def.drawLit?.(pG, state);
   }
 
   private drawBossBar(): void {

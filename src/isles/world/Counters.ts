@@ -5,7 +5,7 @@ import { describeEffect } from '../../data/Items';
 import * as Save from '../IslesSave';
 import { MAX_CHARMS } from '../IslesSave';
 import {
-  getShop, getBakery, getIsleItem, boats, dockUpgrades, getUber, getRod, ISLES, ALL_ISLE_IDS, routeOpen, getIsle,
+  getShop, getBakery, getIsleItem, boats, dockUpgrades, getUber, getRod, ISLES, ALL_ISLE_IDS, routeOpen, getIsle, PINNACLE,
 } from '../IslesRegistry';
 import type { IsleItemDef } from '../IslesTypes';
 import * as Quests from '../systems/Quests';
@@ -382,6 +382,24 @@ export function openDock(p: LedgerPanel, accent: number, here: string, setSail: 
         verb: open && has ? 'SET SAIL' : null,
         dim: !open,
         act: () => { setSail(isle.id); return null; },
+      });
+    }
+    if (here !== PINNACLE.id) {
+      const open = routeOpen(PINNACLE.id);
+      const fallen = ISLES.filter((i) => s().monarchs.includes(i.monarch.id)).length;
+      rows.push({
+        icon: '🗡️', name: PINNACLE.name, right: !open ? 'THE SHROUD' : has ? 'THE LAST CROSSING' : 'NO BOAT',
+        rightColor: open && has ? '#c9b0ff' : '#8a6a4a',
+        detail: open
+          ? ['The black spire in the middle of the sea. The storm that hid it is gone.', '',
+            'Sixty councilors sit on its ten benches, and above them the Obsidian King.',
+            'The water round it is glass-black and full of the spire’s own shards.',
+            s().waystones.includes(PINNACLE.port) ? 'You have landed there before.' : 'Nobody has landed there and come back.']
+          : ['The black spire in the middle of the sea, wrapped in a wall of storm: the Shroud.', '',
+            `No pilot will go near it while a monarch still reigns. ${fallen} of ${ISLES.length} have fallen.`],
+        verb: open && has ? 'SET SAIL' : null,
+        dim: !open,
+        act: () => { setSail(PINNACLE.id); return null; },
       });
     }
     const uncharted = ALL_ISLE_IDS.length - ISLES.length;

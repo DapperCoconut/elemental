@@ -2,7 +2,9 @@ import Phaser from 'phaser';
 import { FONT_DISPLAY, FONT_UI } from '../../ui';
 import { Music, Sfx } from '../../audio';
 import * as Save from '../IslesSave';
-import { getEncounter, getCourt, courtOfPrince, getIsle, getIsleItem, ISLES, getIslesBoss, ALL_ISLE_IDS } from '../IslesRegistry';
+import {
+  getEncounter, getCourt, courtOfPrince, getIsle, getIsleItem, ISLES, getIslesBoss, ALL_ISLE_IDS, PINNACLE, benchSeats, getArea, getCutscene,
+} from '../IslesRegistry';
 import * as Quests from '../systems/Quests';
 import type { IslesFightPayload } from '../IslesTypes';
 
@@ -19,6 +21,8 @@ export class IslesResultScene extends Phaser.Scene {
   private won = false;
   private lines: Line[] = [];
   private canLeave = 0;
+  /** A cinematic this result owes the player on the way out (the Shroud breaking, the ending). */
+  private cine: string | null = null;
 
   constructor() { super({ key: 'IslesResultScene' }); }
 
@@ -26,6 +30,7 @@ export class IslesResultScene extends Phaser.Scene {
     this.payload = data.payload;
     this.won = data.won;
     this.lines = [];
+    this.cine = null;
   }
 
   create(): void {
@@ -53,7 +58,8 @@ export class IslesResultScene extends Phaser.Scene {
     this.events.on('update', tick);
     this.events.once('shutdown', () => this.events.off('update', tick));
 
-    const title = this.won ? (this.payload.kind === 'monarch' ? 'THE CROWN FALLS' : this.payload.kind === 'prince' ? 'PRINCE DEFEATED' : 'VICTORY') : 'DRIVEN BACK';
+    const king = this.payload.kind === 'monarch' && this.payload.id === PINNACLE.monarch.id;
+    const title = this.won ? (king ? 'THE THRONE IS EMPTY' : this.payload.kind === 'councilor' ? 'SEAT EMPTIED' : this.payload.kind === 'monarch' ? 'THE CROWN FALLS' : this.payload.kind === 'prince' ? 'PRINCE DEFEATED' : 'VICTORY') : 'DRIVEN BACK';
     this.add.text(W / 2, 92, title, {
       fontFamily: FONT_DISPLAY, fontSize: '46px', color: this.won ? '#ffd27a' : '#e07a7a',
       stroke: '#1a0a04', strokeThickness: 8,
@@ -93,9 +99,9 @@ export class IslesResultScene extends Phaser.Scene {
 
   private foeLabel(): string {
     const p = this.payload;
-    if (p.kind === 'encounter' || p.kind === 'warden') {
+    if (p.kind === 'encounter' || p.kind === 'warden' || p.kind === 'councilor') {
       const e = getEncounter(p.id);
-      return e ? `${e.name} — ${e.foeName}` : p.id;
+      return e ? (e.mastered ? `${e.foeName} — ${e.seat ?? e.name}` : `${e.name} — ${e.foeName}`) : p.id;
     }
     const def = getIslesBoss(`isle:${p.id}`);
     return def ? `${def.name}, ${def.title}` : p.id;
@@ -117,8 +123,53 @@ export class IslesResultScene extends Phaser.Scene {
     }
     s.stats.wins += 1;
     const hardMult = p.hard ? 1.5 : 1;
+    const king = p.kind === 'monarch' && p.id === PINNACLE.monarch.id;
 
-    if (p.kind === 'encounter' || p.kind === 'warden') {
+    if (p.kind === 'councilor') {
+      const e = getEncounter(p.id);
+      const first = !s.encounters.includes(p.id);
+      const coins = Math.round((e?.coins ?? 240) * hardMult * (first ? 1 : 0.3));
+      Save.markEncounter(p.id);
+      Save.addCoins(coins);
+      push(`+${coins} 🪙 coins${first ? '' : ' (rematch)'}`, '#ffd27a', true);
+      if (first && e) {
+        Save.addOrbs(3);
+        push('+3 🔮 orbs', '#d0a8ff');
+        const bench = getArea(e.court);
+        const seats = benchSeats(e.court);
+        const n = seats.filter((id) => Save.S().encounters.includes(id)).length;
+        const total = Save.seatsWon();
+        if (n >= seats.length && seats.length > 0) {
+          Save.addKeys(1);
+          Save.addOrbs(6);
+          Save.setFlag(`broken-${e.court}`);
+          push(`${bench?.name ?? 'The bench'} is broken. The stair above it opens.`, '#c9b0ff', true);
+          push('+1 🗝️ key   +6 🔮 orbs', '#ffe9a8');
+        } else {
+          push(`${bench?.name ?? 'The bench'}: ${n}/${seats.length} seats emptied`, '#e8c8a0');
+        }
+        push(total >= 60 ? 'All sixty seats are empty. Only the throne is left.' : `The Council: ${total}/60`, total >= 60 ? '#ffe9b0' : '#a89ac8', total >= 60);
+      }
+    } else if (king) {
+      const first = !s.monarchs.includes(p.id);
+      const coins = Math.round((first ? 3000 : 600) * hardMult);
+      Save.markMonarch(p.id);
+      Save.addCoins(coins);
+      push(`+${coins} 🪙 coins`, '#ffd27a', true);
+      if (first) {
+        Save.addKeys(5);
+        Save.addOrbs(40);
+        push('+5 🗝️ keys   +40 🔮 orbs', '#d0a8ff');
+        const art = getIsleItem(PINNACLE.monarch.artifact);
+        if (art && Save.count(art.id) === 0) {
+          Save.give(art.id, 1);
+          push(`Artifact: ${art.emoji} ${art.name}`, '#ff9d5c', true);
+        }
+        Save.setFlag('king-fallen');
+        push('The ten isles are free. All of them. For good.', '#9dffb0', true);
+        if (getCutscene('cine-ending')) this.cine = 'cine-ending';
+      }
+    } else if (p.kind === 'encounter' || p.kind === 'warden') {
       const e = getEncounter(p.id);
       const first = !s.encounters.includes(p.id);
       const coins = Math.round((e?.coins ?? 30) * hardMult * (first ? 1 : 0.3));
@@ -181,6 +232,12 @@ export class IslesResultScene extends Phaser.Scene {
           const next = getIsle(ALL_ISLE_IDS[ALL_ISLE_IDS.indexOf(isle.id) + 1] ?? '');
           if (next) push(`The docks can chart a course for ${next.name} now.`, '#9dd8ff');
           Save.setFlag(`freed-isle-${isle.id}`);
+          // The tenth crown: the storm round the Pinnacle has nothing left to hold it up.
+          if (ISLES.every((i) => Save.S().monarchs.includes(i.monarch.id)) && !Save.hasFlag('shroud-broken')) {
+            Save.setFlag('shroud-broken');
+            push('The Shroud is breaking. The docks can chart the Obsidian Pinnacle.', '#c9b0ff', true);
+            if (getCutscene('cine-shroud')) this.cine = 'cine-shroud';
+          }
         }
       }
     }
@@ -189,6 +246,8 @@ export class IslesResultScene extends Phaser.Scene {
 
   private leave(): void {
     this.input.removeAllListeners();
-    this.scene.start('IsleWorldScene', { area: this.payload.area, pos: this.payload.pos, after: this.won ? this.payload : undefined });
+    const next = { key: 'IsleWorldScene', data: { area: this.payload.area, pos: this.payload.pos, after: this.won ? this.payload : undefined } };
+    if (this.cine) this.scene.start('IslesCutsceneScene', { id: this.cine, next });
+    else this.scene.start(next.key, next.data);
   }
 }

@@ -34,6 +34,7 @@ const entry = join(dir, 'entry.ts');
 writeFileSync(entry, `
 export * as R from ${JSON.stringify(join(process.cwd(), 'src/isles/IslesRegistry.ts'))};
 export { ELEMENT_DATA_MAP } from ${JSON.stringify(join(process.cwd(), 'src/data/ElementRoster.ts'))};
+export { ALL_PERKS } from ${JSON.stringify(join(process.cwd(), 'src/data/Perks.ts'))};
 export { BossToolkit } from ${JSON.stringify(join(process.cwd(), 'src/boss/framework/BossToolkit.ts'))};
 `);
 globalThis.localStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
@@ -43,7 +44,8 @@ await build({
   entryPoints: [entry], bundle: true, format: 'esm', platform: 'node', outfile: out, logLevel: 'error',
   plugins: [{ name: 'stub-phaser', setup(b) { b.onResolve({ filter: /^phaser$/ }, () => ({ path: stub })); } }],
 });
-const { R, ELEMENT_DATA_MAP, BossToolkit } = await import(pathToFileURL(out).href);
+const { R, ELEMENT_DATA_MAP, BossToolkit, ALL_PERKS } = await import(pathToFileURL(out).href);
+const PERK_IDS = new Set(ALL_PERKS.flatMap((e) => (e.perks ?? []).map((p) => p.id)));
 rmSync(dir, { recursive: true, force: true });
 
 const onlyAt = process.argv.indexOf('--only');
@@ -60,6 +62,15 @@ if (ONLY) {
     if (dungeonArea) ONLY_IDS.push(`isle:${isle.monarch.id}`, isle.monarch.artifact);
   }
 }
+// The Pinnacle: `--only bench-fire` also shows its six seats, its relic and its intro; `--only pin-summit` and
+// `--only king` the Obsidian King; `--only cine` every cinematic.
+if (ONLY) {
+  const seats = R.benchSeats(ONLY);
+  if (ONLY.startsWith('bench-')) ONLY_IDS.push(...seats, `relic-${ONLY}`, `cine-${ONLY}`);
+  if (ONLY === 'pin-summit' || ONLY === 'king') ONLY_IDS.push('isle:obsidian-king', 'art-obsidian-king', 'cine-throne');
+  if (ONLY === 'pin-landing') ONLY_IDS.push('cine-landfall');
+  if (ONLY === 'cine') ONLY_IDS.push('cine-');
+}
 const say = (m) => { if (!ONLY || ONLY_IDS.some((id) => m.includes(id))) console.log(m); };
 const err = (m) => { errors++; say(`  ✗ ${m}`); };
 const warn = (m) => { warns++; say(`  ! ${m}`); };
@@ -72,6 +83,7 @@ const phAreas = new Set(R.allAreas().filter((a) => a.placeholder).map((a) => a.i
 const phCourts = new Set(R.allCourts().filter((c) => phAreas.has(c.area)).map((c) => c.id));
 const phBosses = new Set(R.allCourts().filter((c) => phCourts.has(c.id)).map((c) => `isle:${c.prince.id}`));
 for (const isle of R.ISLES) { const d = R.getIslesBoss(`isle:${isle.monarch.id}`); if (d && !d.phases.length) phBosses.add(d.worldId); }
+{ const k = R.getIslesBoss(`isle:${R.PINNACLE.monarch.id}`); if (k && !k.phases.length) phBosses.add(k.worldId); }
 const areas = R.allAreas().filter((a) => !a.placeholder);
 const npcIds = new Map();
 for (const a of areas) for (const n of a.npcs) { if (npcIds.has(n.id)) err(`duplicate npc id ${n.id}`); npcIds.set(n.id, a.id); }
@@ -216,6 +228,78 @@ for (const isle of R.ISLES) {
   if (!R.getIslesBoss(`isle:${isle.monarch.id}`)) err(`isle ${isle.id}: monarch boss missing`);
 }
 
+// The Obsidian Pinnacle: sixty seats, one per element, six to a bench.
+{
+  const benches = R.allAreas().filter((a) => a.id.startsWith('bench-') && !a.placeholder);
+  const seen = new Map();
+  for (const b of benches) {
+    const seats = R.benchSeats(b.id).map((id) => R.getEncounter(id));
+    if (seats.length !== 6) err(`${b.id}: ${seats.length} councilors (want exactly 6)`);
+    for (const e of seats) {
+      if (!e) continue;
+      if (e.id !== `seat-${e.foeElement}`) err(`${b.id}: councilor ${e.id} must be id seat-${e.foeElement}`);
+      if (seen.has(e.foeElement)) err(`${e.id}: element ${e.foeElement} already sits on ${seen.get(e.foeElement)}`);
+      seen.set(e.foeElement, b.id);
+      if (!e.gimmick) err(`${e.id}: a councilor needs a decree (gimmick)`);
+      if (!e.seat) err(`${e.id}: no seat name`);
+      if (e.difficulty !== 5) err(`${e.id}: councilors fight at difficulty 5`);
+      if (e.perk && !PERK_IDS.has(e.perk)) err(`${e.id}: unknown perk ${e.perk}`);
+      if (!b.pois.some((p) => p.kind === 'encounter' && p.id === e.id)) err(`${b.id}: no encounter poi for ${e.id}`);
+    }
+    if (!b.intro || !R.getCutscene(b.intro)) err(`${b.id}: intro cinematic ${b.intro ?? '(none)'} missing`);
+    if (!item(`relic-${b.id}`)) err(`${b.id}: relic relic-${b.id} missing`);
+    const up = b.exits.find((x) => x.side === 'n');
+    if (!up?.open) err(`${b.id}: the stair up (north exit) must be gated on { courtReady: '${b.id}' }`);
+  }
+  // The climb must be walkable: flood-fill each Pinnacle area from its south stair (or spawn) and make sure the
+  // north stair, every seat and every chest / waystone can be reached on foot (gates and hazards ignored).
+  for (const a of R.allAreas().filter((x) => x.isle === 'pinnacle' && !x.placeholder)) {
+    const PR = 11, STEP = 10;
+    const cols = Math.ceil(a.w / STEP), rows = Math.ceil(a.h / STEP);
+    const blockedAt = (x, y) => x < PR || y < PR || x > a.w - PR || y > a.h - PR || a.solids.some((so) => {
+      if (so.kind === 'circle') return Math.hypot(x - so.x, y - so.y) < so.r + PR;
+      const qx = Math.max(so.x, Math.min(x, so.x + so.w)), qy = Math.max(so.y, Math.min(y, so.y + so.h));
+      return Math.hypot(x - qx, y - qy) < PR;
+    });
+    const exitPt = (e) => { const at = e.at ?? ((e.side === 'n' || e.side === 's') ? a.w / 2 : a.h / 2);
+      return e.side === 'n' ? { x: at, y: 30 } : e.side === 's' ? { x: at, y: a.h - 30 } : e.side === 'w' ? { x: 30, y: at } : { x: a.w - 30, y: at }; };
+    const seen = new Uint8Array(cols * rows);
+    const start = a.spawn;
+    const q = [[Math.floor(start.x / STEP), Math.floor(start.y / STEP)]];
+    seen[q[0][1] * cols + q[0][0]] = 1;
+    while (q.length) {
+      const [cx, cy] = q.pop();
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const nx = cx + dx, ny = cy + dy;
+        if (nx < 0 || ny < 0 || nx >= cols || ny >= rows || seen[ny * cols + nx]) continue;
+        if (blockedAt(nx * STEP + STEP / 2, ny * STEP + STEP / 2)) continue;
+        seen[ny * cols + nx] = 1; q.push([nx, ny]);
+      }
+    }
+    const near = (pt, r) => { for (let dy = -r; dy <= r; dy += STEP) for (let dx = -r; dx <= r; dx += STEP) {
+      if (Math.hypot(dx, dy) > r) continue;
+      const cx = Math.floor((pt.x + dx) / STEP), cy = Math.floor((pt.y + dy) / STEP);
+      if (cx >= 0 && cy >= 0 && cx < cols && cy < rows && seen[cy * cols + cx]) return true; } return false; };
+    for (const e of a.exits) if (!near(exitPt(e), 60)) err(`${a.id}: cannot walk from the spawn to the ${e.side} exit`);
+    for (const p of a.pois) {
+      const at = p.kind === 'encounter' ? R.getEncounter(p.id)?.at : p.at;
+      if (at && !near(at, 70)) err(`${a.id}: cannot walk from the spawn to ${p.kind} ${p.id ?? ''}`);
+    }
+    for (const n of a.npcs) if (!near(n.at, 70)) err(`${a.id}: cannot walk from the spawn to npc ${n.id}`);
+  }
+  for (const a of R.allAreas()) if (a.intro && !a.placeholder && !R.getCutscene(a.intro)) err(`${a.id}: intro cinematic ${a.intro} is not registered`);
+  for (const c of R.allCutscenes()) {
+    if (!c.shots.length) err(`cutscene ${c.id}: no shots`);
+    c.shots.forEach((sh, i) => {
+      for (const l of sh.lines ?? []) {
+        if (l.text.length > 150) err(`cutscene ${c.id} shot ${i}: line over 150 chars (${l.text.length})`);
+        else if (l.text.length > 120) warn(`cutscene ${c.id} shot ${i}: line over 120 chars (${l.text.length})`);
+      }
+      for (const q of sh.cues ?? []) if (q.sfx && !SFX.has(q.sfx)) warn(`cutscene ${c.id} shot ${i}: sfx '${q.sfx}' is not a known voice`);
+    });
+  }
+}
+
 // Quests
 for (const q of R.allQuests()) {
   const last = q.stages[q.stages.length - 1]?.objective.kind;
@@ -316,14 +400,32 @@ for (const c of R.allCourts()) {
       }
     }
   }
-  const bossDefs = [...R.allCourts().map((c) => R.getIslesBoss(`isle:${c.prince.id}`)), ...R.ISLES.map((i) => R.getIslesBoss(`isle:${i.monarch.id}`))].filter((d) => d && !phBosses.has(d.worldId));
+  const bossDefs = [...R.allCourts().map((c) => R.getIslesBoss(`isle:${c.prince.id}`)), ...[...R.ISLES, R.PINNACLE].map((i) => R.getIslesBoss(`isle:${i.monarch.id}`))].filter((d) => d && !phBosses.has(d.worldId));
+  // Cinematics: every shot painted at its start, middle and end, with and without the story told.
+  for (const c of R.allCutscenes()) {
+    c.shots.forEach((sh, i) => {
+      for (const p of [0, 0.5, 1]) for (const yes of [true, false]) {
+        const kit = { W: 960, H: 640, t: (sh.ms / 1000) * p, p, T: 3 + i, line: p > 0 ? 0 : -1, rng: () => rng, test: () => yes,
+          hero: { element: 'fire', color: 0xff6a2a }, text: () => {} };
+        tryRun(`cutscene ${c.id} shot ${i}`, () => sh.draw(G, kit));
+      }
+    });
+  }
   console.log(`Smoke: ${bossDefs.length} bosses, ${bossDefs.reduce((n, d) => n + Object.keys(d.signatures).length, 0)} signatures`);
   for (const d of bossDefs) {
     const player = fighter();
     let bx = 480, by = 260;
     const host = { scene, W: 960, H: 640, player: () => player, bossX: () => bx, bossY: () => by, setBossPos: (x, y) => { bx = x; by = y; },
       stopped: () => false, addEnemy: () => {}, removeEnemy: () => {}, healBoss: () => {}, spawnHitFlash: () => {}, showFloatingText: () => {} };
-    tryRun(`${d.worldId} drawArena`, () => d.drawArena?.(G, 960, 640));
+    for (let pi = 0; pi < Math.max(1, d.phases.length); pi++) tryRun(`${d.worldId} drawArena p${pi}`, () => d.drawArena?.(G, 960, 640, pi));
+    for (const [what, e] of [...d.phases.map((ph, pi) => [`entry p${pi}`, ph.entry]), ['outro', d.outro]]) {
+      if (!e) continue;
+      for (const p of [0, 0.3, 0.7, 1]) {
+        const k = { p, t: e.ms * p, time: 1000 + e.ms * p, W: 960, H: 640, x: 480, y: 260, fromX: 480, fromY: 150, player: { x: 480, y: 480 } };
+        tryRun(`${d.worldId} ${what}`, () => { e.drawGround?.(G, k); e.drawOver?.(G, k); });
+      }
+      for (const q of e.cues ?? []) if (q.sfx && !SFX.has(q.sfx)) warn(`${d.worldId} ${what}: sfx '${q.sfx}' is not a known voice`);
+    }
     for (const hard of [false, true]) {
       const tk = new BossToolkit(host, { main: d.color, lit: d.colorLit, dark: d.colorDark, accent: d.accent }, hard);
       const sigs = Object.entries(d.signatures).map(([k, f]) => { let m = null; tryRun(`${d.worldId} sig ${k} build`, () => { m = f(tk); }); return [k, m]; });
@@ -351,6 +453,7 @@ for (const c of R.allCourts()) {
             hands: [{ x: 440, y: 270 }, { x: 520, y: 270 }, { x: 430, y: 300 }, { x: 530, y: 300 }], inGloom };
           tryRun(`${d.worldId} drawDecor p${pi}`, () => d.drawDecor?.(G, st));
           tryRun(`${d.worldId} drawLit p${pi}`, () => d.drawLit?.(G, st));
+          tryRun(`${d.worldId} drawBackdrop p${pi}`, () => d.drawBackdrop?.(G, st, 960, 640));
         }
       }
     }

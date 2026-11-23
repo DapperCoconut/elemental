@@ -196,6 +196,53 @@ export interface BossPhaseStyle {
   /** Layered over the def's look for this phase — a crest that grows teeth. */
   look?: Partial<BossLook>;
   tint?: BossTint;
+  /** Where an `anchor` body holds its post, in arena px. Default: centre, a third of the way down. */
+  anchorAt?: { x: number; y: number };
+  /** Do not draw the rig this phase — `drawDecor` paints the whole body (a throne-sat king, a star). */
+  hideRig?: boolean;
+  /** The body is a wall: the player is pushed back out of it every frame (a star you cannot walk into). */
+  solid?: boolean;
+}
+
+/** What a phase's entry cinematic is handed every frame. */
+export interface BossEntryKit {
+  /** 0–1 through the entry. */
+  p: number;
+  /** ms since it began. */
+  t: number;
+  /** Scene clock, ms. */
+  time: number;
+  W: number;
+  H: number;
+  /** The body's position this frame. */
+  x: number;
+  y: number;
+  /** Where the body stood as the entry began. */
+  fromX: number;
+  fromY: number;
+  player: { x: number; y: number };
+}
+
+/**
+ * The cinematic that plays *into* a phase — in place of the stock 2.8 s interlude (or, on the first
+ * phase, stretching the intro). Nothing can be hurt while it runs; hazards are already cleared.
+ */
+export interface BossEntry {
+  ms: number;
+  /** Painted every frame over the arena floor and under the fighters (depth 4). */
+  drawGround?(g: Phaser.GameObjects.Graphics, k: BossEntryKit): void;
+  /** Painted every frame over everything in the arena, under the letterbox (depth 28). */
+  drawOver?(g: Phaser.GameObjects.Graphics, k: BossEntryKit): void;
+  /** Timed beats. `say` puts a line over the body; `banner` across the hall. */
+  cues?: { at: number; sfx?: string; shake?: number; ms?: number; flash?: number; say?: string; banner?: string }[];
+  /** The body glides here across the entry (ease in-out) — the king walking down from his throne. */
+  bodyTo?: { x: number; y: number };
+  /** Hide the rig / decor while it runs (the entry paints the body itself). Default false. */
+  hideBody?: boolean;
+  /** Black cinema bars over the HUD strip. Default true. */
+  letterbox?: boolean;
+  /** The new phase's look, palette and floor are applied at this fraction of the entry. Default 1 (at the end). */
+  swapAt?: number;
 }
 
 // ── The def ──────────────────────────────────────────────────────────
@@ -225,6 +272,8 @@ export interface WorldBossPhase {
   bodyR?: number;
   /** Overrides `def.phaseStyles[idx]` for this one phase. */
   style?: BossPhaseStyle;
+  /** The cinematic into this phase (see `BossEntry`). */
+  entry?: BossEntry;
 }
 
 export interface WorldBossHard {
@@ -304,7 +353,14 @@ export interface WorldBossDef {
    */
   drawLit?(g: Phaser.GameObjects.Graphics, s: BossBodyState): void;
   /** Optional bespoke floor, painted once under the whole fight. */
-  drawArena?(g: Phaser.GameObjects.Graphics, W: number, H: number): void;
+  drawArena?(g: Phaser.GameObjects.Graphics, W: number, H: number, phaseIdx: number): void;
+  /**
+   * A living floor: painted every frame over `drawArena` and under every telegraph (depth -40) —
+   * turning rings, a breathing throne-light. Runs in every flow (intro, fight, entries, the end).
+   */
+  drawBackdrop?(g: Phaser.GameObjects.Graphics, s: BossBodyState, W: number, H: number): void;
+  /** The cinematic of the Sovereign's fall — plays after the last blow, before the fight is called. */
+  outro?: BossEntry;
 }
 
 /**

@@ -1,5 +1,6 @@
 import type { NpcLook } from '../IslesTypes';
 import { dim, lit, type G } from '../art/IsleArt';
+import { councilMask, OBS } from '../art/PinnacleArt';
 
 /**
  * The Isles' people: a round body, two floating ball hands, tracking eyes, a hat and a few
@@ -757,6 +758,26 @@ function drawHat(g: G, L: NpcLook, cx: number, cy: number, R: number, s: number,
       g.fillStyle(0xfff6e8, 1);
       g.fillCircle(cx - R * 0.5, top - R * 0.2, R * 0.18); g.fillCircle(cx + R * 0.15, top - R * 0.55, R * 0.22);
       g.fillCircle(cx + R * 0.65, top - R * 0.05, R * 0.14); g.fillCircle(cx - R * 0.1, top + R * 0.05, R * 0.1);
+      return;
+    }
+    case 'councilmask': {
+      // A councilor of the Sixty: a shard of the King's shell worn as a face — a narrow black-glass
+      // circlet round the brow holding the kite mask over the eyes, its violet slit breathing, and a
+      // splinter of glass standing up behind the crown like a quill. The accent only tints the circlet's inlay.
+      const breathe = 0.5 + 0.5 * Math.sin(t * 1.6);
+      g.fillStyle(OBS.glass, 1);
+      g.fillTriangle(cx - R * 0.08, top + R * 0.25, cx + R * 0.26, top + R * 0.2, cx + R * 0.22, top - R * 0.85);
+      g.fillStyle(OBS.sheen, 1);
+      g.fillTriangle(cx + R * 0.1, top + R * 0.22, cx + R * 0.26, top + R * 0.2, cx + R * 0.22, top - R * 0.85);
+      g.lineStyle(0.8 * s, OBS.edge, 0.7); g.lineBetween(cx + R * 0.1, top + R * 0.22, cx + R * 0.22, top - R * 0.85);
+      g.lineStyle(R * 0.2, OBS.glass, 1);
+      g.beginPath(); g.arc(cx, cy - R * 0.02, R * 0.97, Math.PI * 1.06, Math.PI * 1.94, false); g.strokePath();
+      g.lineStyle(0.9 * s, OBS.edge, 0.55);
+      g.beginPath(); g.arc(cx, cy - R * 0.02, R * 1.06, Math.PI * 1.1, Math.PI * 1.9, false); g.strokePath();
+      g.lineStyle(1 * s, lit(a, 0.2), 0.55);
+      g.beginPath(); g.arc(cx, cy - R * 0.02, R * 0.94, Math.PI * 1.2, Math.PI * 1.45, false); g.strokePath();
+      g.beginPath(); g.arc(cx, cy - R * 0.02, R * 0.94, Math.PI * 1.55, Math.PI * 1.8, false); g.strokePath();
+      councilMask(g, cx, cy + R * 0.02, R * 0.86, { glow: 0.4 + breathe * 0.6 });
       return;
     }
     case 'candle': {

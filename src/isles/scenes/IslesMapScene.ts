@@ -2,7 +2,9 @@ import Phaser from 'phaser';
 import { FONT_DISPLAY, FONT_UI } from '../../ui';
 import { Sfx } from '../../audio';
 import * as Save from '../IslesSave';
-import { getArea, courtOfArea, isleOf, getIsle, ALL_ISLE_IDS, ISLES } from '../IslesRegistry';
+import { getArea, courtOfArea, isleOf, getIsle, ALL_ISLE_IDS, ISLES, benchSeats } from '../IslesRegistry';
+import { benchOf } from '../content/pinnacle/spec';
+import { drawPinnacle, OBS } from '../art/PinnacleArt';
 import { findElementDef } from '../../data/ElementRoster';
 import type { Pt } from '../IslesTypes';
 
@@ -124,6 +126,21 @@ const ISLE_LAYOUT: Record<string, { pos: Record<string, Pt>; roads: [string, str
       ['noon', 'lantern'], ['noon', 'workshop'], ['lantern', 'mural'], ['workshop', 'arcane'], ['tribunal', 'heliostat'],
     ],
   },
+  /** The Obsidian Pinnacle: no island — the stair zig-zags up the drawn spire, bench over bench, to the hall. */
+  pinnacle: {
+    pos: {
+      'pin-landing': { x: 640, y: 548 },
+      'bench-fire': { x: 360, y: 500 }, 'bench-water': { x: 600, y: 462 }, 'bench-life': { x: 360, y: 424 },
+      'bench-air': { x: 600, y: 386 }, 'bench-earth': { x: 360, y: 348 }, 'bench-electricity': { x: 600, y: 310 },
+      'bench-slime': { x: 360, y: 272 }, 'bench-fate': { x: 600, y: 234 }, 'bench-sound': { x: 360, y: 196 },
+      'bench-light': { x: 600, y: 158 }, 'pin-summit': { x: 480, y: 104 },
+    },
+    roads: [
+      ['pin-landing', 'bench-fire'], ['bench-fire', 'bench-water'], ['bench-water', 'bench-life'], ['bench-life', 'bench-air'],
+      ['bench-air', 'bench-earth'], ['bench-earth', 'bench-electricity'], ['bench-electricity', 'bench-slime'],
+      ['bench-slime', 'bench-fate'], ['bench-fate', 'bench-sound'], ['bench-sound', 'bench-light'], ['bench-light', 'pin-summit'],
+    ],
+  },
 };
 
 export class IslesMapScene extends Phaser.Scene {
@@ -232,19 +249,23 @@ export class IslesMapScene extends Phaser.Scene {
 
   private drawIsle(g: Phaser.GameObjects.Graphics, t: number): void {
     const L = this.layout();
-    // The island outline.
+    const here = isleOf(this.from) ?? 'fire';
+    // The island outline (the Pinnacle has none: it is all spire).
     const pts: Phaser.Geom.Point[] = [];
     for (let i = 0; i < 40; i++) {
       const a = (i / 40) * Math.PI * 2;
       const r = 1 + Math.sin(a * 3 + 1) * 0.06 + Math.sin(a * 7) * 0.035;
       pts.push(new Phaser.Geom.Point(480 + Math.cos(a) * 300 * r, 315 + Math.sin(a) * 230 * r));
     }
-    g.fillStyle(0xb89a6a, 1); g.fillPoints(pts, true, true);
-    g.lineStyle(3, 0x4a3218, 1); g.strokePoints(pts, true, true);
-    g.lineStyle(1, 0x4a3218, 0.4);
-    g.strokePoints(pts.map((p) => new Phaser.Geom.Point(480 + (p.x - 480) * 1.05, 315 + (p.y - 315) * 1.05)), true, true);
-    const here = isleOf(this.from) ?? 'fire';
-    if (here === 'water') {
+    if (here !== 'pinnacle') {
+      g.fillStyle(0xb89a6a, 1); g.fillPoints(pts, true, true);
+      g.lineStyle(3, 0x4a3218, 1); g.strokePoints(pts, true, true);
+      g.lineStyle(1, 0x4a3218, 0.4);
+      g.strokePoints(pts.map((p) => new Phaser.Geom.Point(480 + (p.x - 480) * 1.05, 315 + (p.y - 315) * 1.05)), true, true);
+    }
+    if (here === 'pinnacle') {
+      this.drawSpireChart(g, t);
+    } else if (here === 'water') {
       // The maelstrom off the trench, and the half-drowned low shore.
       for (let i = 0; i < 5; i++) {
         g.lineStyle(2.5 - i * 0.3, 0x2a5a7a, 0.8 - i * 0.12);
@@ -551,16 +572,17 @@ export class IslesMapScene extends Phaser.Scene {
       const p = L.pos[a], q = L.pos[b];
       if (!p || !q) continue;
       const n = Math.floor(Math.hypot(q.x - p.x, q.y - p.y) / 12);
-      g.fillStyle(0x4a3218, 0.8);
+      g.fillStyle(here === 'pinnacle' ? OBS.seamLit : 0x4a3218, 0.8);
       for (let i = 0; i < n; i += 2) g.fillCircle(p.x + ((q.x - p.x) * i) / n, p.y + ((q.y - p.y) * i) / n, 1.8);
     }
     const s = Save.S();
     for (const [id, p] of Object.entries(L.pos)) {
       const a = getArea(id);
       const court = courtOfArea(id);
-      const freed = court && s.princes.includes(court.prince.id);
+      const bench = benchOf(id);
+      const freed = court ? s.princes.includes(court.prince.id) : bench ? Save.courtReady(id) : false;
       const attuned = s.waystones.includes(id);
-      const col = court ? findElementDef(court.element)?.color ?? 0x8a4a2a : 0x6a4a3a;
+      const col = court ? findElementDef(court.element)?.color ?? 0x8a4a2a : bench ? bench.color : here === 'pinnacle' ? OBS.facet : 0x6a4a3a;
       const on = id === this.sel;
       if (on) { g.fillStyle(0xffffff, 0.35 + Math.sin(t * 5) * 0.15); g.fillCircle(p.x, p.y, 30); }
       g.fillStyle(0x2a1a0c, 1); g.fillCircle(p.x, p.y, 20);
@@ -574,12 +596,43 @@ export class IslesMapScene extends Phaser.Scene {
     }
   }
 
+  /**
+   * The Pinnacle's isle tab: no coastline, only the spire as the sailors chart it — glass shoals round
+   * its foot, the black shingle of the Landing with the Muster's ten boats drawn up on it, and the spire
+   * itself rising the height of the chart, a lamp on every bench broken and the throne-light at its tip.
+   */
+  private drawSpireChart(g: Phaser.GameObjects.Graphics, t: number): void {
+    g.fillStyle(0x3a3448, 0.3); g.fillEllipse(480, 566, 600, 76);
+    g.lineStyle(1.5, 0x2a1a3a, 0.55); g.strokeEllipse(480, 566, 600, 76);
+    g.lineStyle(1, 0x2a1a3a, 0.3); g.strokeEllipse(480, 566, 650, 92);
+    for (let i = 0; i < 18; i++) {
+      const a = i * 0.35 + 0.2, x = 480 + Math.cos(a * 3.1) * 270, y = 566 + Math.sin(a * 2.3) * 32;
+      g.lineStyle(1, 0x2a1a3a, 0.4); g.lineBetween(x - 4, y, x + 4, y);
+    }
+    // The Landing's shingle and the Muster drawn up on it.
+    g.fillStyle(0x2a2430, 1); g.fillEllipse(650, 562, 170, 26);
+    g.fillStyle(0x4a4058, 1); g.fillEllipse(646, 557, 150, 14);
+    for (let i = 0; i < 22; i++) { g.fillStyle(i % 3 ? 0x6a5e84 : 0x1a141c, 1); g.fillCircle(580 + ((i * 37) % 140), 553 + ((i * 13) % 12), 1.3); }
+    if (Save.test({ monarchs: 10 })) {
+      ISLES.slice(0, 10).forEach((isle, i) => {
+        const bx = 586 + i * 13, by = 572 + (i % 2) * 5;
+        g.fillStyle(0x3a2a1e, 1); g.fillEllipse(bx, by, 9, 4);
+        g.lineStyle(1, 0x2a1a10, 1); g.lineBetween(bx, by, bx, by - 8);
+        g.fillStyle(isle.color, 1); g.fillTriangle(bx + 0.5, by - 8, bx + 0.5, by - 2, bx + 5, by - 3);
+      });
+    }
+    drawPinnacle(g, 480, 566, 480, { t, lit: Math.floor(Save.seatsWon() / 6), open: Save.test({ monarch: 'obsidian-king' }) });
+  }
+
   private drawSea(g: Phaser.GameObjects.Graphics, t: number): void {
     const W = this.scale.width;
     const cx = W / 2, cy = 320;
-    // The Pinnacle in the middle.
-    g.fillStyle(0x1a141c, 1); g.fillTriangle(cx - 20, cy + 26, cx + 20, cy + 26, cx, cy - 46);
-    g.fillStyle(0x7a5cff, 0.5 + Math.sin(t * 2) * 0.3); g.fillCircle(cx, cy - 46, 4);
+    // The Pinnacle in the middle: wrapped in the Shroud until the tenth crown falls, then bare, a lamp
+    // on every bench broken, its tip a star once the King is down. A ring of glass shoals round its foot.
+    const shroud = !Save.test({ monarchs: 10 });
+    g.fillStyle(0x3a3448, 0.3); g.fillEllipse(cx, cy + 26, 120, 22);
+    g.lineStyle(1, 0x2a1a3a, 0.5); g.strokeEllipse(cx, cy + 26, 120, 22); g.strokeEllipse(cx, cy + 26, 140, 28);
+    drawPinnacle(g, cx, cy + 26, 100, { t, storm: shroud ? 1 : 0, lit: Math.floor(Save.seatsWon() / 6), open: Save.test({ monarch: 'obsidian-king' }) });
     ALL_ISLE_IDS.forEach((id, i) => {
       const a = -Math.PI / 2 + (i / ALL_ISLE_IDS.length) * Math.PI * 2;
       const x = cx + Math.cos(a) * 250, y = cy + Math.sin(a) * 190;
@@ -613,6 +666,7 @@ export class IslesMapScene extends Phaser.Scene {
         const label = a?.name ?? id;
         let sub = '';
         if (court) sub = s.princes.includes(court.prince.id) ? 'freed' : `${court.encounters.filter((e) => s.encounters.includes(e.id)).length}/5 · ${court.prince.name}`;
+        else if (benchSeats(id).length) sub = `${benchSeats(id).filter((e) => s.encounters.includes(e)).length}/${benchSeats(id).length} seats`;
         const t = txt(p.x, p.y + 24, `${label}${sub ? `\n${sub}` : ''}`, { fontFamily: FONT_UI, fontSize: '12px', color: id === this.sel ? '#1a0a00' : '#3a2412', align: 'center', fontStyle: id === this.sel ? 'bold' : 'normal' }).setOrigin(0.5, 0);
         const z = this.add.zone(p.x, p.y, 48, 48).setInteractive({ useHandCursor: true });
         z.on('pointerdown', () => { if (this.sel === id) this.travel(id); else { this.sel = id; this.render(); } });
@@ -631,7 +685,9 @@ export class IslesMapScene extends Phaser.Scene {
         const isle = getIsle(id);
         txt(x, y + 26, isle ? isle.name : `${findElementDef(id)?.name ?? id} Isle\n(uncharted)`, { fontFamily: FONT_UI, fontSize: '12px', color: isle ? '#2a1408' : '#7a6a5a', align: 'center' }).setOrigin(0.5, 0);
       });
-      txt(cx, cy + 34, 'The Obsidian Pinnacle', { fontFamily: FONT_DISPLAY, fontSize: '12px', color: '#2a1a3a' }).setOrigin(0.5, 0);
+      const pinState = !Save.test({ monarchs: 10 }) ? '(behind the Shroud)'
+        : Save.test({ monarch: 'obsidian-king' }) ? 'the star is out' : `${Save.seatsWon()}/60 seats`;
+      txt(cx, cy + 34, `The Obsidian Pinnacle\n${pinState}`, { fontFamily: FONT_DISPLAY, fontSize: '12px', color: '#2a1a3a', align: 'center' }).setOrigin(0.5, 0);
       txt(cx, 580, 'The Far Wastes', { fontFamily: FONT_DISPLAY, fontSize: '13px', color: '#2a3a4a' }).setOrigin(0.5);
     }
     if (this.note) txt(W / 2, 612, this.note, { fontFamily: FONT_DISPLAY, fontSize: '13px', color: '#8a1a0a' }).setOrigin(0.5);

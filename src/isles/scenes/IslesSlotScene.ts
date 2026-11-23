@@ -5,6 +5,7 @@ import { allSelectableElements, ElementDef } from '../../data/ElementRoster';
 import { TownWalker } from '../../campaign/town/TownWalker';
 import * as Save from '../IslesSave';
 import { getArea, ISLES } from '../IslesRegistry';
+import { drawPinnacle } from '../art/PinnacleArt';
 
 /**
  * The Ten Isles' front door: three save slots over a moonlit sea, and — for an empty slot — the
@@ -115,9 +116,8 @@ export class IslesSlotScene extends Phaser.Scene {
       const k = ((t * 0.3 + i / 12) % 1);
       g.fillStyle(0xff8a3a, (1 - k) * 0.7); g.fillCircle(W * 0.72 + Math.sin(i * 7 + t) * 18 * k, H * 0.31 - k * 120, 2);
     }
-    // The Pinnacle far off.
-    g.fillStyle(0x08060c, 1); g.fillTriangle(W * 0.06, H * 0.62, W * 0.16, H * 0.62, W * 0.11, H * 0.2);
-    g.fillStyle(0x7a5cff, 0.4 + Math.sin(t * 1.3) * 0.2); g.fillCircle(W * 0.11, H * 0.2, 3);
+    // The Pinnacle far off, wound in the Shroud.
+    drawPinnacle(g, W * 0.11, H * 0.62, H * 0.42, { t, storm: 1 });
   }
 
   private clear(): void {

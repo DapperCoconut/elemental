@@ -1,5 +1,5 @@
 import type {
-  AreaDef, ArenaFloor, BakeryDef, BoatDef, CourtDef, DockUpgradeDef, EncounterDef, FishDef, FisheryDef,
+  AreaDef, ArenaFloor, BakeryDef, BoatDef, CourtDef, CutsceneDef, DockUpgradeDef, EncounterDef, FishDef, FisheryDef,
   GeneTree, GimmickDef, IsleBundle, IsleDef, IsleItemDef, ItemScriptFactory, QuestDef, RodDef,
   ShopDef, UberDef, WandererDef,
 } from './IslesTypes';
@@ -17,6 +17,7 @@ import { SLIME_ISLE } from './content/slime';
 import { FATE_ISLE } from './content/fate';
 import { SOUND_ISLE } from './content/sound';
 import { LIGHT_ISLE } from './content/light';
+import { PINNACLE_ISLE } from './content/pinnacle';
 import { BOATS, DOCK_UPGRADES } from './content/sea';
 
 /**
@@ -24,9 +25,14 @@ import { BOATS, DOCK_UPGRADES } from './content/sea';
  * `BUNDLES`; nothing else in the engine names an isle.
  */
 
-const BUNDLES: IsleBundle[] = [FIRE_ISLE, WATER_ISLE, LIFE_ISLE, AIR_ISLE, EARTH_ISLE, ELECTRICITY_ISLE, SLIME_ISLE, FATE_ISLE, SOUND_ISLE, LIGHT_ISLE];
+const BUNDLES: IsleBundle[] = [
+  FIRE_ISLE, WATER_ISLE, LIFE_ISLE, AIR_ISLE, EARTH_ISLE, ELECTRICITY_ISLE, SLIME_ISLE, FATE_ISLE, SOUND_ISLE, LIGHT_ISLE,
+  PINNACLE_ISLE,
+];
 
-export const ISLES: IsleDef[] = BUNDLES.map((b) => b.isle);
+/** The ten isles. The Obsidian Pinnacle is not one of them — it is `PINNACLE` (and `getIsle('pinnacle')`). */
+export const ISLES: IsleDef[] = BUNDLES.filter((b) => !b.isle.pinnacle).map((b) => b.isle);
+export const PINNACLE: IsleDef = PINNACLE_ISLE.isle;
 
 /** The ten isles in chart order — the ones not yet built are drawn as uncharted. */
 export const ALL_ISLE_IDS = ['fire', 'water', 'life', 'air', 'earth', 'electricity', 'slime', 'fate', 'sound', 'light'];
@@ -49,6 +55,7 @@ const ubers = new Map<string, UberDef>();
 const wanderers = new Map<string, WandererDef>();
 const floors = new Map<string, ArenaFloor>();
 const isleOfArea = new Map<string, string>();
+const cutscenes = new Map<string, CutsceneDef>();
 
 function put<T>(m: Map<string, T>, id: string, v: T, what: string): void {
   if (m.has(id)) console.warn(`[isles] duplicate ${what} id: ${id}`);
@@ -72,6 +79,7 @@ for (const b of BUNDLES) {
   for (const t of b.genes) put(genes, t.element, t, 'gene tree');
   for (const u of b.ubers) put(ubers, u.id, u, 'uber');
   for (const [k, f] of Object.entries(b.floors)) floors.set(k, f);
+  for (const c of b.cutscenes ?? []) put(cutscenes, c.id, c, 'cutscene');
   for (const cb of b.courts) {
     const c = cb.court;
     put(courts, c.id, c, 'court');
@@ -100,10 +108,28 @@ for (const q of quests.values()) {
 
 registerBossResolver((id) => bosses.get(id));
 
+/** The Pinnacle's councilors, by the bench (area id) they sit on. */
+const seatsByBench = new Map<string, string[]>();
+for (const e of PINNACLE_ISLE.encounters) {
+  if (!e.mastered) continue;
+  seatsByBench.set(e.court, [...(seatsByBench.get(e.court) ?? []), e.id]);
+}
+const allSeats = [...seatsByBench.values()].flat();
+
 bindRegistry({
-  courtEncounters: (court) => courts.get(court)?.encounters.map((e) => e.id) ?? [],
+  // A court's five champions — or a Pinnacle bench's six seats, so `{ courtReady: '<bench>' }` gates its stair.
+  courtEncounters: (court) => courts.get(court)?.encounters.map((e) => e.id) ?? seatsByBench.get(court) ?? [],
   islePrinces: (isle) => [...courts.values()].filter((c) => c.isle === isle).map((c) => c.prince.id),
+  councilSeats: () => allSeats,
 });
+
+/** The six seat ids of a Pinnacle bench (by its area id). */
+export const benchSeats = (bench: string): string[] => seatsByBench.get(bench) ?? [];
+export const councilSeatCount = (): number => allSeats.length;
+export const getCutscene = (id: string) => cutscenes.get(id);
+export const allCutscenes = (): CutsceneDef[] => [...cutscenes.values()];
+/** Every boss def the Isles register (princes, monarchs, the Obsidian King). */
+export const allIslesBosses = (): WorldBossDef[] => [...bosses.values()];
 
 export const getArea = (id: string) => areas.get(id);
 export const getCourt = (id: string) => courts.get(id);
@@ -122,7 +148,7 @@ export const getQuest = (id: string) => quests.get(id);
 export const getUber = (id: string) => ubers.get(id);
 export const getWanderer = (isle: string) => wanderers.get(isle);
 export const getFloor = (key: string) => floors.get(key);
-export const getIsle = (id: string) => ISLES.find((i) => i.id === id);
+export const getIsle = (id: string) => BUNDLES.find((b) => b.isle.id === id)?.isle;
 export const isleOf = (areaId: string) => isleOfArea.get(areaId);
 
 export const allQuests = (): QuestDef[] => [...quests.values()];
@@ -160,6 +186,8 @@ export function routeOpen(isleId: string): boolean {
   const isle = getIsle(isleId);
   if (!isle) return false;
   if (S().waystones.includes(isle.port) || isCheatMode()) return true;
+  // The Pinnacle's storm wall — the Shroud — stands until the last of the ten monarchs falls.
+  if (isle.pinnacle) return ISLES.every((i) => S().monarchs.includes(i.monarch.id));
   const i = ALL_ISLE_IDS.indexOf(isleId);
   const prev = i > 0 ? getIsle(ALL_ISLE_IDS[i - 1]) : undefined;
   return !!prev && S().monarchs.includes(prev.monarch.id);

@@ -8,8 +8,11 @@ import { TownWalker } from '../../campaign/town/TownWalker';
 import * as Save from '../IslesSave';
 import {
   getArea, getEncounter, getIslesBoss, bossIdFor, getWanderer, isleOf,
-  allQuests, getIsle, allAreas, getIsleItem, courtOfArea, getCourt,
+  allQuests, getIsle, allAreas, getIsleItem, courtOfArea, getCourt, getCutscene, councilSeatCount,
 } from '../IslesRegistry';
+import { councilMask, OBS, seam, shard, crackPath, starGlow } from '../art/PinnacleArt';
+import { buildNpcLoadout } from '../../data/NpcLoadout';
+import { getPerksForElement } from '../../data/Perks';
 import type {
   AreaDef, AreaExit, EncounterDef, NpcDef, NpcLook, Poi, Pt, Rect, Talk, IslesFightPayload, WorldHazard, Cond, PainterWorld,
 } from '../IslesTypes';
@@ -70,6 +73,8 @@ interface Champion {
   walker: TownWalker;
   plate: Phaser.GameObjects.Text;
   beaten: boolean;
+  /** A councilor's obsidian mask, drawn over the walker's face. */
+  mask?: Phaser.GameObjects.Graphics;
 }
 
 interface BossStand {
@@ -187,6 +192,13 @@ export class IsleWorldScene extends Phaser.Scene {
     const areaId = this.initData.area ?? s.area;
     const def = getArea(areaId) ?? getArea('emberport') ?? allAreas()[0];
     this.def = def;
+    // An area's intro cinematic plays once, the first time it is entered; then we come straight back here.
+    if (def.intro && getCutscene(def.intro) && !Save.hasFlag(`cine-seen-${def.id}`)) {
+      Save.setFlag(`cine-seen-${def.id}`);
+      this.leaving = true;
+      this.scene.start('IslesCutsceneScene', { id: def.intro, next: { key: 'IsleWorldScene', data: { ...this.initData, area: def.id } } });
+      return;
+    }
     this.rng = mulberry(hashStr(def.id));
     Music.play('campaign');
     Quests.bindNpcNames((id) => this.npcName(id));
@@ -410,10 +422,15 @@ export class IsleWorldScene extends Phaser.Scene {
     const beaten = !enc.quest && Save.S().encounters.includes(enc.id);
     const walker = new TownWalker(this, enc.foeElement, enc.at.x, enc.at.y, { bare: true });
     if (beaten) walker.container.setAlpha(0.55);
-    const plate = this.add.text(enc.at.x, enc.at.y - 62, beaten ? `${enc.foeName}` : `⚔ ${enc.foeName}\n${enc.name}`, {
-      fontFamily: FONT_UI, fontSize: '11px', color: beaten ? '#a8a090' : enc.quest ? '#9dd8ff' : '#ffcf9a', stroke: '#000', strokeThickness: 3, align: 'center',
+    const plate = this.add.text(enc.at.x, enc.at.y - 62, beaten ? `${enc.foeName}` : `⚔ ${enc.foeName}\n${enc.mastered ? enc.seat ?? enc.name : enc.name}`, {
+      fontFamily: FONT_UI, fontSize: '11px', color: beaten ? '#a8a090' : enc.mastered ? '#c9b0ff' : enc.quest ? '#9dd8ff' : '#ffcf9a', stroke: '#000', strokeThickness: 3, align: 'center',
     }).setOrigin(0.5, 1).setDepth(9200);
     const c: Champion = { enc, walker, plate, beaten };
+    if (enc.mastered) {
+      // The Council's regalia: a shard of the King's shell over the face — split, once the seat is empty.
+      c.mask = this.add.graphics().setDepth(enc.at.y + 0.5);
+      councilMask(c.mask, enc.at.x, enc.at.y - 3, 12, { crack: beaten ? 1 : 0, alpha: beaten ? 0.7 : 1, glow: beaten ? 0 : 1 });
+    }
     this.champions.push(c);
     return c;
   }
@@ -432,6 +449,7 @@ export class IsleWorldScene extends Phaser.Scene {
     for (const c of [...this.champions]) {
       if (!c.enc.quest || live.includes(c.enc)) continue;
       c.walker.destroy();
+      c.mask?.destroy();
       c.plate.destroy();
       this.champions.splice(this.champions.indexOf(c), 1);
       this.interactables = this.interactables.filter((it) => it.championOf !== c);
@@ -649,11 +667,14 @@ export class IsleWorldScene extends Phaser.Scene {
     const portrait = (g: Phaser.GameObjects.Graphics, x: number, y: number, t: number, talking: boolean) =>
       drawNpc(g, e.look, { x, y, t, look: 0.4, moving: false, talking, scale: 2.7 });
     const lines = c.beaten ? e.beaten : e.challenge;
-    const gimmick = `“${e.name}” — difficulty ${'★'.repeat(e.difficulty)}${'☆'.repeat(5 - e.difficulty)}`;
+    const gimmick = e.mastered
+      ? `${e.seat ?? 'Councilor'} — decree: “${e.name}” — PERFECTED`
+      : `“${e.name}” — difficulty ${'★'.repeat(e.difficulty)}${'☆'.repeat(5 - e.difficulty)}`;
+    const kind: IslesFightPayload['kind'] = e.mastered ? 'councilor' : getCourt(e.court) ? 'encounter' : 'warden';
     this.dialogue.open({
-      name: e.foeName, title: gimmick, portrait, accent: 0xff7a4a, lines,
+      name: e.foeName, title: gimmick, portrait, accent: e.mastered ? OBS.seam : 0xff7a4a, lines,
       choices: [
-        { label: c.beaten ? 'Rematch' : 'Fight!', pick: () => this.launchFight({ kind: getCourt(e.court) ? 'encounter' : 'warden', id: e.id, court: e.court }, e.foeElement, e.difficulty) },
+        { label: c.beaten ? 'Rematch' : 'Fight!', pick: () => this.launchFight({ kind, id: e.id, court: e.court }, e.foeElement, e.difficulty, e) },
         { label: 'Not yet', pick: () => {} },
       ],
     });
@@ -686,14 +707,14 @@ export class IsleWorldScene extends Phaser.Scene {
         name: b.def.name, title: b.def.title, portrait, accent: b.def.color,
         lines: [...b.def.intro],
         choices: [
-          { label: `Challenge the ${isle ? 'monarch of ' + isle.name : 'monarch'}`, pick: () => this.launchFight({ kind: 'monarch', id: b.id, court: this.def.id }, isle?.element ?? 'fire', 5) },
+          { label: isle?.pinnacle ? 'Climb the steps' : `Challenge the ${isle ? 'monarch of ' + isle.name : 'monarch'}`, pick: () => this.launchFight({ kind: 'monarch', id: b.id, court: this.def.id }, isle?.element ?? 'fire', 5) },
           { label: 'Not yet', pick: () => {} },
         ],
       });
     }
   }
 
-  private launchFight(p: { kind: IslesFightPayload['kind']; id: string; court?: string }, foeElement: string, difficulty: number): void {
+  private launchFight(p: { kind: IslesFightPayload['kind']; id: string; court?: string }, foeElement: string, difficulty: number, enc?: EncounterDef): void {
     const s = Save.S();
     Save.setPlace(this.def.id, { x: this.px, y: this.py });
     const payload: IslesFightPayload = {
@@ -716,6 +737,11 @@ export class IsleWorldScene extends Phaser.Scene {
         bossId: boss ? bossIdFor(p.id) : undefined,
         isles: payload,
         playerPerk: PlayerData.getEquippedPerk(s.element),
+        // A councilor is the element perfected: every upgrade, its mastery, its bound enhancement and a perk.
+        ...(enc?.mastered ? {
+          npcLoadout: buildNpcLoadout(foeElement, 5),
+          npcPerk: enc.perk ?? (() => { const pool = getPerksForElement(foeElement); return pool.length ? pool[Math.floor(Math.random() * pool.length)].id : null; })(),
+        } : {}),
       });
     });
   }
@@ -922,6 +948,7 @@ export class IsleWorldScene extends Phaser.Scene {
       const on = inView(view, c.enc.at.x, c.enc.at.y);
       c.walker.container.setVisible(on);
       c.plate.setVisible(on);
+      c.mask?.setVisible(on);
       if (on) c.walker.update(dt, c.enc.at.x, c.enc.at.y, false, Math.atan2(this.py - c.enc.at.y, this.px - c.enc.at.x));
     }
     for (const b of this.bosses) {
@@ -2072,6 +2099,80 @@ export class IsleWorldScene extends Phaser.Scene {
         }
         break;
       }
+      case 'glassrain': {
+        // The spire sheds itself: slivers of black glass falling, each a long thin shard turning end over
+        // end — dark on its back, a pale edge on its lit face, and a violet flash along the edge when the
+        // face swings square to the light. A faint violet cast hangs in the air, and where slivers land the
+        // floor ticks: a tiny star of breaking glass and a ring of violet that spreads and dies.
+        g.fillStyle(OBS.seam, 0.03); g.fillRect(view.x, view.y, view.w, view.h);
+        for (let i = 0; i < 9; i++) {
+          const k = (t * 0.55 + i * 0.37) % 1, n = Math.floor(t * 0.55 + i * 0.37);
+          if (k > 0.3) continue;
+          const p = k / 0.3;
+          const x = view.x + ((i * 263 + n * 151) % view.w), y = view.y + ((i * 181 + n * 97) % view.h);
+          g.lineStyle(1, OBS.seam, 0.5 * (1 - p)); g.strokeEllipse(x, y, 6 + p * 22, 3 + p * 9);
+          for (let s = 0; s < 5; s++) {
+            const a = s * 1.26 + i, d = 2 + p * (7 + (s % 2) * 4);
+            g.fillStyle(s % 2 ? OBS.edge : OBS.facet, 0.9 * (1 - p));
+            g.fillTriangle(x + Math.cos(a) * d, y + Math.sin(a) * d * 0.5 - p * 4, x + Math.cos(a + 0.25) * (d + 2.5), y + Math.sin(a + 0.25) * (d + 2.5) * 0.5 - p * 4, x, y);
+          }
+          g.fillStyle(OBS.seamLit, 0.8 * (1 - p)); g.fillCircle(x, y, 1.4 * (1 - p) + 0.4);
+        }
+        for (let i = 0; i < 64; i++) {
+          const sp = 150 + (i % 7) * 34;
+          const y = view.y + ((i * 53 + t * sp) % (view.h + 40)) - 20;
+          const x = view.x + ((i * 97 + t * 14) % view.w) + Math.sin(t * 0.9 + i * 1.7) * 10;
+          const ang = t * (1.6 + (i % 4) * 0.7) + i * 1.3, c = Math.cos(ang), s = Math.sin(ang);
+          const L = 4 + (i % 5) * 2.2, W = 1.2 + (i % 3) * 0.55;
+          const face = Math.cos(t * (2.4 + (i % 3)) + i * 2.1);
+          const fw = W * (0.25 + Math.abs(face) * 0.75);
+          const ax = x + c * L, ay = y + s * L, bx = x - c * L, by = y - s * L;
+          const nx = -s * fw, ny = c * fw;
+          g.fillStyle(OBS.glass, 0.95); g.fillTriangle(ax, ay, bx, by, x + nx, y + ny);
+          g.fillStyle(face > 0 ? OBS.sheen : OBS.facet, 0.95); g.fillTriangle(ax, ay, bx, by, x - nx, y - ny);
+          g.lineStyle(0.8, OBS.edge, 0.55 + Math.max(0, face) * 0.35); g.lineBetween(ax, ay, x - nx, y - ny);
+          if (face > 0.88) {
+            const k = (face - 0.88) / 0.12;
+            g.lineStyle(2.4, OBS.seam, 0.35 * k); g.lineBetween(ax, ay, bx, by);
+            g.lineStyle(0.9, OBS.seamLit, 0.9 * k); g.lineBetween(ax, ay, bx, by);
+            g.fillStyle(0xffffff, 0.8 * k); g.fillCircle(x - nx * 0.5, y - ny * 0.5, 0.9);
+          }
+        }
+        break;
+      }
+      case 'starmotes': {
+        // Starlight leaking up through the shell: slow motes rising and swaying, each a soft halo round a
+        // hard point, the bright ones a four-point glint that turns as it twinkles. Most are the cold
+        // white-violet of light through glass; one in seven is the star's own warm gold. Now and then a
+        // thin shaft of pale light stands up out of the floor, holds, and fades.
+        for (let i = 0; i < 4; i++) {
+          const life = 7 + i * 1.3, k = ((t + i * 2.9) % life) / life, n = Math.floor((t + i * 2.9) / life);
+          const a = Math.sin(k * Math.PI);
+          if (a < 0.02) continue;
+          const x = view.x + ((i * 331 + n * 211) % view.w), w = 18 + (i % 3) * 10;
+          g.fillStyle(OBS.star, 0.035 * a); g.fillRect(x - w, view.y, w * 2, view.h);
+          g.fillStyle(0xe8e0ff, 0.05 * a); g.fillRect(x - w * 0.35, view.y, w * 0.7, view.h);
+          g.fillStyle(OBS.star, 0.12 * a); g.fillEllipse(x, view.y + view.h * (0.55 + (i % 3) * 0.12), w * 3, w * 0.7);
+        }
+        for (let i = 0; i < 56; i++) {
+          const rise = 10 + (i % 6) * 5;
+          const y = view.y + view.h - ((i * 67 + t * rise) % (view.h + 30)) + 15;
+          const x = view.x + ((i * 139 + 37) % view.w) + Math.sin(t * 0.5 + i * 1.9) * 14;
+          const warm = i % 7 === 0;
+          const col = warm ? OBS.star : i % 3 ? 0xdce4ff : OBS.seamLit;
+          const tw = 0.4 + 0.6 * Math.abs(Math.sin(t * (0.8 + (i % 5) * 0.3) + i * 2.3));
+          const big = i % 4 === 0 || warm;
+          g.fillStyle(col, 0.08 * tw); g.fillCircle(x, y, big ? 7 : 4);
+          g.fillStyle(col, 0.5 + 0.45 * tw); g.fillCircle(x, y, big ? 1.4 : 0.9);
+          if (big && tw > 0.6) {
+            const L = (tw - 0.6) * 18, ra = t * 0.4 + i;
+            g.lineStyle(0.8, col, 0.8 * tw);
+            g.lineBetween(x - Math.cos(ra) * L, y - Math.sin(ra) * L, x + Math.cos(ra) * L, y + Math.sin(ra) * L);
+            g.lineBetween(x + Math.sin(ra) * L * 0.7, y - Math.cos(ra) * L * 0.7, x - Math.sin(ra) * L * 0.7, y + Math.cos(ra) * L * 0.7);
+          }
+        }
+        break;
+      }
       default: break;
     }
   }
@@ -2157,7 +2258,8 @@ export class IsleWorldScene extends Phaser.Scene {
         : gt.look === 'pipes' ? 0xc8ccd4 : gt.look === 'bell' ? 0xb8823a : gt.look === 'curtain' ? 0xa8182a
         : gt.look === 'stalactite' ? 0x8a8070 : gt.look === 'stainedglass' ? 0x5a5660 : gt.look === 'scroll' ? 0xf0e6cc
         : gt.look === 'mirror' ? 0xd8a838 : gt.look === 'sunbar' ? 0xfff0b0 : gt.look === 'lanterns' ? 0xa8e0ff
-        : gt.look === 'sigil' ? 0xffd870 : gt.look === 'lens' ? 0xd8a840 : gt.look === 'scaffold' ? 0x9a7448 : 0x3a3a42;
+        : gt.look === 'sigil' ? 0xffd870 : gt.look === 'lens' ? 0xd8a840 : gt.look === 'scaffold' ? 0x9a7448
+        : gt.look === 'obsidian' || gt.look === 'starseal' ? OBS.glass : 0x3a3a42;
       // Orientation helpers for the looks that lay out along the gate's long axis (u) and across it (v).
       const horiz = r.w >= r.h, gL = horiz ? r.w : r.h, gC = horiz ? r.h : r.w;
       const gP = (u: number, v: number): [number, number] => horiz ? [r.x + u, r.y + v] : [r.x + v, r.y + u];
@@ -3232,6 +3334,132 @@ export class IsleWorldScene extends Phaser.Scene {
             if (dk < 0.9) { g.fillStyle(col, 0.85); g.fillEllipse(dx, dy, 1.6, 2.4); }
           }
         }
+      } else if (gt.look === 'obsidian') {
+        // A wall of black glass set across the way: a dressed slab with a lit top bevel and long diagonal
+        // sheens down its polished front, a crown of upthrust shards along its top, and down the middle the
+        // seam that will split it — violet, breathing, branching — throwing a violet pool on the floor.
+        const rng = mulberry(hashStr(`${this.def.id}:obs:${r.x},${r.y}`));
+        const pulse = 0.5 + 0.5 * Math.sin(t * 1.7);
+        if (horiz) {
+          const H = Phaser.Math.Clamp(gL * 0.32, 54, 120), base = r.y + r.h, top = base - H;
+          g.fillStyle(0x000000, 0.35); g.fillEllipse(r.x + r.w / 2 + 6, base + 3, r.w + 30, 16);
+          g.fillStyle(OBS.seam, 0.1 + 0.06 * pulse); g.fillEllipse(r.x + r.w / 2, base + 6, Math.min(r.w, 160), 22);
+          for (let u = 8; u < gL - 8; u += 20 + rng() * 10) shard(g, r.x + u, top + 6, 16 + rng() * 12, 14 + rng() * 26, (rng() - 0.5) * 10, rng() * 0.5);
+          g.fillStyle(OBS.glass, 1); g.fillRect(r.x, top, r.w, H);
+          for (let u = 0; u < gL; u += 46) {
+            const w0 = 10 + rng() * 14;
+            g.fillStyle(OBS.facet, 0.55 + rng() * 0.3);
+            g.fillPoints([
+              new Phaser.Geom.Point(r.x + u, top + 8), new Phaser.Geom.Point(Math.min(r.x + r.w, r.x + u + w0), top + 8),
+              new Phaser.Geom.Point(Math.min(r.x + r.w, r.x + u + w0 + H * 0.35), base), new Phaser.Geom.Point(Math.min(r.x + r.w, r.x + u + H * 0.35), base),
+            ], true);
+          }
+          g.fillStyle(OBS.sheen, 1); g.fillRect(r.x, top, r.w, 8);
+          g.fillStyle(0xffffff, 0.08); g.fillRect(r.x, top, r.w, 2);
+          g.lineStyle(1.2, OBS.edge, 0.65); g.lineBetween(r.x, top + 8, r.x + r.w, top + 8);
+          g.lineStyle(1, OBS.edge, 0.3); g.strokeRect(r.x, top, r.w, H);
+          for (const ex of [r.x, r.x + r.w]) shard(g, ex, base, 26, H + 34, ex === r.x ? -6 : 6, 0.3);
+          const mx = r.x + r.w / 2 + (rng() - 0.5) * gL * 0.1;
+          const main = crackPath({ x: mx, y: top - 4 }, { x: mx + (rng() - 0.5) * 12, y: base }, rng, 7, 7);
+          seam(g, main, 2.2, 1, pulse);
+          for (let b = 0; b < 4; b++) {
+            const from = main[1 + Math.floor(rng() * (main.length - 2))];
+            const dir = b % 2 ? 1 : -1;
+            seam(g, crackPath(from, { x: from.x + dir * (14 + rng() * 26), y: from.y + 6 + rng() * 22 }, rng, 4, 3), 1, 0.8, pulse * 0.6);
+          }
+          g.fillStyle(OBS.seamLit, 0.5 + 0.4 * pulse); g.fillCircle(mx, base - 2, 2);
+        } else {
+          const lift = 14;
+          g.fillStyle(0x000000, 0.35); g.fillRect(r.x + 5, r.y + 6, r.w, r.h);
+          g.fillStyle(OBS.glass, 1); g.fillRect(r.x, r.y - lift, r.w, r.h + lift);
+          g.fillStyle(OBS.facet, 1); g.fillRect(r.x, r.y - lift, r.w, r.h);
+          for (let v = 0; v < gL; v += 40) {
+            g.fillStyle(OBS.sheen, 0.45 + rng() * 0.3);
+            g.fillTriangle(r.x + 2, r.y - lift + v, r.x + r.w - 2, r.y - lift + v + 6, r.x + 2, r.y - lift + v + 26);
+          }
+          g.lineStyle(1.2, OBS.edge, 0.65); g.strokeRect(r.x, r.y - lift, r.w, r.h);
+          g.lineStyle(1, OBS.edge, 0.3); g.lineBetween(r.x, r.y + r.h - lift, r.x, r.y + r.h); g.lineBetween(r.x + r.w, r.y + r.h - lift, r.x + r.w, r.y + r.h);
+          for (let v = 18; v < gL - 8; v += 34 + rng() * 14) shard(g, r.x + r.w / 2 + (rng() - 0.5) * r.w * 0.4, r.y - lift + v, 14 + rng() * 8, 16 + rng() * 22, (rng() - 0.5) * 8, rng() * 0.5);
+          const my = r.y - lift + r.h / 2;
+          seam(g, crackPath({ x: r.x - 3, y: my }, { x: r.x + r.w + 3, y: my + (rng() - 0.5) * 8 }, rng, 5, 5), 2.2, 1, pulse);
+          seam(g, crackPath({ x: r.x + r.w / 2, y: my }, { x: r.x + r.w / 2 + (rng() - 0.5) * 6, y: my - gL * 0.3 }, rng, 4, 5), 1.2, 0.8, pulse * 0.6);
+          seam(g, crackPath({ x: r.x + r.w / 2, y: my }, { x: r.x + r.w / 2 + (rng() - 0.5) * 6, y: my + gL * 0.3 }, rng, 4, 5), 1.2, 0.8, pulse * 0.6);
+        }
+      } else if (gt.look === 'starseal') {
+        // The throne door: two leaves of black glass under a lintel, flanked by tall shards, and across
+        // the join a great disc of sixty mask-seals ringed round a sleeping star — one seal turned gold for
+        // every seat emptied, ten spokes between them (the benches) lighting as each bench falls. The star
+        // at the heart breathes slowly behind a lens of glass; the join of the leaves glows faint violet.
+        const won = Save.seatsWon(), benches = Math.floor(won / 6);
+        const pulse = 0.5 + 0.5 * Math.sin(t * 0.9);
+        const cx = r.x + r.w / 2;
+        let cy: number, R: number;
+        if (horiz) {
+          const H = Phaser.Math.Clamp(gL * 0.45, 100, 230), base = r.y + r.h, top = base - H;
+          g.fillStyle(0x000000, 0.4); g.fillEllipse(cx + 8, base + 4, r.w + 50, 20);
+          for (const [dx, sh, lean] of [[-1, 1.18, -10], [1, 1.22, 10]] as const) {
+            const ex = dx < 0 ? r.x - 4 : r.x + r.w + 4;
+            shard(g, ex + dx * 16, base, 34, H * sh * 0.9, lean, 0.15);
+            shard(g, ex, base, 44, H * sh, lean * 0.5, 0.35);
+          }
+          for (const side of [0, 1]) {
+            const lx = side ? cx : r.x, lw = r.w / 2;
+            g.fillStyle(OBS.glass, 1); g.fillRect(lx, top + 14, lw, H - 14);
+            g.fillStyle(OBS.facet, 0.75);
+            g.fillPoints([
+              new Phaser.Geom.Point(lx + lw * 0.1, top + 14), new Phaser.Geom.Point(lx + lw * 0.38, top + 14),
+              new Phaser.Geom.Point(lx + lw * 0.2, base), new Phaser.Geom.Point(lx, base), new Phaser.Geom.Point(lx, top + H * 0.5),
+            ], true);
+            g.lineStyle(1, OBS.edge, 0.3); g.strokeRect(lx + 6, top + 22, lw - 12, H - 30);
+            g.lineStyle(1, OBS.edge, 0.18); g.strokeRect(lx + 12, top + 28, lw - 24, H - 42);
+          }
+          g.fillStyle(OBS.sheen, 1); g.fillRect(r.x - 10, top, r.w + 20, 14);
+          g.fillStyle(0xffffff, 0.08); g.fillRect(r.x - 10, top, r.w + 20, 3);
+          g.lineStyle(1.2, OBS.edge, 0.7); g.lineBetween(r.x - 10, top + 14, r.x + r.w + 10, top + 14);
+          seam(g, [{ x: cx, y: top + 14 }, { x: cx, y: base }], 1.4, 0.7, pulse * 0.5);
+          R = Math.min(H * 0.4, gL * 0.3);
+          cy = top + 14 + (H - 14) * 0.48;
+        } else {
+          g.fillStyle(0x000000, 0.35); g.fillRect(r.x + 5, r.y + 6, r.w, r.h);
+          g.fillStyle(OBS.glass, 1); g.fillRect(r.x, r.y, r.w, r.h);
+          g.lineStyle(1.2, OBS.edge, 0.6); g.strokeRect(r.x, r.y, r.w, r.h);
+          seam(g, [{ x: cx, y: r.y }, { x: cx, y: r.y + r.h }], 1.4, 0.7, pulse * 0.5);
+          R = Math.min(gL * 0.3, 60);
+          cy = r.y + r.h / 2;
+        }
+        // The disc.
+        g.fillStyle(OBS.seam, 0.06 + 0.04 * pulse); g.fillCircle(cx, cy, R * 1.12);
+        g.fillStyle(OBS.glass, 1); g.fillCircle(cx, cy, R);
+        g.fillStyle(OBS.facet, 0.8); g.fillCircle(cx, cy, R * 0.92);
+        g.fillStyle(OBS.glass, 1); g.fillCircle(cx, cy, R * 0.74);
+        g.lineStyle(2, OBS.edge, 0.7); g.strokeCircle(cx, cy, R);
+        g.lineStyle(1, OBS.edge, 0.35); g.strokeCircle(cx, cy, R * 0.92); g.strokeCircle(cx, cy, R * 0.74); g.strokeCircle(cx, cy, R * 0.4);
+        g.lineStyle(2.5, 0xffffff, 0.1); g.beginPath(); g.arc(cx, cy, R * 0.97, Math.PI * 1.1, Math.PI * 1.55); g.strokePath();
+        // Ten spokes, one per bench.
+        for (let b = 0; b < 10; b++) {
+          const a = -Math.PI / 2 + (b + 0.5) * (Math.PI * 2 / 10), on = b < benches;
+          const x0 = cx + Math.cos(a) * R * 0.42, y0 = cy + Math.sin(a) * R * 0.42, x1 = cx + Math.cos(a) * R * 0.72, y1 = cy + Math.sin(a) * R * 0.72;
+          if (on) { g.lineStyle(3, OBS.star, 0.25); g.lineBetween(x0, y0, x1, y1); }
+          g.lineStyle(1.1, on ? OBS.star : OBS.seam, on ? 0.95 : 0.45 + 0.2 * pulse); g.lineBetween(x0, y0, x1, y1);
+          g.fillStyle(on ? OBS.starCore : OBS.seamLit, on ? 1 : 0.5); g.fillCircle(x1, y1, Math.max(1, R * 0.018));
+        }
+        // Sixty seals round the rim.
+        const ss = Math.max(2, R * 0.055);
+        for (let i = 0; i < 60; i++) {
+          const a = -Math.PI / 2 + (i + 0.5) * (Math.PI * 2 / 60), ca = Math.cos(a), sa = Math.sin(a);
+          const px = cx + ca * R * 0.83, py = cy + sa * R * 0.83, on = i < won;
+          const P = (rad: number, tan: number) => new Phaser.Geom.Point(px + ca * rad * ss + -sa * tan * ss, py + sa * rad * ss + ca * tan * ss);
+          if (on) { g.fillStyle(OBS.star, 0.2); g.fillCircle(px, py, ss * 1.6); }
+          g.fillStyle(on ? OBS.star : OBS.sheen, 1);
+          g.fillPoints([P(1.1, 0), P(0.3, 0.62), P(-1, 0), P(0.3, -0.62)], true);
+          g.fillStyle(on ? OBS.starCore : OBS.seam, on ? 1 : 0.75 + 0.25 * pulse);
+          g.fillPoints([P(0.25, 0.42), P(0.15, 0), P(0.25, -0.42), P(0.35, 0)], true);
+        }
+        // The sleeping star, under its lens.
+        starGlow(g, cx, cy, R * 0.12, t * 0.4, 0.3 + 0.2 * pulse + benches * 0.04);
+        g.fillStyle(OBS.glass, 0.5 - benches * 0.03); g.fillCircle(cx, cy, R * 0.36);
+        g.lineStyle(1.4, 0xffffff, 0.25); g.beginPath(); g.arc(cx, cy, R * 0.3, Math.PI * 1.1, Math.PI * 1.45); g.strokePath();
+        g.lineStyle(1, OBS.edge, 0.5); g.strokeCircle(cx, cy, R * 0.36);
       } else if (gt.look === 'candy') {
         // Candy-cane bars, red-and-white striped.
         g.fillStyle(0xfff0f6, 0.5); g.fillRect(r.x, r.y, r.w, r.h);

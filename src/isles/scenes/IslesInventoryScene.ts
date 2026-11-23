@@ -3,7 +3,9 @@ import { Sfx } from '../../audio';
 import { allSelectableElements } from '../../data/ElementRoster';
 import * as Save from '../IslesSave';
 import { MAX_CHARMS } from '../IslesSave';
-import { getIsleItem, allCourts, allFish, getRod, ISLES, getGeneTree } from '../IslesRegistry';
+import {
+  getIsleItem, allCourts, allFish, getRod, ISLES, getGeneTree, PINNACLE, routeOpen, councilSeatCount, benchSeats, allAreas, getEncounter,
+} from '../IslesRegistry';
 import type { IsleItemDef } from '../IslesTypes';
 import { LedgerPanel, Row, itemDetail } from '../world/Counters';
 
@@ -157,6 +159,27 @@ export class IslesInventoryScene extends Phaser.Scene {
         rows.push({
           icon: free ? '🏳️' : '⚔️', name: `   ${c.name}`, right: free ? 'FREED' : `${n}/5`, rightColor: free ? '#9dffb0' : '#ffd27a',
           detail: [`${c.prince.name}, ${c.prince.title}`, '', ...c.encounters.map((e) => `${s.encounters.includes(e.id) ? '✔' : '·'} ${e.name} — ${e.foeName}`)],
+          verb: null,
+        });
+      }
+    }
+    // The Pinnacle: shown once the Shroud is down (or a foot has been set on it).
+    if (routeOpen(PINNACLE.id)) {
+      const kingDown = s.monarchs.includes(PINNACLE.monarch.id);
+      rows.push({
+        icon: kingDown ? '⭐' : '🗡️', name: PINNACLE.name, right: kingDown ? 'THE THRONE IS EMPTY' : `${Save.seatsWon()}/${councilSeatCount() || 60} seats`,
+        rightColor: kingDown ? '#9dffb0' : '#c9b0ff',
+        detail: [`${PINNACLE.monarch.name}, ${PINNACLE.monarch.title}`, kingDown ? 'Fallen. The star is out.' : 'Still on the throne.', '',
+          'Sixty councilors on ten benches, one seat for every element.', 'Empty a bench and the stair above it opens.'],
+        verb: null,
+      });
+      for (const a of allAreas().filter((x) => x.isle === PINNACLE.id && benchSeats(x.id).length > 0)) {
+        const seats = benchSeats(a.id).map((id) => getEncounter(id)).filter((e): e is NonNullable<typeof e> => !!e);
+        const n = seats.filter((e) => s.encounters.includes(e.id)).length;
+        rows.push({
+          icon: n >= seats.length ? '🏳️' : '⚔️', name: `   ${a.name}`, right: n >= seats.length ? 'BROKEN' : `${n}/${seats.length}`,
+          rightColor: n >= seats.length ? '#9dffb0' : '#ffd27a',
+          detail: [a.subtitle, '', ...seats.map((e) => `${s.encounters.includes(e.id) ? '✔' : '·'} ${e.foeName} — ${e.seat ?? ''} — “${e.name}”`)],
           verb: null,
         });
       }
