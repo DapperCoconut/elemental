@@ -2,6 +2,7 @@ import type { CourtBundle } from '../../../../IslesTypes';
 import { GEODE_AREA } from './area';
 import { GEODE_ENCOUNTERS, GEODE_GIMMICKS } from './encounters';
 import { GEODE_FLOOR } from './floor';
+import { FALLEN } from './fallen';
 import { ART_FACET, GEODE_FISH, GEODE_FISHERIES, GEODE_ITEMS, GEODE_SCRIPTS, GEODE_SHOPS } from './items';
 import { GEODE_COLOR } from './palette';
 import { FACET_BOSS } from './prince';
@@ -38,4 +39,5 @@ export const GEODE_COURT: CourtBundle = {
   shops: GEODE_SHOPS,
   fish: GEODE_FISH,
   fisheries: GEODE_FISHERIES,
+  fallen: FALLEN,
 };

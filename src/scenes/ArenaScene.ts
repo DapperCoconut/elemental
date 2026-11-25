@@ -99,7 +99,7 @@ import { OilKit, OilArenaApi } from '../elements/kits/OilKit';
 import { FateKit, FateArenaApi } from '../elements/kits/FateKit';
 import { SoundKit, SoundArenaApi } from '../elements/kits/SoundKit';
 import { RubberKit, RubberArenaApi } from '../elements/kits/RubberKit';
-import { SilenceKit, SilenceArenaApi } from '../elements/kits/SilenceKit';
+import { FearKit, FearArenaApi } from '../elements/kits/FearKit';
 import { FireKit, FireArenaApi } from '../elements/kits/FireKit';
 import { AirKit, AirArenaApi } from '../elements/kits/AirKit';
 import { GunpowderKit, GunpowderArenaApi } from '../elements/kits/GunpowderKit';
@@ -135,7 +135,7 @@ import { AstraKit, AstraArenaApi } from '../elements/kits/AstraKit';
 import { MemoryKit, MemoryArenaApi } from '../elements/kits/MemoryKit';
 import { StringKit, StringArenaApi } from '../elements/kits/StringKit';
 import { InkKit, InkArenaApi, InkHudCard } from '../elements/kits/InkKit';
-import { MagicKit, MagicArenaApi } from '../elements/kits/MagicKit';
+import { MathKit, MathArenaApi } from '../elements/kits/MathKit';
 import { TimeKit, TimeArenaApi } from '../elements/kits/TimeKit';
 import { PlasmaKit, PlasmaArenaApi } from '../elements/kits/PlasmaKit';
 import { MetalKit, MetalArenaApi } from '../elements/kits/MetalKit';
@@ -781,9 +781,9 @@ export class ArenaScene extends Phaser.Scene {
   private justiceGroundFills: AbilityBarEntry[] = [];
   private justiceFlightFills: AbilityBarEntry[] = [];
 
-  // ── Silence — managed by SilenceKit ──────────────────────────────
-  private silenceKit!: SilenceKit;
-  private silencePlayerYankUntil = 0; // read by movement lock, written by kit via api
+  // ── Fear (element id `silence`) — managed by FearKit ─────────────
+  private fearKit!: FearKit;
+  private fearPlayerYankUntil = 0; // read by movement lock, written by kit via api
   /** Bleed is a generic status (Amber mutation, husk statuses) — Hunt no longer applies it. */
   private playerBleeding = false;
   private playerBleedingUntil = 0;
@@ -855,8 +855,8 @@ export class ArenaScene extends Phaser.Scene {
   // ── Rubber — managed by RubberKit ────────────────────────────────
   private rubberKit!: RubberKit;
 
-  // ── Magic (abstract combined: slime + light) — managed by MagicKit ──
-  private magicKit!: MagicKit;
+  // ── Math (element id `magic`, abstract combined: slime + light) — managed by MathKit ──
+  private mathKit!: MathKit;
 
 
   // ── Echo (abstract combined: fate + light) kit ───────────────────────
@@ -954,9 +954,6 @@ export class ArenaScene extends Phaser.Scene {
   // ── Gravity mastery ─────────────────────────────────────────────────────
   private gravityMasteryOn = false;
 
-  // ── Magic mastery ────────────────────────────────────────────────────────
-  private magicMasteryOn = false;
-
   // ── Life mastery ──────────────────────────────────────────────────────
   private lifeMasteryOn = false;
 
@@ -969,7 +966,6 @@ export class ArenaScene extends Phaser.Scene {
   private subterfugeMasteryOn = false;
   private plasmaMasteryOn = false;
   private soundMasteryOn = false;
-  private silenceMasteryOn = false;
   private illusionMasteryOn = false;
   private duneMasteryOn = false;
   private passionMasteryOn = false;
@@ -1272,18 +1268,18 @@ export class ArenaScene extends Phaser.Scene {
       this.huntKit = new HuntKit(huntApi);
     }
 
-    // Silence kit construction / reset
-    this.silencePlayerYankUntil = 0;
-    if (this.silenceKit) {
-      this.silenceKit.reset();
+    // Fear kit (element id `silence`)
+    this.fearPlayerYankUntil = 0;
+    if (this.fearKit) {
+      this.fearKit.reset();
     } else {
       const arena = this;
-      const silenceApi: SilenceArenaApi = {
+      const fearApi: FearArenaApi = {
+        get scene(): Phaser.Scene { return arena; },
         get player() { return arena.player; },
         get npc() { return arena.npc; },
-        get scene() { return arena as Phaser.Scene; },
+        get enemies() { return arena.reachableEnemies; },
         get projectiles() { return arena.projectiles; },
-        get spaceKey() { return arena.keyFor('silence', arena.spaceKey); },
         get eKey() { return arena.keyFor('silence', arena.eKey); },
         get rKey() { return arena.keyFor('silence', arena.rKey); },
         get fKey() { return arena.keyFor('silence', arena.fKey); },
@@ -1292,35 +1288,23 @@ export class ArenaScene extends Phaser.Scene {
         get aKey() { return arena.aKey; },
         get sKey() { return arena.sKey; },
         get dKey() { return arena.dKey; },
-        get enemies() { return arena.reachableEnemies; },
-        get width() { return arena.scale.width; },
-        get height() { return arena.scale.height; },
+        get elementId() { return arena.liveElementFor('silence'); },
+        get npcElementId() { return arena.npcElement.id; },
+        get bounds() { return arena.physics.world.bounds; },
         get isOnline() { return arena.isOnline; },
         get isInvasion() { return arena.isInvasion; },
-        get masteryActive() { return arena.silenceMasteryOn && arena.playerIs('silence'); },
-        get npcMasteryActive() { return arena.npcMasteryOn && arena.npcElement.id === 'silence'; },
-        masteryBindFor: (slot) => arena.masteryBindForElement('silence', slot),
-        recordMasteryStat: (key, amount) => {
-          if (arena.playerIs('silence')) PlayerData.addMasteryStat('silence', key, amount);
-        },
-        setStatusIndicator: (id, status) => arena.setStatusIndicator(id, status),
-        broadcastMasteryCast: (enhId) => arena.broadcastMasteryCast(enhId),
-        sendHuskPuppet: (id, on, x, y) => arena.invasionCoopKit?.sendHuskPuppet(id, on, x, y),
-        applyNpcSpeedMult: (f) => { arena.npcSpeedMult *= f; },
-        setPlayerYankUntil: (t) => { arena.silencePlayerYankUntil = t; },
-        spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
-        showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
-        buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
-        buildNpcContext: (x, y) => arena.buildNpcContext(x, y),
-        hasUpgrade: (owner, slot) => owner === 'player'
-          ? arena.playerIs('silence') && arena.hasUpgradeFor('silence', slot)
-          : arena.isOnline && arena.npcElement.id === 'silence' && arena.npcUpgrades.includes(slot),
-        hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
-        sendSilenceMsg: (msg) => { if (arena.isOnline) Net.send(msg); },
-        silenceColor: (owner, base) => arena.skinsKit.silenceColor(owner, base),
+        get width() { return arena.scale.width; },
+        get height() { return arena.scale.height; },
+        get npcSlack() { return arena.npcDifficulty?.castSkipChance ?? 0; },
+        get abilityBars() { return arena.abilityBars; },
+        isTargetable: (f) => !arena.isInvasion || !(f instanceof Husk) || arena.invasionKit.isHuskTargetable(f),
+        fearColor: (owner, base) => arena.skinsKit.silenceColor(owner, base),
         skinId: (owner) => arena.skinsKit.skinId(owner),
+        buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
+        setPlayerYankUntil: (t) => { arena.fearPlayerYankUntil = Math.max(arena.fearPlayerYankUntil, t); },
+        broadcast: (id) => arena.broadcastMasteryCast(id),
       };
-      this.silenceKit = new SilenceKit(silenceApi);
+      this.fearKit = new FearKit(fearApi);
     }
 
     // Time kit reset
@@ -3579,58 +3563,33 @@ export class ArenaScene extends Phaser.Scene {
       };
       this.rubberKit = new RubberKit(rubberApi);
     }
-    // Magic kit
-    if (this.magicKit) {
-      this.magicKit.reset();
+    // Math kit (element id `magic`)
+    if (this.mathKit) {
+      this.mathKit.reset();
     } else {
       const arena = this;
-      const magicApi: MagicArenaApi = {
+      const mathApi: MathArenaApi = {
+        get scene(): Phaser.Scene { return arena; },
         get player() { return arena.player; },
         get npc() { return arena.npc; },
-        get isPlayerMagic() { return arena.playerIs('magic'); },
-        get isNpcMagic() { return arena.npcElement?.id === 'magic'; },
-        magicColor: (owner, base) => arena.skinsKit.magicColor(owner, base),
         get enemies() { return arena.reachableEnemies; },
-        get scene(): Phaser.Scene { return arena; },
-        get projectiles() { return arena.projectiles; },
         get eKey() { return arena.keyFor('magic', arena.eKey); },
-        get qKey() { return arena.keyFor('magic', arena.qKey); },
-        get fKey() { return arena.keyFor('magic', arena.fKey); },
         get rKey() { return arena.keyFor('magic', arena.rKey); },
-        get leftKey() { return arena.dummyLeftKey; },
-        get rightKey() { return arena.dummyRightKey; },
-        get nukeChanneling() { return arena.nukeChanneling; },
-        set nukeChanneling(v: boolean) { arena.nukeChanneling = v; },
-        get nukeChannelEnd() { return arena.nukeChannelEnd; },
-        set nukeChannelEnd(v: number) { arena.nukeChannelEnd = v; },
-        get npcNukeChanneling() { return arena.npcNukeChanneling; },
-        set npcNukeChanneling(v: boolean) { arena.npcNukeChanneling = v; },
-        get npcNukeChannelEnd() { return arena.npcNukeChannelEnd; },
-        set npcNukeChannelEnd(v: number) { arena.npcNukeChannelEnd = v; },
-        get playerSpeedMult() { return arena.playerSpeedMult; },
-        set playerSpeedMult(v: number) { arena.playerSpeedMult = v; },
-        get npcSpeedMult() { return arena.npcSpeedMult; },
-        set npcSpeedMult(v: number) { arena.npcSpeedMult = v; },
-        getSceneWidth: () => arena.scale.width,
-        getSceneHeight: () => arena.scale.height,
-        dealAoeDamageFromOwner: (x, y, r, d, o) => arena.dealAoeDamageFromOwner(x, y, r, d, o),
-        spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
-        showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
-        spawnDamageNumber: (x, y, a) => arena.spawnDamageNumber(x, y, a),
-        hasUpgrade: (slot) => arena.hasUpgradeFor('magic', slot),
-        hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
-        get masteryActive() { return arena.magicMasteryOn && arena.playerIs('magic'); },
-        masteryBindFor: (slot) => arena.masteryBindForElement('magic', slot),
-        broadcastMasteryCast: (enhId) => arena.broadcastMasteryCast(enhId),
-        recordMasteryStat: (key, amount) => {
-          if (arena.playerIs('magic')) PlayerData.addMasteryStat('magic', key, amount);
-        },
-        getMasteryStat: (key) => PlayerData.getMasteryStat('magic', key),
-        recordMasteryBestStat: (key, value) => {
-          if (arena.playerIs('magic')) PlayerData.recordMasteryBest('magic', key, value);
-        },
+        get fKey() { return arena.keyFor('magic', arena.fKey); },
+        get qKey() { return arena.keyFor('magic', arena.qKey); },
+        get elementId() { return arena.liveElementFor('magic'); },
+        get npcElementId() { return arena.npcElement.id; },
+        get bounds() { return arena.physics.world.bounds; },
+        get isOnline() { return arena.isOnline; },
+        get isInvasion() { return arena.isInvasion; },
+        get worldW() { return arena.scale.width; },
+        get npcSlack() { return arena.npcDifficulty?.castSkipChance ?? 0; },
+        isTargetable: (f) => !arena.isInvasion || !(f instanceof Husk) || arena.invasionKit.isHuskTargetable(f),
+        mathColor: (owner, base) => arena.skinsKit.magicColor(owner, base),
+        buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
+        broadcast: (id) => arena.broadcastMasteryCast(id),
       };
-      this.magicKit = new MagicKit(magicApi);
+      this.mathKit = new MathKit(mathApi);
     }
     // Technology kit
     if (this.techKit) {
@@ -3828,10 +3787,7 @@ export class ArenaScene extends Phaser.Scene {
           const target = owner === 'player' ? arena.npc : arena.player;
           arena.echoKit.doEclipse(target.x, target.y, owner);
         }),
-        magicNecronomicon: (owner) => foreign(() => {
-          if (owner === 'player') arena.magicKit.foreignOpenNecronomicon(arena.time.now);
-          else arena.magicKit.npcCastNecronomiconWedge(arena.player.x, arena.player.y);
-        }),
+        magicNecronomicon: (owner) => foreign(() => arena.mathKit.doFortyTwo(owner)),
         crystalClonePositions: (owner) => arena.crystalKit.getClonePositions(owner === 'player'),
         get masteryActive() { return arena.subterfugeMasteryOn && arena.playerIs('subterfuge'); },
         get npcMasteryActive() { return arena.npcMasteryOn && arena.npcElement.id === 'subterfuge'; },
@@ -4392,14 +4348,11 @@ export class ArenaScene extends Phaser.Scene {
         if (proj.texture.key === 'proj-ice') {
           this.iceKit.onIceSpikeHitPlayer(this.time.now);
         }
-        // Magic (NPC) Spur bur landed
-        if ((proj as any).isMagicThornVine && (proj as any).thornVineOwner === 'npc') {
-          this.magicKit.onThornVineHit(this.player, 'npc');
-        }
-        // Venom Poison Whip lash: one toxin (two at half coverage) on top of the hit above
-        if (proj.texture.key === 'proj-acid-whip') {
-          this.slimeKit.onWhipHit(this.player, proj);
-          // Corrosive Bite on the opponent's whip: the lash eats max HP too.
+        // Venom: a Shed Skin dart lays toxin; an Inject shot lays toxin, its poison and a puddle.
+        if (proj.texture.key === 'proj-acid-whip') this.slimeKit.onWhipHit(this.player, proj);
+        if (proj.texture.key === 'proj-venom-blob') {
+          this.slimeKit.onInjectHit(this.player, proj);
+          // Corrosive Dose on the opponent's gun: the shot eats max HP too.
           if (this.npcElement.id === 'slime' && this.hasNpcUpgrade('click')) this.player.reduceMaxHp(proj.damage);
         }
         // Gunpowder Corruption perk: an npc musket ball leaves rot in the player
@@ -4609,8 +4562,7 @@ export class ArenaScene extends Phaser.Scene {
           spawnDamageNumber: (x, y, a) => arena.spawnDamageNumber(x, y, a),
           showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
           endOnlineMatch: (won, reason) => arena.endOnlineMatch(won, reason),
-          isPlayerInvisible: () => (arena.playerIs('silence') && arena.silenceKit.isInvisible('player'))
-            || (arena.playerIs('technology') && (arena.techKit.isPlayerSheltered() || arena.techKit.isPlayerAdminInvisible()))
+          isPlayerInvisible: () => (arena.playerIs('technology') && (arena.techKit.isPlayerSheltered() || arena.techKit.isPlayerAdminInvisible()))
             // Devotion: carried off by the chariot.
             || (arena.playerIs('passion') && arena.passionKit.isRiding('player'))
             // Illusion: shrunk and hidden behind a Guise clone.
@@ -4619,10 +4571,10 @@ export class ArenaScene extends Phaser.Scene {
             || (arena.playerIs('depths') && arena.depthsKit.isCamoFull('player'))
             // Wax Mastery: standing in our own smoke.
             || arena.waxKit.isSmokeHidden('player'),
-          playerStealth: () => arena.playerIs('silence') ? arena.silenceKit.getStealth('player') : 0,
-          setRemoteStealth: (v) => arena.silenceKit.setNetStealth(v),
+          playerStealth: () => 0,
+          setRemoteStealth: () => {},
           onTechMsg: (msg) => arena.techKit.handleNetMsg(msg),
-          onSilenceMsg: (msg) => arena.silenceKit.handleNetMsg(msg),
+          onSilenceMsg: () => {},
           onIllusionMsg: (msg) => arena.illusionKit.handleNetMsg(msg),
         onPsychicMsg: (msg) => arena.psychicKit.handleNetMsg(msg),
         onPaintMsg: (msg) => arena.chalkKit.handleNetMsg(msg),
@@ -4777,13 +4729,10 @@ export class ArenaScene extends Phaser.Scene {
           unlockAchievement: (id) => arena.unlockAchievement(id),
           addFrostStackTo: (t) => arena.iceKit.addFrostStackTo(t),
           applyBleedVisual: (t) => arena.applyBleedVisualTo(t),
-          isSilencePlayerHidden: () => (arena.playerIs('silence')
-            && (arena.silenceKit.isInvisible('player') || arena.silenceKit.isRunChaseActive()))
-            // Wax Mastery — Smoke-out hides the player from husks the same way.
-            || arena.waxKit.isSmokeHidden('player'),
-          silenceStalkerHunt: () => arena.playerIs('silence')
-            && arena.silenceKit.isInvisible('player') && arena.silenceKit.stalkersAlive('player') > 0,
-          tryHitSilenceStalker: (x, y, r) => arena.silenceKit.tryHitStalker(x, y, r, 'husk'),
+          // Wax Mastery — Smoke-out hides the player from husks.
+          isSilencePlayerHidden: () => arena.waxKit.isSmokeHidden('player'),
+          silenceStalkerHunt: () => false,
+          tryHitSilenceStalker: () => false,
           huskTargetsView: (list) => arena.radiationKit.huskTargetsView(arena.illusionKit.huskTargetsView(list)),
           absorbDecoyHit: (t, amount) => arena.illusionKit.absorbDecoyHit(t, amount)
             || arena.radiationKit.absorbDecoyHit(t, amount),
@@ -5305,7 +5254,6 @@ export class ArenaScene extends Phaser.Scene {
     this.crystalMasteryOn = this.masteryOnFor('crystal');
     this.electricityMasteryOn = this.masteryOnFor('electricity');
     this.gravityMasteryOn = this.masteryOnFor('gravity');
-    this.magicMasteryOn = this.masteryOnFor('magic');
     this.creationMasteryOn = this.masteryOnFor('creation');
     this.fateMasteryOn = this.masteryOnFor('fate');
     this.rubberMasteryOn = this.masteryOnFor('rubber');
@@ -5317,7 +5265,6 @@ export class ArenaScene extends Phaser.Scene {
     this.huntMasteryOn = this.masteryOnFor('hunt');
     // Sound's old mastery (Audience Participation) may have left the flag on; the drum major's must be earned.
     this.soundMasteryOn = this.masteryOnFor('sound') && isMasteryComplete('sound');
-    this.silenceMasteryOn = this.masteryOnFor('silence');
     this.illusionMasteryOn = this.masteryOnFor('illusion');
     this.duneMasteryOn = this.masteryOnFor('dune');
     // The charmer's old mastery may have left the flag on; only the priest's completes it now.
@@ -5486,7 +5433,7 @@ export class ArenaScene extends Phaser.Scene {
       if (this.npcElement.id === 'gluttony') this.gluttonyKit.replayNet(enhId);
       return;
     }
-    // Venom: surfacing from Snake Burrow is a press, not a cast.
+    // Venom: surfacing from Burrow, pulling the bomb out and bursting it are presses, not casts.
     if (enhId.startsWith('acid-')) {
       if (this.npcElement.id === 'slime') this.slimeKit.replayNet(enhId);
       return;
@@ -5495,6 +5442,18 @@ export class ArenaScene extends Phaser.Scene {
     // ids never come through here — OnlineKit replays those as casts.)
     if (enhId.startsWith('pressure-')) {
       if (this.npcElement.id === 'pressure') this.pressureKit.replayNet(enhId);
+      return;
+    }
+    // Fear: the meter, the rune, the statues' secret and the maze. `fear-mp` (a maze position) comes
+    // back from whatever the victim is playing.
+    if (enhId.startsWith('fear-') && !this.npcElement.abilities.some((a) => a.id === enhId)) {
+      this.fearKit.replayNet(enhId);
+      return;
+    }
+    // Math: pillar counts, the ring's cursor and the exam's seed come from a Math opponent; the
+    // verdict on each of *our* exam's problems (`math-ans`) comes from whatever they are playing.
+    if (enhId.startsWith('math-') && !this.npcElement.abilities.some((a) => a.id === enhId)) {
+      this.mathKit.replayNet(enhId);
       return;
     }
     // Astra: the Q+ hold and its stars, the trial's result, R+'s second bolt, and the swap, the
@@ -5613,17 +5572,6 @@ export class ArenaScene extends Phaser.Scene {
       case 'starfall':
         if (this.npcElement.id === 'gravity') this.gravityKit.doNpcStarfall(tx, ty);
         break;
-      // Silence Mastery — Puppetmaster. The awakened moveset broadcasts one id per
-      // resolved action so this sim, which owns the possessed body, applies the same
-      // branch the puppeteer saw rather than re-deriving it from a cursor position.
-      case 'puppet-slash':
-      case 'puppet-bite':
-      case 'puppet-eat':
-      case 'puppet-cannibal':
-      case 'puppet-raise':
-      case 'puppet-slam':
-        if (this.npcElement.id === 'silence') this.silenceKit.doNpcPuppetAct(enhId, tx, ty);
-        break;
       case 'beastling':
         if (this.npcElement.id === 'hunt') this.huntKit.doNpcBeastling();
         break;
@@ -5682,9 +5630,6 @@ export class ArenaScene extends Phaser.Scene {
       // Air's Gust perk: the second R that teleports onto the glaive.
       case 'air-gust-recall':
         if (this.npcElement.id === 'air') this.airKit.doGustRecall('npc');
-        break;
-      case 'transmogrify':
-        if (this.npcElement.id === 'magic') this.magicKit.doNpcTransmogrify(tx, ty);
         break;
       case 'shadow-beacon':
         if (this.npcElement.id === 'shadow') this.shadowKit.doNpcShadowBeacon(tx, ty);
@@ -5824,7 +5769,7 @@ export class ArenaScene extends Phaser.Scene {
     const cardH = 48;
     // Hunt, Silence, Gunpowder, Justice and Myth (its Final Destiny guns) have extra abilities
     // beyond the first 5; only show 5 at a time.
-    const MULTI_FORM_ELEMENTS = ['hunt', 'silence', 'gunpowder', 'justice', 'myth', 'gum'];
+    const MULTI_FORM_ELEMENTS = ['hunt', 'silence', 'gunpowder', 'justice', 'myth', 'gum']; // `silence` is Fear
     const trayAbilities = (id: string): Ability[] => {
       // The player's own element may carry an alternate ultimate, so read the fighter's copy.
       const el = id === this.elementId ? this.playerElement : ELEMENT_MAP[id];
@@ -6110,10 +6055,10 @@ export class ArenaScene extends Phaser.Scene {
       'kinetic-discharge':  0xffaa00,
       'pain-battery':       0xdd8800,
       'restart':            0xffffff,
-      'poison-whip':        0x66cc44,
-      'vile-spray':         0x33ff33,
-      'snake-burrow':       0x448822,
-      'purge':              0x66ff33,
+      'venom-inject':       0x66cc44,
+      'pick-your-poison':   0xcc55ff,
+      'acid-reflux':        0x33ff33,
+      'venom-burrow':       0x448822,
       'acid-apocalypse':    0x225511,
       'fate-card-throw':   0x88eecc,
       'fate-side-shuffle': 0x44aacc,
@@ -6161,12 +6106,12 @@ export class ArenaScene extends Phaser.Scene {
       'rubber-bounce-form': 0xffaacc,
       'rubber-band':        0x222222,
       'rubberage':          0xff2244,
-      // Magic
-      'magic-sparkle-shot':  0xff99ff,
-      'magic-grimoire':      0x7a2edd,
-      'magic-anchor':        0xbb88ff,
-      'magic-meditate':      0xaa66ee,
-      'magic-necronomicon':  0x551188,
+      // Math
+      'math-crunch':    0x5ee6c8,
+      'math-integrate': 0x3fd0ae,
+      'math-rate':      0xff3b4e,
+      'math-derive':    0xffd866,
+      'math-42':        0xf2f6ea,
       // Technology
       'tech-cruncher': 0x33ff88,
       'tech-ads':      0x44ccaa,
@@ -6191,12 +6136,12 @@ export class ArenaScene extends Phaser.Scene {
       'growth-virus':      0x77dd33,
       'spore-spray':       0x338822,
       'auxiliary-growth':  0x88bb22,
-      // Silence (horror stealth remaster)
-      'silence-stab':   0x442255,
-      'silence-watch':  0x220033,
-      'silence-ritual': 0x881122,
-      'silence-feast':  0x445544,
-      'silence-run':    0x110016,
+      // Fear (element id `silence`)
+      'fear-phobia':         0x8f8a99,
+      'fear-grasp':          0x3a3640,
+      'fear-gaze':           0xc9b25a,
+      'fear-manifest':       0xb3521e,
+      'fear-claustrophobia': 0x8a1420,
       // Justice (divine) — gold on the ground, pale blue in the air
       'justice-stab':           0xc9a13a,
       'justice-coliseum':       0x9c9382,
@@ -6640,11 +6585,16 @@ export class ArenaScene extends Phaser.Scene {
       huntAdrenaline: () => this.huntKit.doAdrenaline('player'),
       huntGiveIn: () => this.huntKit.doGiveIn('player'),
       // Silence
-      silenceStab: (tx, ty) => { this.silenceKit.doStab(tx, ty, 'player'); },
-      silenceSummonStalker: (tx, ty) => { this.silenceKit.doSummonStalker(tx, ty, 'player'); },
-      silenceRitual: (tx, ty) => { this.silenceKit.doRitual(tx, ty, 'player'); },
-      silenceFeast: (tx, ty) => { this.silenceKit.doStalk(tx, ty, 'player'); },
-      silenceRun: (tx, ty) => { this.silenceKit.doRun(tx, ty, 'player'); },
+      fearPhobia: (tx, ty) => this.fearKit.doPhobia('player', tx, ty),
+      fearGrasp: (tx, ty) => this.fearKit.doGrasp('player', tx, ty),
+      fearGaze: () => this.fearKit.doGaze('player'),
+      fearManifest: () => this.fearKit.doManifest('player'),
+      fearClaustrophobia: () => this.fearKit.doClaustro('player'),
+      fearMassacre: (tx, ty) => this.fearKit.doMassacre('player', tx, ty),
+      fearHaunt: () => this.fearKit.doHaunt('player'),
+      fearSignature: () => this.fearKit.doSignature('player'),
+      fearDescent: () => this.fearKit.doDescent('player'),
+      fearFall: () => this.fearKit.doFall('player'),
       // Time
       timeBarrage: () => { /* firing handled in TimeKit.handleInput */ },
       timeWarp: (tx, ty) => this.timeKit.doTimeLasso(tx, ty, 'player'),
@@ -6717,12 +6667,12 @@ export class ArenaScene extends Phaser.Scene {
       rubberBounceForm: () => { this.rubberKit.doRubberBounceForm('player'); },
       rubberBandStart: () => { this.rubberKit.doRubberBandStart('player'); },
       rubberage: () => { this.rubberKit.doRubberage('player'); },
-      // Magic
-      magicSparkleShot: (tx, ty) => { this.magicKit.doSparkleShot(tx, ty, 'player'); },
-      magicOpenGrimoire: () => { /* handled in magicKit.handleInput */ },
-      magicAnchorToggle: (_tx, _ty) => { this.magicKit.doAnchorToggle('player'); },
-      magicMeditateBegin: () => { this.magicKit.doMeditateBegin('player'); },
-      magicOpenNecronomicon: () => { /* handled in magicKit.handleInput */ },
+      // Math
+      mathCrunch: (tx, ty) => this.mathKit.doCrunch('player', tx, ty),
+      mathIntegrate: () => this.mathKit.doIntegrate('player'),
+      mathRate: () => this.mathKit.doRate('player'),
+      mathDerive: () => this.mathKit.doDerive('player'),
+      mathFortyTwo: () => this.mathKit.doFortyTwo('player'),
       // Technology
       techCruncherFire: (tx, ty) => { this.techKit.doTechCruncherFire('player', tx, ty); },
       techAdsCast: () => { this.techKit.doTechAdsCast('player'); },
@@ -6894,10 +6844,10 @@ export class ArenaScene extends Phaser.Scene {
       inkSkedaddle: (tx, ty) => this.inkKit.doSkedaddle('player', tx, ty),
       inkAnvil: (tx, ty) => this.inkKit.doAnvil('player', tx, ty),
       inkFouxWorld: () => this.inkKit.doFouxWorld('player'),
-      acidWhip: (tx, ty) => this.slimeKit.doWhip('player', tx, ty),
-      acidSpray: (tx, ty) => this.slimeKit.doSpray('player', tx, ty),
+      acidInject: (tx, ty) => this.slimeKit.doInject('player', tx, ty),
+      acidPoison: (tx, ty) => this.slimeKit.doPoison('player', tx, ty),
+      acidBomb: (tx, ty) => this.slimeKit.doBomb('player', tx, ty),
       acidBurrow: () => this.slimeKit.doBurrow('player'),
-      acidBite: (tx, ty) => this.slimeKit.doBite('player', tx, ty),
       acidApocalypse: () => this.slimeKit.doApocalypse('player'),
       paperStorybook: (tx, ty) => this.paperKit.doStorybook('player', tx, ty),
       paperPlane: (tx, ty) => this.paperKit.doPlane('player', tx, ty),
@@ -7058,11 +7008,16 @@ export class ArenaScene extends Phaser.Scene {
       huntAdrenaline: () => this.huntKit.doAdrenaline('npc'),
       huntGiveIn: () => this.huntKit.doGiveIn('npc'),
       // Silence (NPC)
-      silenceStab: (tx, ty) => { this.silenceKit.doStab(tx, ty, 'npc'); },
-      silenceSummonStalker: (tx, ty) => { this.silenceKit.doSummonStalker(tx, ty, 'npc'); },
-      silenceRitual: (tx, ty) => { this.silenceKit.doRitual(tx, ty, 'npc'); },
-      silenceFeast: (tx, ty) => { this.silenceKit.doStalk(tx, ty, 'npc'); },
-      silenceRun: (tx, ty) => { this.silenceKit.doRun(tx, ty, 'npc'); },
+      fearPhobia: (tx, ty) => this.fearKit.doPhobia('npc', tx, ty),
+      fearGrasp: (tx, ty) => this.fearKit.doGrasp('npc', tx, ty),
+      fearGaze: () => this.fearKit.doGaze('npc'),
+      fearManifest: () => this.fearKit.doManifest('npc'),
+      fearClaustrophobia: () => this.fearKit.doClaustro('npc'),
+      fearMassacre: (tx, ty) => this.fearKit.doMassacre('npc', tx, ty),
+      fearHaunt: () => this.fearKit.doHaunt('npc'),
+      fearSignature: () => this.fearKit.doSignature('npc'),
+      fearDescent: () => this.fearKit.doDescent('npc'),
+      fearFall: () => this.fearKit.doFall('npc'),
       // Time (NPC)
       timeBarrage: () => { /* NPC revolver handled in TimeKit.update */ },
       timeWarp: (tx, ty) => this.timeKit.doTimeLasso(tx, ty, 'npc'),
@@ -7135,12 +7090,12 @@ export class ArenaScene extends Phaser.Scene {
       rubberBounceForm: () => { this.rubberKit.doRubberBounceForm('npc'); },
       rubberBandStart: () => { this.rubberKit.doRubberBandStart('npc'); },
       rubberage: () => { this.rubberKit.doRubberage('npc'); },
-      // Magic (NPC mirrors)
-      magicSparkleShot: (tx, ty) => { this.magicKit.doSparkleShot(tx, ty, 'npc'); },
-      magicOpenGrimoire: () => { this.magicKit.npcCastGrimoireWedge(this.player.x, this.player.y); },
-      magicAnchorToggle: (_tx, _ty) => { this.magicKit.doAnchorToggle('npc'); },
-      magicMeditateBegin: () => { this.magicKit.doMeditateBegin('npc'); },
-      magicOpenNecronomicon: () => { this.magicKit.npcCastNecronomiconWedge(this.player.x, this.player.y); },
+      // Math (NPC mirrors)
+      mathCrunch: (tx, ty) => this.mathKit.doCrunch('npc', tx, ty),
+      mathIntegrate: () => this.mathKit.doIntegrate('npc'),
+      mathRate: () => this.mathKit.doRate('npc'),
+      mathDerive: () => this.mathKit.doDerive('npc'),
+      mathFortyTwo: () => this.mathKit.doFortyTwo('npc'),
       // Technology
       techCruncherFire: (tx, ty) => { this.techKit.doTechCruncherFire('npc', tx, ty); },
       techAdsCast: () => { this.techKit.doTechAdsCast('npc'); },
@@ -7312,10 +7267,10 @@ export class ArenaScene extends Phaser.Scene {
       inkSkedaddle: (tx, ty) => this.inkKit.doSkedaddle('npc', tx, ty),
       inkAnvil: (tx, ty) => this.inkKit.doAnvil('npc', tx, ty),
       inkFouxWorld: () => this.inkKit.doFouxWorld('npc'),
-      acidWhip: (tx, ty) => this.slimeKit.doWhip('npc', tx, ty),
-      acidSpray: (tx, ty) => this.slimeKit.doSpray('npc', tx, ty),
+      acidInject: (tx, ty) => this.slimeKit.doInject('npc', tx, ty),
+      acidPoison: (tx, ty) => this.slimeKit.doPoison('npc', tx, ty),
+      acidBomb: (tx, ty) => this.slimeKit.doBomb('npc', tx, ty),
       acidBurrow: () => this.slimeKit.doBurrow('npc'),
-      acidBite: (tx, ty) => this.slimeKit.doBite('npc', tx, ty),
       acidApocalypse: () => this.slimeKit.doApocalypse('npc'),
       paperStorybook: (tx, ty) => this.paperKit.doStorybook('npc', tx, ty),
       paperPlane: (tx, ty) => this.paperKit.doPlane('npc', tx, ty),
@@ -7504,23 +7459,28 @@ export class ArenaScene extends Phaser.Scene {
       // Rubber stubs
       rubberPunch: () => {}, rubberSlingShotStart: () => {}, rubberSlingShotRelease: () => {},
       rubberBounceForm: () => {}, rubberBandStart: () => {}, rubberage: () => {},
-      // Magic — no-op stubs for raid
-      magicSparkleShot: () => {},
-      magicOpenGrimoire: () => {},
-      magicAnchorToggle: () => {},
-      magicMeditateBegin: () => {},
-      magicOpenNecronomicon: () => {},
+      // Math — no-op stubs for raid
+      mathCrunch: () => {},
+      mathIntegrate: () => {},
+      mathRate: () => {},
+      mathDerive: () => {},
+      mathFortyTwo: () => {},
       techCruncherFire: () => {},
       techAdsCast: () => {},
       techUploadCast: () => {},
       techWebDragCast: () => {},
       techAdminCast: () => {},
-      // Silence — no-ops for clone
-      silenceStab: () => {},
-      silenceSummonStalker: () => {},
-      silenceRitual: () => {},
-      silenceFeast: () => {},
-      silenceRun: () => {},
+      // Fear — no-ops for clone
+      fearPhobia: () => {},
+      fearGrasp: () => {},
+      fearGaze: () => {},
+      fearManifest: () => {},
+      fearClaustrophobia: () => {},
+      fearMassacre: () => {},
+      fearHaunt: () => {},
+      fearSignature: () => {},
+      fearDescent: () => {},
+      fearFall: () => {},
       subterfugeCutter: () => {},
       subterfugeSpray: () => {},
       subterfugeRecruit: () => {},
@@ -7679,10 +7639,10 @@ export class ArenaScene extends Phaser.Scene {
       inkSkedaddle: () => {},
       inkAnvil: () => {},
       inkFouxWorld: () => {},
-      acidWhip: () => {},
-      acidSpray: () => {},
+      acidInject: () => {},
+      acidPoison: () => {},
+      acidBomb: () => {},
       acidBurrow: () => {},
-      acidBite: () => {},
       acidApocalypse: () => {},
       depthsPiranha: () => {},
       depthsLungfish: () => {},
@@ -7941,8 +7901,6 @@ export class ArenaScene extends Phaser.Scene {
 
     // Death Mastery — Delay The Inevitable: three times as far for the eight seconds.
     const deathDash = this.playerIs('death') ? this.deathKit.getDodgeLengthMult() : 1;
-    // Venom — Serpentine: a serpent's dodge goes three times as far (and the tail drops out for it).
-    const venomDash = this.playerIs('slime') ? 3 : 1;
     // Water — Poseidon: the dodge is a wave you ride, longer and a touch faster.
     const waveRide = this.playerIs('water') && !bedrockLeap && !this.cardPsychoActive ? this.waterKit.startWaveRide() : null;
 
@@ -7955,7 +7913,7 @@ export class ArenaScene extends Phaser.Scene {
       playerBody.reset(Math.max(pad, Math.min(width - pad, mouseX)), Math.max(pad, Math.min(height - pad, mouseY)));
       playerBody.setVelocity(0, 0);
     } else {
-      const len = 520 * this.cardDodgeLengthMult * deathDash * venomDash * (waveRide?.speedMult ?? 1);
+      const len = 520 * this.cardDodgeLengthMult * deathDash * (waveRide?.speedMult ?? 1);
       playerBody.setVelocity(dx * len, dy * len);
     }
 
@@ -10637,7 +10595,7 @@ export class ArenaScene extends Phaser.Scene {
       shadow: (t, d) => { if (!skip('shadow')) this.shadowKit.update(t, d, false, false); },
       light: (t, d) => { if (!skip('light')) this.lightKit.update(t, d, false, false); },
       ice: (t, d) => { if (!skip('ice')) this.iceKit.update(t, d, false, false); },
-      silence: (t, d) => { if (!skip('silence')) this.silenceKit.update(t, d, false, false); },
+      silence: (t, d) => { if (!skip('silence')) this.fearKit.update(t, d); },
       sound: (t, d) => { if (!skip('sound')) this.soundKit.update(t, d, false, false); },
       magnet: (t, d) => { if (!skip('magnet')) this.magnetKit.update(t, d, false, false); },
       echo: (t, d) => { if (!skip('echo')) this.echoKit.update(t, d, false, false); },
@@ -10650,7 +10608,7 @@ export class ArenaScene extends Phaser.Scene {
       water: (t, d) => { if (!skip('water')) this.waterKit.update(t, d); },
       earth: (t, d) => { if (!skip('earth')) this.earthKit.update(t, d); },
       air: (t, d) => { if (!skip('air')) this.airKit.update(t, d); },
-      magic: (t, d) => { if (!skip('magic')) this.magicKit.update(t, d); },
+      magic: (t, d) => { if (!skip('magic')) this.mathKit.update(t, d); },
       soul: (t, d) => { if (!skip('soul')) this.soulKit.update(t, d); },
       hunt: (t, d) => { if (!skip('hunt')) this.huntKit.update(t, d); },
       sand: (t, d) => { if (!skip('sand')) this.timeKit.update(t, d); },
@@ -11124,11 +11082,11 @@ export class ArenaScene extends Phaser.Scene {
       this.playerSpeedMult = time < this.playerGeyserBuffUntil ? 1.5 : 1;
     }
 
-    // Silence: hallway/maze dread on a victim, plus Weep on a mastered Silence player.
-    // Pulled here rather than pushed from SilenceKit.update(), which runs after player
-    // movement has already resolved for the frame — see getPlayerSpeedMult().
+    // Fear: the slasher's crawl, Haunt and the haul on its user; cut legs and a cut head on its
+    // victim. Pulled here because FearKit.update() runs after movement has resolved.
     if (this.playerIs('silence') || this.npcElement.id === 'silence') {
-      this.playerSpeedMult *= this.silenceKit.getPlayerSpeedMult(time);
+      this.playerSpeedMult *= this.fearKit.getPlayerSpeedMult();
+      this.npcSpeedMult *= this.fearKit.getNpcSpeedMult();
     }
 
     this.npcSpeedMult = 1;
@@ -11360,18 +11318,8 @@ export class ArenaScene extends Phaser.Scene {
         this.showFloatingText(this.player.x, this.player.y - 30, '🩸 RAGE', '#cc2233');
       }
     }
-    // Silence slasher dread aura: kit applies via applyNpcSpeedMult / applyPlayerSpeedMult in update()
     // Card — Cripple: 15% slow on NPC for 2s after any player hit
     if (this.cardCrippleActive && time < this.cardCrippleSlowUntil) this.npcSpeedMult *= 0.70;
-    // Magic storm cloud slow + upgrade speed effects
-    if (this.playerIs('magic') || this.npcElement.id === 'magic') {
-      this.playerSpeedMult *= this.magicKit.getPlayerSlowMult();
-      this.npcSpeedMult *= this.magicKit.getNpcSlowMult();
-      if (this.playerIs('magic')) {
-        this.playerSpeedMult *= this.magicKit.getPlayerSpeedBoostMult();
-          this.npcSpeedMult *= this.magicKit.getNpcDark80SlowMult();
-      }
-    }
 
     // ── Online PvP: the slow the opponent's sim is applying to us ─────
     // Their machine owns every slow they land (see OnlineKit's `fx` mirror), so it is
@@ -11496,8 +11444,8 @@ export class ArenaScene extends Phaser.Scene {
     } else if (this.dreamKit.isPlayerLocked()) {
       // Asleep on the floor or resting in the oasis — neither is a state you walk out of.
       playerBody.setVelocity(0, 0);
-    } else if (time < this.silencePlayerYankUntil) {
-      // NPC silence yank in progress — keep yank velocity, block WASD override
+    } else if (time < this.fearPlayerYankUntil) {
+      // Fear has the body (fleeing, frozen, lunging, down the hole) — keep its velocity, block WASD
     } else if (this.mythKit.ownsPlayerMovement() && !this.isDodging) {
       // Final Destiny: WASD is forward/back/strafe relative to where the first-person camera looks.
       const moveMult = this.playerSpeedMult * this.gauntletSpeedMult
@@ -11573,11 +11521,6 @@ export class ArenaScene extends Phaser.Scene {
     const invasionDowned = !!this.invasionCoopKit?.isPlayerDowned()
       || (this.isInvasion && this.invasionKit.isPlayerDowned());
     if (invasionDowned) {
-      playerBody.setVelocity(0, 0);
-    }
-
-    // ── Magic thorn bind / prison (NPC cast) ─────────────────────
-    if ((this.playerIs('magic') || this.npcElement.id === 'magic') && this.magicKit.isPlayerBound(time) && !this.isDodging) {
       playerBody.setVelocity(0, 0);
     }
 
@@ -11680,16 +11623,13 @@ export class ArenaScene extends Phaser.Scene {
     } else if (this.elementId === 'rubber') {
       this.rubberKit.handleInput(time, pointer, mouseX, mouseY);
     } else if (this.elementId === 'magic') {
-      this.magicKit.handleInput(time, delta, pointer, mouseX, mouseY);
+      this.mathKit.handleInput(time, pointer, mouseX, mouseY);
     } else if (this.elementId === 'technology') {
       this.techKit.handleInput(time, pointer, mouseX, mouseY);
     } else if (this.elementId === 'echo') {
       this.echoKit.handleInput(time, delta, pointer, mouseX, mouseY);
     } else if (this.elementId === 'subterfuge') {
       this.subterfugeKit.handleInput(time, delta, pointer);
-      // Dark Treachery magic-Q copy: while the stolen necronomicon wheel is open,
-      // route input to MagicKit (its handleInput early-returns into wheel-driving).
-      if (this.magicKit.isNecroWheelOpen()) this.magicKit.handleInput(time, delta, pointer, mouseX, mouseY);
     } else if (this.elementId === 'earth') {
       this.earthKit.handleInput(time, delta, pointer, mouseX, mouseY);
     } else if (this.elementId === 'light') {
@@ -11767,7 +11707,7 @@ export class ArenaScene extends Phaser.Scene {
     } else if (this.elementId === 'passion') {
       this.passionKit.handleInput(time, pointer, mouseX, mouseY);
     } else if (this.elementId === 'silence') {
-      this.silenceKit.handleInput(time, pointer, mouseX, mouseY);
+      this.fearKit.handleInput(time, pointer, mouseX, mouseY);
     } else if (this.elementId === 'sand') {
       this.timeKit.handleInput(time, pointer, mouseX, mouseY);
     } else if (this.elementId === 'gravity') {
@@ -11951,7 +11891,7 @@ export class ArenaScene extends Phaser.Scene {
       && Phaser.Input.Keyboard.JustDown(this.spaceKey)
       // Clay's Slipstream (F+) banks dashes: a stored charge is the gate rather than the cooldown.
       && ((this.playerIs('clay') && this.hasUpgrade('f')) ? this.clayKit.hasSlipstreamCharge('player') : !this.dodgeOnCooldown)
-      && !this.isDodging && !this.clayKit.isLeaping('player') && !this.nukeChanneling && !this.cardSluggishDisableDodge && !this.silenceKit.isPlayerControlLost() && time >= this.player.highGravityUntil
+      && !this.isDodging && !this.clayKit.isLeaping('player') && !this.nukeChanneling && !this.cardSluggishDisableDodge && !this.fearKit.isPlayerControlLost() && time >= this.player.highGravityUntil
       && time >= this.player.mobilityBlockedUntil
       // Savor's Sugar Diffusion: low blood sugar takes the dodge away just after an ability.
       && time >= this.player.savorNoDodgeUntil) {
@@ -11971,7 +11911,7 @@ export class ArenaScene extends Phaser.Scene {
 
     // ── Echo Q+ Hypersense: auto-dodge incoming attacks during the 4s reveal ──
     if (this.playerIs('echo') && this.echoKit.isHypersenseActive() && !this.isDodging
-        && !this.nukeChanneling && !this.cardSluggishDisableDodge && !this.silenceKit.isPlayerControlLost()
+        && !this.nukeChanneling && !this.cardSluggishDisableDodge && !this.fearKit.isPlayerControlLost()
         && time >= this.echoHypersenseNextDodgeAt) {
       const threat = this.findHypersenseThreat();
       if (threat) {
@@ -11983,7 +11923,7 @@ export class ArenaScene extends Phaser.Scene {
 
     // ── NPC AI ───────────────────────────────────────────────────
     const aiState: NpcAiState = {
-      isLocked: this.npcNukeChanneling || this.npc.frozenUntil > time || (this.npc.magicChainBound && time < this.npc.magicChainBoundEnd) || time < this.silenceKit.getNpcYankUntil() || (this.airKit.isNpcHawkDragged() || this.airKit.isNpcSwept()) || (this.npcElement.id === 'rubber' && this.rubberKit.isBounceFormActive('npc')) || this.waterKit.isNpcSplit() || this.npc.chickenUntil > Date.now() || this.techKit.isNpcDragged() || this.crystalKit.isCarried(this.npc) || this.justiceKit.isLocked('npc') || this.justiceKit.isOnTrial(this.npc) || this.justiceKit.isBeingKicked(this.npc) || this.dreamKit.locksNpcAi() || this.sandKit.locksNpcAbilities() || this.fireKit.isSupernovaActive('npc') || this.marrowKit.locksNpc() || this.mythKit.isTrapped(this.npc),
+      isLocked: this.npcNukeChanneling || this.npc.frozenUntil > time || (this.npc.magicChainBound && time < this.npc.magicChainBoundEnd) || time < this.fearKit.getNpcYankUntil() || (this.airKit.isNpcHawkDragged() || this.airKit.isNpcSwept()) || (this.npcElement.id === 'rubber' && this.rubberKit.isBounceFormActive('npc')) || this.waterKit.isNpcSplit() || this.npc.chickenUntil > Date.now() || this.techKit.isNpcDragged() || this.crystalKit.isCarried(this.npc) || this.justiceKit.isLocked('npc') || this.justiceKit.isOnTrial(this.npc) || this.justiceKit.isBeingKicked(this.npc) || this.dreamKit.locksNpcAi() || this.sandKit.locksNpcAbilities() || this.fireKit.isSupernovaActive('npc') || this.marrowKit.locksNpc() || this.mythKit.isTrapped(this.npc),
       hasActiveGeyser: this.geysers.some((g) => g.owner === 'npc'),
       flameBodyActive: this.fireKit.isNpcFlameBodyActive(),
       // Fire: a charge that would light the bot's own booze around its target (Alcohol → R),
@@ -12052,7 +11992,7 @@ export class ArenaScene extends Phaser.Scene {
       npcGunpowderArsenalSize: this.gunpowderKit.getArsenalSize('npc'),
       // Radiation Mastery — X-Ray Vision: a radiologist bot sees an outline whether or not there is a body.
       targetInvisible: !this.radiationKit.seesInvisible('npc') && (
-        (this.playerIs('silence') && this.silenceKit.isInvisible('player'))
+        this.fearKit.npcBlinded()
         || (this.playerIs('technology') && (this.techKit.isPlayerSheltered() || this.techKit.isPlayerAdminInvisible()))
         || this.depthsKit.isCamoFull('player')
         // Paper Mastery — Restructure: there is no body there at all, only shards.
@@ -12061,17 +12001,19 @@ export class ArenaScene extends Phaser.Scene {
         || this.waxKit.hidesFrom('player', this.npc)
         // Myth Mastery — gone through the bot's own Wormhole.
         || this.mythKit.isTrapped(this.player)),
-      silenceStalkersPresent: this.playerIs('silence') && this.silenceKit.stalkersAlive('player') > 0,
-      npcSilenceStealth: this.silenceKit.getStealth('npc'),
-      npcSilenceStalkers: this.silenceKit.stalkersAlive('npc'),
-      npcSilenceMatureStalker: this.silenceKit.getMatureStalkerPos('npc'),
-      npcSilenceInvisible: this.npcElement.id === 'silence' && this.silenceKit.isInvisible('npc'),
-      npcSilenceTerrorFull: this.npcElement.id === 'silence' && this.silenceKit.isTerrorFull('npc'),
-      npcSilenceStriker: this.npcElement.id === 'silence' && this.silenceKit.isStriker('npc'),
-      npcSilenceSacrificeStab: this.silenceKit.getNpcSacrificeStabTarget() ?? undefined,
-      npcSilenceMutateWatcher: this.silenceKit.getNpcSeekerMutateTarget() ?? undefined,
-      npcSilenceStalkOpen: this.silenceKit.getNpcStalkOpen(),
-      npcSilenceBackstabAim: this.silenceKit.getNpcBackstabAim() ?? undefined,
+      fearObjective: this.fearKit.npcObjective() ?? undefined,
+      npcFearBusy: this.fearKit.npcFearBusy(),
+      npcFearSlasher: this.fearKit.isSlasher('npc'),
+      npcFearHaunting: this.fearKit.npcFearHaunting(),
+      npcFearDragTo: this.fearKit.npcFearDragTo() ?? undefined,
+      npcFearPhobias: this.fearKit.npcFearPhobias(),
+      npcFearManifestReady: this.fearKit.npcFearManifestReady(),
+      npcFearGraspAim: this.fearKit.npcFearGraspAim() ?? undefined,
+      npcFearGazeCovers: this.fearKit.npcFearGazeCovers(),
+      npcFearPhobiaSpot: this.fearKit.npcFearPhobiaSpot() ?? undefined,
+      npcFearClaustroOpen: this.fearKit.npcFearClaustroOpen(),
+      npcFearFodder: this.fearKit.npcFearFodder() ?? undefined,
+      npcFearShouldDescend: this.fearKit.npcFearShouldDescend(),
       echoAttachActive: this.npcElement.id === 'echo' ? this.echoKit.isNpcBatAttaching() : false,
       subMoney: this.npcElement.id === 'subterfuge' ? this.subterfugeKit.getNpcMoney() : 0,
       subBullets: this.npcElement.id === 'subterfuge' ? this.subterfugeKit.getNpcBullets() : 0,
@@ -12125,9 +12067,16 @@ export class ArenaScene extends Phaser.Scene {
       // The player's Guise: their shots are invisible, so there is nothing for a bot to dodge.
       playerShotsUnseen: this.playerIs('illusion') && this.illusionKit.isGuised('player'),
       npcIllusionMaskSlot: this.illusionKit.npcMaskSlot(),
-      // Magic: is there a patch of our own conjurations dense enough to be worth 15 Darkness?
-      // MagicKit owns the geometry and centres the field itself; this is only the go/no-go.
-      magicMeditating: (this.magicKit.npcDupePoint()?.count ?? 0) >= 2,
+      // Math: the kit owns the graph and the ring; these are its reads of what each key would do.
+      npcMathBusy: this.mathKit.npcMathBusy(),
+      npcMathPillars: this.mathKit.npcMathPillars(),
+      npcMathVolleyAim: this.mathKit.npcMathVolleyAim() ?? undefined,
+      npcMathRateCovers: this.mathKit.npcMathRateCovers(),
+      npcMathRateActive: this.mathKit.npcMathRateActive(),
+      npcMathIntegrateCovers: this.mathKit.npcMathIntegrateCovers(),
+      npcMathDeriveHits: this.mathKit.npcMathDeriveHits(),
+      npcMathDeriveCovers: this.mathKit.npcMathDeriveCovers(),
+      npcMathExamRunning: this.mathKit.npcMathExamRunning(),
       npcMagmaBloat: this.magmaKit.isBloatActive('npc'),
       npcMagmaVolcanoes: this.magmaKit.volcanoCount('npc'),
       npcLightTrickRamp: this.npcElement.id === 'light' && this.lightKit.npcTrickRampReady(),
@@ -12214,8 +12163,10 @@ export class ArenaScene extends Phaser.Scene {
       npcAcidBurrowReady: this.slimeKit.npcBurrowReady(),
       acidSeekPoint: this.slimeKit.npcAcidSeekPoint() ?? undefined,
       npcAcidApocalypseReady: this.slimeKit.npcApocalypseReady(),
-      npcAcidBiteReady: this.slimeKit.npcBiteReady(),
-      npcAcidSprayWorth: this.slimeKit.npcSprayWorth(),
+      npcAcidInjectReady: this.slimeKit.npcInjectReady(),
+      npcAcidBombShot: this.slimeKit.npcBombShotAim() ?? undefined,
+      npcAcidPoisonWorth: this.slimeKit.npcPoisonWorth(),
+      npcAcidBombWorth: this.slimeKit.npcBombWorth(),
       npcAcidShedSlot: this.slimeKit.npcShedSlot(),
       // Conquest: the bot has to physically stand on the square it means to build on, so its
       // build queue is a destination before it is ever a cast.
@@ -12478,11 +12429,6 @@ export class ArenaScene extends Phaser.Scene {
     if (this.playerIs('shadow')) {
       this.shadowKit.updateAfterAI(time, delta);
     }
-    // Magic Mastery — Transmogrify chicken wander (must run after doAI so it wins).
-    // Runs for either side so an opponent's chicken bolt wanders our local player online.
-    if (this.playerIs('magic') || this.npcElement.id === 'magic') {
-      this.magicKit.updateAfterAI(time, delta);
-    }
 
     // React to NPC casts that need ArenaScene state
     this.fireKit.handleNpcCastId(npcCastId, time);
@@ -12593,10 +12539,8 @@ export class ArenaScene extends Phaser.Scene {
       }
     }
 
-    // ── Silence per-frame ────────────────────────────────────────
-    if (this.playerIs('silence') || this.npcElement.id === 'silence') {
-      this.silenceKit.update(time, delta, this.playerIs('silence'), this.npcElement.id === 'silence');
-    }
+    // ── Fear per-frame (idles itself when nobody is playing it) ──
+    this.fearKit.update(time, delta);
 
     // ── Mutation effects per-frame ───────────────────────────────
     this.updateMutationEffects(time, delta);
@@ -12784,10 +12728,9 @@ export class ArenaScene extends Phaser.Scene {
       this.rubberKit.update(time, delta);
     }
 
-    // ── Magic per-frame ───────────────────────────────────────────
-    if (this.playerIs('magic') || this.npcElement.id === 'magic') {
-      this.magicKit.update(time, delta);
-    }
+    // Unconditional: a pillar in flight, a fuse, an exam or a stolen 42 outlives (or never had) a
+    // Math fighter, and the kit early-outs on its own when there is nothing left.
+    this.mathKit.update(time, delta);
 
     // ── Technology per-frame ──────────────────────────────────────
     if (this.playerIs('technology') || this.npcElement.id === 'technology') {
@@ -12881,7 +12824,7 @@ export class ArenaScene extends Phaser.Scene {
       // this is still the slot body's clamp.
       const allEnemies: Fighter[] = [this.npc];
       for (const e of allEnemies) {
-        if (!e.active || this.silenceKit.isCarriedByVulture(e)) continue;
+        if (!e.active) continue;
         let clamped = false;
         if (e.x < wb.x) { e.x = wb.x; clamped = true; }
         else if (e.x > wb.right) { e.x = wb.right; clamped = true; }
@@ -12929,8 +12872,6 @@ export class ArenaScene extends Phaser.Scene {
         entry.fill.setSize(entry.maxWidth * this.gravityKit.getStarfallCooldownRatio(time), entry.fill.height);
       } else if (entry.abilityId === 'crystal-shredder') {
         entry.fill.setSize(entry.maxWidth * this.crystalKit.getShredderCooldownRatio(time), entry.fill.height);
-      } else if (entry.abilityId === 'transmogrify') {
-        entry.fill.setSize(entry.maxWidth * this.magicKit.getTransmogrifyCooldownRatio(time), entry.fill.height);
       } else if (entry.abilityId === 'steel-shield') {
         entry.fill.setSize(entry.maxWidth * this.metalKit.getSteelShieldCooldownRatio(time), entry.fill.height);
       } else if (entry.abilityId === 'shed-skin') {
@@ -13073,8 +13014,9 @@ export class ArenaScene extends Phaser.Scene {
         entry.fill.setSize(entry.maxWidth * this.psychicKit.getBarRatio(entry.abilityId, time), entry.fill.height);
       } else if (entry.abilityId === 'unstable-orbital') {
         entry.fill.setSize(entry.maxWidth * this.plasmaKit.getOrbitalCooldownRatio(time), entry.fill.height);
-      } else if (entry.abilityId === 'puppetmaster') {
-        entry.fill.setSize(entry.maxWidth * this.silenceKit.getPuppetmasterCooldownRatio(time), entry.fill.height);
+      } else if (entry.abilityId.startsWith('fear-')) {
+        // As the slasher the five cards are the slasher's five keys; Manifest's fills with fear.
+        entry.fill.setSize(entry.maxWidth * this.fearKit.getBarRatio(entry.abilityId), entry.fill.height);
       } else if (entry.abilityId === 'tarot-of-fate') {
         entry.fill.setSize(entry.maxWidth * this.fateKit.getTarotCooldownRatio(time), entry.fill.height);
       } else if ((entry.abilityId === 'fate-dice-of-doom' || entry.abilityId === 'fate-cursed-talisman')
@@ -13117,16 +13059,7 @@ export class ArenaScene extends Phaser.Scene {
           ).setOrigin(0.5).setDepth(entry.fill.depth + 1);
         }
         entry.lockedIcon.setPosition(entry.fill.x, entry.fill.y);
-      } else if (entry.abilityId === 'magic-grimoire' && this.playerIs('magic') && this.magicKit.isThunderCharged('e')) {
-        entry.fill.setFillStyle(0xffee00, 0.55);
-        entry.fill.setSize(entry.maxWidth, entry.fill.height);
-      } else if (entry.abilityId === 'magic-necronomicon' && this.playerIs('magic') && this.magicKit.isThunderCharged('q')) {
-        entry.fill.setFillStyle(0xcc44ff, 0.55);
-        entry.fill.setSize(entry.maxWidth, entry.fill.height);
       } else {
-        if (entry.abilityId === 'magic-grimoire' || entry.abilityId === 'magic-necronomicon') {
-          entry.fill.setFillStyle(entry.baseFillColor ?? 0x4466aa, 0.45);
-        }
         entry.fill.setSize(entry.maxWidth * this.player.getCooldownRatio(entry.abilityId, entry.ability), entry.fill.height);
       }
     }
@@ -13321,10 +13254,6 @@ export class ArenaScene extends Phaser.Scene {
     if ((proj as any).fateInfectDps) {
       this.fateKit.applyPoison(target, (proj as any).fateInfectDps, this.time.now, (proj as any).fateInfectDurMs ?? 3000, (proj as any).fateLedgerId ?? 0);
     }
-    // Magic (player) Spur bur landed
-    if ((proj as any).isMagicThornVine && (proj as any).thornVineOwner === 'player') {
-      this.magicKit.onThornVineHit(target, 'player');
-    }
     // R+ Powerful Parry: fire DOT on NPC from rubber-reflected projectile
     // (kit-internal to the npc; reflected projectiles only exist in 1v1)
     const rubberParryFireDot = (proj as any).rubberParryFireDot as number | undefined;
@@ -13336,13 +13265,14 @@ export class ArenaScene extends Phaser.Scene {
       (proj as any).demonPierceLeft--;
       return;
     }
-    // Venom Poison Whip lash: toxin on top of the generic damage above
+    // Venom: a Shed Skin dart lays toxin; an Inject shot lays toxin, its poison and a puddle.
     if (proj.texture.key === 'proj-acid-whip') {
       this.slimeKit.onWhipHit(target, proj);
     }
-    // Corrosive Bite: Poison Whip hits also strip max HP equal to the damage dealt
-    if (proj.texture.key === 'proj-acid-whip' && this.hasUpgrade('click')) {
-      target.reduceMaxHp(_npcDmg);
+    if (proj.texture.key === 'proj-venom-blob') {
+      this.slimeKit.onInjectHit(target, proj);
+      // Corrosive Dose: Inject hits also strip max HP equal to the damage dealt
+      if (this.hasUpgradeFor('slime', 'click')) target.reduceMaxHp(_npcDmg);
     }
     proj.setActive(false).setVisible(false);
     (proj.body as Phaser.Physics.Arcade.Body).stop();
@@ -13401,8 +13331,8 @@ export class ArenaScene extends Phaser.Scene {
   ): number {
     const kits: SummonPurgeTarget[] = [
       this.conquestKit, this.soulKit, this.subterfugeKit, this.creationKit, this.huntKit,
-      this.growthKit, this.oilKit, this.crystalKit, this.silenceKit, this.shadowKit,
-      this.magicKit, this.soundKit, this.magmaKit, this.lifeKit, this.techKit, this.illusionKit,
+      this.growthKit, this.oilKit, this.crystalKit, this.fearKit, this.shadowKit,
+      this.soundKit, this.magmaKit, this.lifeKit, this.techKit, this.illusionKit,
       this.paperKit, this.sandKit, this.quantumCoreKit, this.clothKit, this.marrowKit, this.chalkKit, this.waxKit, this.clayKit,
       this.depthsKit, this.psychicKit, this.passionKit,
     ];
@@ -13428,7 +13358,7 @@ export class ArenaScene extends Phaser.Scene {
     // Rubber's uber, Depths' megalodon) are deliberately absent: none of those is a body.
     const kits: FormRevertTarget[] = [
       this.huntKit, this.justiceKit, this.earthKit, this.fireKit, this.clayKit,
-      this.magnetKit, this.slimeKit, this.lightKit, this.silenceKit, this.magicKit,
+      this.magnetKit, this.slimeKit, this.lightKit, this.fearKit,
       this.sandKit, this.creationKit, this.growthKit, this.illusionKit, this.psychicKit,
       this.clothKit,
     ];
@@ -13522,8 +13452,8 @@ export class ArenaScene extends Phaser.Scene {
   }
 
   private dealAoeDamageFromOwner(cx: number, cy: number, radius: number, damage: number, owner: 'player' | 'npc', except?: Fighter): void {
-    // Any AoE can wipe silence stalkers caught in the blast.
-    this.silenceKit.notifyAoeDamage(cx, cy, radius, owner);
+    // Any AoE can chip Fear's rune and its marble statues.
+    this.fearKit.notifyAoeDamage(cx, cy, radius, owner, damage);
     // ...and Conquest soldiers, who have no body of their own for the loops below to find.
     this.conquestKit.notifyAoeDamage(cx, cy, radius, owner, damage);
     // ...and an Illusion Guise clone, which banks the blast rather than taking it.

@@ -6,6 +6,7 @@ import { ART_ANVIL, FORGE_FISH, FORGE_FISHERIES, FORGE_ITEMS, FORGE_SCRIPTS, FOR
 import { FORGE_COLOR } from './palette';
 import { ANVIL_BOSS } from './prince';
 import { FORGE_QUESTS } from './quests';
+import { FALLEN } from './fallen';
 
 /**
  * The Forge Court — metal, tier 3 of Bedrock Hold, Prince Anvil the Unbending.
@@ -38,4 +39,5 @@ export const FORGE_COURT: CourtBundle = {
   shops: FORGE_SHOPS,
   fish: FORGE_FISH,
   fisheries: FORGE_FISHERIES,
+  fallen: FALLEN,
 };

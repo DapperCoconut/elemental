@@ -5,17 +5,18 @@ import { PRICE } from './prices';
 /**
  * Serpent's Gall — Venom's gene tree (element id `slime`).
  *
- * Venom is a serpent on a floor of acid: Poison Whip lashes toward the cursor (one cast per press,
- * every 400ms), Vile Spray lays three splashes that never dry, Snake Burrow dives into that acid
- * (only usable standing in it — the press is refused before any cooldown is paid, and surfacing
- * is free), Festering Bite purges and bites forward, and Acid Apocalypse rains on every cell of
- * acid you own. Three lines: **Fang** (the whip and the bite — the strike), **Fen** (the spray and
- * the burrow — the swamp you lay and live in) and **Scale** (the hide that comes through it, and
- * the rain).
+ * Venom is a plague doctor on a floor of acid: Inject fires blobs from a three-shot syringe gun
+ * (every 420ms), Pick Your Poison loads the next shot with one of four poisons, Acid Reflux is a
+ * bomb thrown on its second press (the cast is the throw), Burrow dives into the acid (only usable
+ * standing in it — the press is refused before any cooldown is paid — and comes up biting), and
+ * Acid Apocalypse rains on every cell of acid you own. Three lines: **Fang** (the gun and the
+ * dive — the strike), **Fen** (the vials and the bomb — the swamp you lay and live in) and
+ * **Scale** (the hide that comes through it, and the rain).
  *
- * The whip's window is 0.4s — the length of its own cooldown — so it can never stack on itself.
- * Burrow's speed window is 2s for the same reason. Toxin stacks are the kit's own arithmetic and
- * do not read status multipliers, so nothing here promises "more toxin".
+ * Grants are keyed by slot, so they followed the 2026-11-24 rework onto whatever sits on that key.
+ * Inject's window is 0.4s — about the length of its own cooldown — so it can never stack on
+ * itself. Toxin stacks are the kit's own arithmetic and do not read status multipliers, so
+ * nothing here promises "more toxin".
  */
 export const VENOM_GENE_TREE: GeneTree = {
   element: 'slime',
@@ -25,7 +26,7 @@ export const VENOM_GENE_TREE: GeneTree = {
     /** Fang root: every lash opens the skin a little wider for the next. */
     gene({
       id: 'gene-venom-hollow-fangs', name: 'Hollow Fangs', tier: 0, col: 0,
-      text: 'Poison Whip casts make the foe take +2% damage for 0.4s',
+      text: 'Inject casts make the foe take +2% damage for 0.4s',
       maxLevel: 4, cost: PRICE.root,
       grant: cast('click', (lv) => ({ damageMult: gain(0.02)(lv), ms: 400 })),
       mastery: {
@@ -37,12 +38,12 @@ export const VENOM_GENE_TREE: GeneTree = {
     /** Fen root: a mouthful spat on the floor buys time for everything else. */
     gene({
       id: 'gene-venom-spitting-glands', name: 'Spitting Glands', tier: 0, col: 1,
-      text: 'Vile Spray casts shave 300ms off every other cooldown',
+      text: 'Pick Your Poison casts shave 300ms off every other cooldown',
       maxLevel: 4, cost: PRICE.root,
       grant: cast('e', (lv) => ({ refundOthers: flat(300)(lv) })),
       mastery: {
         name: 'Second Gland', cost: PRICE.rootMastery,
-        text: 'Vile Spray casts have a 15% chance to come straight back — there was more in the sac',
+        text: 'Pick Your Poison casts have a 15% chance to come straight back — there was more in the vial',
         grant: onCast('e', { refundSelfChance: 0.15 }),
       },
     }),
@@ -63,24 +64,24 @@ export const VENOM_GENE_TREE: GeneTree = {
     /** Purging Bite: a foe stripped of every buff is a foe with nothing between it and you. */
     gene({
       id: 'gene-venom-purging-bite', name: 'Purging Bite', tier: 1, col: 0, needs: ['gene-venom-hollow-fangs'],
-      text: 'Festering Bite casts make the foe take +4% damage for 3s — as long as the shortest Purge',
+      text: 'Burrow casts make the foe take +4% damage for 3s — long enough to come up under them',
       maxLevel: 4, cost: PRICE.t1,
       grant: cast('f', (lv) => ({ damageMult: gain(0.04)(lv), ms: 3000 })),
       mastery: {
         name: 'Lockjaw', cost: PRICE.t1Mastery,
-        text: 'Festering Bite casts clamp down on everything close: 16 to all within 100px',
+        text: 'Burrow casts clamp down on everything close as you go under: 16 to all within 100px',
         grant: onCast('f', { burst: { damage: 16, radius: 100 } }),
       },
     }),
     /** Mire Stride: the serpent comes out of the acid moving. */
     gene({
       id: 'gene-venom-mire-stride', name: 'Mire Stride', tier: 1, col: 1, needs: ['gene-venom-spitting-glands'],
-      text: 'Snake Burrow casts make you 5% faster for 2s, on top of the burrow\'s own speed',
+      text: 'Acid Reflux casts make you 5% faster for 2s',
       maxLevel: 4, cost: PRICE.t1,
       grant: cast('r', (lv) => ({ speedMult: gain(0.05)(lv), ms: 2000 })),
       mastery: {
         name: 'Tunnel Network', cost: PRICE.t1Mastery,
-        text: 'Snake Burrow casts shave 300ms off every other cooldown — the fen is honeycombed with your runs',
+        text: 'Acid Reflux casts shave 300ms off every other cooldown — the fen is pocked with your craters',
         grant: onCast('r', { refundOthers: 300 }),
       },
     }),
@@ -113,12 +114,12 @@ export const VENOM_GENE_TREE: GeneTree = {
     /** Acid Bath: the serpent soaks in what would strip anyone else to the bone. */
     gene({
       id: 'gene-venom-acid-bath', name: 'Acid Bath', tier: 2, col: 1, needs: ['gene-venom-mire-stride'],
-      text: 'Vile Spray casts heal you 3 HP',
+      text: 'Pick Your Poison casts heal you 3 HP',
       maxLevel: 4, cost: PRICE.t2,
       grant: cast('e', (lv) => ({ heal: flat(3)(lv) })),
       mastery: {
         name: 'Slick Belly', cost: PRICE.t2Mastery,
-        text: 'Vile Spray casts make you 8% faster for 3s — you slide down your own spit',
+        text: 'Pick Your Poison casts make you 8% faster for 3s — a nip of your own tonic',
         grant: onCast('e', { speedMult: 1.08, ms: 3000 }),
       },
     }),
@@ -152,7 +153,7 @@ export const VENOM_GENE_TREE: GeneTree = {
     gene({
       id: 'gene-venom-bitter-cure', name: 'Bitter Cure', tier: 3, col: 1,
       needs: ['gene-venom-acid-bath', 'gene-venom-concentrated-toxin'],
-      text: 'Festering Bite casts heal you 3 HP',
+      text: 'Burrow casts heal you 3 HP',
       maxLevel: 4, cost: PRICE.cross,
       grant: cast('f', (lv) => ({ heal: flat(3)(lv) })),
       mastery: {

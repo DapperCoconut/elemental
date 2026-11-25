@@ -51,12 +51,16 @@ fate, creation, growth, rubber, acid, hunt, time; then the remainder). For each 
 4. **Synergy pass (mandatory)** — enumerate the kit's internal synergies ("X enables
    Y") and wire EACH as a kit-published `NpcAiState` opportunity field executed FIRST
    in the AI rotation. See the "Bot synergy contract" section in CLAUDE.md and the doc
-   comment on `NpcAiState`. Silence's three are the canon: `npcSilenceMatureStalker`
-   (ritual → grabber), `npcSilenceSacrificeStab` (stab through own stalker),
-   `npcSilenceMutateWatcher` (E+ seeker mutation, youngest-watcher / keep-two rule),
-   plus the Stalk pair (2026-10-15): `npcSilenceStalkOpen` (cast F when the target can
-   be held in the aura) → the mirror AI shadows them round to their back →
-   `npcSilenceBackstabAim` (stab from inside the Stalked target's back shadow).
+   comment on `NpcAiState`. Fear's are the current canon (Silence, whose fields these
+   replaced on 2026-11-24, no longer exists): `npcFearPhobiaSpot` (place a phobia just past
+   the target) → `npcFearGazeCovers` / `npcFearGraspAim` (the target is in a phobia's line
+   or reach) → `npcFearManifestReady` (50 fear banked) → as the slasher, `npcFearFodder`
+   (run an own phobia through for speed while the target is out of reach) and
+   `npcFearDragTo` (Haunt's hook has somebody on the chain: haul them onto the nearest
+   butcher's hook; `npcFearHaunting` also covers the hook's spin, when the bot must keep
+   walking at the target and press nothing). `fearObjective`
+   is the other direction: a bot *fighting* Fear is told where the rune or its chosen
+   statue is, and walks there instead of running its rotation.
 5. **Movement profile** — tune the element's `MOVEMENT_PROFILES` entry alongside the
    rewrite.
 
@@ -247,16 +251,22 @@ fate, creation, growth, rubber, acid, hunt, time; then the remainder). For each 
   by `NPC_MASTERY_BINDS`; planted at its feet, fed a spare soul). `npcBindIdolSlot` keeps the
   rotation off that key. Movement profile untouched.
 
-- **Venom / `slime` (2026-10-25), all five steps — rewritten with the Venom rework.** SlimeKit is
-  owner-aware throughout (`up(owner, slot)`, per-side grid/tail/burrow/rain/shed). Synergies, each a
-  kit-published `NpcAiState` field read first: `npcAcidBiteReady` (target inside the coverage-scaled
-  bite reach — the purge strips shields before the fangs land), `npcAcidApocalypseReady` (target
-  standing on the bot's acid), `npcAcidBurrowReady` + `acidSeekPoint` (R+ ambush: walk onto own acid,
-  go under, and the **kit surfaces the bot** within 80px of the target for the ×1.5 toxin blast),
-  `npcAcidSprayWorth` (spray the target's footing when it is off the bot's acid). `npcAcidBurrowed`
-  silences the rotation while under. Shed Skin (bound over R by `NPC_MASTERY_BINDS`) is **cast
-  kit-side** at a banked milestone within 220px; `npcAcidShedSlot` keeps the rotation off that key.
-  Profile `skirmisher [100, 240]`. The bot dodge is ×3 like the player's (Serpentine).
+- **Venom / `slime` (2026-11-24), all five steps — rewritten with the plague-doctor rework.** SlimeKit
+  is owner-aware throughout (`up(owner, slot)`, per-side grid/syringe/bomb/burrow/rain/shed).
+  Synergies, each a kit-published `NpcAiState` field read first: `npcAcidBombShot` (its own bomb is
+  in the air — Inject at the led point to burst it into cluster bombs), `npcAcidBurrowReady` +
+  `acidSeekPoint` (on its acid with a poison running or 12+ toxin on the target, or hurt: go under,
+  and the **kit surfaces the bot** inside the bite, which restores every debuff and multiplies
+  toxin), `npcAcidApocalypseReady` (target standing on the bot's acid), `npcAcidPoisonWorth` (nothing
+  loaded — the **kit picks the vial**: Purging against a shield, otherwise whichever poison is not
+  already running, Melting/Paralyzing only once there is acid for them), `npcAcidBombWorth` (no bomb
+  already flying). `npcAcidInjectReady` keeps clicks out of the 1s self-stab reload, and
+  `npcAcidBurrowed` silences the rotation while under. A bot throws the bomb on the one cast (no
+  held stage). Shed Skin (bound over F by `NPC_MASTERY_BINDS` — the bomb is what earns the
+  milestones, so the bot keeps it and gives up the burrow) is **cast kit-side** at a banked
+  milestone within 220px; `npcAcidShedSlot` keeps the rotation off that key. Profile
+  `skirmisher [100, 240]`. The ×3 Serpentine dodge is gone; a Paralyzed bot (`mobilityBlockedUntil`)
+  does not dodge at all.
 
 - **Savor / `gum` (2026-10-26, replaces Slime).** No upgrades or mastery, so steps 1–2 do not
   apply. Rotation `doSavorAbilities` rewritten for the two rows; profile `skirmisher [140, 320]`.
@@ -746,3 +756,15 @@ fate, creation, growth, rubber, acid, hunt, time; then the remainder). For each 
   rework.)
 - **`hasNpcUpgrade` semantics**: empty outside online matches and Hard+ solo 1v1 — do
   not re-add `isOnline` gates to anything downstream of it.
+
+## Math (element id `magic`) — rebuilt 2026-11-23
+
+Magic was replaced by Math (`MathKit`). `doMagicAbilities` reads only the kit's published fields:
+
+- `npcMathVolleyAim` — the pillar ring has closed on the target: throw the volley through that point (checked first, and not gated by `castSkipChance` — it is the bot's click).
+- `npcMathDeriveHits` — target stands on the graph: Derivitize's bombs land on them.
+- `npcMathRateCovers` / `npcMathRateActive` — target is under the graph: Rate of Pain.
+- `npcMathIntegrateCovers` / `npcMathDeriveCovers` — a rewrite would put the graph over a target that is not under it (set-up before Rate of Pain, rescue during it).
+- `npcMathPillars`, `npcMathExamRunning`, `npcMathBusy` (42's cutscene).
+
+The kit, not the AI, does the bot's sums (`BOT_SOLVE_MS` + slack from `castSkipChance`) and creeps its "cursor" after the target.

@@ -345,14 +345,38 @@ export const STATUS_DESCRIPTORS: StatusDescriptor[] = [
   },
   {
     id: 'toxin', name: 'Toxin', emoji: '🐍', color: 0x66dd22, priority: 41.9, kind: 'stack',
-    description: 'Venom. It never fades. 25+: 3 damage a second. 50+: you drip acid as you walk. 100+: you deal 20% less and burn for 5 a second. 250+: 50 max HP gone. 500+: another 100 max HP gone, 40% less damage dealt, 8 a second. 1000: dead.',
+    description: 'Venom. It never fades. Every stack makes each new negative effect on you last 2% longer — at the cap of 100, three times as long.',
     read: (f) => Math.floor(f.toxinStacks),
   },
   {
-    id: 'purged', name: 'Purged', emoji: '☠️', color: 0x99ff33, priority: 42, kind: 'timer',
-    description: 'Venom purge — every buff was stripped off you, and speed boosts stay suppressed while this lasts.',
+    id: 'purged', name: 'Purged', emoji: '☠️', color: 0xe8f4ff, priority: 42, kind: 'timer',
+    description: 'Purging poison — every positive effect is stripped off you and kept off, and speed boosts stay suppressed while this lasts.',
     read: (f) => f.purgedUntil,
     write: (f, t) => { f.purgedUntil = t; },
+  },
+  {
+    id: 'venom-rot', name: 'Disintegrating', emoji: '🧪', color: 0xff5533, priority: 42.1, kind: 'timer',
+    description: 'Disintegrating poison. 5 damage a second, and every tick makes you take 3% more damage (up to 15%) for 8 seconds.',
+    read: (f) => f.venomRotUntil,
+    write: (f, t) => { f.venomRotUntil = t; },
+  },
+  {
+    id: 'venom-vuln', name: 'Disintegrated', emoji: '🩻', color: 0xff7744, priority: 42.2, kind: 'timer',
+    description: 'Eaten through. Taking 3% more damage per tick of Disintegrating that landed, up to 15%. Every new tick restarts the clock.',
+    read: (f) => (f.venomVulnStacks > 0 ? f.venomVulnUntil : 0),
+    write: (f, t) => { f.venomVulnUntil = t; },
+  },
+  {
+    id: 'venom-paralyzed', name: 'Paralyzed', emoji: '🦵', color: 0xffdd33, priority: 42.3, kind: 'timer',
+    description: 'Paralyzing poison. Your dodge and every dash or leap in your abilities do nothing — the rest of the ability still happens. On the venom\'s acid you are slowed and the floor is slippery.',
+    read: (f) => f.venomParalyzedUntil,
+    write: (f, t) => { f.venomParalyzedUntil = t; },
+  },
+  {
+    id: 'venom-melting', name: 'Melting', emoji: '🫠', color: 0xcc55ff, priority: 42.4, kind: 'timer',
+    description: 'Melting poison. You take double damage while you stand on the venom\'s acid, and you drip puddles of it wherever you go.',
+    read: (f) => f.venomMeltingUntil,
+    write: (f, t) => { f.venomMeltingUntil = t; },
   },
   {
     id: 'heal-block', name: 'Heal Block', emoji: '💔', color: 0x992233, priority: 43, kind: 'timer',
@@ -947,7 +971,7 @@ export function clearDebuffs(f: Fighter): number {
 }
 
 /**
- * Venom's Purge: strip every buff a fighter is carrying, and report how many came off.
+ * Venom's Purging poison: strip every buff a fighter is carrying, and report how many came off.
  *
  * The mirror of {@link clearDebuffs}: every `timer` buff with a writer is expired, and the
  * protective pools — shield charges, shield HP, clotted, weak and sap HP, evasion — are emptied.

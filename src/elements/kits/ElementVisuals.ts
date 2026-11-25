@@ -164,6 +164,26 @@ export abstract class BaseAvatar {
    */
   static rigFilter: ((avatar: BaseAvatar, x: number, y: number) => boolean) | null = null;
 
+  /** Every rig that has been built and not destroyed — see {@link handsAt}. */
+  private static readonly rigs = new Set<BaseAvatar>();
+  private anchorX = NaN;
+  private anchorY = NaN;
+  private anchorShown = false;
+
+  /**
+   * The two hands of whichever visible rig in `scene` is standing on `(x, y)`, or null if no rig
+   * is. Lets one kit ask where *another* element's fighter is holding its hands (Fear's slasher
+   * cuts arms where the arms actually are) without the kits knowing about each other.
+   */
+  static handsAt(scene: Phaser.Scene, x: number, y: number): [{ x: number; y: number }, { x: number; y: number }] | null {
+    for (const a of BaseAvatar.rigs) {
+      if (a.scene !== scene || !a.anchorShown) continue;
+      if (Math.abs(a.anchorX - x) > 6 || Math.abs(a.anchorY - y) > 6) continue;
+      return [a.handPos(0), a.handPos(1)];
+    }
+    return null;
+  }
+
   private armObjs: Phaser.GameObjects.Container[] = [];
   private eyeObjs: { white: Phaser.GameObjects.Arc; pupil: Phaser.GameObjects.Arc }[] = [];
   /** Soft under-glow. Separate Graphics from `extras` because one Graphics has one depth. */
@@ -234,6 +254,7 @@ export abstract class BaseAvatar {
       this.eyeObjs.push({ white, pupil });
     }
     this.blinkAt = 1500 + Math.random() * 3000;
+    BaseAvatar.rigs.add(this);
   }
 
   /**
@@ -309,6 +330,9 @@ export abstract class BaseAvatar {
     this.orbit += dt * (this.intensity > 1 ? 2.4 : 0.35);
 
     const visible = alpha > 0.02 && (BaseAvatar.rigFilter === null || BaseAvatar.rigFilter(this, x, y));
+    this.anchorX = x;
+    this.anchorY = y;
+    this.anchorShown = visible;
     for (const c of this.armObjs) c.setVisible(visible);
     for (const e of this.eyeObjs) { e.white.setVisible(visible); e.pupil.setVisible(visible); }
 
@@ -391,6 +415,7 @@ export abstract class BaseAvatar {
   }
 
   destroy(): void {
+    BaseAvatar.rigs.delete(this);
     for (const c of this.armObjs) c.destroy();
     for (const e of this.eyeObjs) { e.white.destroy(); e.pupil.destroy(); }
     this.glow.destroy();

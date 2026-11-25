@@ -43,10 +43,10 @@ const NPC_MASTERY_BINDS: Record<string, { enhId: string; slot: MasterySlot }> = 
   sand: { enhId: 'time-bomb', slot: 'f' },
   // Magnet has no mastery since its 2026-10-15 scrap rework, so nothing to bind.
   growth: { enhId: 'syringe-shot', slot: 'f' },
-  // Venom keeps its bite and its ultimate; Shed Skin goes over the burrow.
-  slime: { enhId: 'shed-skin', slot: 'r' },
+  // Venom keeps its bomb (it is what earns the shed milestones) and its ultimate; Shed Skin goes over Burrow (F).
+  slime: { enhId: 'shed-skin', slot: 'f' },
   metal: { enhId: 'steel-shield', slot: 'f' },
-  magic: { enhId: 'transmogrify', slot: 'f' },
+  // Math (`magic`) has no mastery yet — it replaced Magic on 2026-11-23.
   creation: { enhId: 'mortar-command', slot: 'f' },
   rubber: { enhId: 'atom-nhilego', slot: 'f' },
   technology: { enhId: 'byte-bomb', slot: 'f' },

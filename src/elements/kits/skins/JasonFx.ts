@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { FxBase, TAU, easeIn, easeOut } from '../ElementVisuals';
-import { SILENCE, SilenceColorFn, fogBank, silenceEye } from '../SilenceVisuals';
+import { SILENCE, SilenceColorFn, fogBank, silenceEye } from './JasonLegacy';
 
 /**
  * The Jason skin's ability art for Silence. Visual only: every painter here is called from a

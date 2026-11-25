@@ -2,6 +2,7 @@ import type { CourtBundle } from '../../../../IslesTypes';
 import { WAR_AREA } from './area';
 import { WAR_ENCOUNTERS, WAR_GIMMICKS } from './encounters';
 import { WAR_FLOOR } from './floor';
+import { FALLEN } from './fallen';
 import { ART_BANNERET, WAR_FISH, WAR_FISHERIES, WAR_ITEMS, WAR_SCRIPTS, WAR_SHOPS } from './items';
 import { WAR_COLOR } from './palette';
 import { BANNERET_BOSS } from './prince';
@@ -37,4 +38,5 @@ export const WAR_COURT: CourtBundle = {
   shops: WAR_SHOPS,
   fish: WAR_FISH,
   fisheries: WAR_FISHERIES,
+  fallen: FALLEN,
 };

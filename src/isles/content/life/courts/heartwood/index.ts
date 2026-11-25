@@ -10,6 +10,7 @@ import { growthRingsGimmick } from './gimmicks/growthRings';
 import { woodpeckerGimmick } from './gimmicks/woodpecker';
 import { leafFallGimmick } from './gimmicks/leafFall';
 import { termitesGimmick } from './gimmicks/termites';
+import { FALLEN } from './fallen';
 
 /**
  * The Heartwood Court — Thornwild's tier-4 court, a city on a birch the size of a mountain.
@@ -42,4 +43,5 @@ export const HEARTWOOD_COURT: CourtBundle = {
   shops: HEARTWOOD_SHOPS,
   fish: HEARTWOOD_FISH,
   fisheries: HEARTWOOD_FISHERIES,
+  fallen: FALLEN,
 };

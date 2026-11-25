@@ -461,7 +461,7 @@ export class AcidFx extends FxBase {
   }
 
   /**
-   * Festering Bite: a snake's head lunging out along `angle` with its jaws gaping, then snapping
+   * The Burrow bite: a snake's head lunging out along `angle` with its jaws gaping, then snapping
    * shut at `reach`. Two hooked fangs lead each jaw and drip on the close; the bigger the stage,
    * the wider the gape and the longer the head. Drawn as one short animation over the caster.
    */
@@ -749,7 +749,7 @@ export class AcidFx extends FxBase {
 // ── AcidAura ──────────────────────────────────────────────────────────────
 
 export type AcidAuraStyle =
-  | 'burrow'     // Snake Burrow: submerged under a churning mound of acid
+  | 'burrow'     // Burrow: submerged under a churning mound of acid
   | 'breakdown'  // Mastery bindable: the body coming apart and leaking
   | 'melt'       // Meltdown: a victim visibly dissolving
   | 'purge';     // Purged: stripped bare, with the stolen buffs boiling off
@@ -888,6 +888,17 @@ export class AcidAvatar extends BaseAvatar {
   private tones: AcidTones;
   /** Drip timers for the crest ribbons — each one lets go on its own schedule. */
   private dripAt = 0;
+  /** The syringe gun: how full the barrel is (0–1), what is loaded, and the reload stab (0 = not reloading). */
+  private syringeFill = 1;
+  private syringeColor: number | null = null;
+  private stab = 0;
+
+  /** The kit reports the gun every frame: barrel fill, the loaded poison's colour (null = plain venom), reload progress 0–1 (0 when not reloading). */
+  setSyringe(fill: number, color: number | null, stab: number): void {
+    this.syringeFill = fill;
+    this.syringeColor = color;
+    this.stab = stab;
+  }
 
   constructor(scene: Phaser.Scene, tint: AcidColorFn, tones: AcidTones = VILE_TONES, depth = 6) {
     super(scene, tint, depth, ACID_AVATAR);
@@ -925,6 +936,12 @@ export class AcidAvatar extends BaseAvatar {
 
   /** Burrowed: hands pulled down under the surface, working low. */
   protected extraHoldPose(hold: ArmHold, side: number, idle: ArmPose): ArmPose | null {
+    // Reloading: the gun hand swings out wide, then drives the needle into the body and draws.
+    if (hold === 'gun' && side > 0 && this.stab > 0) {
+      const p = this.stab;
+      const out = p < 0.25 ? easeOut(p / 0.25) : p < 0.4 ? 1 - easeIn((p - 0.25) / 0.15) * 0.75 : 0.25;
+      return { ang: this.facing + 1.35, dist: 14 + out * 26, scale: idle.scale };
+    }
     if (hold !== 'brace') return null;
     const churn = Math.sin(this.t * 6 + side * 1.4);
     return {
@@ -995,6 +1012,86 @@ export class AcidAvatar extends BaseAvatar {
     g.fillCircle(x + 15, y + run * 6, 1.6 + run * 0.6);
     g.fillStyle(this.tint(this.tones.wet), 0.7 * alpha);
     g.fillCircle(x + 14.6, y - 0.4 + run * 6, 0.6);
+    this.drawPlagueMask(g, x, y, alpha);
+  }
+
+  /**
+   * The plague doctor's mask, strapped over the same dripping orb: a stitched leather face plate
+   * the eyes look out through (they are drawn over this layer, so they read as the lenses, each
+   * in a brass rim), and a long bone beak that swings round with the aim. Mastered, the beak is
+   * capped in gold and fumes from the tip.
+   */
+  private drawPlagueMask(g: Phaser.GameObjects.Graphics, x: number, y: number, alpha: number): void {
+    const m = this.mastered;
+    const leather = 0x241a12, seam = 0x5a4630, bone = 0xe2d9c0, boneShade = 0xa89c7e, brass = m ? 0xffd75a : 0xc9a24a;
+    const fx = Math.cos(this.facing), fy = Math.sin(this.facing);
+    // The face rides with the eyes (BaseAvatar's own placement), so the lenses always frame them.
+    const cx = x + fx * 2.4;
+    const cy = y - 4 + fy * 2 + Math.sin(this.t * 2.6) * 1.1;
+    // Straps round the orb, then the face plate.
+    g.lineStyle(2.4, leather, 0.9 * alpha);
+    g.beginPath();
+    g.arc(x, y - 1, 17.5, Math.PI * 1.05, Math.PI * 1.95, false);
+    g.strokePath();
+    g.fillStyle(leather, 0.97 * alpha);
+    g.fillEllipse(cx, cy + 1, 31, 17);
+    g.lineStyle(1, seam, 0.9 * alpha);
+    g.strokeEllipse(cx, cy + 1, 31, 17);
+    // Brass lens rims round the eyes.
+    for (const side of [-1, 1]) {
+      g.fillStyle(0x0a0d08, 0.9 * alpha);
+      g.fillCircle(cx + side * 7.2, cy, 5.6);
+      g.lineStyle(1.8, brass, alpha);
+      g.strokeCircle(cx + side * 7.2, cy, 5.8);
+    }
+    // The beak: a long bone cone from under the lenses, swinging with the aim and always drooping.
+    const px = 1, py = 0;
+    const bx = cx, by = cy + 5.5;
+    const tx = bx + fx * 25, ty = by + 15 + fy * 8;
+    const w = 6.6;
+    g.fillStyle(boneShade, alpha);
+    g.beginPath();
+    g.moveTo(bx + px * w, by + py * w * 0.7);
+    g.lineTo(tx, ty + 1.6);
+    g.lineTo(bx - px * w, by - py * w * 0.7);
+    g.closePath();
+    g.fillPath();
+    g.fillStyle(bone, alpha);
+    g.beginPath();
+    g.moveTo(bx + px * w * 0.35, by - 0.6);
+    g.lineTo(tx, ty);
+    g.lineTo(bx - px * w, by - 0.6);
+    g.closePath();
+    g.fillPath();
+    g.lineStyle(1, leather, 0.85 * alpha);
+    g.beginPath();
+    g.moveTo(bx + px * w, by + py * w * 0.7);
+    g.lineTo(tx, ty + 1.6);
+    g.lineTo(bx - px * w, by - py * w * 0.7);
+    g.strokePath();
+    // Stitches along the ridge, a breathing slit, and the brass collar where beak meets plate.
+    for (let i = 1; i <= 4; i++) {
+      const k = i / 5.5;
+      const sx = bx + (tx - bx) * k, sy = by + (ty - by) * k;
+      g.lineStyle(1, seam, 0.9 * alpha);
+      g.lineBetween(sx - px * 1.8, sy - py * 1.8 - 0.6, sx + px * 1.8, sy + py * 1.8 - 0.6);
+    }
+    g.lineStyle(1.2, 0x0a0d08, 0.8 * alpha);
+    g.lineBetween(bx + (tx - bx) * 0.3 + px * 2.6, by + (ty - by) * 0.3 + py * 2.2 + 1.5, bx + (tx - bx) * 0.55 + px * 1.6, by + (ty - by) * 0.55 + py * 1.4 + 1.5);
+    g.lineStyle(2.2, brass, alpha);
+    g.lineBetween(bx + px * w, by + py * w * 0.7, bx - px * w, by - py * w * 0.7);
+    if (m) {
+      // Gilded tip, and green fume leaking out of it.
+      g.fillStyle(brass, alpha);
+      const bl = Math.hypot(tx - bx, ty - by) || 1;
+      const ux = (tx - bx) / bl, uy = (ty - by) / bl;
+      g.fillTriangle(tx, ty + 1.2, tx - ux * 9 - uy * 2.6, ty - uy * 9 + ux * 2.6, tx - ux * 9 + uy * 2.6, ty - uy * 9 - ux * 2.6);
+    }
+    for (let i = 0; i < (m ? 3 : 1); i++) {
+      const p = (this.t * 0.7 + i / 3) % 1;
+      g.fillStyle(this.tint(this.tones.hot), (1 - p) * (m ? 0.55 : 0.3) * alpha);
+      g.fillCircle(tx + fx * 2 + Math.sin(this.t * 3 + i * 2) * 2.5, ty - p * 11, 1.4 + p * 2.6);
+    }
   }
 
   /**
@@ -1054,6 +1151,15 @@ export class AcidAvatar extends BaseAvatar {
       g.fillCircle(tx - 0.8, ty - 0.8, (0.6 + swell) * scale);
     }
 
+    // The syringe gun in the right hand: levelled along the aim, or turned on its owner to refill.
+    {
+      const hx = this.armX[1], hy = this.armY[1];
+      const stabbing = this.stab > 0;
+      const ang = stabbing ? Math.atan2(y - hy, x - hx) : this.facing;
+      const liquid = this.syringeColor ?? this.tint(this.mastered ? ACID.caustic : this.tones.hot);
+      drawSyringe(g, this.tint, hx, hy, ang, this.syringeFill, liquid, alpha, this.mastered, this.t);
+    }
+
     // Bubbles fizzing up off each hand.
     for (let i = 0; i < 2; i++) {
       for (let k = 0; k < 2; k++) {
@@ -1097,7 +1203,7 @@ export class AcidAvatar extends BaseAvatar {
   }
 }
 
-// ── Venom: the floor, the tail, the gauge ────────────────────────────────
+// ── Venom: the floor and the gauge ────────────────────────────────
 
 /** Small deterministic hash per cell, so a cell's wobble and sheen never crawl between repaints. */
 function cellHash(i: number, k = 0): number {
@@ -1187,110 +1293,9 @@ export function drawAcidBubbles(
   }
 }
 
-export interface TailKnot { x: number; y: number }
 
-/**
- * The serpent's tail: a scaled ribbon that tapers from the hips to a horned rattle, with a pale
- * belly line, a diamond scale pattern running down the back, and a wet highlight. `alpha` lets the
- * kit fade it out while dodging and `ghost` draws the sloughed skin Shed Skin leaves behind.
- */
-export function drawVenomTail(
-  g: Phaser.GameObjects.Graphics, tint: AcidColorFn, knots: TailKnot[], width: number, t: number,
-  tones: AcidTones, alpha = 1, ghost = false,
-): void {
-  const n = knots.length;
-  if (n < 2 || alpha <= 0.02) return;
-  const half = (i: number): number => width * (1 - (i / (n - 1)) * 0.78) * 0.5;
-  const side = (i: number, s: 1 | -1): { x: number; y: number } => {
-    const a = knots[Math.max(0, i - 1)];
-    const b = knots[Math.min(n - 1, i + 1)];
-    const ang = Math.atan2(b.y - a.y, b.x - a.x) + Math.PI / 2;
-    // A slow travelling undulation, so a standing serpent's tail still breathes.
-    const wob = Math.sin(t * 4 - i * 0.7) * Math.min(1, i / 3) * 1.6;
-    const w = half(i) * s + wob;
-    return { x: knots[i].x + Math.cos(ang) * w, y: knots[i].y + Math.sin(ang) * w };
-  };
-  const outline = (scale: number): Phaser.Math.Vector2[] => {
-    const pts: Phaser.Math.Vector2[] = [];
-    for (let i = 0; i < n; i++) {
-      const p = side(i, 1);
-      pts.push(new Phaser.Math.Vector2(knots[i].x + (p.x - knots[i].x) * scale, knots[i].y + (p.y - knots[i].y) * scale));
-    }
-    for (let i = n - 1; i >= 0; i--) {
-      const p = side(i, -1);
-      pts.push(new Phaser.Math.Vector2(knots[i].x + (p.x - knots[i].x) * scale, knots[i].y + (p.y - knots[i].y) * scale));
-    }
-    return pts;
-  };
-
-  if (ghost) {
-    // A sloughed skin: a pale, papery outline with the scale pattern still pressed into it.
-    g.fillStyle(tint(tones.wet), 0.18 * alpha);
-    g.fillPoints(outline(1), true);
-    g.lineStyle(1.4, tint(tones.wet), 0.55 * alpha);
-    g.strokePoints(outline(1), true);
-    g.lineStyle(1, tint(tones.live), 0.35 * alpha);
-    for (let i = 1; i < n - 1; i += 2) {
-      const l = side(i, 1), r = side(i, -1);
-      g.lineBetween(l.x, l.y, knots[i + 1].x, knots[i + 1].y);
-      g.lineBetween(r.x, r.y, knots[i + 1].x, knots[i + 1].y);
-    }
-    return;
-  }
-
-  // Shadow under the coil, then the scaled body, then the darker back.
-  g.fillStyle(0x000000, 0.22 * alpha);
-  g.fillPoints(outline(1.15).map((p) => new Phaser.Math.Vector2(p.x, p.y + 4)), true);
-  g.fillStyle(tint(tones.rind), alpha);
-  g.fillPoints(outline(1.08), true);
-  g.fillStyle(tint(tones.body), alpha);
-  g.fillPoints(outline(1), true);
-  g.fillStyle(tint(tones.live), 0.55 * alpha);
-  g.fillPoints(outline(0.45), true);
-
-  // Diamond scales down the spine: dark lozenges with a lit core, every other knot.
-  for (let i = 1; i < n - 2; i += 2) {
-    const a = knots[i], b = knots[i + 1];
-    const ang = Math.atan2(b.y - a.y, b.x - a.x);
-    const mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
-    const hw = half(i) * 0.55;
-    const hl = 6;
-    const ca = Math.cos(ang), sa = Math.sin(ang);
-    g.fillStyle(tint(tones.rind), 0.85 * alpha);
-    g.fillTriangle(mx + ca * hl, my + sa * hl, mx - sa * hw, my + ca * hw, mx + sa * hw, my - ca * hw);
-    g.fillTriangle(mx - ca * hl, my - sa * hl, mx - sa * hw, my + ca * hw, mx + sa * hw, my - ca * hw);
-    g.fillStyle(tint(tones.hot), 0.7 * alpha);
-    g.fillCircle(mx, my, Math.max(1, hw * 0.35));
-  }
-
-  // The wet highlight along one flank.
-  g.lineStyle(1.4, tint(tones.wet), 0.4 * alpha);
-  g.beginPath();
-  for (let i = 0; i < n - 1; i++) {
-    const p = side(i, 1);
-    const q = { x: knots[i].x + (p.x - knots[i].x) * 0.6, y: knots[i].y + (p.y - knots[i].y) * 0.6 };
-    if (i === 0) g.moveTo(q.x, q.y); else g.lineTo(q.x, q.y);
-  }
-  g.strokePath();
-
-  // The rattle: three stacked horn segments at the tip, shivering.
-  const tip = knots[n - 1], pre = knots[n - 2];
-  const ta = Math.atan2(tip.y - pre.y, tip.x - pre.x);
-  const shiver = Math.sin(t * 40) * 1.2;
-  for (let k = 0; k < 3; k++) {
-    const d = 3 + k * 5;
-    const cx = tip.x + Math.cos(ta) * d + Math.cos(ta + Math.PI / 2) * shiver;
-    const cy = tip.y + Math.sin(ta) * d + Math.sin(ta + Math.PI / 2) * shiver;
-    const r = 4.2 - k * 0.9;
-    g.fillStyle(tint(tones.rind), alpha);
-    g.fillEllipse(cx, cy, r * 2.4, r * 2.4);
-    g.fillStyle(tint(ACID.bile), 0.9 * alpha);
-    g.fillEllipse(cx, cy, r * 1.8, r * 1.8);
-  }
-}
-
-/** Toxin tiers in stack order — the gauge marks, the floating callouts and the kit all read this. */
-export const TOXIN_TIERS = [25, 50, 100, 250, 500, 1000];
+/** Toxin quarters (the cap is 100) — the mark on a poisoned body gains drips at each. */
+export const TOXIN_TIERS = [25, 50, 75, 100];
 
 /**
  * The toxin tell on a poisoned body: a ring of drips round the feet, one more drip per tier
@@ -1312,19 +1317,20 @@ export function drawToxinMark(
     const a = (i / drips) * TAU;
     const dx = x + Math.cos(a) * 14;
     const dy = y + Math.sin(a) * 6 - 8 + p * 22;
-    g.fillStyle(tint(tier >= 4 ? ACID.sting : tones.hot), (1 - p) * 0.85 * alpha * k);
+    g.fillStyle(tint(tier >= 4 ? ACID.white : tones.hot), (1 - p) * 0.85 * alpha * k);
     g.fillEllipse(dx, dy, 2.4, 3.6);
   }
 }
 
 /**
  * The acidification gauge across the top of the screen: a glass tube filling with acid, ticks at
- * the four Shed Skin milestones (lit once passed), and a marked 50% line where Poison Whip starts
- * dealing double toxin. Screen-space; the kit owns the Graphics.
+ * the four Shed Skin milestones (lit once passed), and red lines at the coverage where Acid
+ * Reflux's bomb grows. Screen-space; the kit owns the Graphics.
  */
 export function drawAcidBar(
   g: Phaser.GameObjects.Graphics, tint: AcidColorFn, x: number, y: number, w: number, h: number,
   coverage: number, t: number, tones: AcidTones, milestones: number[], reached: number,
+  marks: number[] = [],
 ): void {
   const k = Phaser.Math.Clamp(coverage, 0, 1);
   // The tube.
@@ -1348,10 +1354,12 @@ export function drawAcidBar(
       g.fillCircle(bx, y + h * (0.3 + 0.4 * ((i * 0.37) % 1)), 1.2);
     }
   }
-  // The 50% line: where the whip starts carrying double toxin.
-  const hx = x + w * 0.5;
-  g.lineStyle(2, tint(ACID.sting), k >= 0.5 ? 1 : 0.55);
-  g.lineBetween(hx, y - 5, hx, y + h + 5);
+  // Red lines: where Acid Reflux's bomb grows a size.
+  for (const mk of marks) {
+    const hx = x + w * mk;
+    g.lineStyle(2, tint(ACID.sting), k >= mk ? 1 : 0.55);
+    g.lineBetween(hx, y - 5, hx, y + h + 5);
+  }
   // Shed Skin milestones: diamonds, lit once passed.
   milestones.forEach((m, i) => {
     const mx = x + w * m;
@@ -1362,4 +1370,322 @@ export function drawAcidBar(
     g.lineStyle(1, tint(lit ? tones.wet : tones.body), 1);
     g.strokeTriangle(mx, y - 7, mx - 4, y - 2, mx + 4, y - 2);
   });
+}
+
+// ── Venom rework: the syringe gun, the four poisons, the bomb ─────────────
+
+/** The four poisons Pick Your Poison offers, in wheel order. `angle` is where the vial sits round the caster. */
+export const POISONS = [
+  { id: 'rot', name: 'DISINTEGRATING', color: 0xff5533, dark: 0x5a160a, angle: -Math.PI / 2 },
+  { id: 'para', name: 'PARALYZING', color: 0xffdd33, dark: 0x5c4a08, angle: 0 },
+  { id: 'purge', name: 'PURGING', color: 0xe8f4ff, dark: 0x4a5a6e, angle: Math.PI / 2 },
+  { id: 'melt', name: 'MELTING', color: 0xcc55ff, dark: 0x431260, angle: Math.PI },
+] as const;
+export type PoisonKind = 0 | 1 | 2 | 3;
+
+/** A filled quad in a rotated local frame: `a` runs along the angle, `p` across it. */
+function localQuad(
+  g: Phaser.GameObjects.Graphics, ox: number, oy: number, ca: number, sa: number,
+  a0: number, p0: number, a1: number, p1: number, a2: number, p2: number, a3: number, p3: number,
+): void {
+  g.beginPath();
+  g.moveTo(ox + ca * a0 - sa * p0, oy + sa * a0 + ca * p0);
+  g.lineTo(ox + ca * a1 - sa * p1, oy + sa * a1 + ca * p1);
+  g.lineTo(ox + ca * a2 - sa * p2, oy + sa * a2 + ca * p2);
+  g.lineTo(ox + ca * a3 - sa * p3, oy + sa * a3 + ca * p3);
+  g.closePath();
+  g.fillPath();
+}
+
+/**
+ * The syringe gun: a pistol grip under a brass-banded glass barrel, a plunger that rides in as
+ * the barrel empties, and a long needle with a bead swelling at its tip. `fill` is 0–1; the
+ * liquid is whatever is loaded.
+ */
+export function drawSyringe(
+  g: Phaser.GameObjects.Graphics, tint: AcidColorFn, hx: number, hy: number, ang: number,
+  fill: number, liquid: number, alpha: number, gilded: boolean, t: number,
+): void {
+  if (alpha <= 0.02) return;
+  const ca = Math.cos(ang), sa = Math.sin(ang);
+  const brass = gilded ? 0xffd75a : 0xc9a24a;
+  const k = Phaser.Math.Clamp(fill, 0, 1);
+  const at = (a: number, p: number): [number, number] => [hx + ca * a - sa * p, hy + sa * a + ca * p];
+  // Grip, under the barrel.
+  g.fillStyle(0x2c2016, alpha);
+  localQuad(g, hx, hy, ca, sa, 1, 3, 7, 3, 5, 11, -1, 10);
+  // Plunger: rod and thumb plate, further out the fuller the barrel.
+  const rod = -3 - 9 * k;
+  g.lineStyle(1.8, 0x8a8f94, alpha);
+  g.lineBetween(...at(rod, 0), ...at(2, 0));
+  g.lineStyle(2.6, brass, alpha);
+  g.lineBetween(...at(rod, -4), ...at(rod, 4));
+  // Barrel: glass with the load inside it.
+  g.fillStyle(0x0c120c, 0.75 * alpha);
+  localQuad(g, hx, hy, ca, sa, 2, -4.6, 25, -4.6, 25, 4.6, 2, 4.6);
+  if (k > 0.02) {
+    g.fillStyle(liquid, 0.95 * alpha);
+    localQuad(g, hx, hy, ca, sa, 24 - 20 * k, -3.4, 24, -3.4, 24, 3.4, 24 - 20 * k, 3.4);
+    // A bubble riding the meniscus.
+    const [bx, by] = at(24 - 20 * k + 2.4 + Math.sin(t * 5) * 0.8, -1);
+    g.fillStyle(ACID.white, 0.7 * alpha);
+    g.fillCircle(bx, by, 1);
+  }
+  g.fillStyle(ACID.white, 0.22 * alpha);
+  localQuad(g, hx, hy, ca, sa, 3, -4, 24, -4, 24, -2.2, 3, -2.2);
+  // Brass bands and graduations.
+  g.lineStyle(2, brass, alpha);
+  g.lineBetween(...at(2, -5.2), ...at(2, 5.2));
+  g.lineBetween(...at(25, -5.2), ...at(25, 5.2));
+  g.lineStyle(1, 0xdfe8e0, 0.6 * alpha);
+  for (const a of [8, 13, 18]) g.lineBetween(...at(a, 1.4), ...at(a, 4.2));
+  // Hub and needle.
+  g.fillStyle(brass, alpha);
+  localQuad(g, hx, hy, ca, sa, 25, -3, 29, -1.2, 29, 1.2, 25, 3);
+  g.lineStyle(1.5, 0xe6ecef, alpha);
+  g.lineBetween(...at(29, 0), ...at(40, 0));
+  if (k > 0.02) {
+    const swell = (t * 1.2) % 1;
+    const [dx, dy] = at(40.5, 0);
+    g.fillStyle(liquid, (1 - swell * 0.4) * alpha);
+    g.fillCircle(dx, dy + swell * 2.5, 0.9 + swell * 1.3);
+  }
+  void tint;
+}
+
+/** One poison vial: stoppered glass, the poison sloshing inside, and its own mark on the label. */
+export function drawPoisonVial(
+  g: Phaser.GameObjects.Graphics, x: number, y: number, kind: PoisonKind, scale: number, t: number, alpha: number,
+): void {
+  const p = POISONS[kind];
+  const w = 13 * scale, h = 20 * scale;
+  g.fillStyle(0x05080a, 0.35 * alpha);
+  g.fillEllipse(x, y + h * 0.62, w * 1.5, 5 * scale);
+  // Glass.
+  g.fillStyle(0x0e1414, 0.9 * alpha);
+  g.fillRoundedRect(x - w / 2, y - h / 2, w, h, 4 * scale);
+  // The poison, with a slosh line.
+  const level = 0.68 + Math.sin(t * 3 + kind * 1.7) * 0.05;
+  const top = y + h / 2 - h * level;
+  g.fillStyle(p.dark, alpha);
+  g.fillRoundedRect(x - w / 2 + 1.4 * scale, top, w - 2.8 * scale, y + h / 2 - top - 1.2 * scale, 3 * scale);
+  g.fillStyle(p.color, alpha);
+  g.fillRoundedRect(x - w / 2 + 1.4 * scale, top, w - 2.8 * scale, (y + h / 2 - top) * 0.6, 3 * scale);
+  for (let i = 0; i < 2; i++) {
+    const bp = (t * 0.9 + i * 0.5 + kind * 0.2) % 1;
+    g.fillStyle(ACID.white, (1 - bp) * 0.7 * alpha);
+    g.fillCircle(x + (i ? 2.5 : -2.5) * scale, y + h / 2 - 3 * scale - bp * h * 0.5, (0.8 + bp * 0.8) * scale);
+  }
+  g.lineStyle(1.3 * scale, 0xbfe0d0, 0.8 * alpha);
+  g.strokeRoundedRect(x - w / 2, y - h / 2, w, h, 4 * scale);
+  // Neck and cork.
+  g.fillStyle(0x0e1414, 0.9 * alpha);
+  g.fillRect(x - 3.2 * scale, y - h / 2 - 4 * scale, 6.4 * scale, 5 * scale);
+  g.lineStyle(1.2 * scale, 0xbfe0d0, 0.8 * alpha);
+  g.strokeRect(x - 3.2 * scale, y - h / 2 - 4 * scale, 6.4 * scale, 5 * scale);
+  g.fillStyle(0x9a6b3c, alpha);
+  g.fillRoundedRect(x - 3.8 * scale, y - h / 2 - 8 * scale, 7.6 * scale, 5 * scale, 1.5 * scale);
+  // The mark: cracks, a bolt, a cross, a drop.
+  g.lineStyle(1.5 * scale, 0x0a0a0a, 0.9 * alpha);
+  const my = y + 2 * scale;
+  if (kind === 0) {
+    g.lineBetween(x - 3 * scale, my - 3 * scale, x, my);
+    g.lineBetween(x, my, x - 1.5 * scale, my + 3.5 * scale);
+    g.lineBetween(x, my, x + 3 * scale, my + 1.5 * scale);
+  } else if (kind === 1) {
+    g.beginPath();
+    g.moveTo(x + 1.5 * scale, my - 4 * scale);
+    g.lineTo(x - 2 * scale, my + 0.5 * scale);
+    g.lineTo(x + 1.5 * scale, my + 0.5 * scale);
+    g.lineTo(x - 1.5 * scale, my + 4.5 * scale);
+    g.strokePath();
+  } else if (kind === 2) {
+    g.lineBetween(x - 3 * scale, my - 3 * scale, x + 3 * scale, my + 3 * scale);
+    g.lineBetween(x + 3 * scale, my - 3 * scale, x - 3 * scale, my + 3 * scale);
+  } else {
+    g.fillStyle(0x0a0a0a, 0.9 * alpha);
+    g.fillCircle(x, my + 1.5 * scale, 2.6 * scale);
+    g.fillTriangle(x, my - 4 * scale, x - 2.2 * scale, my + 0.5 * scale, x + 2.2 * scale, my + 0.5 * scale);
+  }
+}
+
+/**
+ * Pick Your Poison's wheel: four vials round the caster on a faint ring, the one the cursor
+ * leans toward swollen and haloed in its own colour, a tether running from it to the syringe.
+ */
+export function drawPoisonWheel(
+  g: Phaser.GameObjects.Graphics, x: number, y: number, radius: number, picked: PoisonKind, open: number, t: number,
+): void {
+  const k = easeOut(Phaser.Math.Clamp(open, 0, 1));
+  g.lineStyle(1.5, ACID.glow, 0.25 * k);
+  g.strokeCircle(x, y, radius * k);
+  for (let i = 0; i < 4; i++) {
+    const kind = i as PoisonKind;
+    const p = POISONS[kind];
+    const on = kind === picked;
+    const r = radius * k + (on ? 6 : 0);
+    const vx = x + Math.cos(p.angle) * r;
+    const vy = y + Math.sin(p.angle) * r + Math.sin(t * 2.4 + i * 1.6) * 2;
+    if (on) {
+      g.fillStyle(p.color, 0.22 * k);
+      g.fillCircle(vx, vy, 24 + Math.sin(t * 7) * 2);
+      g.lineStyle(2, p.color, 0.85 * k);
+      g.strokeCircle(vx, vy, 21);
+      g.lineStyle(1.6, p.color, 0.5 * k);
+      g.lineBetween(x + Math.cos(p.angle) * 22, y + Math.sin(p.angle) * 22, vx - Math.cos(p.angle) * 20, vy - Math.sin(p.angle) * 20);
+    }
+    drawPoisonVial(g, vx, vy, kind, (on ? 1.35 : 1) * k, t, k * (on ? 1 : 0.8));
+  }
+}
+
+/** The glow that rides a flying Inject blob: a wobbling skin in the load's colour and a bright core. */
+export function drawVenomBlob(
+  g: Phaser.GameObjects.Graphics, x: number, y: number, ang: number, color: number, dark: number, t: number, seed: number,
+): void {
+  const ca = Math.cos(ang), sa = Math.sin(ang);
+  // Tail, stretched out behind.
+  g.fillStyle(dark, 0.85);
+  g.fillTriangle(x - ca * 20, y - sa * 20, x - sa * 5.5, y + ca * 5.5, x + sa * 5.5, y - ca * 5.5);
+  g.fillStyle(dark, 0.9);
+  acidBlob(g, x, y, 9.5, t * 9 + seed, seed, 8);
+  g.fillStyle(color, 0.95);
+  acidBlob(g, x + ca * 1.2, y + sa * 1.2, 6.8, t * 11 + seed * 2, seed + 1.3, 7);
+  g.fillStyle(ACID.white, 0.85);
+  g.fillCircle(x + ca * 2.5 - sa * 2, y + sa * 2.5 + ca * 2 - 1, 1.8);
+  // Beads shaken loose behind it.
+  for (let i = 0; i < 2; i++) {
+    const p = (t * 3 + i * 0.5 + seed) % 1;
+    g.fillStyle(color, (1 - p) * 0.8);
+    g.fillCircle(x - ca * (14 + p * 16) + sa * (i ? 3 : -3), y - sa * (14 + p * 16) - ca * (i ? 3 : -3), 2.2 * (1 - p * 0.6));
+  }
+}
+
+/**
+ * Acid Reflux's bomb, in its three sizes. Tier 1 is a stoppered round flask of sloshing acid with
+ * a fizzing fuse. Tier 2 is banded in brass with a second chamber bubbling. Tier 3 is a spiked,
+ * cracked sphere glowing red-hot from inside. `spin` turns it in flight.
+ */
+export function drawAcidBomb(
+  g: Phaser.GameObjects.Graphics, tint: AcidColorFn, x: number, y: number, r: number, tier: number,
+  t: number, spin: number, tones: AcidTones, alpha = 1,
+): void {
+  const brass = 0xc9a24a;
+  g.fillStyle(0x05080a, 0.3 * alpha);
+  g.fillEllipse(x, y + r + 5, r * 1.9, r * 0.55);
+  if (tier >= 3) {
+    // Spikes first, so the shell overlaps their roots.
+    for (let i = 0; i < 8; i++) {
+      const a = spin + (i / 8) * TAU;
+      const ca = Math.cos(a), sa = Math.sin(a);
+      g.fillStyle(tint(tones.rind), alpha);
+      g.fillTriangle(x + ca * (r + 7), y + sa * (r + 7), x + ca * r * 0.8 - sa * 3.4, y + sa * r * 0.8 + ca * 3.4, x + ca * r * 0.8 + sa * 3.4, y + sa * r * 0.8 - ca * 3.4);
+    }
+    g.fillStyle(tint(ACID.sting), (0.22 + Math.sin(t * 9) * 0.08) * alpha);
+    g.fillCircle(x, y, r + 11);
+  }
+  // Shell, the acid inside it, the slosh line.
+  g.fillStyle(tint(tones.rind), alpha);
+  g.fillCircle(x, y, r);
+  g.fillStyle(tint(tones.body), alpha);
+  acidBlob(g, x, y + r * 0.18, r * 0.82, t * 4 + spin, 1.7, 9);
+  g.fillStyle(tint(tier >= 3 ? ACID.caustic : tones.live), alpha);
+  acidBlob(g, x, y + r * 0.3, r * 0.6, t * 5 + spin * 1.3, 3.1, 8);
+  for (let i = 0; i < 2 + tier; i++) {
+    const p = (t * 1.3 + i / (2 + tier)) % 1;
+    g.fillStyle(tint(tones.wet), (1 - p) * 0.8 * alpha);
+    g.fillCircle(x + Math.sin(i * 2.4 + spin) * r * 0.45, y + r * 0.55 - p * r * 0.9, 1 + p * 1.6);
+  }
+  if (tier >= 3) {
+    // Cracks glowing through.
+    g.lineStyle(1.6, tint(ACID.sting), 0.95 * alpha);
+    for (let i = 0; i < 3; i++) {
+      const a = spin * 0.6 + i * 2.1;
+      g.beginPath();
+      g.moveTo(x + Math.cos(a) * r * 0.2, y + Math.sin(a) * r * 0.2);
+      g.lineTo(x + Math.cos(a + 0.35) * r * 0.6, y + Math.sin(a + 0.35) * r * 0.6);
+      g.lineTo(x + Math.cos(a + 0.1) * r * 0.95, y + Math.sin(a + 0.1) * r * 0.95);
+      g.strokePath();
+    }
+  }
+  if (tier >= 2) {
+    // Brass bands, riveted.
+    g.lineStyle(2.2, brass, alpha);
+    g.strokeEllipse(x, y, r * 2, r * 0.7);
+    g.strokeEllipse(x, y, r * 0.7, r * 2);
+    for (let i = 0; i < 4; i++) {
+      const a = spin + (i / 4) * TAU;
+      g.fillStyle(0xfff0b0, alpha);
+      g.fillCircle(x + Math.cos(a) * r * 0.98, y + Math.sin(a) * r * 0.34, 1.3);
+    }
+  }
+  g.lineStyle(1.6, tint(tones.hot), 0.9 * alpha);
+  g.strokeCircle(x, y, r);
+  g.fillStyle(ACID.white, 0.5 * alpha);
+  g.fillEllipse(x - r * 0.4, y - r * 0.45, r * 0.5, r * 0.28);
+  // Cork and a spitting fuse.
+  const na = spin * 0.35 - Math.PI / 2;
+  const nx = x + Math.cos(na) * r, ny = y + Math.sin(na) * r;
+  g.fillStyle(0x9a6b3c, alpha);
+  g.fillCircle(nx, ny, 3.6 + tier * 0.4);
+  const fz = (t * 6) % 1;
+  g.lineStyle(1.4, 0x3a2a1a, alpha);
+  g.lineBetween(nx, ny, nx + Math.cos(na) * 7, ny + Math.sin(na) * 7);
+  g.fillStyle(tint(tier >= 3 ? ACID.sting : tones.wet), (1 - fz * 0.5) * alpha);
+  g.fillCircle(nx + Math.cos(na) * 8, ny + Math.sin(na) * 8, 1.6 + fz * 1.8);
+}
+
+/**
+ * What the three lingering poisons look like on a body (Purged has its own aura): red fissures
+ * crawling over a disintegrating one, yellow sparks locking a paralyzed one's legs, violet wax
+ * runs sagging off a melting one. `k` per effect is 0–1 strength (0 = not afflicted).
+ */
+export function drawAfflictions(
+  g: Phaser.GameObjects.Graphics, x: number, y: number, t: number, rot: number, vuln: number, para: number, melt: number,
+): void {
+  if (rot > 0 || vuln > 0) {
+    const n = 2 + Math.round(vuln * 5);
+    g.lineStyle(1.5, POISONS[0].color, 0.5 + 0.4 * Math.max(rot, vuln));
+    for (let i = 0; i < n; i++) {
+      const a = i * 2.39 + Math.floor(t * 2) * 0.7;
+      const r0 = 5, r1 = 15 + Math.sin(t * 6 + i) * 2;
+      g.beginPath();
+      g.moveTo(x + Math.cos(a) * r0, y + Math.sin(a) * r0);
+      g.lineTo(x + Math.cos(a + 0.4) * (r0 + r1) * 0.5, y + Math.sin(a + 0.4) * (r0 + r1) * 0.5);
+      g.lineTo(x + Math.cos(a - 0.1) * r1, y + Math.sin(a - 0.1) * r1);
+      g.strokePath();
+    }
+    if (rot > 0) {
+      for (let i = 0; i < 3; i++) {
+        const p = (t * 1.1 + i / 3) % 1;
+        g.fillStyle(POISONS[0].color, (1 - p) * 0.8);
+        g.fillRect(x - 12 + i * 11 + Math.sin(t * 4 + i) * 2, y + 6 + p * 16, 2.2, 2.2);
+      }
+    }
+  }
+  if (para > 0) {
+    g.lineStyle(1.6, POISONS[1].color, 0.85);
+    for (let i = 0; i < 3; i++) {
+      const a = (i / 3) * TAU + Math.floor(t * 9) * 1.3;
+      const bx = x + Math.cos(a) * 15, by = y + 13 + Math.sin(a) * 5;
+      g.beginPath();
+      g.moveTo(bx, by - 6);
+      g.lineTo(bx + 3, by - 2);
+      g.lineTo(bx - 2, by);
+      g.lineTo(bx + 2, by + 5);
+      g.strokePath();
+    }
+    g.lineStyle(1.2, POISONS[1].color, 0.45);
+    g.strokeEllipse(x, y + 14, 38, 13);
+  }
+  if (melt > 0) {
+    for (let i = 0; i < 5; i++) {
+      const p = (t * 0.8 + i * 0.21) % 1;
+      const dx = x - 13 + i * 6.5;
+      const top = y - 10 + Math.abs(i - 2) * 4;
+      g.fillStyle(POISONS[3].dark, 0.8);
+      g.fillRect(dx - 1.4, top, 2.8, 6 + p * 14);
+      g.fillStyle(POISONS[3].color, 0.9);
+      g.fillCircle(dx, top + 6 + p * 14, 2 + p * 1.2);
+    }
+  }
 }

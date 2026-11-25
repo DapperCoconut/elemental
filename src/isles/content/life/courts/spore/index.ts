@@ -6,6 +6,7 @@ import { SPORE_ENCOUNTERS } from './encounters';
 import { SPORE_QUESTS } from './quests';
 import { SPORE_GIMMICKS } from './gimmicks';
 import { MYCEL_BOSS } from './boss';
+import { FALLEN } from './fallen';
 import { SPORE_FISH, SPORE_FISHERIES, SPORE_ITEMS, SPORE_SCRIPTS, SPORE_SHOPS } from './items';
 
 /**
@@ -38,4 +39,5 @@ export const SPORE_COURT: CourtBundle = {
   shops: SPORE_SHOPS,
   fish: SPORE_FISH,
   fisheries: SPORE_FISHERIES,
+  fallen: FALLEN,
 };

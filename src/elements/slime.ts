@@ -4,48 +4,48 @@ import { Ability, CastContext } from './Ability';
 /**
  * Venom (element id `slime` — it was Acid, and Slime before that; the id never moved).
  *
- * A serpent whose long tail is part of its hitbox, and whose real weapon is toxin: stacks that
- * never fade and get worse at every tier until they kill outright at 1000. The floor is a grid of
- * acid cells, and how much of the arena it covers (the gauge across the top) feeds the whip, the
- * bite and the mastery.
+ * A plague doctor with a syringe gun. Its toxin does no harm of its own: every stack makes each
+ * new negative effect on the victim last 2% longer, up to three times as long at 100. The harm is
+ * in the four poisons it loads into the gun, and in the acid it trickles, bombs and rains across
+ * the floor.
  *
  * Every `cast` is a one-line delegate; the whole simulation lives in SlimeKit.
  */
 
-const poisonWhip: Ability = {
-  id: 'poison-whip',
-  name: 'Poison Whip',
-  description: 'A barrage of 15 acid lashes toward the cursor, 1 damage each — 20 while you stand in acid. Every lash lands 1 toxin; with half the arena acidified, 2.',
+const inject: Ability = {
+  id: 'venom-inject',
+  name: 'Inject',
+  description: 'Fire a blob of venom from the syringe gun: 12 damage and 2 toxin. It trickles acid as it flies and leaves a puddle under whoever it hits. Every third shot empties the barrel — you stab yourself to draw it full again. Hold to keep firing.',
   displayKey: 'Click',
-  cooldown: 400,
-  cast(ctx: CastContext) { ctx.acidWhip(ctx.targetX, ctx.targetY); },
+  cooldown: 420,
+  cast(ctx: CastContext) { ctx.acidInject(ctx.targetX, ctx.targetY); },
 };
 
-const vileSpray: Ability = {
-  id: 'vile-spray',
-  name: 'Vile Spray',
-  description: 'Spray three splashes of acid onto the floor ahead of you. Fresh acid nips whoever first walks over it; standing on any of your acid burns 1 a second and lands 3 toxin a second. It never dries.',
+const pickYourPoison: Ability = {
+  id: 'pick-your-poison',
+  name: 'Pick Your Poison',
+  description: 'Hold for four vials around you and release toward one to load your next Inject. Up — Disintegrating: 5 damage a second for 5s, each tick +3% damage taken (max 15%) for 8s. Right — Paralyzing: 8s of no dashes or dodges, slow and slipping on acid. Down — Purging: 8s with every positive effect stripped. Left — Melting: 8s of double damage on acid, dripping puddles.',
   displayKey: 'E',
-  cooldown: 6000,
-  cast(ctx: CastContext) { ctx.acidSpray(ctx.targetX, ctx.targetY); },
+  cooldown: 7000,
+  cast(ctx: CastContext) { ctx.acidPoison(ctx.targetX, ctx.targetY); },
 };
 
-const snakeBurrow: Ability = {
-  id: 'snake-burrow',
-  name: 'Snake Burrow',
-  description: 'Only usable while standing in acid. Burrow underground: invincible, +25% speed. Press again (or leave the acid) to surface.',
+const acidReflux: Ability = {
+  id: 'acid-reflux',
+  name: 'Acid Reflux',
+  description: 'Pull out an acid bomb; press again to throw it. It bursts on a wall or an enemy into a wide pool of acid — 25 damage, plus toxin that grows with how much of the arena is acid. Shoot it in the air with Inject and it sheds five cluster bombs. At 15% and 35% acid the bomb grows: 38 then 52 damage, and a bigger blast.',
   displayKey: 'R',
-  cooldown: 2000,
-  cast(ctx: CastContext) { ctx.acidBurrow(); },
+  cooldown: 9000,
+  cast(ctx: CastContext) { ctx.acidBomb(ctx.targetX, ctx.targetY); },
 };
 
-const festeringBite: Ability = {
-  id: 'festering-bite',
-  name: 'Festering Bite',
-  description: 'Bite forward: Purge strips every buff they have, then 15 damage and 12 toxin. With more of the arena acidified the bite reaches further and hits harder — 30 at 24%, 45 at 50% — and the Purge lasts 3s, 8s, then 15s.',
+const burrow: Ability = {
+  id: 'venom-burrow',
+  name: 'Burrow',
+  description: 'Only on your acid. Dive under it: invincible, +35% speed, no attacking. Press again — or run out of acid — to come up biting: 30 damage, every negative effect on them back to its full length, and their toxin up by 25%.',
   displayKey: 'F',
-  cooldown: 6000,
-  cast(ctx: CastContext) { ctx.acidBite(ctx.targetX, ctx.targetY); },
+  cooldown: 5000,
+  cast(ctx: CastContext) { ctx.acidBurrow(); },
 };
 
 const acidApocalypse: Ability = {
@@ -63,5 +63,5 @@ export const slimeElement: Element = {
   name: 'Venom',
   color: 0x66cc44,
   emoji: '🐍',
-  abilities: [poisonWhip, vileSpray, snakeBurrow, festeringBite, acidApocalypse],
+  abilities: [inject, pickYourPoison, acidReflux, burrow, acidApocalypse],
 };

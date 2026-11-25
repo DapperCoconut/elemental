@@ -66,7 +66,7 @@ const MOVEMENT_PROFILES: Record<string, MovementProfile> = {
   rubber:      { archetype: 'brawler',    range: [60, 170],  retreatHp: 0.15 },
   magic:       { archetype: 'zoner',      range: [240, 400], retreatHp: 0.32 },
   technology:  { archetype: 'zoner',      range: [260, 420], retreatHp: 0.32 },
-  silence:     { archetype: 'assassin',   range: [50, 150],  retreatHp: 0.22 },
+  silence:     { archetype: 'zoner',      range: [170, 320], retreatHp: 0.25 }, // Fear
   echo:        { archetype: 'skirmisher', range: [160, 300], retreatHp: 0.28 },
   subterfuge:  { archetype: 'skirmisher', range: [180, 320], retreatHp: 0.30 },
   justice:     { archetype: 'skirmisher', range: [140, 280], retreatHp: 0.25 },
@@ -273,28 +273,51 @@ export interface NpcAiState {
   npcRubberBandActive?: boolean;
   // Magic
   magicAnchorPlaced?: boolean;
-  magicMeditating?: boolean;
-  // Silence (remaster)
-  /** The NPC's target (usually the player) is invisible — wander, don't fight. */
+  // Math (element id `magic`) — MathKit's reads of what each key would do right now.
+  /** 42's cutscene is playing: nobody acts. */
+  npcMathBusy?: boolean;
+  /** Pillars circling the bot's creeping cursor (0–5). */
+  npcMathPillars?: number;
+  /** Set when the ring has closed on the target: throw the volley through this point. */
+  npcMathVolleyAim?: { x: number; y: number };
+  /** The target stands under the graph: Rate of Pain burns them. */
+  npcMathRateCovers?: boolean;
+  npcMathRateActive?: boolean;
+  /** Integrating would put the graph over the target. */
+  npcMathIntegrateCovers?: boolean;
+  /** The target stands on the graph: Derivitize's bombs land on them. */
+  npcMathDeriveHits?: boolean;
+  /** Differentiating would put the graph over the target. */
+  npcMathDeriveCovers?: boolean;
+  /** The bot's own exam is still being sat. */
+  npcMathExamRunning?: boolean;
+  // Fear (element id `silence`)
+  /** The NPC's target cannot be seen (Fear's slasher has cut its sight to a flashlight) — wander, don't fight. */
   targetInvisible?: boolean;
-  /** Invisible silence player has stalkers out — fire blindly to hunt them. */
-  silenceStalkersPresent?: boolean;
-  npcSilenceStealth?: number;
-  npcSilenceStalkers?: number;
-  npcSilenceMatureStalker?: { x: number; y: number } | null;
-  npcSilenceInvisible?: boolean;
-  /** R+ Night Terror: the bar is full, and a ritual cast on itself becomes the Striker. */
-  npcSilenceTerrorFull?: boolean;
-  /** Transformed: the click is a slash, E is Boggle, R is Allure — play it as a melee monster. */
-  npcSilenceStriker?: boolean;
-  /** Click+ synergy: stab AT this own stalker — the lane detonates it onto the adjacent player. */
-  npcSilenceSacrificeStab?: { x: number; y: number };
-  /** E+ synergy: re-cast Watch onto this own watcher to grow it into a seeker. */
-  npcSilenceMutateWatcher?: { x: number; y: number };
-  /** F synergy: the target is close enough to hold inside a Stalk aura — cast it now. */
-  npcSilenceStalkOpen?: boolean;
-  /** F → Click synergy: the target is Stalked and we are in their back shadow — stab here. */
-  npcSilenceBackstabAim?: { x: number; y: number };
+  /** Somewhere to walk to and hit instead of fighting: Fear's rune, or a Claustrophobia statue. */
+  fearObjective?: { x: number; y: number };
+  /** Mid-move (the maze, a frenzy, Signature Move): press nothing. */
+  npcFearBusy?: boolean;
+  /** Transformed: the keys are Massacre / Haunt / Signature Move / Shadowy Descent / They Will Fall. */
+  npcFearSlasher?: boolean;
+  npcFearHaunting?: boolean;
+  /** Fear: Haunt's hook → butcher's hook. Somebody is on the chain; walk here to hang them up. */
+  npcFearDragTo?: { x: number; y: number };
+  npcFearPhobias?: number;
+  /** Fear → Manifest: 50 fear is on the field. */
+  npcFearManifestReady?: boolean;
+  /** Phobia → Grasp: the target is in a phobia's reach — claw here. */
+  npcFearGraspAim?: { x: number; y: number };
+  /** Phobia → Gaze: the target stands in the line between a phobia and us. */
+  npcFearGazeCovers?: boolean;
+  /** Where the next phobia belongs (just past the target), or nothing if the set is good as it is. */
+  npcFearPhobiaSpot?: { x: number; y: number };
+  /** Phobias → Claustrophobia: enough statues that one will be occupied. */
+  npcFearClaustroOpen?: boolean;
+  /** Slasher: an own phobia in machete reach with the target out of it — cut it down for the speed. */
+  npcFearFodder?: { x: number; y: number };
+  /** Slasher: the form has run its course — sink back. */
+  npcFearShouldDescend?: boolean;
   // Echo — no persistent ai state needed
   echoAttachActive?: boolean;
   // Quantum
@@ -613,16 +636,20 @@ export interface NpcAiState {
   // Venom (id `slime`)
   /** Under the acid: the kit surfaces the bot itself when it reaches its target. */
   npcAcidBurrowed?: boolean;
-  /** On its own acid, with a reason to go under (R+ ambush, or hurt). */
+  /** On its own acid, with a reason to go under (a bite that restores what is on the target, or hurt). */
   npcAcidBurrowReady?: boolean;
   /** Burrow is wanted but the bot is off its acid: the nearest cell of its own. */
   acidSeekPoint?: { x: number; y: number };
   /** The target is standing on the bot's acid — Acid Apocalypse lands on them. */
   npcAcidApocalypseReady?: boolean;
-  /** The target is inside Festering Bite's (coverage-scaled) reach. */
-  npcAcidBiteReady?: boolean;
-  /** Vile Spray is worth a cast: the target is off the bot's acid, or a coverage milestone is near. */
-  npcAcidSprayWorth?: boolean;
+  /** The syringe has a shot in it (not mid self-stab). */
+  npcAcidInjectReady?: boolean;
+  /** Synergy: the bot's own bomb is in the air — shoot here to burst it into clusters. */
+  npcAcidBombShot?: { x: number; y: number };
+  /** No poison is loaded: Pick Your Poison is worth the press (the kit picks the vial). */
+  npcAcidPoisonWorth?: boolean;
+  /** No bomb of the bot's is already flying. */
+  npcAcidBombWorth?: boolean;
   /** Venom Mastery: the slot Shed Skin was bound over (the kit casts it). */
   npcAcidShedSlot?: string;
 
@@ -1139,8 +1166,9 @@ export class NpcOpponent extends Fighter {
     if (this.lastChargeDecision < 0) this.lastChargeDecision = time;
 
     // ── Invisible target (Silence): wander naturally instead of fighting ──
+    if (aiState.fearObjective) return this.doFearObjective(aiState.fearObjective, buildContext);
     if (aiState.targetInvisible) {
-      return this.doBlindBehavior(buildContext, time, aiState.silenceStalkersPresent ?? false);
+      return this.doBlindBehavior(buildContext, time, false);
     }
 
     const dist = Phaser.Math.Distance.Between(this.x, this.y, target.x, target.y);
@@ -1220,7 +1248,8 @@ export class NpcOpponent extends Fighter {
       body.setVelocity(this.trueDodgeVx, this.trueDodgeVy);
       dodging = true;
     }
-    if (!dodging && this.difficulty.dodgeRange > 0 && !aiState.playerShotsUnseen && time >= this.savorNoDodgeUntil) {
+    if (!dodging && this.difficulty.dodgeRange > 0 && !aiState.playerShotsUnseen && time >= this.savorNoDodgeUntil
+        && this.scene.time.now >= this.mobilityBlockedUntil) {
       const projs = aiState.projectiles.getChildren();
       for (const go of projs) {
         if (!(go instanceof Projectile)) continue;
@@ -1249,8 +1278,7 @@ export class NpcOpponent extends Fighter {
         // sidestep into a committed dash — it clears the lane instead of drifting
         // out of it, and then holds that heading for the length of the dash.
         if (this.trueNightmare && time >= this.nextTrueDodgeAt) {
-          // Venom's Serpentine: a serpent's dodge carries three times as far.
-          const dash = this.speed * TRUE_DODGE_SPEED_MULT * (this.element.id === 'slime' ? 3 : 1);
+          const dash = this.speed * TRUE_DODGE_SPEED_MULT;
           // Away from the arena wall it is nearest, so a dash never pins it flat.
           const wb = this.scene.physics.world.bounds;
           const side = (this.y - wb.centerY) * (vx / speed) - (this.x - wb.centerX) * (vy / speed) > 0 ? -1 : 1;
@@ -1262,7 +1290,7 @@ export class NpcOpponent extends Fighter {
           dodging = true;
           break;
         }
-        const dodgeSpeed = this.speed * (this.difficulty.level >= 5 ? 1.3 : 1.05) * (this.element.id === 'slime' ? 3 : 1);
+        const dodgeSpeed = this.speed * (this.difficulty.level >= 5 ? 1.3 : 1.05);
         body.setVelocity(-vy / speed * dodgeSpeed, vx / speed * dodgeSpeed);
         dodging = true;
         break;
@@ -1429,7 +1457,7 @@ export class NpcOpponent extends Fighter {
       }
     }
 
-    // ── Venom: walking onto its own acid to go under (Snake Burrow needs acid underfoot) ──
+    // ── Venom: walking onto its own acid to go under (Burrow needs acid underfoot) ──
     if (aiState.acidSeekPoint) {
       const seek = aiState.acidSeekPoint;
       const d = Phaser.Math.Distance.Between(this.x, this.y, seek.x, seek.y);
@@ -1745,7 +1773,7 @@ export class NpcOpponent extends Fighter {
       return this.doTechnologyAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
     }
     if (this.element.id === 'silence') {
-      return this.doSilenceAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
+      return this.doFearAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
     }
     if (this.element.id === 'echo') {
       return this.doEchoAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
@@ -3854,13 +3882,13 @@ export class NpcOpponent extends Fighter {
   private justiceNextStanceAt = 0;
 
   /**
-   * Venom. The kit computes every opportunity (acid underfoot, the bite's coverage-scaled reach,
-   * the target standing on the bot's acid) and also does the two things a bot has no key for:
-   * surfacing at its target and shedding at a milestone. The synergies, first:
-   * - acid under the target → Acid Apocalypse rains on them;
-   * - target in reach → Festering Bite (stage 3 + F+ melts; the purge strips shields before the bite lands);
-   * - R+ Rattling Strike → tunnel up under the target (the kit surfaces it, ×1.5 toxin);
-   * - the target off the bot's acid → spray it under them (3 toxin a second while they stand in it).
+   * Venom (id `slime`). Every opportunity is published by SlimeKit:
+   * - its own bomb in the air → Inject at the led point (bursts it into cluster bombs);
+   * - on its acid with poison or toxin on the target → Burrow (the kit surfaces it inside the bite,
+   *   which restores every debuff and multiplies toxin);
+   * - target standing on its acid → Acid Apocalypse;
+   * - nothing loaded → Pick Your Poison (the kit picks the vial), so the next shot carries one;
+   * - no bomb flying → Acid Reflux; otherwise Inject, never during the self-stab reload.
    */
   private doSlimeAbilities(
     target: Fighter,
@@ -3872,26 +3900,34 @@ export class NpcOpponent extends Fighter {
     aimY: number,
     aiState: NpcAiState,
   ): string | null {
-    // Under the acid the kit has the bot's hands; it surfaces when it arrives.
+    // Under the acid the kit has the bot's hands; it surfaces (biting) when it arrives.
     if (aiState.npcAcidBurrowed) return null;
     const skip = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
     const bound = aiState.npcAcidShedSlot;
     const tx = target.x, ty = target.y;
+    const canShoot = aiState.npcAcidInjectReady !== false;
 
-    if (!skip && bound !== 'f' && aiState.npcAcidBiteReady) {
-      if (this.castAbility('festering-bite', buildContext(tx, ty))) return 'festering-bite';
+    // Synergy first: its own bomb is in the air — shoot it into clusters.
+    if (!skip && canShoot && aiState.npcAcidBombShot) {
+      const shot = aiState.npcAcidBombShot;
+      if (this.castAbility('venom-inject', buildContext(shot.x, shot.y))) return 'venom-inject';
+    }
+    // Burrow toward a poisoned target: the bite restores every poison and multiplies the toxin.
+    if (!skip && bound !== 'f' && aiState.npcAcidBurrowReady) {
+      if (this.castAbility('venom-burrow', buildContext(tx, ty))) return 'venom-burrow';
     }
     if (!skip && bound !== 'q' && aiState.npcAcidApocalypseReady) {
       if (this.castAbility('acid-apocalypse', buildContext(tx, ty))) return 'acid-apocalypse';
     }
-    if (!skip && bound !== 'r' && aiState.npcAcidBurrowReady) {
-      if (this.castAbility('snake-burrow', buildContext(tx, ty))) return 'snake-burrow';
+    // Load a poison before the next shot goes out.
+    if (!skip && bound !== 'e' && aiState.npcAcidPoisonWorth && dist < 560) {
+      if (this.castAbility('pick-your-poison', buildContext(tx, ty))) return 'pick-your-poison';
     }
-    if (!skip && bound !== 'e' && aiState.npcAcidSprayWorth && dist < 340) {
-      if (this.castAbility('vile-spray', buildContext(tx, ty))) return 'vile-spray';
+    if (!skip && bound !== 'r' && aiState.npcAcidBombWorth && dist > 120 && dist < 460) {
+      if (this.castAbility('acid-reflux', buildContext(aimX, aimY))) return 'acid-reflux';
     }
-    if (dist < 520) {
-      if (this.castAbility('poison-whip', buildContext(aimX, aimY))) return 'poison-whip';
+    if (canShoot && dist < 560) {
+      if (this.castAbility('venom-inject', buildContext(aimX, aimY))) return 'venom-inject';
     }
     return null;
   }
@@ -5120,39 +5156,55 @@ export class NpcOpponent extends Fighter {
     aimY: number,
     aiState: NpcAiState,
   ): string | null {
+    // Math. The kit does the sums and creeps the ring's cursor; every decision here is one of the
+    // kit's published reads, checked before the rotation.
+    if (aiState.npcMathBusy) return null;
     const skip = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+    const cast = (id: string, x = aimX, y = aimY): string | null => (this.castAbility(id, buildContext(x, y)) ? id : null);
+    const pillars = aiState.npcMathPillars ?? 0;
+
+    // Synergy: the ring has closed on them — every pillar crosses the target. Not a "special":
+    // this is the click, and a bot that sat on a full ring would never attack at all.
+    const volley = aiState.npcMathVolleyAim;
+    if (volley) {
+      const id = cast('math-crunch', volley.x, volley.y);
+      if (id) return id;
+    }
 
     if (!skip) {
-      // Q first, and at any range: an elemental assists from the top of the screen for 8
-      // seconds off the longest cooldown in the kit, so the worst thing this bot can do is sit
-      // on it. MagicKit picks which of the five suits the fight and refuses to double up on
-      // one it already has out.
-      if (this.castAbility('magic-necronomicon', buildContext(aimX, aimY))) return 'magic-necronomicon';
-
-      // F: Duplication. The kit owns the geometry — it records the densest patch of its own
-      // conjurations and reads the scroll out on the spot — so all this has to decide is that
-      // there is something out worth copying at all. Early in a fight there is not.
-      if (aiState.magicMeditating && this.castAbility('magic-meditate', buildContext(aimX, aimY))) {
-        return 'magic-meditate';
+      // 42 whenever it is paid for: the exam runs on its own while everything else goes on.
+      if (!aiState.npcMathExamRunning) {
+        const id = cast('math-42');
+        if (id) return id;
       }
-
-      // R: mark them. MagicKit auto-clicks the crosshair for a bot, so casting it is the whole
-      // decision — missiles only pay while the target is in reasonable reach.
-      if (dist < 420 && this.castAbility('magic-anchor', buildContext(aimX, aimY))) return 'magic-anchor';
-
-      // E: the rotation. The kit reads the range and its own pools before choosing a wedge.
-      if (Math.random() < 0.5) {
-        if (this.castAbility('magic-grimoire', buildContext(aimX, aimY))) return 'magic-grimoire';
+      // Synergy: they are standing on the line — the old curve's bombs land on them.
+      if (aiState.npcMathDeriveHits) {
+        const id = cast('math-derive');
+        if (id) return id;
       }
-      // Cornered and hurt: a Ward between us is worth the press even off-rotation.
-      if (hpRatio < 0.35 && dist < 160) {
-        if (this.castAbility('magic-grimoire', buildContext(aimX, aimY))) return 'magic-grimoire';
+      // Synergy: they are under the graph — burn the area.
+      if (aiState.npcMathRateCovers && !aiState.npcMathRateActive) {
+        const id = cast('math-rate');
+        if (id) return id;
+      }
+      // Synergy: they are *not* under it, but one rewrite puts them there. While the area burns
+      // this is the rescue; before it, the set-up (only if Rate of Pain is about to be ready).
+      const rateSoon = aiState.npcMathRateActive || this.getCooldownRatio('math-rate') >= 0.75;
+      if (rateSoon && aiState.npcMathIntegrateCovers) {
+        const id = cast('math-integrate');
+        if (id) return id;
+      }
+      if (aiState.npcMathRateActive && aiState.npcMathDeriveCovers) {
+        const id = cast('math-derive');
+        if (id) return id;
       }
     }
 
-    // Default: Sparkle Shot
-    if (this.castAbility('magic-sparkle-shot', buildContext(aimX, aimY))) return 'magic-sparkle-shot';
-
+    // Cornered or hurt: throw whatever is banked rather than wait for the ring to close.
+    if (pillars > 0 && (dist < 150 || hpRatio < 0.3 || pillars >= 5)) {
+      const id = cast('math-crunch');
+      if (id) return id;
+    }
     return null;
   }
 
@@ -5196,121 +5248,97 @@ export class NpcOpponent extends Fighter {
   }
 
   /**
-   * Silence. The kit owns the body for the two moves that matter — the fog-ring stealth
-   * farm and the invisible slide into a backstab (SilenceKit.updateNpcMirrorAI) — so
-   * everything here is about what to *press*, in priority order: become the Striker the
-   * moment terror allows it, keep the stalker network alive, and only fight loudly
-   * while visible. While invisible every special is held, because noise is the one
-   * thing an ambush cannot afford.
+   * Fear (element id `silence`). The gentleman builds fear with his phobias and cashes it in by
+   * becoming the slasher; every read of "would this key do anything" is the kit's (see the
+   * NpcAiState synergy contract), so this is only the order the keys are tried in.
    */
-  private doSilenceAbilities(
+  private doFearAbilities(
     _target: Fighter,
     buildContext: (tX: number, tY: number) => CastContext,
     _time: number,
     dist: number,
-    hpRatio: number,
+    _hpRatio: number,
     aimX: number,
     aimY: number,
     aiState: NpcAiState,
   ): string | null {
+    if (aiState.npcFearBusy) return null;
     const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
-    const stalkers = aiState.npcSilenceStalkers ?? 0;
-    const invisible = aiState.npcSilenceInvisible ?? false;
+    const cast = (id: string, x = aimX, y = aimY): boolean => this.castAbility(id, buildContext(x, y));
 
-    // ── The Striker ──
-    // Twenty seconds of borrowed monster: the form defers all incoming damage, so the
-    // only wrong move is shyness. Slash on top of the target, Boggle (E) for the
-    // orbiting eyes mid-range, Allure (R) to pull a distant target into reach.
-    if (aiState.npcSilenceStriker) {
-      if (dist < 95) {
-        if (this.castAbility('silence-stab', buildContext(aimX, aimY))) return 'silence-stab';
+    // ── The slasher ──
+    // Invincible and very slow: there is no wrong time to swing, only wrong keys to waste.
+    if (aiState.npcFearSlasher) {
+      // Haunt → butcher's hook: somebody is on the chain. Haul them to the nearest hook; the kit
+      // hangs them up when they get there, or throws them down when the five seconds run out.
+      const haul = aiState.npcFearDragTo;
+      if (haul) {
+        const body = this.body as Phaser.Physics.Arcade.Body;
+        const a = Math.atan2(haul.y - this.y, haul.x - this.x);
+        if (this.stationary || Phaser.Math.Distance.Between(this.x, this.y, haul.x, haul.y) < 8) body.setVelocity(0, 0);
+        else body.setVelocity(Math.cos(a) * this.speed, Math.sin(a) * this.speed);
+        return null;
       }
-      if (!skipSpecials && dist < 280) {
-        if (this.castAbility('silence-watch', buildContext(aimX, aimY))) return 'silence-watch';
+      // The gentleman keeps his distance; the slasher does not. Walk straight at them.
+      if (!this.stationary && dist > 70) {
+        const a = Math.atan2(_target.y - this.y, _target.x - this.x);
+        (this.body as Phaser.Physics.Arcade.Body).setVelocity(Math.cos(a) * this.speed, Math.sin(a) * this.speed);
       }
-      if (!skipSpecials && dist > 200) {
-        if (this.castAbility('silence-ritual', buildContext(aimX, aimY))) return 'silence-ritual';
-      }
+      // Haunt is charging, or its hook is going round — the kit lets go of it, and the hook only
+      // finds them if we keep walking; pressing anything else would throw it away.
+      if (aiState.npcFearHaunting) return null;
+      if (dist < 118 && cast('fear-massacre')) return 'fear-massacre';
+      // Massacre ← own phobia: run it through — the speed is the only thing the slasher is short of.
+      const fodder = aiState.npcFearFodder;
+      if (fodder && cast('fear-massacre', fodder.x, fodder.y)) return 'fear-massacre';
+      if (skipSpecials) return null;
+      if (cast('fear-fall')) return 'fear-fall';
+      if (dist > 230 && cast('fear-signature')) return 'fear-signature';
+      if (dist < 330 && cast('fear-haunt')) return 'fear-haunt';
+      if (aiState.npcFearShouldDescend && cast('fear-descent')) return 'fear-descent';
       return null;
     }
 
-    // ── Night Terror ──
-    // A full bar is the whole element's payoff: ritual *yourself* and transform. Cast
-    // at its own feet — doRitual reads a self-target as the transformation.
-    if (aiState.npcSilenceTerrorFull) {
-      if (this.castAbility('silence-ritual', buildContext(this.x, this.y))) return 'silence-ritual';
-    }
-
-    // ── Stalk → backstab ──
-    // A Stalked target can't come about, and the kit has walked us into its back shadow:
-    // this is the stab the whole F exists to set up, so it outranks everything else.
-    const backstab = aiState.npcSilenceBackstabAim;
-    if (backstab) {
-      if (this.castAbility('silence-stab', buildContext(backstab.x, backstab.y))) return 'silence-stab';
-    }
-
     if (!skipSpecials) {
-      // ── Synergies first (see the NpcAiState synergy contract) ──
-      // Stalk when the kit says the target can be held inside the aura; the kit's mirror
-      // AI then shadows them round to their back for the three seconds.
-      if (aiState.npcSilenceStalkOpen) {
-        if (this.castAbility('silence-feast', buildContext(aimX, aimY))) return 'silence-feast';
-      }
-
-      // Convert a matured stalker into a grabber the moment Ritual comes up.
-      const mature = aiState.npcSilenceMatureStalker;
-      if (mature) {
-        if (this.castAbility('silence-ritual', buildContext(mature.x, mature.y))) return 'silence-ritual';
-      }
-
-      // Click+ Sacrifice: dash-stab THROUGH its own stalker while the player stands
-      // beside it — the lane detonates the watcher and the scream silences them,
-      // which is also what feeds the terror bar.
-      const sac = aiState.npcSilenceSacrificeStab;
-      if (sac && !invisible) {
-        if (this.castAbility('silence-stab', buildContext(sac.x, sac.y))) return 'silence-stab';
-      }
-
-      // E+ Mutant: with the network full, re-cast Watch onto its youngest watcher to
-      // grow a seeker. The kit only offers this while ritual fodder remains.
-      const mut = aiState.npcSilenceMutateWatcher;
-      if (mut && Math.random() < 0.35) {
-        if (this.castAbility('silence-watch', buildContext(mut.x, mut.y))) return 'silence-watch';
-      }
-
-      // Keep the stalker network up — drop them along the fog border. Placement uses
-      // the physics bounds (the arena), not the render surface.
-      if (stalkers < 3 && Math.random() < 0.5) {
-        const wb = this.scene.physics.world.bounds;
-        const edge = Phaser.Math.Between(0, 3);
-        const sx = edge === 2 ? wb.x + 24 : edge === 3 ? wb.right - 24 : Phaser.Math.Between(wb.x + 10, wb.right - 10);
-        const sy = edge === 0 ? wb.y + 24 : edge === 1 ? wb.bottom - 24 : Phaser.Math.Between(wb.y + 10, wb.bottom - 10);
-        if (this.castAbility('silence-watch', buildContext(sx, sy))) return 'silence-watch';
-      }
-
-      // While invisible, hold the loud specials — the kit steers us into a backstab.
-      if (!invisible) {
-        if (dist < 260) {
-          if (this.castAbility('silence-ritual', buildContext(aimX, aimY))) return 'silence-ritual';
-        }
-        if (dist < 420 && (hpRatio < 0.6 || _target.hp / _target.maxHp < 0.6)) {
-          if (this.castAbility('silence-run', buildContext(_target.x, _target.y))) return 'silence-run';
-        }
-      }
+      // Fear → Manifest: the whole kit is a run-up to this.
+      if (aiState.npcFearManifestReady && cast('fear-manifest')) return 'fear-manifest';
+      // Phobia → Gaze: they are standing in an eye's line right now.
+      if (aiState.npcFearGazeCovers && cast('fear-gaze')) return 'fear-gaze';
+      // Phobia → Grasp.
+      const grasp = aiState.npcFearGraspAim;
+      if (grasp && cast('fear-grasp', grasp.x, grasp.y)) return 'fear-grasp';
+      // Phobias → Claustrophobia.
+      if (aiState.npcFearClaustroOpen && cast('fear-claustrophobia')) return 'fear-claustrophobia';
     }
-
-    // Click: stab when close (the cast itself dashes at the target).
-    if (!invisible && dist < 190) {
-      if (this.castAbility('silence-stab', buildContext(aimX, aimY))) return 'silence-stab';
-    }
-
+    // The click: keep a phobia just past the target, so they stand between it and us.
+    const spot = aiState.npcFearPhobiaSpot;
+    if (spot && cast('fear-phobia', spot.x, spot.y)) return 'fear-phobia';
     return null;
   }
 
   /**
-   * The target is invisible (Silence stealth): amble around like nothing is
-   * there. With stalkers on the field, fire the click attack in random
-   * directions hoping to clip one.
+   * Fear has given the bot something to break — its rune, or a marble statue. Walk onto it
+   * (standing on it wears it down) and throw the click at it on the way.
+   */
+  private doFearObjective(
+    at: { x: number; y: number },
+    buildContext: (tX: number, tY: number) => CastContext,
+  ): string | null {
+    const body = this.body as Phaser.Physics.Arcade.Body;
+    const d = Phaser.Math.Distance.Between(this.x, this.y, at.x, at.y);
+    if (d > 14 && !this.stationary) {
+      const a = Math.atan2(at.y - this.y, at.x - this.x);
+      body.setVelocity(Math.cos(a) * this.speed, Math.sin(a) * this.speed);
+    } else {
+      body.setVelocity(0, 0);
+    }
+    const clickId = this.element.abilities[0]?.id;
+    if (clickId && d < 320 && this.castAbility(clickId, buildContext(at.x, at.y))) return clickId;
+    return null;
+  }
+
+  /**
+   * The target cannot be seen (Fear's slasher): amble around like nothing is there.
    */
   private doBlindBehavior(
     buildContext: (tX: number, tY: number) => CastContext,

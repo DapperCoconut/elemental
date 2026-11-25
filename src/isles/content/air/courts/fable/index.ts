@@ -3,6 +3,7 @@ import { FABLE_AREA } from './area';
 import { LEGEND_BOSS } from './boss';
 import { FABLE_ENCOUNTERS } from './encounters';
 import { FABLE_FLOOR } from './floor';
+import { FALLEN } from './fallen';
 import { BEANSTALK_GIMMICK } from './gimmicks/beanstalk';
 import { DRAGONS_HOARD } from './gimmicks/dragonHoard';
 import { GOLDEN_GOOSE } from './gimmicks/goldenGoose';
@@ -37,6 +38,7 @@ export const FABLE_COURT: CourtBundle = {
   area: FABLE_AREA,
   gimmicks: [BEANSTALK_GIMMICK, GOLDEN_GOOSE, HUFF_AND_PUFF, MIRROR_MIRROR, DRAGONS_HOARD],
   boss: LEGEND_BOSS,
+  fallen: FALLEN,
   items: FABLE_ITEMS,
   scripts: FABLE_SCRIPTS,
   shops: [{

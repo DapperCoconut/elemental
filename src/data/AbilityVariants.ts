@@ -41,38 +41,6 @@ const ABILITY_VARIANTS: Record<string, Partial<Record<string, AbilityVariantSet>
       ],
     },
   },
-  magic: {
-    e: {
-      label: 'Grimoire wheel (← / → to select, release to cast — E+ adds a Dark Magic button at the hub that toggles the corrupted five)',
-      variants: [
-        { emoji: '🔥', name: 'Flare', description: 'A burning orb crawls to the cursor at 110 px/s for 4.5s — 3 dmg every 0.5s within 34px, plus a 3s burn.' },
-        { emoji: '🌊', name: 'Splash', description: 'A 90px pool for 6s: 35% slow and 3 dmg/s to anything standing in it.' },
-        { emoji: '🌿', name: 'Spur', description: 'Three burs in a 26° spread at 620 px/s, 5 dmg each.' },
-        { emoji: '💨', name: 'Gust', description: 'Dash up to 240px. Anything within 96px of the corridor takes 6 and is hauled back to the cast point for 1.3s.' },
-        { emoji: '🪨', name: 'Ward', description: 'Five stones orbit you for 8s — 10 dmg on contact, and they delete hostile projectiles.' },
-        { emoji: '🖤', name: 'Flare+', description: 'Half speed again (55 px/s) inside a 70px dark aura dealing 3 dmg/0.4s. Its burn becomes a shadow burn worth 4 a tick. +25 Darkness.', requiresUpgrade: 'e' },
-        { emoji: '🖤', name: 'Splash+', description: 'Putrid: 130px, 6 dmg/s, a 70% slow, and no dash, blink or dodge roll while you stand in it. +25 Darkness.', requiresUpgrade: 'e' },
-        { emoji: '🖤', name: 'Spur+', description: 'Burs stick for 2s and stack. Five at once pins for 3s, then tears free for 12. +25 Darkness.', requiresUpgrade: 'e' },
-        { emoji: '🖤', name: 'Gust+', description: 'An 8s electricity trail along the dash: 4 dmg/0.3s to whatever it hauls, +25% speed for you to walk on. Dupe copies it. +25 Darkness.', requiresUpgrade: 'e' },
-        { emoji: '🖤', name: 'Ward+', description: '10s instead of 8, plus a linked rock wall at 92px that blocks enemies but not shots — and sheds links that fly for 10 as it dies. +25 Darkness.', requiresUpgrade: 'e' },
-      ],
-    },
-    q: {
-      label: 'Necronomicon wheel (← / → to select, release to summon — Q+ adds a Dark Magic button at the hub that toggles the corrupted five)',
-      variants: [
-        { emoji: '🔥', name: 'Fire', description: '45 HP familiar, 18s. A fire bolt every 1.3s at up to 420px: 8 dmg and a 2s burn.' },
-        { emoji: '🌊', name: 'Water', description: '50 HP familiar, 18s. A dart every 1.5s: 6 dmg and a 1.2s slow.' },
-        { emoji: '🌿', name: 'Life', description: '60 HP warden, 18s. A thorn lash every 1.2s within 96px for 7 — it has to close.' },
-        { emoji: '💨', name: 'Wind', description: '40 HP and the fastest. A shove every 1.1s within 110px: 5 dmg and hard knockback.' },
-        { emoji: '🪨', name: 'Earth', description: '80 HP golem, the slowest. A slam every 1.6s within 78px for 12 — the hardest ordinary hit.' },
-        { emoji: '🖤', name: 'Fire+', description: '+40% HP. Every 7s drops a bomb that detonates as a cross of four 200px pillars for 18 (the diagonals are safe). +50 Darkness.', requiresUpgrade: 'q' },
-        { emoji: '🖤', name: 'Water+', description: '+40% HP. Every 8s floods the whole arena for 4s — a 20% slow with nowhere to stand it out. +50 Darkness.', requiresUpgrade: 'q' },
-        { emoji: '🖤', name: 'Life+', description: '+40% HP. Every 9s fires 18 roots within 150px of the target, 3 dmg and a 1.5s root each. +50 Darkness.', requiresUpgrade: 'q' },
-        { emoji: '🖤', name: 'Wind+', description: '+40% HP. Every 10s raises an 8s hurricane. Stand within 58px of the eye for 70% faster cooldowns and +30% damage taken by everything. +50 Darkness.', requiresUpgrade: 'q' },
-        { emoji: '🖤', name: 'Earth+', description: '+40% HP. Every 9s opens five 34px holes for 9s: 20 dmg and a trip back to the centre. It catches you too, unless Levitate is up. +50 Darkness.', requiresUpgrade: 'q' },
-      ],
-    },
-  },
   gunpowder: {
     f: {
       label: 'Arsenal weapons (choose 1 of 3 offered; max 3 in your arsenal, 6 with R+; F+ unlocks 7 more weapon types)',

@@ -127,6 +127,12 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   public mythVulnUntil = 0;
   /** Myth — The Crowd: jeered until this `Date.now()` timestamp, 10% more damage taken. */
   public mythJeeredUntil = 0;
+  /** Fear — running away in terror until this `Date.now()` timestamp: 33% more damage taken. */
+  public fearFleeUntil = 0;
+  /** Fear — the slasher has opened this body's heart: 1.15 damaged, 1.3 severe. Written by FearKit every frame. */
+  public fearHeartMult = 1;
+  /** Fear — the slasher has cut this body's arms: every cooldown is this much longer. Written by FearKit every frame. */
+  public fearCooldownMult = 1;
   /**
    * Which side landed the most recent hit on this body — stamped at ArenaScene's
    * two damage chokepoints (projectile contact and owner-tagged AoE), which
@@ -1098,22 +1104,32 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   public slimeConfuseVy = 0;
   public slimeConfuseDirUntil = 0;
 
-  /** Venom Purge (Festering Bite, element `slime`): timestamp until which positive speed boosts are suppressed. Its start strips every buff (SlimeKit). */
+  /** Venom Purge (the Purging poison, element `slime`): until this scene-clock time every buff is stripped and kept off, and positive speed boosts are suppressed (SlimeKit). */
   public purgedUntil = 0;
   /** Venom Purge: multiplier applied on top of a fighter's own speed calc — used to cancel a baked-in variant speed bonus (invasion husks). Default 1. */
   public purgeSpeedMult = 1;
   /**
-   * Venom (element id `slime`): toxin stacks. They never fade — 25 starts a burn, 50 makes the
-   * body drip acid as it walks, 100 weakens it, 250 and 500 eat max HP, 1000 kills. SlimeKit owns
-   * every tier; this is only the count, so the status tray and the online mirror can read it.
+   * Venom (element id `slime`): toxin stacks, 0–100, never fading. Each one makes every new
+   * negative effect on this body last 2% longer (SlimeKit stretches them as they land). This is
+   * only the count, so the status tray and the online mirror can read it.
    */
   public toxinStacks = 0;
-  /**
-   * Victim-side stand-in for "my attacker is toxified, so they deal less" — SlimeKit keeps this
-   * in step with the opposing fighter's `toxinStacks` each frame, the `hopelessIncomingMult`
-   * pattern, since `takeDamage` has no attacker reference.
-   */
-  public toxinIncomingMult = 1;
+  /** Venom — Disintegrating: rotting for 5 a second until this scene-clock time. SlimeKit ticks it. */
+  public venomRotUntil = 0;
+  /** Venom — Disintegrating: 3% more damage taken per stack (max 5) until `venomVulnUntil` (scene clock). */
+  public venomVulnStacks = 0;
+  public venomVulnUntil = 0;
+  /** Venom — Paralyzing: no dashes or dodges, and acid underfoot is slow and slippery (scene clock). */
+  public venomParalyzedUntil = 0;
+  /** Venom — Melting: double damage while on the venom's acid, and the body drips acid (scene clock). */
+  public venomMeltingUntil = 0;
+  /** SlimeKit writes this every frame: 2 while melting *and* standing on the poisoner's acid. */
+  public venomMeltIncomingMult = 1;
+  /** What Disintegrating's vulnerability does to incoming damage right now. */
+  venomVulnMult(): number {
+    return this.venomVulnStacks > 0 && this.scene.time.now < this.venomVulnUntil
+      ? 1 + 0.03 * Math.min(5, this.venomVulnStacks) : 1;
+  }
 
   public earthStunnedUntil = 0;
   /** Earth Mastery — Dust Screen: while active, Husk AI wanders/misfires instead of pathfinding normally. */
@@ -1555,6 +1571,11 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     return vuln * jeer;
   }
 
+  /** Fear's two amplifiers, as one factor for `takeDamage`. 1 when neither is on. */
+  fearIncomingMult(): number {
+    return (Date.now() < this.fearFleeUntil ? 1.33 : 1) * this.fearHeartMult;
+  }
+
   takeDamage(amount: number, opts?: DamageOpts): void {
     // Invasion co-op: friendly fire from the ally replica never lands. Checked
     // before anything else so a blocked hit can't consume a buff or a shield.
@@ -1643,7 +1664,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       // Tallied here: after the crit roll (a crit really is a bigger hit) but before every
       // mitigation multiplier on the line below, which is what "damage aimed at you" means.
       this.rawDamageTaken += amount;
-      let mitigation = trueDamage ? 1 : this.incomingDamageMultiplier * this.gauntletDamageTakenMult * this.bribeIncomingMult * this.smokeIncomingMult * this.cardDamageTakenMult * this.droneArmorMult * this.kineticShieldMult * this.steelShieldMult * this.empoweredIncomingMult * this.potionArmorMult * this.hopelessIncomingMult * this.justiceIncomingMult * this.magmaIncomingMult * this.waxIncomingMult * this.clayIncomingMult * this.conquestIncomingMult * this.passionIncomingMult * this.quantumIncomingMult * this.deathIncomingMult * this.journalIncomingMult * this.paperIncomingMult * this.psychicIncomingMult * this.bindIncomingMult * this.illusionIncomingMult * this.soundIncomingMult * this.artifactIncomingMult * this.clothIncomingMult * this.marrowIncomingMult * this.woodIncomingMult * this.orderIncomingMult * this.wardIncomingMult * this.soulTankIncomingMult * this.bossWardIncomingMult * this.fortuneIncomingMult * this.dreamIncomingMult * this.duneIncomingMult * this.radiationIncomingMult * this.lifeIncomingMult * this.magicIncomingMult * this.mutationIncomingMult * this.mapArmorMult * this.starIncomingMult * this.earthBiomeIncomingMult * this.perkIncomingMult * this.paintIncomingMult * this.toxinIncomingMult * this.savorArmorMult * this.savorIncomingMult * this.netDefenseMult * this.islesIncomingMult * this.bossSigIncomingMult;
+      let mitigation = trueDamage ? 1 : this.incomingDamageMultiplier * this.gauntletDamageTakenMult * this.bribeIncomingMult * this.smokeIncomingMult * this.cardDamageTakenMult * this.droneArmorMult * this.kineticShieldMult * this.steelShieldMult * this.empoweredIncomingMult * this.potionArmorMult * this.hopelessIncomingMult * this.justiceIncomingMult * this.magmaIncomingMult * this.waxIncomingMult * this.clayIncomingMult * this.conquestIncomingMult * this.passionIncomingMult * this.quantumIncomingMult * this.deathIncomingMult * this.journalIncomingMult * this.paperIncomingMult * this.psychicIncomingMult * this.bindIncomingMult * this.illusionIncomingMult * this.soundIncomingMult * this.artifactIncomingMult * this.clothIncomingMult * this.marrowIncomingMult * this.woodIncomingMult * this.orderIncomingMult * this.wardIncomingMult * this.soulTankIncomingMult * this.bossWardIncomingMult * this.fortuneIncomingMult * this.dreamIncomingMult * this.duneIncomingMult * this.radiationIncomingMult * this.lifeIncomingMult * this.magicIncomingMult * this.mutationIncomingMult * this.mapArmorMult * this.starIncomingMult * this.earthBiomeIncomingMult * this.perkIncomingMult * this.paintIncomingMult * this.venomMeltIncomingMult * this.venomVulnMult() * this.savorArmorMult * this.savorIncomingMult * this.netDefenseMult * this.islesIncomingMult * this.bossSigIncomingMult;
       // Ruin's spikes turn armour inside out — 25% less damage taken comes back as 25% more.
       // Only a net *buff* is flipped; a fighter already taking extra damage is left alone.
       if (mitigation < 1 && this.scene.time.now < this.buffsInvertedUntil) mitigation = 2 - mitigation;
@@ -1660,6 +1681,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       if (opts?.aoe || opts?.pierce) mitigation *= this.clothAoeMult;
       // Myth: pistol vulnerability stacks and the crowd's jeer, both plain amplifiers.
       mitigation *= this.mythIncomingMult();
+    mitigation *= this.fearIncomingMult();
       // Memory's Guilt: every hit already taken makes this one 1% worse.
       mitigation *= this.guiltIncomingMult();
       amount = Math.round(amount * mitigation * (trueDamage ? 1 : this.ruinIncomingMult));
@@ -2060,7 +2082,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     const ultimateExtra = ability.isUltimate ? this.ultimateCooldownMult : 1;
     return ability.cooldown * (this.cooldownMult || 1) * this.netCooldownMult
       * this.amputationCooldownMult * this.deathDelayCooldownMult * this.dreamCooldownMult
-      * this.justiceCooldownMult * this.perkCooldownMult * this.psychicCooldownMult * this.clothCooldownMult * this.goldCooldownMult * this.bindCooldownMult * this.savorCooldownMult * ultimateExtra;
+      * this.justiceCooldownMult * this.perkCooldownMult * this.psychicCooldownMult * this.clothCooldownMult * this.goldCooldownMult * this.bindCooldownMult * this.savorCooldownMult * this.fearCooldownMult * ultimateExtra;
   }
 
   /** As {@link effectiveCooldown}, including whatever split was banked when this id was stamped. */

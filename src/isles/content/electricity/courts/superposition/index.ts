@@ -1,6 +1,7 @@
 import type { CourtBundle } from '../../../../IslesTypes';
 import { SUPERPOSITION_AREA } from './area';
 import { SUPERPOSITION_ENCOUNTERS, SUPERPOSITION_GIMMICKS } from './encounters';
+import { FALLEN } from './fallen';
 import { SUPERPOSITION_FLOOR } from './floor';
 import {
   ART_BOTH, SUPERPOSITION_FISH, SUPERPOSITION_FISHERIES, SUPERPOSITION_ITEMS, SUPERPOSITION_SCRIPTS, SUPERPOSITION_SHOPS,
@@ -40,4 +41,5 @@ export const SUPERPOSITION_COURT: CourtBundle = {
   shops: SUPERPOSITION_SHOPS,
   fish: SUPERPOSITION_FISH,
   fisheries: SUPERPOSITION_FISHERIES,
+  fallen: FALLEN,
 };

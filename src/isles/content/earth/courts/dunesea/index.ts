@@ -6,6 +6,7 @@ import { ART_SIROCCO, DUNESEA_FISH, DUNESEA_FISHERIES, DUNESEA_ITEMS, DUNESEA_SC
 import { DUNESEA_COLOR } from './palette';
 import { SIROCCO_BOSS } from './prince';
 import { DUNESEA_QUESTS } from './quests';
+import { FALLEN } from './fallen';
 
 /**
  * The Dunesea Court — dune (Sand), tier 2 of Bedrock Hold, Prince Sirocco the Restless.
@@ -37,4 +38,5 @@ export const DUNESEA_COURT: CourtBundle = {
   shops: DUNESEA_SHOPS,
   fish: DUNESEA_FISH,
   fisheries: DUNESEA_FISHERIES,
+  fallen: FALLEN,
 };

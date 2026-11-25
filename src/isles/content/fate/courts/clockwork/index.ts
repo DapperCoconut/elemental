@@ -2,6 +2,7 @@ import type { CourtBundle } from '../../../../IslesTypes';
 import { CLOCKWORK_AREA } from './area';
 import { CLOCKWORK_ENCOUNTERS, CLOCKWORK_GIMMICKS } from './encounters';
 import { CLOCKWORK_FLOOR } from './floor';
+import { FALLEN } from './fallen';
 import {
   ART_TOCK, CLOCKWORK_FISH, CLOCKWORK_FISHERIES, CLOCKWORK_ITEMS, CLOCKWORK_SCRIPTS, CLOCKWORK_SHOPS,
 } from './items';
@@ -39,4 +40,5 @@ export const CLOCKWORK_COURT: CourtBundle = {
   shops: CLOCKWORK_SHOPS,
   fish: CLOCKWORK_FISH,
   fisheries: CLOCKWORK_FISHERIES,
+  fallen: FALLEN,
 };

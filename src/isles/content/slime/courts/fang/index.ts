@@ -8,6 +8,7 @@ import {
 import { FANG_COLOR } from './palette';
 import { VENIN_BOSS } from './prince';
 import { FANG_QUESTS } from './quests';
+import { FALLEN } from './fallen';
 
 /**
  * The Fang Court — slime (Venom), tier 1 of Fangmire, Prince Venin the Milk-Fanged.
@@ -41,4 +42,5 @@ export const FANG_COURT: CourtBundle = {
   bakeries: FANG_BAKERIES,
   fish: FANG_FISH,
   fisheries: FANG_FISHERIES,
+  fallen: FALLEN,
 };

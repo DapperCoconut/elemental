@@ -1,356 +1,247 @@
 import { ElementCodex } from '../AbilityCodex';
 
 /**
- * Silence — a horror film that has noticed you.
+ * Fear — the gentleman in the mask, and the slasher under the suit (element id `silence`; it
+ * replaced Silence 2026-11-24).
  *
- * Verified against `src/elements/silence.ts`, `kits/SilenceKit.ts`, the five shop upgrades in
- * `data/Upgrades.ts`, the Torture perk in `data/Perks.ts` and the two mastery enhancements in
- * `data/Mastery.ts`. It is by some distance the largest kit in the game.
+ * Verified against `src/elements/silence.ts`, `kits/FearKit.ts` and `kits/FearMazeRun.ts`. Every
+ * number below is a constant at the top of the kit. No upgrades, perks or mastery yet: every key
+ * is marked `noUpgrade` so the old Silence shop upgrades still sitting on these keys are not
+ * offered as an UPGRADED tab for abilities they do not reach.
  */
 const silence: ElementCodex = {
   identity:
-    'A thin dark thing that lives in the fog around the edge of the arena and does not want to be '
-    + 'seen doing any of this. Bank stealth in the fog and you disappear — genuinely, to the other '
-    + 'player, health bar and all — and the next knife is worth more than double. Everything else '
-    + 'is a way of making the fight worse to be inside: watchers that stand around staring, a beam '
-    + 'that takes their abilities away for twenty seconds, a shadow that leaves them unable to turn '
-    + 'round to face you, and an ultimate that drags them '
-    + 'out of the arena entirely into a corridor with something in it. Silence does not out-damage '
-    + 'anybody. It makes the match unpleasant until they lose it.',
+    'A dapper gentleman behind a white mask who never throws a punch himself. He plants phobias, '
+    + 'fills the enemy with fear and drinks it — then, with enough fear on the field, Manifests '
+    + 'into an invincible slasher with five keys of his own.',
 
   passives: [
     {
-      emoji: '🌫️',
-      name: 'The Fog',
-      basics:
-        'A 90px band around the entire arena edge that banks stealth. Once the meter reaches 20 you are '
-        + 'invisible — to the other player you are gone, sprite and health bar both, while on your own '
-        + 'screen you stay faintly visible at 35% so you can still play. A 0–100 meter gains 10 a second '
-        + 'in the fog and drains 10 a second outside it, and a Stab converts the whole meter into damage: '
-        + '+25 at a full 100, taking a 20-damage stab to 45, spending the meter entirely. Every watcher '
-        + 'you own is +20% stealth gain and −20% drain, so three fill the meter at 16 a second and empty '
-        + 'it at 4.',
-      effects: [
-        { tag: 'area', label: 'The band', detail: '90px around the entire arena edge. It banks stealth — it does not hide you by itself.' },
-        { tag: 'shield', label: 'The threshold', detail: 'You are invisible only while the meter is at 20 or above, in the fog or out of it. Below 20 you can be seen.' },
-        { tag: 'resource', label: 'The meter', detail: '0–100. Gains 10 a second in the fog, drains 10 a second outside it.' },
-        { tag: 'buff', label: 'What it is worth', detail: 'A Stab converts the whole meter into damage: +25 at a full 100, taking a 20-damage stab to 45. The meter is spent entirely doing it.' },
-        { tag: 'shield', label: 'Actually invisible', detail: 'To the other player you are gone — sprite and health bar both. On your own screen you stay faintly visible at 35% so you can still play.' },
-        { tag: 'buff', label: 'Watchers change the rates', detail: 'Every stalker you own is +20% stealth gain and −20% drain, so three of them fill the meter at 16 a second and empty it at 4.' },
-      ],
-      notes: [
-        'The fog is the element\'s whole economy: it is where you are safe, where you charge, and the only place you can be ignored.',
-        'Because the drain is only 10 a second and you vanish from 20 up, a full meter is eight seconds of invisibility in open ground — which is most of a fight.',
-        'Walking into the fog with an empty meter leaves you visible for the first two seconds. Stealth, not the fog, is what hides you.',
-        'A corrupted copy of the enemy walking around, from the Puppetmaster enhancement, switches the fog off for you entirely while it is out.',
-      ],
-    },
-    {
-      emoji: '🔇',
-      name: 'Silenced',
-      basics:
-        'The lockout this element exists to apply. It takes every ability except the Click — E, R, F '
-        + 'and Q all refuse outright — for 12 seconds from a backstab, 20 from a Ritual beam or 10 from a '
-        + 'sacrificed watcher, with a muted-speaker mark turning over their head for the whole time, '
-        + 'facing whichever way they are.',
-      effects: [
-        { tag: 'debuff', label: 'What it takes', detail: 'Every ability except the Click. E, R, F and Q all refuse outright for the duration.' },
-        { tag: 'debuff', label: 'How long', detail: '12 seconds from a backstab, 20 from a Ritual beam, 10 from a sacrificed watcher.' },
-        { tag: 'utility', label: 'The tell', detail: 'A muted-speaker mark turns over their head for the whole time, facing whichever way they are.' },
-      ],
-      notes: [
-        'Twenty seconds without an ultimate, a dash or a heal is the single largest thing this element does to anybody.',
-        'The Torture perk adds a second of Silence per tick on top, so a racked victim can be locked out for close to half a minute.',
-      ],
-    },
-    {
       emoji: '👁️',
-      name: 'The Rear Arc',
+      name: 'Fear',
       basics:
-        'A 120° wedge behind every fighter — ±60° of the direction they are facing away from. A stab '
-        + 'landed inside it deals ×1.5, so a full-stealth backstab is 67 rather than 45, and it carries '
-        + '12 seconds of Silence, which only ever comes from a backstab and never from a face-on one.',
+        'Every enemy carries a fear meter, 0 to 100, shown over their head. It never drains by '
+        + 'itself. It feeds Reassurance, makes Massacre hit harder and is what Manifest needs. An '
+        + 'enemy at 100 fear who is near you turns and runs, out of control and taking more damage.',
       effects: [
-        { tag: 'damage', label: 'The backstab', detail: '×1.5 damage — so a full-stealth stab from behind is 67 rather than 45.' },
-        { tag: 'debuff', label: 'And the lockout', detail: '12 seconds of Silence, which only ever comes from a backstab and never from a face-on one.' },
-        { tag: 'area', label: 'The arc', detail: '±60° of the direction they are facing away from — a 120° wedge behind them.' },
+        { tag: 'utility', label: 'Sources', detail: 'Fear\'s Grasp 10 per claw, Gaze 22 a second (+30 on a jumpscare), Claustrophobia 2.5 a second (+20 from a trapped statue), a catch in the maze +25.' },
+        { tag: 'control', label: 'Flee', detail: 'At 100 fear and within 170px of you: runs straight away from you for 2.5s at 110% of their own speed, with no control and no dodge roll.' },
+        { tag: 'debuff', label: 'Running scared', detail: 'Takes 33% more damage from everything for the 2.5s.' },
+        { tag: 'utility', label: 'Afterwards', detail: 'Fear drops to 60 and they cannot be routed again for 5s. Somebody frozen by a jumpscare does not run until it wears off.' },
+        { tag: 'debuff', label: 'Dread', detail: 'From 60 fear up, the victim\'s own screen darkens at the edges, further the fuller the meter.' },
       ],
-      notes: [
-        'On a Silence player\'s screen every foe casts a back shadow — a dark wedge spilling out behind them across exactly this arc. Stab from inside the shadow and it is a backstab.',
-        'The mastery requirement From Behind is 50 backstabs, which makes reading those shadows the element\'s core skill.',
-        'Being invisible does not change the arc. A player who knows where you are can still turn to face you — unless Stalk has hold of them, in which case turning takes seconds.',
+    },
+    {
+      emoji: '🥀',
+      name: 'Reassurance',
+      basics:
+        'Stand next to a frightened enemy — or leave a phobia next to one — and a grey line drains '
+        + 'them: damage to them, the same as healing to you, harder the more afraid they are. It '
+        + 'does not use the fear up.',
+      effects: [
+        { tag: 'dot', label: 'Drain', detail: 'Every 0.5s: 0.05 damage per point of fear, rounded — 5 a tick (10 a second) at 100 fear. Always at least 1 a tick.' },
+        { tag: 'heal', label: 'Drink', detail: 'You are healed for 100% of each tick, whether you or a phobia did the drinking.' },
+        { tag: 'area', label: 'Reach', detail: '120px from you or from any phobia (not a marble one). One line per enemy, from whichever is closest.' },
       ],
+      notes: ['The slasher drains too: Reassurance does not care which form you are in.'],
     },
   ],
 
   abilities: {
-    'silence-stab': {
+    'fear-phobia': {
       basics:
-        'Dashes 170px forward along your aim, cutting a 110px-wide lane, so the click is a gap-closer '
-        + 'as well as an attack. The knife deals 20 plus up to 25 more from a full stealth meter — 45 at '
-        + '100 — and the meter is consumed either way. From behind it is ×1.5 and 12 seconds of Silence, '
-        + 'so a full-stealth backstab is 67 damage and a total lockout. 1s cooldown.',
-      cast: 'Click, dashing 170px forward along the aim and cutting a 110px-wide lane. 1s cooldown.',
+        'Summon a phobia — a ghost of yourself — at your cursor. It cannot be hit and stays for the '
+        + 'bout. It drains frightened enemies near it, and enemy shots that pass through it go grey: '
+        + 'they hit softer and hurt whoever fired them. Your other keys all work through your phobias.',
+      cast: 'Click at the cursor. 1.5s cooldown. Not while the slasher is out or Claustrophobia is running.',
       effects: [
-        { tag: 'damage', label: 'The knife', detail: '20 damage, plus up to 25 more from a full stealth meter — 45 at 100 — and the whole meter is consumed either way.' },
-        { tag: 'damage', label: 'From behind', detail: '×1.5, and 12 seconds of Silence. A full-stealth backstab is 67 damage and a total lockout.' },
-        { tag: 'movement', label: 'The dash', detail: '170px forward, so the click is a gap-closer as well as an attack.' },
+        { tag: 'summon', label: 'Phobias', detail: 'Up to 4. A fifth replaces the oldest.' },
+        { tag: 'debuff', label: 'Grey shots', detail: 'An enemy projectile passing within 28px of a phobia deals 55% of its damage from then on.' },
+        { tag: 'damage', label: 'Backlash', detail: '3 damage to the shooter for each shot that goes grey.' },
+        { tag: 'dot', label: 'Reassurance', detail: 'Each phobia drains frightened enemies within 120px for you (see Reassurance).' },
       ],
-      upgrade: {
-        basics:
-          'A stab that passes through one of your own watchers sacrifices it: 15 damage and 10 seconds of '
-          + 'Silence to every enemy within 130px. It sets that watcher back 5 seconds before it can mature, '
-          + 'so sacrificing a nearly-grown one costs you a Grabber.',
-        effects: [
-          { tag: 'damage', label: 'The shockwave', detail: '15 damage and 10 seconds of Silence to every enemy within 130px of the watcher.', requiresUpgrade: 'click' },
-          { tag: 'cost', label: 'It sets the watcher back', detail: 'The stabbed watcher cannot mature for 5 seconds, so sacrificing a nearly-grown one costs you a Grabber.', requiresUpgrade: 'click' },
-        ],
-      },
-      notes: [
-        'The stealth bonus is spent on the stab whether it lands or not, so a whiffed knife at 100 stealth is ten seconds of fog thrown away.',
-        'Sacrifice is the only way to apply Silence without getting behind somebody, which makes it the answer to an opponent who never turns their back.',
-        'With the Mutant upgrade, an enemy in Panic only loses 50 stealth to a stab rather than all of it — the one thing that softens the spend.',
-      ],
+      notes: ['A phobia does nothing to an enemy with no fear on them. Grasp and Gaze are how the fear gets there.'],
+      noUpgrade: true,
     },
 
-    'silence-watch': {
+    'fear-grasp': {
       basics:
-        'Plants a 14px watcher at the cursor — three at once, and a single hit of anything destroys '
-        + 'one. Each is worth +20% stealth gain, −20% stealth drain and +10% damage on everything this '
-        + 'element deals. Standing untouched for 35 seconds matures it, and a matured watcher is what '
-        + 'Ritual turns into a Grabber. It pulses every 15 seconds, which is both flavour and a reminder '
-        + 'of where your board is. 5s cooldown.',
-      cast: 'E, planted at the cursor. 5s cooldown. Three at a time.',
+        'Every phobia slashes a giant black claw in a cone toward your cursor. Each claw that '
+        + 'catches an enemy deals 12 damage and adds 10 fear.',
+      cast: 'E, aimed with the cursor — each phobia aims from where it stands. 5s cooldown. Needs at least one phobia.',
       effects: [
-        { tag: 'summon', label: 'The watcher', detail: 'Up to 3 at once, 14px, and destroyed by a single hit of anything.' },
-        { tag: 'buff', label: 'What each one is worth', detail: '+20% stealth gain, −20% stealth drain, and +10% damage on everything this element deals.' },
-        { tag: 'utility', label: 'Maturing', detail: '35 seconds of standing untouched. A matured watcher is what Ritual turns into a Grabber.' },
-        { tag: 'utility', label: 'It pulses', detail: 'Every 15 seconds it makes itself known, which is both flavour and a reminder of where your board is.' },
+        { tag: 'damage', label: 'Claw', detail: '12 damage per phobia, landing 0.15s after the cast. Four phobias on one enemy: 48.' },
+        { tag: 'debuff', label: 'Fear', detail: '+10 fear per claw that lands (up to 40).' },
+        { tag: 'area', label: 'Cone', detail: '150px long and about 76° wide, from each phobia toward the cursor.' },
       ],
-      upgrade: {
-        basics:
-          'Watchers become Seekers: 3 hits instead of 1, moving at 120 px/s and turning to a new heading '
-          + 'every 1.5 seconds, with a 200px cone ±30° wide that leaves anything inside it Panicking for 8 '
-          + 'seconds — "I see you" haunts their screen. Stabbing a panicking enemy drains only 50 stealth '
-          + 'instead of the whole meter, so a panicked target can be stabbed twice at strength. Ritual on a '
-          + 'matured Seeker raises a Vulture rather than a Grabber: every 20 seconds it carries an enemy '
-          + 'off the top of the screen and drops them back 50 health lighter and covered in blood.',
-        effects: [
-          { tag: 'summon', label: 'The Seeker', detail: 'Takes 3 hits instead of 1, moves at 120 px/s, and turns to a new heading every 1.5 seconds.', requiresUpgrade: 'e' },
-          { tag: 'debuff', label: 'The gaze', detail: 'A 200px cone, ±30° wide. Anything inside it Panics for 8 seconds — "I see you" haunts their screen.', requiresUpgrade: 'e' },
-          { tag: 'buff', label: 'What Panic is worth to you', detail: 'Stabbing a panicking enemy drains only 50 stealth instead of the whole meter, so a panicked target can be stabbed twice at strength.', requiresUpgrade: 'e' },
-          { tag: 'summon', label: 'The Vulture', detail: 'Ritual on a matured Seeker raises a Vulture instead of a Grabber. Every 20 seconds it carries an enemy off the top of the screen and drops them back 50 health lighter and covered in blood.', requiresUpgrade: 'e' },
-        ],
-      },
-      notes: [
-        'Three watchers is +60% stealth gain, −60% drain and +30% damage, which is the difference between a Silence player who has had time and one who has not.',
-        'They die to literally anything, so the real skill is planting them where the fight is not.',
-        'The mastery requirement It Grabs Now is 25 Grabbers, and a Grabber needs a full 35 seconds of an untouched watcher — this is the slowest thing in the game to train.',
-      ],
+      noUpgrade: true,
     },
 
-    'silence-ritual': {
+    'fear-gaze': {
       basics:
-        'Draws a 75px circle up to 450px away that strikes one full second later — visible the whole '
-        + 'time and dodgeable on purpose — for 25 damage to everything inside and 20 seconds of Silence, '
-        + 'the longest in the element and the only source that does not need you behind them. Cast on a '
-        + 'matured watcher it raises a Grabber instead: 60 seconds of life, throwing a gangly arm every '
-        + '20 seconds (the first after 10) that drags a victim 300 px/s toward it for up to 2.5 seconds '
-        + 'and, if it lands, deals 50 damage plus a permanent 20% cooldown penalty. 14s cooldown.',
-      cast: 'R, at the cursor, up to 450px away. A 75px circle, striking 1 second after it is drawn. 14s cooldown.',
+        'For 3s every phobia opens its mask and shines its eye straight at you. An enemy standing '
+        + 'in a beam burns, gains fear fast, and the beam widens around them. Spend 2.5s in the light and it '
+        + 'is a jumpscare: frozen for 3s and 30 more fear.',
+      cast: 'R. 16s cooldown. Needs at least one phobia. The beams follow you as you move.',
       effects: [
-        { tag: 'damage', label: 'The beam', detail: '25 damage to everything inside the 75px circle.' },
-        { tag: 'debuff', label: 'And the lockout', detail: '20 seconds of Silence — the longest in the element, and the only source that does not need you behind them.' },
-        { tag: 'utility', label: 'The second of warning', detail: 'The circle is visible for a full second before the beam lands. It is dodgeable, on purpose.' },
-        { tag: 'summon', label: 'On a matured watcher', detail: 'It becomes a Grabber: 60 seconds of life, and every 20 seconds — the first after 10 — it throws a gangly arm out, drags a victim 300 px/s toward it for up to 2.5 seconds, and does 50 damage plus a permanent 20% cooldown penalty if it lands.' },
+        { tag: 'area', label: 'Beam', detail: 'From each phobia to you and 50px past (at least 230px long). Starts about 23° wide and opens by 18° a second while somebody is in it, up to about 69°.' },
+        { tag: 'damage', label: 'Burn', detail: '10 damage a second while in any beam — 30 over the full 3s. Several beams do not stack.' },
+        { tag: 'debuff', label: 'Fear', detail: '+22 fear a second while in any beam — 66 over the full 3s.' },
+        { tag: 'control', label: 'Jumpscare', detail: '2.5s in the light in total (it need not be unbroken): frozen for 3s and +30 fear. Once per enemy per Gaze.' },
       ],
-      upgrade: {
-        basics:
-          'A terror bar fills at +1 a second per afflicted enemy, to 100, and Ritual cast on yourself at '
-          + 'full terror turns you into the Striker for 20 seconds with a completely new clawed moveset. '
-          + 'Everything that hits you while transformed is stored rather than prevented and taken in one '
-          + 'hit when you revert, at 25% off — a loan and not a shield. The clock moves with the fight: +1 '
-          + 'second per 5 damage you deal and −1 second per 15 you absorb, so an aggressive Striker lasts '
-          + 'and a hunted one does not.',
-        effects: [
-          { tag: 'resource', label: 'The bar', detail: '+1 a second per afflicted enemy, to a maximum of 100.' },
-          { tag: 'utility', label: 'Becoming the Striker', detail: 'Ritual on yourself at full terror. 20 seconds of a completely new clawed moveset.', requiresUpgrade: 'r' },
-          { tag: 'shield', label: 'Damage is deferred, not prevented', detail: 'Everything that hits you while transformed is stored and taken in one hit when you revert — at 25% off. It is a loan, not a shield.', requiresUpgrade: 'r' },
-          { tag: 'utility', label: 'The clock moves', detail: '+1 second per 5 damage you deal and −1 second per 15 you absorb, so an aggressive Striker lasts and a hunted one does not.', requiresUpgrade: 'r' },
-        ],
-      },
       notes: [
-        'Twenty seconds of Silence on a 14-second cooldown means a Silence player who lands two rituals has taken the opponent\'s abilities away for the rest of the fight.',
-        'A Grabber\'s 20% cooldown penalty is permanent for the match. It is the only lasting stat change in the element.',
-        'The Striker is the element\'s only true offensive stance, and everything it costs is paid after the fact.',
+        'The beam runs from the phobia to you, so put the enemy between the two.',
+        'A frozen enemy does not flee — but they will the moment it ends, if the meter is full and you are close.',
       ],
+      noUpgrade: true,
     },
 
-    'silence-feast': {
+    'fear-manifest': {
       basics:
-        'A shadow aura of 130px rises round you for 3 seconds and moves with you, burning 5 stealth a '
-        + 'second on top of the normal drain. An enemy who stays inside it for the whole 3 seconds — '
-        + 'stepping out restarts their count — takes 20 damage and is Stalked for 5 seconds: they turn at '
-        + 'about 72° a second instead of instantly, and every ability they cast fires the way they are '
-        + 'facing rather than where they aimed. 18s cooldown.',
-      cast: 'F, on yourself. A 130px aura that follows you for 3 seconds. 18s cooldown.',
+        'With 50 fear on the field, become the slasher: invincible, a third bigger, 67% slower, and '
+        + 'your five keys become his. In a duel the enemy sees only by a flickering flashlight, and '
+        + 'a rune appears on the arena\'s edge — breaking it is the only way they can end this.',
+      cast: 'F. 20s cooldown. Needs 50 fear in total across your enemies; the card fills as the fear builds.',
       effects: [
-        { tag: 'area', label: 'The aura', detail: '130px round you, for 3 seconds, moving with you. It burns 5 extra stealth a second while it is up.' },
-        { tag: 'damage', label: 'The catch', detail: '20 damage to anybody who stays inside for the full 3 seconds. Stepping out restarts their count.' },
-        { tag: 'debuff', label: 'Stalked', detail: '5 seconds. They turn at about 72° a second instead of instantly, and everything they cast goes the way they face — not where they aim.' },
-        { tag: 'resource', label: 'Terror', detail: 'A Stalk that lands banks 25 terror — if you have the terror bar (Night Terror, or the mastery).' },
+        { tag: 'shield', label: 'Invincible', detail: 'Nothing damages the slasher. No dodge roll while he is out.' },
+        { tag: 'cost', label: 'Heavy', detail: 'Moves at 25% speed and is 35% larger.' },
+        { tag: 'debuff', label: 'Flashlight', detail: 'Duel only. The enemy\'s screen goes dark except a 34px pool around them and a 250px, 48°-wide beam where they aim. It flickers.' },
+        { tag: 'summon', label: 'The rune', detail: 'Duel only. 25hp, at a random spot on the arena edge, bright enough to see in the dark. Enemy shots and blasts damage it; standing within 46px wears it down at 14 a second. Broken: you are the gentleman again.' },
+        { tag: 'utility', label: 'Invasion', detail: 'Husks never hunt a rune, so there is none: the slasher lasts 20s.' },
+        { tag: 'utility', label: 'Ending it', detail: 'The rune, the Invasion clock, or your own Shadowy Descent. In a duel it otherwise lasts until one of you is dead.' },
       ],
-      upgrade: {
-        basics:
-          'Despress: the aura weighs on anyone inside it. A stack lands on the way in and another every '
-          + 'second they stay, holding until the aura ends and then fading 3 seconds later. Each stack is '
-          + '10% slower movement and strips 10 points of their damage resistance — it lifts armour back '
-          + 'toward normal damage, never past it.',
-        effects: [
-          { tag: 'debuff', label: 'Despress', detail: 'A stack on entry and one more per second inside. Each: 10% slower movement and 10 points of damage resistance stripped (never below normal damage). Lasts until the aura ends, then 3 seconds more.', requiresUpgrade: 'f' },
-        ],
-      },
       notes: [
-        'Stalked is the backstab setup: the victim can see you circling behind them and still cannot come about in time.',
-        'Because a Stalked fighter fires along their facing, walking round them sideways makes most of their attacks miss you.',
-        'The aura burns stealth and you are visible at the centre of a pool of shadow — it is a commitment, not an ambush.',
-        'Despress does nothing to someone with no resistance; it is the answer to shields, armour stances and damage-reduction buffs.',
+        'Phobias stay where they are and keep draining. Any Gaze in progress ends.',
+        'A bot fighting by flashlight wanders, and only goes for the rune once it stumbles within 240px of it.',
       ],
+      noUpgrade: true,
     },
 
-    'silence-run': {
+    'fear-claustrophobia': {
       basics:
-        'Reaches 500px over 350ms with a 60px catch, and both fighters leave the arena entirely for a '
-        + 'pocket corridor 220px wide where the victim is untargetable by anybody else. A blob chases at '
-        + '380 px/s with a 50px catch against a victim moving at 80% speed, and reaching them is 80 '
-        + 'damage. They win by crossing the top of the corridor: the door opens 4.5 seconds in and the '
-        + 'chase times out at 14. A player mashes 14 presses to break the initial grab and a bot has a '
-        + 'flat 33% chance, and a bot escapes the hallway about half the time before any spitting. Click '
-        + 'during the chase spits for 5 damage and a half-second slow at 430 px/s, and every spit that '
-        + 'lands cuts a bot\'s survival odds by 2%. 60s cooldown — but a whiff refunds 45 of it, leaving '
-        + 'about 15.',
-      cast: 'Q, ultimate. The arm reaches 500px over 350ms with a 60px catch. 60s cooldown — but a whiff refunds 45 of it, leaving about 15.',
+        'The arena walls close in over 22s and every phobia turns to a 100hp marble statue. Fear '
+        + 'rises the whole time, and when the walls meet the enemy is crushed — dead, in a duel. '
+        + 'Breaking any one statue stops it, but half the statues are trapped: break one of those '
+        + 'and it is a jumpscare, 40 damage and 20 fear.',
+      cast: 'Q. Ultimate (charged by damage dealt and taken). Needs at least one phobia. No new phobias while it runs.',
       effects: [
-        { tag: 'control', label: 'The hallway', detail: 'Both fighters leave the arena entirely for a pocket corridor 220px wide. The victim is untargetable by anybody else while it runs.' },
-        { tag: 'damage', label: 'Caught', detail: '80 damage if the blob reaches them — a 50px catch at 380 px/s against a victim moving at 80% speed.' },
-        { tag: 'utility', label: 'The escape', detail: 'They win by crossing the top of the corridor. The door opens 4.5 seconds in, and the chase times out at 14 seconds. A player mashes 14 presses to break the initial grab; a bot has a flat 33% chance.' },
-        { tag: 'damage', label: 'Spitting', detail: 'Click during the chase spits for 5 damage and a half-second slow at 430 px/s — and every spit that lands cuts a bot\'s survival odds by 2%.' },
-        { tag: 'utility', label: 'A bot\'s odds', detail: 'A bot escapes the hallway about half the time before any spitting.' },
+        { tag: 'area', label: 'The walls', detail: 'The room shrinks evenly on the arena\'s centre for 22s, down to a 116px square. Everybody — you included — and every statue is pushed inward with it.' },
+        { tag: 'debuff', label: 'Fear', detail: '+2.5 fear a second on every enemy: 55 over the full 22s.' },
+        { tag: 'damage', label: 'Crushed', detail: 'When the walls meet. Duel: 10 times the victim\'s maximum health, through shields — a kill. Invasion: 120 to every husk.' },
+        { tag: 'summon', label: 'Statues', detail: '100hp each. Enemy shots and blasts damage them; standing within 48px wears one down at 28 a second. Marble phobias do not drain, claw or gaze.' },
+        { tag: 'utility', label: 'Breaking one', detail: 'Ends the ultimate at once. That statue is destroyed; the others turn back into phobias.' },
+        { tag: 'damage', label: 'Trapped', detail: 'Half the statues, rounded down, are occupied. Breaking one: 40 damage and +20 fear to every enemy, with a full-screen jumpscare.' },
+        { tag: 'utility', label: 'The tell', detail: 'An occupied statue cannot keep still: stand within 95px of one for 3s and it starts to bleed from the eyes and breathe.' },
       ],
-      upgrade: {
-        basics:
-          'The Labyrinth: the pocket dimension becomes an 11×7 maze in the dark, and you hunt in it. You '
-          + 'steer the blob through the corridors with WASD at 235 px/s, seeing 190px round yourself, and '
-          + 'the victim\'s heartbeat flashes their position every 1.5 seconds. They are shrunk to 60% and '
-          + 'move at 85% speed, see only 140px round themselves, and get out by reaching the lit exit on the '
-          + 'maze\'s border or surviving 12 seconds. Caught is 80 damage. Bot hunters follow the heartbeat; '
-          + 'bot victims make for the exit at a walk.',
-        effects: [
-          { tag: 'control', label: 'The maze', detail: 'An 11×7 labyrinth with loops, candles in the dead ends and a cold-lit exit cut into the border. The exit is always a real walk from the victim and usually on the far side of them from you.', requiresUpgrade: 'q' },
-          { tag: 'utility', label: 'The hunt', detail: 'You steer the blob with WASD at 235 px/s and see 190px round you. Their heartbeat shows you where they are every 1.5 seconds.', requiresUpgrade: 'q' },
-          { tag: 'debuff', label: 'What it does to them', detail: 'Shrunk to 60%, 85% speed, and only 140px of vision — plus the exit\'s light and the candles.', requiresUpgrade: 'q' },
-          { tag: 'utility', label: 'The way out', detail: 'Reach the exit, or survive 12 seconds. Caught is 80 damage.', requiresUpgrade: 'q' },
-        ],
-      },
       notes: [
-        'The 45-second refund on a whiff is enormous: a missed Run is effectively a 15-second cooldown, so there is very little reason not to try.',
-        'The mastery requirement No Way Out is 5 hallway catches, which is the rarest thing this element asks for.',
-        'Eighty damage plus everything you spat on the way is often more than half a health bar, and none of it can be answered — the victim has no abilities in the corridor, only legs.',
+        'With one phobia nothing is trapped; with two or three, one is; with four, two are.',
+        'Manifest can still be cast with the walls closing. It does not stop them.',
       ],
+      noUpgrade: true,
     },
-  },
 
-  perks: {
-    hymn: {
+    'fear-massacre': {
       basics:
-        'Every watcher you own sings a 140px ring. Anything hostile inside one is dragged toward the '
-        + 'eye at 44 px/s — a steering nudge, not a grab, and an unstoppable fighter ignores it '
-        + 'outright. A watcher that holds an enemy inside its hum for a cumulative 6 seconds matures on '
-        + 'the spot instead of waiting out its 35. The price is the noise: while any enemy stands in any '
-        + 'of your hums your stealth drains at the normal 10 a second even if you are stood in the fog.',
-      cast: 'Passive. Every watcher hums from the moment it is planted.',
+        'Slasher. Stab the machete at your cursor: 28 damage, plus more the more afraid the target '
+        + 'is, up to 58 at full fear. The stab wounds the part of the body it lands on — the hands they '
+        + 'wave are the arms, the very middle of the hitbox is the heart, the top of it the head and '
+        + 'the bottom the legs. Your own phobias are in the way too: running one through destroys it '
+        + 'and makes the slasher 30% faster until he turns back.',
+      cast: 'Click, or hold to keep stabbing. 1.1s cooldown. Not while stalking with Haunt, swinging its hook or dragging somebody.',
       effects: [
-        { tag: 'area', label: 'The hum', detail: '140px ring around each watcher you own.' },
-        { tag: 'utility', label: 'The pull', detail: 'Anything hostile inside is dragged toward the eye at 44 px/s. Unstoppable fighters are immune.' },
-        { tag: 'buff', label: 'Early ripening', detail: '6 cumulative seconds of an enemy held inside a hum matures that watcher instantly, against its normal 35 seconds.' },
-        { tag: 'cost', label: 'The song carries', detail: 'While any enemy stands in any of your hums, stealth drains at 10 a second instead of banking — the fog stops paying.' },
+        { tag: 'damage', label: 'Machete', detail: '28 damage + 0.3 per point of the target\'s fear: 43 at 50 fear, 58 at 100.' },
+        { tag: 'area', label: 'Thrust', detail: 'A straight line to the cursor, 132px at most. A point that stops inside the body cuts exactly there; one that carries on through cuts where it went in.' },
+        { tag: 'debuff', label: 'Wound', detail: 'Each part runs sound → damaged (pink) → severe (red). One stab damages an arm, a leg or the head and three make it severe. The heart takes two stabs to damage and five to make severe.' },
+        { tag: 'debuff', label: 'Arms', detail: 'Per arm: every cooldown 12% longer damaged, 25% severe.' },
+        { tag: 'debuff', label: 'Legs', detail: 'Per leg: 12% slower damaged, 22% severe.' },
+        { tag: 'debuff', label: 'Head', detail: '6% slower and their vision swims for 1.7s about every 7s; severe, 12% slower and 2.6s about every 4s.' },
+        { tag: 'debuff', label: 'Heart', detail: 'They take 15% more damage from everything; severe, 30%.' },
+        { tag: 'dot', label: 'Bleeding', detail: 'Each severe part: 0.3% of max health a second through shields (0.9% for the heart), +10% for every other part that is at least damaged. Severe parts visibly bleed and leave puddles.' },
+        { tag: 'utility', label: 'The chart', detail: 'While you are the slasher, the body you last cut is drawn bottom right of your screen: each part pink or red, with a bar filling toward severe.' },
+        { tag: 'buff', label: 'Run through a phobia', detail: 'Every one of your phobias on the line is destroyed. Each is +30% of the slasher\'s speed, stacking, until the form ends.' },
       ],
       notes: [
-        'Ritual on a matured watcher makes a Grabber, so this perk is really a Grabber accelerator: it turns 35 seconds of waiting into 6 seconds of pinning someone near an eye.',
-        'Three watchers is three overlapping rings, and the drain does not stack — one enemy in one hum costs exactly as much as one in all three.',
-        'It fights the base kit on purpose. Silence banks stealth by hiding; this perk pays for its tempo by refusing to let you bank while the plan is working.',
+        'Wounds last the rest of the bout — they do not heal when the slasher ends.',
+        'Four phobias run through takes the slasher from 33% to 73% of normal speed.',
+        'A bot has no cursor to place on a part: its stabs land somewhere on the body at random.',
       ],
+      noUpgrade: true,
     },
-    torture: {
-      basics:
-        'The Ritual beam racks its victim: 4 damage a second for 6 seconds — 24 in all, against the '
-        + 'beam\'s single 25 — with +1 second of Silence per tick, so a full rack is 6 more seconds on top '
-        + 'of the 20. Ritualling the same racked victim again tightens it for +2 damage a second, up to 3 '
-        + 'stacks and 8 a second at full tension.',
-      effects: [
-        { tag: 'dot', label: 'The rack', detail: '4 damage a second for 6 seconds — 24 in all, against the beam\'s single 25.' },
-        { tag: 'debuff', label: 'It extends the Silence', detail: '+1 second of Silence per tick, so a full rack is 6 more seconds on top of the 20.' },
-        { tag: 'debuff', label: 'Tightening', detail: 'Ritual the same racked victim again for +2 damage a second, up to 3 stacks — 8 a second at full tension.' },
-      ],
-      notes: [
-        'At three stacks the rack is 48 damage over six seconds and 26 seconds of total lockout from one victim.',
-        'It rewards hitting the same person repeatedly rather than spreading rituals around, which is a real change to how the key is played.',
-      ],
-    },
-  },
 
-  mastery: {
-    weep: {
+    'fear-haunt': {
       basics:
-        'While every living enemy is facing away from you — meaning outside ±50° of their facing, a '
-        + '100° wedge — you move 50% faster and your stealth drains 25% slower, on top of whatever your '
-        + 'watchers are already doing. It also keeps a terror bar even without the Night Terror upgrade, '
-        + 'so Puppetmaster always has something to spend.',
+        'Slasher. Go grey and stalk, 15% slower, charging faster the closer you are to the enemy. '
+        + 'Press again — or get caught in their flashlight — and you swing a hook round yourself on a '
+        + 'chain, for longer the more you had charged. Whoever it catches is dragged behind you for '
+        + '5s, unable to fight back. When the time is up, or you press again, they are slammed down '
+        + 'in front of you. Drag them onto one of the arena\'s butcher\'s hooks instead and they hang '
+        + 'there for 3s: you cannot hurt them, but they bleed three times as fast.',
+      cast: 'E to start stalking, E again to swing the hook, E again to slam whoever it caught. 12s cooldown from the first press. No Massacre, Signature Move or Descent while stalking, swinging or dragging.',
       effects: [
-        { tag: 'movement', label: 'Unwatched', detail: '+50% move speed while every living enemy is facing away from you.' },
-        { tag: 'buff', label: 'And the fog holds', detail: 'Stealth drains 25% slower while unwatched, on top of whatever your watchers are already doing.' },
-        { tag: 'area', label: 'What counts as watching', detail: '±50° of their facing — a 100° wedge. Anything wider than that and you are unobserved.' },
-        { tag: 'resource', label: 'It keeps a terror bar', detail: 'Even without the Night Terror upgrade, so Puppetmaster always has something to spend.' },
+        { tag: 'cost', label: 'Stalking', detail: 'Another 15% slower while charging.' },
+        { tag: 'resource', label: 'Charge', detail: 'Fills at 8% a second from 460px or further, up to 55% a second touching the enemy.' },
+        { tag: 'utility', label: 'Caught', detail: 'After the first 0.7s, being inside an enemy\'s flashlight beam (250px, 48° wide) lets the hook go with whatever is banked.' },
+        { tag: 'area', label: 'The hook', detail: 'Circles you at 96px, about one and a half turns a second, for 1.2s with no charge up to 4.2s when full. The chain catches as well as the hook.' },
+        { tag: 'control', label: 'Dragged', detail: '5s on a 50px chain: disarmed, cannot walk or dodge. You move 50% faster while hauling.' },
+        { tag: 'damage', label: 'Slam', detail: '22 damage, thrown down 56px toward your cursor, a 0.5s stun, and a light wound (a tenth of the way to severe) to every part.' },
+        { tag: 'control', label: 'Butcher\'s hooks', detail: 'Six stand in the arena while a slasher is out. A dragged enemy within 34px of one is hung on it for 3s: held, untouchable by you, bleeding at three times the rate. No slam.' },
       ],
       notes: [
-        'It is the only movement bonus in the game that a competent opponent can switch off simply by turning around — which makes it excellent against bots and a genuine duel against a person.',
-        'A possessed host is looking out of your own eyes, so nothing counts as watching you while a Puppetmaster possession is running.',
+        'Hanging somebody only pays if they are already bleeding: it needs at least one severe part.',
+        'A bot lets the hook go once it is charged and in reach (or after 9s), and hauls its catch toward the nearest butcher\'s hook.',
       ],
+      noUpgrade: true,
     },
-    puppetmaster: {
+
+    'fear-signature': {
       basics:
-        'A bindable doll, planted within 5 seconds of a landed stab for 25 terror. Everything you put '
-        + 'into the doll is relayed to the enemy at ×1.25, it breaks after 50 damage has gone through it, '
-        + 'and they can neither damage nor move it themselves. Ritual on the doll and the doll survives — '
-        + 'the enemy is possessed instead, for 15 seconds, and you control their body rather than your '
-        + 'own: Click slashes for 15 in a ±60° arc out to 100px, E bites for 10 and heals you 12, R '
-        + 'cannibalizes their own muck for 20 and heals you 20, F slams the ground and drags up 3 '
-        + 'awakened-kin that crawl over and stab them for 10 apiece every 2.5 seconds for 20 seconds, and '
-        + 'Q hands the body back and costs them 20 on the way out. Cannot be bound to R, since Ritual is '
-        + 'what awakens the doll. 12s cooldown.',
-      cast: 'The bound key, within 5 seconds of a landed stab, for 25 terror. Cannot be bound to R — Ritual is what awakens the doll. 12s cooldown.',
+        'Slasher. Vanish to a random spot on the arena edge and stand still. Three times, aim a '
+        + 'thin red line only you can see and click to arm it (it arms itself after 2s); 1.5s later it '
+        + 'goes live for 1s. It starts at your spot on the wall and crosses the whole arena. You '
+        + 'slash through every enemy on a live line for 26, wounding whichever part touched it, '
+        + 'then snap back to the wall, and the rounds carry on.',
+      cast: 'R. 18s cooldown. The line runs from you through your cursor; click to lock it in, and it goes live 1.5s later. Nothing else can be cast until it ends.',
       effects: [
-        { tag: 'damage', label: 'The doll', detail: 'Everything you put into it is relayed to the enemy at ×1.25. It breaks after 50 damage has gone through it, and they cannot damage or move it themselves.' },
-        { tag: 'utility', label: 'Awakening', detail: 'Ritual on the doll and the doll survives — the enemy is possessed instead, for 15 seconds, and you control their body rather than your own.' },
-        { tag: 'damage', label: 'Awakened Click', detail: 'Slashes for 15 in a ±60° arc out to 100px.' },
-        { tag: 'heal', label: 'Awakened E', detail: 'Bites for 10 and heals you 12.' },
-        { tag: 'heal', label: 'Awakened R', detail: 'Cannibalizes their own muck for 20 and heals you 20.' },
-        { tag: 'summon', label: 'Awakened F', detail: 'Slams the ground and drags up 3 awakened-kin that crawl over and stab them for 10 apiece every 2.5 seconds, for 20 seconds.' },
-        { tag: 'cost', label: 'Handing it back', detail: 'Q returns the body and costs them 20 on the way out.' },
+        { tag: 'movement', label: 'Vanish', detail: 'Teleport to a random point on the arena edge. You cannot walk while the move runs.' },
+        { tag: 'area', label: 'Line', detail: 'A 1° cone from where you stand, long enough to cross the arena. Invisible to the enemy, armed or not.' },
+        { tag: 'utility', label: 'Rounds', detail: '3, hit or miss. Each: up to 2s to aim, a 1.5s delay after the click (the angle is locked), then live for 1s.' },
+        { tag: 'damage', label: 'The move', detail: '26 damage to every enemy on a live line, once each per round. You appear 52px past them, then return to your spot on the wall about 0.3s later.' },
+        { tag: 'debuff', label: 'Wound', detail: 'The part that touched the cone first — a hand, the head or a leg — is wounded 60% of the way to severe: damaged at once, severe on the second.' },
       ],
-      variants: {
-        label: 'What you can do with a kin',
-        variants: [
-          { emoji: '🦷', name: 'Bite it', description: 'Eat the kin and heal 12.' },
-          { emoji: '🕯️', name: 'Ritual it', description: 'It becomes a corrupted copy of the enemy — black, eyeless, grinning — fighting on your side for 20 seconds at 150 px/s, shooting for 12 every 1.4s and clawing for 8.' },
-          { emoji: '🌫️', name: 'The price of a copy', description: 'You gain no stealth at all while a corrupted copy is out. The fog simply stops working for you.' },
-        ],
-      },
+      noUpgrade: true,
+    },
+
+    'fear-descent': {
+      basics:
+        'Slasher. Sink through the floor and end the form by choice. You come back up as the '
+        + 'gentleman at a random spot on the arena edge — no longer invincible, back at full speed.',
+      cast: 'F. 1s cooldown. Not during Haunt, its hook or a drag, Signature Move or while somebody is in the maze.',
+      effects: [
+        { tag: 'movement', label: 'Resurface', detail: 'At a random point on the arena edge.' },
+        { tag: 'utility', label: 'Ends the slasher', detail: 'The rune, the hole and any speed from cut-down phobias go with it. Manifest keeps the 20s cooldown it started when you changed.' },
+      ],
+      noUpgrade: true,
+    },
+
+    'fear-fall': {
+      basics:
+        'Slasher. A hole opens in the middle of the arena and keeps growing for 26s. In a duel, an '
+        + 'enemy who touches it falls into a maze and is hunted through it in first person for 45s — '
+        + 'you are the hunter. Caught: 75 damage and every part of them severely wounded. Husks in an '
+        + 'Invasion just take 60 and are stunned.',
+      cast: 'Q. Ultimate (charged by damage dealt and taken). One hole at a time. It closes if the slasher ends.',
+      effects: [
+        { tag: 'area', label: 'The hole', detail: 'Centre of the arena. 34px radius, growing 9px a second to a 250px cap, for 26s.' },
+        { tag: 'control', label: 'The maze', detail: 'Duel only. Both of you leave the arena, untouchable, for up to 45s. The prey walks faster than the hunter (1.9 against 1.25 tiles a second).' },
+        { tag: 'damage', label: 'Caught', detail: 'The hunter reaching the prey with a clear line: 75 damage through shields and +25 fear, after 3s of something you are not shown. Every part comes back severe — head, heart, both arms, both legs — so they bleed 3.6% of max health a second.' },
+        { tag: 'utility', label: 'Escaped', detail: 'Survive the 45s and nothing happens. Either way the prey returns somewhere inside the arena and the slasher on its edge.' },
+        { tag: 'damage', label: 'Husks', detail: 'Invasion: 60 damage and a 1.5s stun to each husk in the hole, at most once every 3s each.' },
+      ],
       notes: [
-        'The doll is the cheap half and the possession is the expensive one: 50 damage relayed at ×1.25 is 62, and it costs nothing but the terror.',
-        'Possession also shortens the awakened moveset\'s own cooldowns dramatically — E is 2.5s rather than 5, R is 6 rather than 14, F is 6 rather than 18.',
-        'The enhancement refuses to bind to R specifically because Ritual is the key that awakens the doll. There has to be a Ritual left to cast.',
+        'Falling ends any Haunt, hook, drag or Signature Move in progress, and the hole closes behind them.',
+        'The slasher cannot be turned back while the hunt is on.',
       ],
+      noUpgrade: true,
     },
   },
 };

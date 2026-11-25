@@ -1,6 +1,7 @@
 import type { CourtBundle } from '../../../../IslesTypes';
 import { BLOOM_AREA } from './area';
 import { BLOOM_ENCOUNTERS, BLOOM_GIMMICKS } from './encounters';
+import { FALLEN } from './fallen';
 import { BLOOM_FLOOR } from './floor';
 import { ART_PETALIS, BLOOM_FISH, BLOOM_FISHERIES, BLOOM_ITEMS, BLOOM_SCRIPTS, BLOOM_SHOPS } from './items';
 import { BLOOM_COLOR } from './palette';
@@ -37,4 +38,5 @@ export const BLOOM_COURT: CourtBundle = {
   shops: BLOOM_SHOPS,
   fish: BLOOM_FISH,
   fisheries: BLOOM_FISHERIES,
+  fallen: FALLEN,
 };

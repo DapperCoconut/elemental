@@ -60,7 +60,7 @@ The `CastContext` (defined in `src/elements/Ability.ts`) is a large object passe
 Menu, campaign, gauntlet and online lobby all read `src/data/ElementRoster.ts` — **never hand-copy the roster**.
 Cards come from `src/ui/ElementSelectGrid.ts` (no emoji on a card; live portrait), profiles from
 `src/data/ElementProfiles.ts` (a new element needs an entry). Id traps: `sand` is Time, `dune` is Sand, `slime`
-is Venom, `gum` is Savor, `chalk` is Paint. Details: `docs/claude/element-selection.md`.
+is Venom, `gum` is Savor, `chalk` is Paint, `magic` is Math (kit: `MathKit`), `silence` is Fear (kit: `FearKit`). Details: `docs/claude/element-selection.md`.
 
 ### Menu Dioramas
 
@@ -127,11 +127,11 @@ element gate.
 
 `castSkipChance` in difficulty presets causes lower-difficulty NPCs to randomly skip special abilities. `aimOffsetDeg` adds angular error to hitscan calculations.
 
-**Bot synergy contract** (mandatory for every new or reworked element): every kit has internal synergies — casts only worth making because of something else the kit already put on the field (Silence rituals a matured watcher into a grabber; its Click+ stab through an own stalker detonates the Sacrifice). Bots must execute these deliberately, not by accident:
+**Bot synergy contract** (mandatory for every new or reworked element): every kit has internal synergies — casts only worth making because of something else the kit already put on the field (Fear's Gaze and Grasp do nothing without a phobia standing where the target is; its slasher cuts down an own phobia for speed). Bots must execute these deliberately, not by accident:
 
 - The **kit** computes each opportunity owner-side and publishes it as an `NpcAiState` field (a cast position or a "combo is live" flag). The kit owns the geometry and upgrade checks; the AI never re-derives either. Reads must be side-effect-free.
 - `do[Element]Abilities` checks opportunity fields **first**, before its generic rotation.
-- When implementing an element's bot, enumerate the kit's synergies ("X enables Y") and wire each through this pattern. A bot that never plays its kit's synergies is an incomplete implementation. Canonical examples: `npcSilenceMatureStalker`, `npcSilenceSacrificeStab`, `npcMagmaChargeTarget`, `npcHarvestHeartAim`.
+- When implementing an element's bot, enumerate the kit's synergies ("X enables Y") and wire each through this pattern. A bot that never plays its kit's synergies is an incomplete implementation. Canonical examples: `npcFearGazeCovers`, `npcFearGraspAim`, `npcMagmaChargeTarget`, `npcHarvestHeartAim`.
 
 The bot-overhaul roadmap (per-element batch checklist, remaining elements, and hard-won gotchas like reaction-tick probability retuning) lives in `docs/bot-overhaul.md` — read it before any bot/AI work, and keep it current as batches land.
 

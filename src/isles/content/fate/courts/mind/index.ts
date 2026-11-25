@@ -1,6 +1,7 @@
 import type { CourtBundle } from '../../../../IslesTypes';
 import { MIND_AREA } from './area';
 import { MIND_ENCOUNTERS, MIND_GIMMICKS } from './encounters';
+import { FALLEN } from './fallen';
 import { MIND_FLOOR } from './floor';
 import { ART_GAMBIT, MIND_FISH, MIND_FISHERIES, MIND_ITEMS, MIND_SCRIPTS, MIND_SHOPS } from './items';
 import { MIND_COLOR } from './palette';
@@ -37,4 +38,5 @@ export const MIND_COURT: CourtBundle = {
   shops: MIND_SHOPS,
   fish: MIND_FISH,
   fisheries: MIND_FISHERIES,
+  fallen: FALLEN,
 };

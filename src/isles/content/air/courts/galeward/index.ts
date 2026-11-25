@@ -2,6 +2,7 @@ import type { CourtBundle } from '../../../../IslesTypes';
 import { GALEWARD_AREA } from './area';
 import { GALEWARD_ENCOUNTERS, GALEWARD_GIMMICKS } from './encounters';
 import { GALEWARD_FLOOR } from './floor';
+import { FALLEN } from './fallen';
 import {
   ART_ZEPHYR, GALEWARD_BAKERIES, GALEWARD_FISH, GALEWARD_FISHERIES, GALEWARD_ITEMS, GALEWARD_SCRIPTS, GALEWARD_SHOPS,
 } from './items';
@@ -41,4 +42,5 @@ export const GALEWARD_COURT: CourtBundle = {
   bakeries: GALEWARD_BAKERIES,
   fish: GALEWARD_FISH,
   fisheries: GALEWARD_FISHERIES,
+  fallen: FALLEN,
 };

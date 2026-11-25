@@ -23,9 +23,9 @@ export const RECIPES: Recipe[] = [
   { ingredients: ['fate', 'sound'], result: 'gunpowder', resultName: 'Gunpowder', resultEmoji: '💀' },
   { ingredients: ['fate', 'light'], result: 'echo', resultName: 'Echo', resultEmoji: '🦇' },
   { ingredients: ['slime', 'fate'], result: 'rubber', resultName: 'Rubber', resultEmoji: '🪀' },
-  { ingredients: ['slime', 'light'], result: 'magic', resultName: 'Magic', resultEmoji: '📖' },
+  { ingredients: ['slime', 'light'], result: 'magic', resultName: 'Math', resultEmoji: '🧮' },
   { ingredients: ['sound', 'light'], result: 'technology', resultName: 'Technology', resultEmoji: '💻' },
-  { ingredients: ['slime', 'sound'], result: 'silence', resultName: 'Silence', resultEmoji: '🫥' },
+  { ingredients: ['slime', 'sound'], result: 'silence', resultName: 'Fear', resultEmoji: '🎭' },
   { ingredients: ['electricity', 'sound'], result: 'subterfuge', resultName: 'Subterfuge', resultEmoji: '🕴️' },
 ];
 

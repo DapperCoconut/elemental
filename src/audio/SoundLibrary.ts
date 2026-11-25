@@ -987,6 +987,31 @@ export const SOUNDS: Record<string, SoundRecipe> = {
     drop(420, 60, 0.85, { wave: 'sine', gain: 0.09, release: 0.6 }),
   ], { minGap: 350 }),
 
+  // ── Fear ──
+  // A scream that is wrong in three ways at once: two voices a tritone apart that bend upward and
+  // then break, over a torn-paper noise band. Played at several rates for They Will Fall.
+  'fear-scream': fx([
+    rise(520, 1180, 0.5, { wave: 'sawtooth', gain: 0.13, attack: 0.03, release: 0.5, vibrato: { rate: 13, depth: 46 }, filter: { type: 'bandpass', freq: 1500, freqEnd: 2600, q: 1.4 }, reverb: 0.55 }),
+    drop(1180, 310, 0.75, { wave: 'sawtooth', gain: 0.11, delay: 0.46, release: 0.6, vibrato: { rate: 21, depth: 90 }, filter: { type: 'bandpass', freq: 2200, freqEnd: 700, q: 1.2 }, reverb: 0.6 }),
+    rise(735, 1668, 0.55, { wave: 'square', gain: 0.045, delay: 0.05, release: 0.5, vibrato: { rate: 9, depth: 70 }, filter: { type: 'bandpass', freq: 1900, q: 2 }, reverb: 0.6 }),
+    noise(1.1, { gain: 0.07, color: 'white', filter: { type: 'bandpass', freq: 3200, freqEnd: 1100, q: 2.4 }, attack: 0.05, release: 0.7, reverb: 0.5 }),
+    drop(140, 48, 1.2, { wave: 'sine', gain: 0.12, release: 0.9 }),
+  ], { minGap: 120, important: true }),
+
+  // The jumpscare's sting: everything at once, instantly, then a long sick tail.
+  'fear-jumpscare': fx([
+    noise(0.35, { gain: 0.3, color: 'white', filter: { type: 'highpass', freq: 900 }, attack: 0.001, release: 0.3 }),
+    ...stack(233, 1.3, [1, 1.414, 2.06, 2.97], { wave: 'sawtooth', gain: 0.09, attack: 0.001, release: 1.1, vibrato: { rate: 7, depth: 18 }, reverb: 0.6 }),
+    drop(2400, 900, 0.9, { wave: 'square', gain: 0.06, attack: 0.001, release: 0.8, vibrato: { rate: 30, depth: 160 }, reverb: 0.5 }),
+    drop(70, 30, 1.4, { wave: 'sine', gain: 0.28, attack: 0.001, release: 1.1 }),
+  ], { minGap: 300, important: true }),
+
+  // Something breathing inside a statue: in, a held nothing, out.
+  'fear-breath': fx([
+    noise(0.7, { gain: 0.09, color: 'pink', filter: { type: 'bandpass', freq: 500, freqEnd: 1300, q: 1.1 }, attack: 0.3, release: 0.3 }),
+    noise(0.9, { gain: 0.11, color: 'pink', filter: { type: 'bandpass', freq: 1100, freqEnd: 320, q: 0.9 }, attack: 0.2, release: 0.6, delay: 0.8 }),
+  ], { minGap: 900 }),
+
   'heartbeat': fx([
     drop(90, 48, 0.16, { gain: 0.2, release: 0.12 }),
     drop(84, 44, 0.14, { gain: 0.13, delay: 0.2, release: 0.11 }),

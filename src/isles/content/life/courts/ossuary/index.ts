@@ -10,6 +10,7 @@ import { CALCIFY } from './gimmicks/calcify';
 import { MARROW_WELLS } from './gimmicks/marrowWells';
 import { KNUCKLEBONES } from './gimmicks/knucklebones';
 import { RELIQUARY } from './gimmicks/reliquary';
+import { FALLEN } from './fallen';
 
 /**
  * THE OSSUARY COURT — Thornwild's garden of the dead, where the pruned who die in the Empress's
@@ -37,4 +38,5 @@ export const OSSUARY_COURT: CourtBundle = {
   shops: OSSUARY_SHOPS,
   fish: OSSUARY_FISH,
   fisheries: OSSUARY_FISHERIES,
+  fallen: FALLEN,
 };

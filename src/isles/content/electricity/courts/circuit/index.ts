@@ -2,6 +2,7 @@ import type { CourtBundle } from '../../../../IslesTypes';
 import { CIRCUIT_AREA } from './area';
 import { CIRCUIT_ENCOUNTERS, CIRCUIT_GIMMICKS } from './encounters';
 import { CIRCUIT_FLOOR } from './floor';
+import { FALLEN } from './fallen';
 import { ART_BYTE, CIRCUIT_FISH, CIRCUIT_FISHERIES, CIRCUIT_ITEMS, CIRCUIT_SCRIPTS, CIRCUIT_SHOPS } from './items';
 import { CIRCUIT_COLOR } from './palette';
 import { BYTE_BOSS } from './prince';
@@ -37,4 +38,5 @@ export const CIRCUIT_COURT: CourtBundle = {
   shops: CIRCUIT_SHOPS,
   fish: CIRCUIT_FISH,
   fisheries: CIRCUIT_FISHERIES,
+  fallen: FALLEN,
 };

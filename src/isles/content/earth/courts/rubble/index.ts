@@ -1,6 +1,7 @@
 import type { CourtBundle } from '../../../../IslesTypes';
 import { RUBBLE_AREA } from './area';
 import { RUBBLE_ENCOUNTERS, RUBBLE_GIMMICKS } from './encounters';
+import { FALLEN } from './fallen';
 import { RUBBLE_FLOOR } from './floor';
 import { ART_WRECK, RUBBLE_FISH, RUBBLE_FISHERIES, RUBBLE_ITEMS, RUBBLE_SCRIPTS, RUBBLE_SHOPS } from './items';
 import { RUBBLE_COLOR } from './palette';
@@ -39,4 +40,5 @@ export const RUBBLE_COURT: CourtBundle = {
   shops: RUBBLE_SHOPS,
   fish: RUBBLE_FISH,
   fisheries: RUBBLE_FISHERIES,
+  fallen: FALLEN,
 };

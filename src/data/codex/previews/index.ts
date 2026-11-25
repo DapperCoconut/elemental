@@ -298,14 +298,14 @@ export const PREVIEWS: Record<string, PreviewScript> = {
   'electricity:restart:up': electricity.restartUpgraded,
 
   // ── Venom (slime) ──
-  'slime:poison-whip': slime.poisonWhip,
-  'slime:poison-whip:up': slime.poisonWhipUpgraded,
-  'slime:vile-spray': slime.vileSpray,
-  'slime:vile-spray:up': slime.vileSprayUpgraded,
-  'slime:snake-burrow': slime.snakeBurrow,
-  'slime:snake-burrow:up': slime.snakeBurrowUpgraded,
-  'slime:festering-bite': slime.festeringBite,
-  'slime:festering-bite:up': slime.festeringBiteUpgraded,
+  'slime:venom-inject': slime.inject,
+  'slime:venom-inject:up': slime.injectUpgraded,
+  'slime:pick-your-poison': slime.pickYourPoison,
+  'slime:pick-your-poison:up': slime.pickYourPoisonUpgraded,
+  'slime:acid-reflux': slime.acidReflux,
+  'slime:acid-reflux:up': slime.acidRefluxUpgraded,
+  'slime:venom-burrow': slime.burrow,
+  'slime:venom-burrow:up': slime.burrowUpgraded,
   'slime:acid-apocalypse': slime.acidApocalypse,
   'slime:acid-apocalypse:up': slime.acidApocalypseUpgraded,
 
@@ -373,17 +373,12 @@ export const PREVIEWS: Record<string, PreviewScript> = {
   'gunpowder:gunpowder-blunderblast': gunpowder.blunderBlast,
   'gunpowder:gunpowder-blunderblast:up': gunpowder.blunderBlastUpgraded,
 
-  // ── Magic ──
-  'magic:magic-sparkle-shot': magic.sparkleShot,
-  'magic:magic-sparkle-shot:up': magic.sparkleShotUpgraded,
-  'magic:magic-grimoire': magic.grimoire,
-  'magic:magic-grimoire:up': magic.grimoireUpgraded,
-  'magic:magic-anchor': magic.magicAnchor,
-  'magic:magic-anchor:up': magic.magicAnchorUpgraded,
-  'magic:magic-meditate': magic.meditate,
-  'magic:magic-meditate:up': magic.meditateUpgraded,
-  'magic:magic-necronomicon': magic.necronomicon,
-  'magic:magic-necronomicon:up': magic.necronomiconUpgraded,
+  // ── Math (id `magic`) ──
+  'magic:math-crunch': magic.crunch,
+  'magic:math-integrate': magic.integrate,
+  'magic:math-rate': magic.rate,
+  'magic:math-derive': magic.derive,
+  'magic:math-42': magic.fortyTwo,
 
   // ── Dream ──
   'dream:dream-sandmen': dream.sandmen,
@@ -828,16 +823,19 @@ export const PREVIEWS: Record<string, PreviewScript> = {
   'conquest:conquest-barricade:up': conquest.barricadeUpgraded,
   'conquest:conquest-expansion': conquest.expansion,
   'conquest:conquest-expansion:up': conquest.expansionUpgraded,
-  'silence:silence-stab': silence.stab,
-  'silence:silence-stab:up': silence.stabUpgraded,
-  'silence:silence-watch': silence.watch,
-  'silence:silence-watch:up': silence.watchUpgraded,
-  'silence:silence-ritual': silence.ritual,
-  'silence:silence-ritual:up': silence.ritualUpgraded,
-  'silence:silence-feast': silence.feast,
-  'silence:silence-feast:up': silence.feastUpgraded,
-  'silence:silence-run': silence.run,
-  'silence:silence-run:up': silence.runUpgraded,
+  // ── Fear (id `silence`) ──
+  'silence:fear-phobia': silence.phobia,
+  'silence:fear-grasp': silence.grasp,
+  'silence:fear-gaze': silence.gaze,
+  'silence:fear-manifest': silence.manifest,
+  'silence:fear-claustrophobia': silence.claustrophobia,
+  'silence:fear-massacre': silence.massacre,
+  'silence:fear-haunt': silence.haunt,
+  'silence:fear-signature': silence.signature,
+  'silence:fear-descent': silence.descent,
+  'silence:fear-fall': silence.fall,
+  'silence:passive:fear': silence.passiveFear,
+  'silence:passive:reassurance': silence.passiveReassurance,
 
   // ── Passives ──
   'air:passive:wind-dodge': subj.airWindDodge,
@@ -865,7 +863,6 @@ export const PREVIEWS: Record<string, PreviewScript> = {
   'creation:passive:the-nexus': creation.passiveNexus,
   'creation:passive:the-six-brews': creation.passiveBrews,
   'electricity:passive:kinetic-power': electricity.passiveKineticPower,
-  'slime:passive:serpentine': slime.passiveSerpentine,
   'slime:passive:toxin': slime.passiveToxin,
   'slime:passive:acid-floor': slime.passiveAcidFloor,
   'slime:passive:acidification': slime.passiveAcidification,
@@ -877,8 +874,7 @@ export const PREVIEWS: Record<string, PreviewScript> = {
   'plasma:passive:chaos': plasma.passiveChaos,
   'gunpowder:passive:three-muskets': gunpowder.passiveThreeMuskets,
   'gunpowder:passive:the-arsenal': gunpowder.passiveTheArsenal,
-  'magic:passive:the-spell-wheel': magic.passiveTheSpellWheel,
-  'magic:passive:darkness': magic.passiveDarkness,
+  'magic:passive:the-graph': magic.passiveTheGraph,
   'dream:passive:drowsiness': dream.passiveDrowsiness,
   'psychic:passive:opened-eyes': psychic.openedEyes,
   'psychic:mastery:outplayed': psychic.masteryOutplayed,
@@ -957,9 +953,6 @@ export const PREVIEWS: Record<string, PreviewScript> = {
   'conquest:passive:one-path-only': conquest.onePathOnly,
   'conquest:mastery:dictatorship': conquest.masteryDictatorship,
   'conquest:mastery:market': conquest.masteryMarket,
-  'silence:passive:the-fog': silence.theFog,
-  'silence:passive:silenced': silence.silenced,
-  'silence:passive:the-rear-arc': silence.theRearArc,
 
   // ── Perks ──
   'fire:perk:alcohol': subj.firePerkAlcohol,
@@ -1000,8 +993,6 @@ export const PREVIEWS: Record<string, PreviewScript> = {
   'plasma:perk:solar': plasma.perkSolar,
   'gunpowder:perk:corruption': gunpowder.perkCorruption,
   'gunpowder:perk:demon': gunpowder.perkDemon,
-  'magic:perk:thunder': magic.perkThunder,
-  'magic:perk:decay': magic.perkDecay,
 
   'echo:perk:beacon': echo.perkBeacon,
   'subterfuge:perk:sonic-boom': subterfuge.perkSonicBoom,
@@ -1012,8 +1003,6 @@ export const PREVIEWS: Record<string, PreviewScript> = {
   'sound:mastery:autotune': sound.masteryAutotune,
   'sound:mastery:forte-piano': sound.masteryFortePiano,
   'technology:perk:adrenaline': technology.perkAdrenaline,
-  'silence:perk:hymn': silence.perkHymn,
-  'silence:perk:torture': silence.perkTorture,
 
   // ── Mastery ──
   'fire:mastery:burning-body': subj.fireMasteryBurningBody,
@@ -1059,8 +1048,6 @@ export const PREVIEWS: Record<string, PreviewScript> = {
   'plasma:mastery:unstable-orbital': plasma.masteryUnstableOrbital,
   'gunpowder:mastery:fireworks': gunpowder.masteryFireworks,
   'gunpowder:mastery:overload': gunpowder.masteryOverload,
-  'magic:mastery:levitate': magic.masteryLevitate,
-  'magic:mastery:transmogrify': magic.masteryTransmogrify,
   'echo:mastery:vibration-detection': echo.masteryVibrationDetection,
   'echo:mastery:echo-bloom': echo.masteryEchoBloom,
   'subterfuge:mastery:big-pockets': subterfuge.masteryBigPockets,
@@ -1071,8 +1058,6 @@ export const PREVIEWS: Record<string, PreviewScript> = {
   'fate:mastery:tarot-of-fate': fate.masteryTarotOfFate,
   'technology:mastery:vpn': technology.masteryVpn,
   'technology:mastery:byte-bomb': technology.masteryByteBomb,
-  'silence:mastery:weep': silence.masteryWeep,
-  'silence:mastery:puppetmaster': silence.masteryPuppetmaster,
 };
 
 /**

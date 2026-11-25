@@ -2,6 +2,7 @@ import type { CourtBundle } from '../../../../IslesTypes';
 import { REMEMBRANCE_AREA } from './area';
 import { REMEMBRANCE_ENCOUNTERS, REMEMBRANCE_GIMMICKS } from './encounters';
 import { REMEMBRANCE_FLOOR } from './floor';
+import { FALLEN } from './fallen';
 import {
   ART_HINDSIGHT, REMEMBRANCE_FISH, REMEMBRANCE_FISHERIES, REMEMBRANCE_ITEMS, REMEMBRANCE_SCRIPTS, REMEMBRANCE_SHOPS,
 } from './items';
@@ -39,4 +40,5 @@ export const REMEMBRANCE_COURT: CourtBundle = {
   shops: REMEMBRANCE_SHOPS,
   fish: REMEMBRANCE_FISH,
   fisheries: REMEMBRANCE_FISHERIES,
+  fallen: FALLEN,
 };

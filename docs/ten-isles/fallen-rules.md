@@ -1,0 +1,246 @@
+# Fallen fights already built — do not repeat these rules
+
+- air/fable: Off the path the wood marks you; at three marks a wolf runs a line through you, mauling all in it. On the path, his snares. Lure him into the trees.
+- air/fable: The yard is an open book: a page turns and slams down on one side, pressing whoever is on it. Strike the ribbon to turn it the other way.
+- air/fable: Burning books send their tale as smoke to whoever stands downwind, where it strikes. Strike the bellows to turn the wind onto him.
+- air/fable: At each bell your most-cast key is struck from your licence: cast it and the seal roots you. Keep the licence clean for faster cooldowns.
+- air/fable: A paper you walks your steps a moment behind, and the Reader does his voices at it. Never retrace yourself; lead him down your trail.
+- air/galeward: Flour drifts east and ripens. A shot through a ripe cloud lights a flash fire that chains to its neighbours. The dry stone sprays sparks. Light him.
+- air/galeward: She drives a pin where you stand and four vanes gust down their lines to it. Strike a vane to spring its pin: it turns on her until she re-pins it.
+- air/galeward: Tops race down three strands, twisting in whoever they overtake. Laid, the outer ropes haul in on the middle. Strike the jack: the strand by her.
+- air/galeward: Hung sails stop every shot. Each gust tears them loose to fly east down their row, wrapping whoever they meet. Strike a lashing to loose one at her.
+- air/galeward: The Foul Man's squall stings, the Maid's sun mends. When the gut turns they swap, thunder on whoever is caught. Strike the house to turn it on her.
+- air/orbit: A gulf splits the yard; off a bridge you fall. Strike a bridge pin and it drops whoever is on it. His torch cuts the bridge nearest you.
+- air/orbit: The Moonpool hovers over you and drops: crushing splash, then a ring of spray with one gap. Strike the ball to shove it — drop it on her.
+- air/orbit: You and he hang off one chain over the sheave: walk out to haul him in. A dash yanks the other end. The well crushes; the ratchet reels.
+- air/orbit: Lead pigs hook onto whoever they land on: slower, hit harder. A dash sheds one where it began — it crushes and hooks on him. Pairs at half.
+- air/orbit: Three crystal tripods chalk a triangle; when the reading closes, whoever is inside is crushed and held. Strike a tripod to swing the survey onto her.
+- air/slumber: The bed's curtains are walls to bodies and shots. When all are drawn the canopy crushes whoever is inside. Strike a post to fling its curtain open.
+- air/slumber: Nightcaps fall on whoever is nearest their shadow: cooldowns race, then you doze. Later, black caps drag time and make you take more.
+- air/slumber: Dashes, casts and blows taken stir the sleepers. Woken, one points at the last noise-maker near it and shushes down that line. Later, noise echoes.
+- air/slumber: Every cast leaves what you said hanging where you stood. Lull reads them all aloud and they go off, hurting whoever is in them. Strike one to hush it.
+- air/slumber: A needle sews round your patch; its laid thread snags you. Leave by the unsewn side, or strike the pin it runs at. Closed seams squeeze all inside.
+- air/starfall: When the Evening Star flares, whoever looks toward it is struck and silenced. Strike the mirror while it swells: the flare finds the other one.
+- air/starfall: Lit star-plaques soften blows. She inks them: strike a wet blot to sand it and splash everyone else near. At half, dried blots strike your name.
+- air/starfall: Whoever stands lower takes more. Crates tumble down from the top, knocking you a step down. Strike one as it falls: its breath bowls her off her step.
+- air/starfall: The star-dial turns; called cells gild, turn with it, then light up. Strike the pole star: the next call lands round him. At half it spins back.
+- air/starfall: Every blow cracks the crater glass under whoever took it; three deep, it gives and drops them into the melt. Scars hold. Hit him where it's starred.
+- air/stormeye: The mason chalks a course, then knocks it out and the gale gusts down that lane. Strike a chalked course to tip it inward down its lane.
+- air/stormeye: The crier posts a forecast — calm, quiet, squalls or gale — and the sky fines whoever breaks it. Strike her board mid-chalk to bind only your foe.
+- air/stormeye: Ball lightning follows the draught: it drifts after whoever is moving more and bursts on touch. Stand still to lose it; strike a ball to bat it away.
+- air/stormeye: Squall lines soak whoever they cross; lightning strikes the wettest fighter, harder the wetter. Take an oilskin from the rack to stay dry.
+- air/stormeye: Gust fronts sweep the yard; only lamplight shelters you. The warden snuffs a lamp before each gust. Strike a lamp to light it or snuff it.
+- earth/dunesea: A dune walks downwind; when its lip slips, all on the face are buried. The crest shelters. Strike the cornice to slip it now. At half, the wind turns.
+- earth/dunesea: Dust devils swallow every shot. Sputtering out, one flings them all at whoever is nearest; dash through it to fling them at the other.
+- earth/dunesea: Step into a qanat shaft to crawl to the next. When the sluice opens, each shaft spouts as the surge passes. Strike a windlass: the next spouts double.
+- earth/dunesea: Leyla draws a figure: each row of one dot strikes its band, two spare it. Tread on a dot to scuff it and flip its row. At half, two figures add.
+- earth/dunesea: Step into a shaduf's bucket to be flung over its pole, crushing whoever stands where you land; he loads blocks too. Strike a pillar to swing it.
+- earth/forge: An open tap-hole burns whoever it can see. Shelter in a screen's shadow; screens heat white and fail. Strike a screen to roll it. At half, both holes.
+- earth/forge: The Great Hammer beats time: blows on its beat land hard, off it soft, both ways. Its fall sprays the nearer fighter. Strike the cam to drop it.
+- earth/forge: The proving chain parts at its weak link and both halves whip round their anchors. Strike a link to nick it and choose the break. Two chains at half.
+- earth/forge: Ring a sound casting and your cooldowns race. A cracked one bursts on all near. She condemns the casting nearest you. Past half, rings crack.
+- earth/forge: By an anvil you take more and a heavy blow rings you. His sledge throws you back — into an anvil, you are slammed. Strike an anvil to slide it.
+- earth/geode: Untouched, your stone grades up: each step hits harder. One blow and it breaks. The loupe reads the better stone: lose two steps, or burn.
+- earth/geode: A shot through a calcite rhomb comes out as two spreading rays: near the rhomb both strike. Hedda slides the nearest one at you down a runner.
+- earth/geode: Strike the next mineral up the hardness scale to become that hard. The harder side hits harder, takes less, and scratches the other down.
+- earth/geode: Two geode halves slide shut; their rims are walls. Inside the chalk ring when they meet: crushed. Strike a half's wedge to jam it there.
+- earth/geode: On the bank you are mirrored in the pool: strike a reflection and its owner takes the blow. Wade in to hide it, slowly. At half, the water lags.
+- earth/potter: Casting loads your kiln and slows your cooldowns. Strike its door when fired for a rush; early, it cracks. Draw hers when it is ready.
+- earth/potter: Struck urns burst into sherds that fly out along spokes, then home along gold threads, cutting all they pass. Burst one by Rosamund.
+- earth/potter: A pug mill lines up on you and pushes a clay log across the yard: its nose shoves, the far wall crushes. Strike the crank while it feeds to surge it.
+- earth/potter: Hulda folds the yard: whoever is on the lifting half lands at their mirror, pressed — or on the foe, wedging him. Strike a peg to lift the other half.
+- earth/potter: A cutting wire runs from a stake to a fighter's hand and cuts whoever else it crosses. Dash over it. Strike a stake to take its toggle.
+- earth/rubble: Strike a block and it skids away from you, crushing whoever it meets and knocking on the next. Line one up on him. At half, stopped blocks are sealed.
+- earth/rubble: Her dog runs your prints from the oldest, biting all it passes. Crossing your trail feeds it; a dash breaks it. Lead it past her. Later, prints snare.
+- earth/rubble: Smoke runs the flues and bursts from every open stack, harder the fewer are open. Strike a stack to cap or open it. At half, two fires.
+- earth/rubble: Strike a raised lintel: whoever is on its low end is thrown over the drum and lands hard. Throw him, or yourself onto him. At half, they rock.
+- earth/rubble: Time runs back: rubble flies home along gold lines and the wall stands again. Strike its keystone and it falls away from you. At half, two walls.
+- earth/stonehold: Merestones bound Crown land: in it you take more, he less. Strike a stone to knock it a step. On the drum the bounds are beaten: get off the lines.
+- earth/stonehold: She walls the yard on a chalk line; shut, the smaller side is interred. Strike the head stone: from the big side it hurries, from the small it falls.
+- earth/stonehold: Strike a hag-stone and it throws the blow through its hole at the striker's foe, doubled. On the toll one spits at the nearest. Later, bolts chain.
+- earth/stonehold: While the pipe plays, each Maiden creeps on the nearest fighter not looking at her; touch one and she takes you. Strike one to knock her away.
+- earth/stonehold: Blows build give: the more give, the further each blow shoves. Shoved off the table, you fall. He charges — step aside at the edge and he goes over.
+- electricity/bounce: Clockwork fielders throw at you: face a ball to catch it, your next cast throws it at her — OUT. If she faces it, she catches and you are out.
+- electricity/bounce: Scored trees bleed tacky latex at you. When the can goes up the milk curdles, holding whoever stands in it. Strike a tree to bleed it at her.
+- electricity/bounce: Oven steam cures you: raw is slow, cured is quick, past the cure blows bite and heavy ones crack you. Troughs quench. Strike a wheel to steam her.
+- electricity/bounce: Rubber-powered planes circle after you; spent, they stall and glide straight on to nose in. Strike one to snap its motor and glide it at her.
+- electricity/bounce: A paper roll cranks the tune: when a box's hole reaches the bar its jack punches down its lane. Strike a box to turn it a notch at your foe.
+- electricity/circuit: Plots whose number has every mask bit set are switched off; the mask then shifts left. Strike a knife switch to flip a bit. At half, numbers count.
+- electricity/circuit: Strike an exchange key: a second later you swap places if in reach, and the other lands in a store cell that strikes. Walk out. At half, reach grows.
+- electricity/circuit: The spot runs at the probe-holder's mirrored height; it and its trace burn. Strike the stand to take the probe. At half, CH2 aims at the other.
+- electricity/circuit: An arc climbs the ladder, carrying whoever it touches to fling them off the mouth. Leave the V or dash. Strike the ignitor to light one.
+- electricity/circuit: Land a blow to kick your watchdog timer; let it run out and the chained hound leaps at you. Strike the post's whistle to send it at the lower timer.
+- electricity/dynamo: Blows taken charge you like a Leyden jar. Near her, the fuller jar arcs the difference into the emptier. Grates drain you. Full, you flash over.
+- electricity/dynamo: Walk into a coil and its wire bursts the terminal at the other end; at a dash, double and stunning. Run the coil wired to where she stands.
+- electricity/dynamo: The arrester sings a phrase, a note longer each time; each note fires down its line on the stave. Strike it: the next note goes at your foe.
+- electricity/dynamo: Strike a feeder switch to close it onto you (faster cooldowns) or throw it onto him. Over three, a circuit trips and fires at its owner.
+- electricity/dynamo: A leader forks down step by step toward the nearer fighter; when it reaches one, the whole tree strikes. Keep her nearer the tips. Off the branches.
+- electricity/halflife: The drawn plug makes all in its ring glow; a glowing fighter burns whoever is near. Glow halves on a clock. Get hot, hug her. Strike the plug.
+- electricity/halflife: Ions fly half-circles through your feet and splash in a cup. Strike a coil to flip the field: they fly the other half. At half, they fly from him.
+- electricity/halflife: The ore steps down its chain: ring, sparks, rays, radon — the last three at whoever is farther. Strike it to hurry it; strike the lead for an apron.
+- electricity/halflife: She drills a round round you; it fires in the order its tags show. Strike a hole to pull its wire, the exploder to fire it now. At half, a hang-fire.
+- electricity/halflife: His jaws hang opposite the yoke-holder across the yard, then lock and clamp. Strike the yoke to steer them with your own feet. At half, a second arm.
+- electricity/lodestar: Hard blows magnetise you; a waking horseshoe drags the magnetised into its jaws. The forge burns it out. Strike a horseshoe to wake it.
+- electricity/lodestar: Face the pole-lamp: cooldowns race, blows glance. Turn your back: jolted. He plants it behind you; strike it to knock it behind him.
+- electricity/lodestar: Floated blocks sail chalked courses and bowl you over; a braked copper plate seizes one dead. Strike a plate to free its brake and the block sails on.
+- electricity/lodestar: Run through a copper coil, or strike it, to charge it in your colour. At three it bolts the other fighter's spot and stuns all inside it.
+- electricity/lodestar: On the tug, all loose iron tears in a line to the lodestone, cutting all in the way. Hard blows shake iron off you. Strike a scrap to kick it.
+- electricity/superposition: A call drops into the pins and splits at each: whole and hard at the top, everywhere and soft below. Strike a middle switch: it runs one way.
+- electricity/superposition: Coins fly from the fountain: heads crushes its shadow, tails rolls down its axis. Strike one in flight: tails, rolling away from you.
+- electricity/superposition: Pairs bloom from nothing, fly apart and rush back to annihilate. Strike one away: its orphan hunts your foe. Their thread zaps.
+- electricity/superposition: On a census plate you are counted: harder blows, quicker cooldowns. Step on a held plate: struck off. Strike a plate to slide it from you.
+- electricity/superposition: A ripple collapses on whoever it touches first. A dash slips through. A shot that meets a ring gathers it there: it spouts a beat later.
+- fate/card: Each card she tosses goes to the nearest fighter; hearts make you take more, then cut. Take all seven, the Lady too, to shoot the moon.
+- fate/card: She lays a run near you, king to ace, tied by burning gilt threads; at the ace every thread blazes. Strike a card to snap the threads after it.
+- fate/card: Each blow you land moves your peg's hole one on. On the count each back peg leaps and crushes whoever is there. First home bursts the other.
+- fate/card: Called cards spring and cut. Only seen through the red lens do they show his marks. Strike a marked card to spring it at once — by his feet.
+- fate/card: The shoe slides cards at you both; a card you touch joins your hand. Twenty-one blasts your foe; over is bust. Strike a card to knock it at him.
+- fate/clockwork: Your running face shields and quickens you but drains your bank. Press the plunger, in reach, to pass the turn. Let your flag fall: stamped.
+- fate/clockwork: Her brush paints the passing hour grey: in it you are slow and hit soft. At five to, all in grey are struck and held. Strike the brush to jump it on.
+- fate/clockwork: Your spring runs down: wound tight you are brisk, run out you stop dead. Strike a key to wind whoever is nearest it. Past the last turn it snaps.
+- fate/clockwork: Each pip sets a stud where you stand, joined to the last. On the long sixth pip your line strikes him if it crosses him, and his strikes you.
+- fate/clockwork: Shots flying into a stopped clock hang there. Wound, it flings them on at the shooter's foe, and its hands at you both. Strike its bow to wind it.
+- fate/mind: Inside the cabinet when its doors shut, you are the medium: the spirits fly at your foe. Get out before the knots slip. Strike it thrice to burst it.
+- fate/mind: Living pieces give check: their lines strike the enemy king. Black hunts you, white him. Strike a piece to turn its coat. At half, a queen.
+- fate/mind: She leaves her body in a chair; the double hunts you on a silver cord and her empty body takes more. Strike the knot thrice to wake her.
+- fate/mind: A gilt pin is hidden: your pulse quickens near it, and hers. A hot pulse draws falling pins. Find it first and drive it at your foe.
+- fate/mind: She sends a symbol, drawing it stroke by stroke over her head; whole, that chalk figure burns. Read it early. Strike an easel to force her card.
+- fate/remembrance: On a carbon sheet you take a copy of every blow struck in the room, even your own. She lays them under you. Strike a sheet to slide it under her.
+- fate/remembrance: The shelves are walls with one aisle. A crank-wheel opens the aisle beside its unit and shuts the old one — on whoever is in it. Strike a wheel.
+- fate/remembrance: Seen through a frame's front, whoever stands behind it is framed: they take more, and when the portrait is done, are hung. Strike a frame to turn it.
+- fate/remembrance: Keepsakes lie on the velvet; under the dust-sheet one goes missing. First to where it lay sends the rest flying at the other. Too slow: they burst.
+- fate/remembrance: She reads a verse of cards, then recites it from memory: each card slams in turn. Tread the verse in order first and her ferule raps your foe.
+- fate/treasury: Strike a desk to send a cup down its wire: it clips heads, and the far desk's till bangs open. Learn which desk feeds which — feed hers.
+- fate/treasury: Sovereigns roll from the chutes, curling the way they lean, then wobble down and slap flat. Strike one to flip its curl — roll it through him.
+- fate/treasury: The ladle drifts after you and pours a column of moulds: molten burns, then sets into bars that wall bodies and shots. Strike it to pour now.
+- fate/treasury: Rows of coin on edge wall the floor; knocked, they topple in a wave that slaps whoever is beside it. Strike an end or shoot a coin to start one.
+- fate/treasury: Step on a red-studded plate: a beat later its row and column are bolted. Step off diagonally. Trip one on her lines; the bell re-sets them.
+- fate/war: Galleries dig in toward where you stood and blow a ring. Strike a face to break in: the ridge slumps a beat later, burying all on it. Bury him.
+- fate/war: The count walks the yard; every third man it reaches is held and shot at. Pass a conscript to change your number. Make Thrale the third.
+- fate/war: Both on the piste, whoever last came forward holds the right of way: blows on them glance, on the other land hard. Dash at Voss to take it.
+- fate/war: Field guns fire down their lanes, then recoil and roll back over whoever stands behind. Strike a breech to fire it — then get off its trail.
+- fate/war: Conscripts pass shells hand to hand to the mortar, which lobs each at you. Strike a man and he drops his: it bursts at his feet. Jostle one by Shank.
+- fire/boilerworks: At lights-out, a fighter on a lit cot is counted: held asleep, healed a little. Anyone else is hunted by the warden's burning lantern.
+- fire/boilerworks: The firebox drags everyone toward its burning mouth, shuts, then belches fire lanes. Strike the damper while it draws to backdraft its mouth.
+- fire/boilerworks: The forge pitches hot rivets near both fighters. Stand in the can to catch one and fling it at your foe; the ring around it splashes.
+- fire/boilerworks: The crane hunts the marked fighter and drops bales on all below. Strike a wall pulpit to mark your foe. Late on, shots near the magnet load the bale.
+- fire/boilerworks: Linger in one chalked bay and you are marked. Three marks and the stamp crushes your whole bay — whoever stands in it.
+- fire/caldera: Obsidian panes bank shots and crack. Below half they turn true black and send every shot back at whoever fired it.
+- fire/caldera: Strike the obsidian core and a flake flies out its far side along the crack. Put it between you and Isk. Below half: two cores, flakes skip.
+- fire/caldera: An ore cart runs the rails and flattens whoever is on them. Strike the lever to throw the points: loop or spur.
+- fire/caldera: Each shift the slate counts damage dealt. At the bell the short side (or both, if even) gets the tally stamp — step out of its shadow.
+- fire/caldera: The bell tolls three times; on the third, anyone facing the tower is seen — branded and stunned. Strike the bell to start the count.
+- fire/candlewick: Lots sold by the inch: every blow on a lot is a bid. Gilt boxes empower the buyer; red writs are collected from them. Mind the gavel.
+- fire/candlewick: The great wheel drifts after you and falls on its shadow. Strike a wall winch to drop it at once — on whoever is under it.
+- fire/candlewick: Your burn is how far you walked in 3 s. When the sand runs out, outside the pins: too fast is trimmed, too slow is snuffed.
+- fire/candlewick: Tallow slicks are slippery. Strike a yard-taper and it falls away from you — a flame in tallow sets every touching slick alight.
+- fire/candlewick: Snuffer bells drop on shadows: caught under one, you are snuffed. Strike a standing bell and it rings — hurting all beside it but you.
+- fire/corona: A sunbeam bounces round six mirrors and burns its path. Strike a mirror to turn it. At Sentence the clamps close and it burns wide.
+- fire/corona: Both of you leave molten glass. Hers burns and drags you; dash to cross. Past half, your own older glass burns you too.
+- fire/corona: Wren marks you; the sunlance falls when the code-pips fill. Strike her heliograph to readdress every mark to her.
+- fire/corona: Two planets circle; when they align a beam crosses the room. Strike a planet to step it on. Clamped arms mean the line is set.
+- fire/corona: On the ration plate your cooldowns run double; off it, short. Each body drains it; at zero the audit stamps whoever stayed.
+- fire/hearth: The bellows draws, then blows: all in its band are shoved and its coal-beds flare. Step out sideways; blow Grue into the coals. At half, two bellows.
+- fire/hearth: Manacles fall on rings at your feet: caught, you are staked on a leash — strike the stake 3 times. Walk him over an open one. At half, the Kiln drags.
+- fire/hearth: Windows open and watch in cones. Stay in one and you are reported (+15% damage taken each); at 4, a brand-stamp falls. The windows report her too.
+- fire/hearth: Sheets stop every shot. Dodge the sheets Nell throws; strike a post twice to drop its line on whoever stands under it. At half, the wash burns.
+- fire/hearth: On the bell the cart runs the lit road. Step off the rails. Strike the lever to throw the points — run Dorrit down. At half, its lodestone drags.
+- fire/powder: The drum calls HALT or QUICK MARCH: under HALT, move and be lashed; under MARCH, stand and be lashed. Strike the drum to call the next order.
+- fire/powder: Every cast kicks up powder dust; her broom trails it. A spark flashes a whole drift — strike a wall flint to light her trail.
+- fire/powder: A lit petard clings to whoever holds the blame — land a hit to pass it on. When its fuse runs out, the holder goes up.
+- fire/powder: A mortar shells whoever the brass quadrant is laid on. Strike the quadrant to lay the gun on him — he will walk up to lay it back.
+- fire/powder: You are chained to him. When the chain smoulders, every cartridge bag lying across it blows — keep them off the line by you, under it by him.
+- life/bloom: A stone roller mows the lawn stripe by stripe and flattens whoever it meets. Strike it to turn it back down the stripe. At half, a second.
+- life/bloom: The box hedges are walls. Every few seconds the knot re-ties: off the green shoots or be thrown and held. Strike the bow to spring it early.
+- life/bloom: The swarm follows whoever holds the queen. Hit the other up close to press her on them. Strike smoker pots to doze it. At half, two swarms.
+- life/bloom: A great rake combs the floor: stand between its marked teeth or be dragged to the edge (dash free). Strike its head to knock the teeth askew.
+- life/bloom: Cloches drop on marked shadows. Shut in: cooldowns twice as fast, but heat ticks and the glass blocks all. Three strikes shatter it.
+- life/confection: Lit candles shield Fennel: strike them to snuff, he relights. Snuff all six for a wish. Candles spit wax at the nearest. At half, the cake turns.
+- life/confection: Follow the bonbon as the cloches shuffle: under the true one, the Prince's favour; under the rest, gumdrop bombs. Strike a dome to lift it early.
+- life/confection: Tin cutters stamp shapes into the dough: the edge cuts, then the rolling pin flattens everyone outside a cut-out. Strike a cutter to stamp it now.
+- life/confection: Carry the one sugar loaf: when the tally-bell rings, whoever holds none is short. A blow knocks it loose. Halfway, beware grey-paper chalk loaves.
+- life/confection: A pen of railed peppermint posts goes up round you: get out before the flagged last post. Strike a post to fell it. Pen Barley in his own gap.
+- life/heartwood: The shears cut daubed bands. Hide in a knot-hole — but it grows shut and seals you in. Strike a knot: empty, it splits; occupied, it closes faster.
+- life/heartwood: Belts carry you toward a running saw; logs shove you along and sawn logs throw slabs sideways. Strike a clutch to reverse its belt.
+- life/heartwood: Mistletoe drinks from the nearest fighter and bursts sticky berries when full. Strike a clump to cut it and take all it drank.
+- life/heartwood: The wind leans the bough and slides you toward the drop; hold a guy-post to stand fast. Strike a post to whip its holder downhill.
+- life/heartwood: The lantern swings along a turning line and drips burning sap where it turns. Strike it and its next pass is laid through your foe.
+- life/ossuary: A grave rings: strike its bell first and the sleeper stones Hobb; if he strikes first he cuts it and heals. Caved beds bite. At half, two ring.
+- life/ossuary: A night procession hunts you. Cross its line and you take +50% for 5s; go round its ends. Strike its lantern to turn it about. At half the cord burns.
+- life/ossuary: Casting is noise. Brim over and the grave under you wakes: a hand closes there on all inside. Her noise counts too. At half it reaches twice.
+- life/ossuary: A millstone rolls round the post, crushing all under it; after a chalk warning it hops to the track nearest you. Strike the post to reverse it.
+- life/ossuary: Abel scrapes names off the slabs; a blank one fogs and silences. Strike a slab to recut a letter, a whole name to read it and stun him. At half, ink.
+- life/spore: Blows sow the fungus; dash to shake it off. Full, it drags you to a stalk that bursts — walk free in time. It takes him the same way.
+- life/spore: The grey takes where she walks and creeps; thick grey sickens. A patch of twelve bursts — dash to scour it, and walk her onto one about to go.
+- life/spore: Your blows weigh on your pan, his on his. The lighter pan is cut and takes more harm. Strike the brass weight to knock it onto your side.
+- life/spore: Every cast drops a whisper that crawls to an ear; three from one speaker and it shouts a line at them. Tread on yours. Strike an ear to make it tell.
+- life/spore: A great cap prints its gills on the floor: stand in the gaps. Strike its stem to turn it half a gill. Past halfway it prints twice.
+- life/wildhunt: Palings pen the floor; each leap crosses one way only. Called pens are shot into — get out the way the leaps run. Strike a leap to turn it.
+- life/wildhunt: A line of beaters drives across the floor and shoves you onto the guns. Find the gap, or strike a beater down, and keep Clem in front.
+- life/wildhunt: Mabyn counts to a hundred, held at her post, then runs you. Reach the lit bound-stone in time, or strike it while she stands by it.
+- life/wildhunt: A turning lamp lights the night. Linger in its beam and you are held while a crossbow fires down a lane. Strike the lamp to swing it back.
+- life/wildhunt: A ring of nets draws in round you; touch the mesh and you are tangled. Strike a stake to drop its nets flat inward — drop them on Agnes.
+- slime/cloak: Each constable walks down whoever did not pay him and claps on the irons. Strike one to pay him: he turns on the Captain. At half, two coins a man.
+- slime/cloak: Blows on Amabel's cloak are caught and sewn in as knives, then flung at you in a fan. It turns slowly: strike her bare side. At half it is cut in two.
+- slime/cloak: A client sends Ansel pay and orders down a gold thread. Cross it to take pay; orders serve whoever takes them. Strike an order at your foe.
+- slime/cloak: Pike flicks evidence at your feet. At the search each piece charges whoever is nearest; three at once, irons. Strike a piece to kick it.
+- slime/cloak: Tread a letter and it is written into your foe's name if it is their next, else into yours. Finish a name: posted. Strike a letter to kick it.
+- slime/fang: The cobra hides at the feet of whoever is nearest; the mongoose pounces through them to reach it. Strike the cobra to send it to your foe.
+- slime/fang: Green venom numbs, red thins the blood; the same twice bites double, the other cures. Strike a frame and its serpent spits at your foe.
+- slime/fang: The king-snake eats adders flag by flag and grows; its body is a wall. Strike its head to turn it away from you; boxed in, it knots and crushes.
+- slime/fang: The python gapes at the rats tossed at your feet and swallows all in the ring. Strike a rat to kick it; strike a bulge to squeeze it out.
+- slime/fang: Both bites at your feet; each bite wells and spurts. At the turn it drinks the holes and spits them at the other side. Strike one to spurt it.
+- slime/grave: A coffin rolls to stand between you, stopping every shot. It keeps each blow; at six the dead sit up and fire them back at whoever gave most.
+- slime/grave: Your candles move as your mirror: step one way and they drift the other. A touch bursts one on whoever it meets. Strike one of hers to make it yours.
+- slime/grave: Strike a bell-jar and its porcelain wreath circles you, cutting your foe as it sweeps. A heavy blow shatters your newest one: shards fly at your foe.
+- slime/grave: The greyed rise and drift at whoever is nearest; strike one to lay it. They cannot cross an open rill. Strike a sluice to open or shut its rill.
+- slime/grave: Lime sacks and struck casks coat you white. Limed in a seep's black pool, it boils on you; a dash shakes it off. Strike a bung to gush its pool wide.
+- slime/shackle: When the cuffs glow you trade places. Mantraps bite whoever arrives on them: stand on one so he lands in it. Strike a trap to spring it.
+- slime/shackle: Snell's chained gang soaks his blows and rushes you on his heave. Strike a convict's fetter off and the freed man goes for Snell.
+- slime/shackle: Drink at a cask to mend and hit harder, but you reel; four measures and you pass out. Strike a cask: its jet souses whoever is beyond it.
+- slime/shackle: Thrupp pitches irons at your surety: each breaks a seal, and the fifth calls your bond. Block them or strike them down. Strike his surety to call his.
+- slime/shackle: Half of every blow is taken in pledge and hung on the rail. Unredeemed, it is hurled back with interest. Strike yours to redeem, his to sell.
+- slime/umbral: In the black lamp's pool, blows taken are lent back as mending. When it gutters, all inside pay it back and more. Strike the lamp to gutter it.
+- slime/umbral: Moths fly to the nearest open candle and sting all in its light, then smother it. Strike a candle-box to open or shut it: bring them down on Drave.
+- slime/umbral: The well-mouths are one water: a shot into one leaps out of the next, same heading. Her stones come out at you. Strike one: the next spits at him.
+- slime/umbral: Collared shades heel to their master, catch one shot meant for him and lunge when close. Strike a shade to collar it; a guarding one needs two.
+- slime/umbral: A lantern throws hand-shadow beasts that bite whoever they cross. Stand in the beam to break one. Strike the lantern: the next beast hunts your foe.
+- slime/web: A great widow walks at you four feet at a time; rings show where they fall. When she rears to bite, strike her hourglass: she turns on her drover.
+- slime/web: She pulls your row and it ladders across the yard: walk onto an open row and you fall through. Dash over. Strike a loose end to run its row.
+- slime/web: Two spiders shove in the pit: red is yours, gold his. Strike his to drive it back; thrown out, it loses and the winner leaps at its backer.
+- slime/web: Stand still and the Sheet sags under you; spilled bobbins roll into the deepest sag and bowl you over. Strike a corner peg to tip the floor that way.
+- slime/web: A shot touching a strand runs along it, away from its shooter, and flies out the far end at their foe. Stand off the ends. Strike a post: word runs.
+- water/abyssal: Off the air pockets your breath drains; empty, you gasp. Strike an open tap to shut it, a shut one to open it. At half, blows steal breath.
+- water/abyssal: Starved lamps go dark; when the list is read, dark doorsteps take whoever stands on them. Strike a lamp to feed it — Nell strikes to snuff.
+- water/abyssal: Rods cast hooks where you stand, then reel in along the line — caught, you are dragged and landed. Dash to slip it. Strike a rod to cast it at Tull.
+- water/abyssal: Shots that hit the bubble wall tear it; each hole weeps, then jets seawater across the room. Strike a hole to seal it. At half, it shrinks.
+- water/abyssal: The floor turns round the eye and draws you in; linger at the eye and you are taken down. Steps stand out of it — strike one to drop whoever is on it.
+- water/inkwell: The ferule raps whoever is off the copy-lines; walk a line to fill your hand and hit harder. At half health it raps those ON the lines.
+- water/inkwell: When the ink tide rolls in, anyone without a Dry Tithe receipt is blotted. Grab the falling slips; every blow you take smudges yours.
+- water/inkwell: The roller inks half the press bed, then the platen falls on it. Strike the lever to pull it early; at half health it prints twice.
+- water/inkwell: Cast inside the sweeping lamp-beam and you are read; three reads and you are censored. Strike the shutter to swing the beam back.
+- water/inkwell: Nell throws homing writs. One that reaches you serves you (stun + damage). Strike one aimed at you to send it back, faster and heavier.
+- water/rimefast: Ice likenesses of you rise where you were and, left standing, shoot at you. Strike one and it bursts a beat later, hurting whoever is close.
+- water/rimefast: The drowned drift under the ice toward whoever cast last. When the roll is read, hands grip anyone over one. Strike a sleeper to wake it.
+- water/rimefast: Round shot skips across the ice and hurts only where it lands (ringed ahead). Strike it in the air to knock it back at your foe, faster.
+- water/rimefast: Every cast is a line of arrears that slows your cooldowns; thaw coins pay lines off. Six lines and the tithe-ice rings you in. His ledger too.
+- water/rimefast: The hook flies down a painted lane and bites the first fighter it reaches, hauling them to the Tithe Hole. Strike the drum to let the rope run.
+- water/sailmaker: He chalks a sail panel round you and his shears cut it out: get off it before they close. Strike the shears and he is cut instead.
+- water/sailmaker: Her needle flies along chalk lines: each pass is a stitch, the seventh the last. Strike a stuck needle to haul it back along its thread.
+- water/sailmaker: He calls a measure and rings it round himself. Stand on the ring when the tape is read and he pays; short is a fine, over is reeled in.
+- water/sailmaker: Stand at a mast to climb out of reach. Strike both stay-plates and the mast falls — on anyone below it, and with whoever is up it.
+- water/sailmaker: Carry canvas bolts to the Yardstick. At dusk whoever brought fewer yards is fined. Hit a carrier to knock their bolt loose.
+- water/slickharbor: A plume of burning gas sweeps the yard like a clock hand, guttering between burns. Strike the nozzle's damper to swing it back at Pyle.
+- water/slickharbor: Reed dives under the slick where nothing can hit him and comes up at the bubbling ring. Strike his air pump while he is under to drag him up.
+- water/slickharbor: Each lit lamp speeds Gill's cooldowns, and the one nearest you flares its whole pool. Strike a lamp to snuff it; burst one over her.
+- water/slickharbor: Pressure climbs until the weeping joint blows a wall of crude across the yard. Strike a valve to bleed it: the jet shoots at Haggard's side.
+- water/slickharbor: You fight on the tithe scale: the heavier pan sinks and floods with crude. Strike a barrel to roll it at Tallow and weigh her side down.
+- water/tidewater: Scoop up tithe coins and stand on a floor to pay for it. When the tide comes only your own paid floor is dry; another's floor fines you double.
+- water/tidewater: Sleepers rise in bubbles; near them you drowse, and full drowse is sleep. Burst one to wake yourself — then its sleeper grabs whoever is nearest.
+- water/tidewater: A seine sweeps the flats: slip through its gap or be hauled. Strike a float to cut a new gap — or, beside someone caught, to haul them now.
+- water/tidewater: Hard blows hang ballast on you: slower, but you hit harder. Swells sink anyone carrying three. Strike the weighbridge to tip yours onto the foe.
+- water/tidewater: Ships steer for the lantern and run aground where it stood. Land a hit to pass the lantern on. Its bearer hits harder; the wrecks stop shots.
+
+## Names taken — use no first name or surname from this list
+
+Ottoline Crease, Binder · Aldous Pyre, Fire-Keeper · Brannock Hale, Huntsman · Prosper Lectern, Reader-Aloud · Primula Vellum, Clerk of Licences · Ottilie Brack, Vane-Smith · Dorcas Whipple, Sailmaker · Sifter Brannock · Hesper Lay, Ropemaker · Mother Hygrove, Keeper of the Weather House · Cuthbert Lanyard, Winch-Hand · Ballast-Bailiff Morrow · Pool-Warden Ysolde Brack · Bridgewarden Sheer · Surveyor Euphemia Plumb · Mother Gusset, Quilter of the Ward · Dreamwright Lull, the Prince\ · Milliner Tassel, Capmaker to His Drowsiness · Hush-Warden Tace · Chamberlain Valance · Night-Clerk Sable Vantress · Meridian-Keeper Tobias Wane · Picker Morrow Flint · Gaze-Warden Vesper Hollin · Stair-Sergeant Tamsin Crake · Orrin Stack, Wall-Mason · Ebba Galloway, Penkeeper · Fen Gutteridge, Night-Warden · Hester Vane, Forecast-Crier · Aldous Brine, Slicker-Maker · Hamid, Shaduf-Master · Yusra, Dune-Shepherd · Samir, Qanat-Keeper · Leyla, Sand-Reader · Soraya, Wind-Dancer · Linka Shackleby, Proof-Mistress · Tamsin Cogwell, Keeper of the Hammer · Verity Knoll, Ring-Tester · Absalom Strake, the Hall\ · Bryony Hale, Keeper of Number Two · Ottoline Sabe, Loupe-Reader · Ysolde Brack, Pool-Keeper · Assayer Benedek Rull · Spar-Cutter Hedda Vink · Resealer Dunstan Quarle · Teasel Marrick, Cut-Off Hand · Ebba Gorrie, Mill Hand · Gilder Rosamund Tey · Wedgewife Hulda Brack · Fireman Odile Sayer · Tracker Quenby Lusk · Shifter Benedek Rook · Mender Perpetua Haske · Prise-Man Wystan Garrow · Sweep Odile Marchbank · Reeve Wystan Merestone · Sibbet Holeway · Lowri Chanter, the Regent\ · Gethin the Shoulder · Ebba Drystane, Waller · Mirabel Tantony, Box-Cranker · Avelina Strutt, Test-Flier · Tapping-Ganger Ysmay Spurge · Cure-Mistress Gudrun Retort · Games-Mistress Hepzibah Quellow · Mask-Clerk Perrine Prink · Scopewright Halvard Lumm · Register-Keeper Liesel Tamworth · Arcwright Thaddeus Corriban · Watchkeeper Brisco Haddle · Jar-Mistress Odalys Trune · Board-Attendant Ignatz Brume · Gapwarden Linnet Sorrowby · Armature-Wright Esmé Varnhagen · Cloud-Reader Ferelith Gowde · Tongsman Ludovic Haft · Source-Warden Ermentrude Scaife · Chain-Reader Bartholomew Daughtry · Separator Cyprian Lowe · Shot-Firer Gunhild Ashlock · Stone-Picker Grusha Keddle · Coil-Winder Mattias Quellby · Brake-Hand Ilse Thrumbold · Farrier Bartholo Cudlipp · Pole-Lamp Keeper Severin Ayle · Assessor Nihil Prowse, Meter of the Empty Lots · Fountain-Keeper Mehitabel Spurge · Enumerator Philippa Nack · Exchange-Operator Lettice Quorn · Well-Warden Clemency Drabble · Governess Ermengild Pask · Engraver Osbeth Quarrie · Shoe-Dealer Hilarion Vosk · Crib-Keeper Lemoyne Purlow · Perdita Lisk, Hearts-Mistress · Window-Clerk Ambrell Quoyle · Key-Wife Dimity Ruddle · Stopper Gervase Lammerlaw · Dial-Painter Ivett Greaves · Time-Caller Fabian Sixsmith · Jubal Fother, Cabinet-Medium · Sender Zillah Pocklington · Arbiter Septimus Thorley · Wrist-Reader Amity Treffry · Trance-Medium Perdita Kellaway · Catechist Philomena Dunnock · Hanger Barnaby Quist · Copy-Clerk Euphrasia Mott · Stack-Keeper Leopold Cranmer · Dulcie Pargeter, Window-Dresser · Head Cashier Euphrasia Trundle · Founder Hezekiah Crozzle · Teller Columbine Sixpenny · Chute-Hand Tobit Rimwell · Strongroom-Warden Leocadia Brassey · Bombardier Hodge Ferrant · Sapper Idris Mattock · Magazine-Corporal Petronel Shank · Sabre-Master Casimir Voss · Drill-Sergeant Obadiah Thrale · Craneman Ulric Hoist · Rivet-Boss Clinker Hale · Under-Clerk Silas Quill · Warden Agathe Slatter · Stoker-Royal Abner Flue · Bellwarden Coyle Ashby · Pointsman Harl Cinderby · Tally-Clerk Dole Marrable · Glasscutter Obsa Vane · Knapper Isk Hollowell · Curfew-Snuffer Gall · Auctioneer Vell · Renderer Suet · Tallykeeper Notch · Verger Hask · Signaller Wren · Meter-Reader Pell · Runner Ottoline · Master Almagest · Lensman Grath · Kiln-Warder Haskett · Nell Pegg, Washerwoman · Corva Dace, Across the Lane · Dorrit Vane, Carter · Grue, the Bellows-Hand · Drum-Major Rennet Coyle · Informer Jory Pettle · Sweeper Agnes Mull · Press-Master Halloran · Master-Gunner Ambrose Vane · Tobias Harrow, Walk-Raker · Forcer Amaryllis Vane · Groundsman Abel Stroud · Sister Wormwood · Apiarist Orrin Hume · Tallyman Pomfrey Dredge · Fencewright Barley Stook · Comfit Vane, Royal Taster · Tinsmith Wenna Gauge · Candlewick Fennel, Chandler · Tobin Sawset, Mill Apprentice · Hollin Wick, Lamplighter · Warden Quillan Burrage · Ropewarden Ivo Hempstead · Sorrel Gall, Mistletoe-Wife · Dorcas Vell, Mourning-Warden · Abel Quarrender, Wall-Scraper · Jory Fenn, Bone-Miller · Hobb Lisle, Rope-Cutter · Brother Amice, Lantern-Bearer · Printer Lamella, Keeper of the Rolls · Auricle Thrum, the Doorstep Ear · Weighmaster Tare · Doctor Ergot, the Prince\ · Blightwife Smut · Corwen Sallow, Lamp-Man · Agnes Hurle, Toil-Mistress · Clem Rook, Headbeater · Osric Tallow, Park-Keeper · Mabyn Clew, the Starter · Go-Between Ansel Querne · Watch-Captain Garnet Spangle · Gate-Clerk Wilmot Inkle · Framer Osmund Pike · Cutter Amabel Shrike · Feeder Osgood Lurch · Milker Brisewyn Tallis · Bout-Master Crispin Moyle · Curator Clothilde Ketch · Pit-Warden Reverdy Gane · Ancilla Mourhouse, Immortelle-Seller · Ozias Calx, the Lime-Man · Eluned Sallis, Night-Walker · Lemuel Crossbar, Bearer-Captain · Cornelius Weir, Drain-Warden · Pledge-Master Orlo Hucklebone · Bondsman Corbyn Thrupp · Turnkey Hesketh Mowbray · Tapster Jem Grout · Ganger Mordecai Snell · Candle-Finder Corriwen Drave · Showman Teodric Mumm · Wickwife Ambrosine Kell · Shade-Drover Gamaliel Wyvenhoe · Mere-Warden Isaura Dunlin · Sheetwright Odo Tensley · Darner Quiddy Ravelin · Strand-Runner Pim Ostrey · Spider-Drover Yarrow Gantling · Oddsman Tibbald Scrope · Breathclerk Tallow Wheeze · Listkeeper Nell · Gaffman Tull · Stairwarden Eddo · Sealwright Fen · Pressman Platt · Lampwarden Vey · Tally-Clerk Ossory · Process-Server Nell · Writing-Master Serif · Winchman Abel Sounding · Tithe-Clerk Ossery Penn · Limner Aurelie Frane · Gunner Merriwether Coyle · Bailiff-Crier Wendle Moss · Tallyman Ludd · Measurer Quint · Widow Thole · Master Cutter Selvage · Topman Jory Lanyard · Gauger Prudence Tallow · Lamplighter Hesper Gill · Fenwick Reed, Crown Diver · Flareman Ossian Pyle · Valveman Corliss Haggard · Tithe-Clerk Pennick · Ballast-Master Coyle · Lamp-Keeper Hesk · Seine-Master Garrow · Row-Warden Mabry

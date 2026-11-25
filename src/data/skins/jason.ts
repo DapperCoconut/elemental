@@ -1,9 +1,9 @@
 import type { SkinDef } from '../Skins';
 
 /**
- * Jason — Silence as the camp-lake slasher. The plum fog becomes night mist off a black lake,
- * the violets become pine shadow and moss, and the blood stays blood. Silence spawns no
- * `proj-*` sprites (its spit is painted), so there is no projectile tint.
+ * Jason — the camp-lake slasher, worn over Fear (element id `silence`; the skin predates the
+ * element's replacement). The first block of the palette is the old Silence one, which the
+ * skin's own painter (`JasonFx`) still draws with; the second re-dresses Fear's suit tones.
  */
 export const JASON_SKIN: SkinDef = {
   id: 'jason',
@@ -34,6 +34,16 @@ export const JASON_SKIN: SkinDef = {
     0x7d6440: 0x6e5a3a, // twine     → rope
     0x7a8a66: 0x6d7a52, // bile      → lake slime
     0x9aaa88: 0x8c9a70, // bileHi    → lit slime
+    // Fear's palette (the element under this skin since Silence was replaced). Only the suit and
+    // the phobias' ink are re-dressed; bone, blood, steel, marble and the rune pass through as they
+    // are — there is deliberately no `paletteFallback`, which would paint all of those olive.
+    0x121317: 0x141d1a, // suitDeep    → wet pine bark
+    0x24262d: 0x2a281e, // suit        → soot-brown work jacket
+    0x3f4350: 0x4a4636, // suitLit     → drab olive
+    0x0b0a10: 0x070d0b, // tentacle    → night water
+    0x3a3350: 0x3a4a40, // tentacleLit → pine shadow
+    0xfbf8f0: 0xe6e2d0, // rose        → hockey-mask bone
+    0x8d8f96: 0x8a8f6a, // ash         → lichen
+    0x3a3b41: 0x22302b, // ashDeep     → murky lake
   },
-  paletteFallback: 0x3a4a40,
 };

@@ -62,9 +62,9 @@ const BOUNTY_ELEMENTS: BountyElement[] = [
   { id: 'plasma',      name: 'Plasma',      emoji: '🔮',  color: 0xaa22ff },
   { id: 'gunpowder',   name: 'Gunpowder',   emoji: '💀',  color: 0x440066 },
   { id: 'rubber',      name: 'Rubber',      emoji: '🪀',  color: 0xff5577 },
-  { id: 'magic',       name: 'Magic',       emoji: '📖',  color: 0x9944ff },
+  { id: 'magic',       name: 'Math',        emoji: '🧮',  color: 0x3fd0ae },
   { id: 'technology',  name: 'Technology',  emoji: '💻',  color: 0x44ccaa },
-  { id: 'silence',     name: 'Silence',     emoji: '🫥',  color: 0x1a0022 },
+  { id: 'silence',     name: 'Fear',        emoji: '🎭',  color: 0x9a94a6 },
   { id: 'echo',        name: 'Echo',        emoji: '🦇',  color: 0xccccff },
   { id: 'subterfuge',  name: 'Subterfuge',  emoji: '🕴️', color: 0xcc2233 },
 ];

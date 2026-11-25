@@ -1,6 +1,7 @@
 import type { CourtBundle } from '../../../../IslesTypes';
 import { CARD_AREA } from './area';
 import { CARD_ENCOUNTERS, CARD_GIMMICKS } from './encounters';
+import { FALLEN } from './fallen';
 import { CARD_FLOOR } from './floor';
 import {
   ART_ANTE, CARD_BAKERIES, CARD_FISH, CARD_FISHERIES, CARD_ITEMS, CARD_SCRIPTS, CARD_SHOPS,
@@ -40,4 +41,5 @@ export const CARD_COURT: CourtBundle = {
   bakeries: CARD_BAKERIES,
   fish: CARD_FISH,
   fisheries: CARD_FISHERIES,
+  fallen: FALLEN,
 };

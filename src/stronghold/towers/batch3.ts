@@ -10,7 +10,7 @@ export const BATCH3_TOWERS: Record<string, TowerDef> = {
     signature: { name: 'Corrosion', desc: 'Its lashes Corrode and poison: armour, shells and banners stop counting.' },
     traits: {},
     attacks: {
-      whip: ab(10, 600, { kind: 'bolt', color: 0x66cc44, speed: 520 }, 'Poison Whip: lashes that corrode and poison.', { name: 'Poison Whip', rider: { toxic: { ms: 3000, dps: 4 }, corrode: 3000 } }),
+      whip: ab(10, 600, { kind: 'bolt', color: 0x66cc44, speed: 520 }, 'Inject: blobs of venom that corrode and poison.', { name: 'Inject', rider: { toxic: { ms: 3000, dps: 4 }, corrode: 3000 } }),
     },
     paths: [
       path('Toxin', 'Venom that spreads from body to body', [
@@ -22,7 +22,7 @@ export const BATCH3_TOWERS: Record<string, TowerDef> = {
         }),
         up('Plague Carrier', 950, 'Poisoned husks infect their neighbours when they die. Adds a burrowing snake.', { kind: 'skull', color: 0x88bb22 }, {
           mods: { whip: { rider: { infect: 4000 } } },
-          add: { burrow: ab(45, 3000, { kind: 'line', length: 220, width: 30, color: 0x44aa22 }, 'A snake tunnels down the road and bites.', { name: 'Snake Burrow', rider: { corrode: 4000, toxic: { ms: 4000, dps: 9 }, infect: 4000 }, gesture: 'r' }) },
+          add: { burrow: ab(45, 3000, { kind: 'line', length: 220, width: 30, color: 0x44aa22 }, 'The doctor tunnels down the road and bites.', { name: 'Burrow', rider: { corrode: 4000, toxic: { ms: 4000, dps: 9 }, infect: 4000 }, gesture: 'r' }) },
         }),
         up('Necrotic', 2700, 'Lashes ×2.2, poison 30/s, and each lash eats 2% of current health.', { kind: 'skull', color: 0x55aa22 }, {
           mods: { whip: { damageMult: 2.2, rider: { toxic: { ms: 4000, dps: 30 }, pct: 0.02 } }, burrow: { damageMult: 2 } },
@@ -32,8 +32,8 @@ export const BATCH3_TOWERS: Record<string, TowerDef> = {
         }),
       ]),
       path('Acid Bath', 'Pools of acid and a sky that rains it', [
-        up('Vile Spray', 150, 'Sprays a pool of acid on the road that corrodes and slows.', 'bubbles', {
-          add: { pool: ab(12, 4500, { kind: 'zone', radius: 70, ms: 4500, color: 0x66cc44, shape: 'acid' }, 'A pool of acid on the road.', { name: 'Vile Spray', rider: { corrode: 1500, slow: { mult: 0.75, ms: 600 } }, gesture: 'e' }) },
+        up('Acid Reflux', 150, 'Lobs an acid bomb that leaves a pool on the road, corroding and slowing.', 'bubbles', {
+          add: { pool: ab(12, 4500, { kind: 'zone', radius: 70, ms: 4500, color: 0x66cc44, shape: 'acid' }, 'A pool of acid on the road.', { name: 'Acid Reflux', rider: { corrode: 1500, slow: { mult: 0.75, ms: 600 } }, gesture: 'e' }) },
         }),
         up('Caustic', 340, 'Pools are 1.4× wider and leave husks brittle (+3 per hit).', 'bubbles', {
           mods: { pool: { areaMult: 1.4, damageMult: 1.5, rider: { brittle: { add: 3, ms: 2000 } } } },

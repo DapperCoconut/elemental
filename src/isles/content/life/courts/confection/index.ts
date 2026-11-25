@@ -2,6 +2,7 @@ import type { CourtBundle } from '../../../../IslesTypes';
 import { CONFECTION_AREA } from './area';
 import { SACCHARO_BOSS } from './boss';
 import { CONFECTION_ENCOUNTERS } from './encounters';
+import { FALLEN } from './fallen';
 import { confectionFloor } from './floor';
 import { CARAMEL_POUR } from './gimmicks/caramel';
 import { GINGERBREAD } from './gimmicks/gingerbread';
@@ -43,4 +44,5 @@ export const CONFECTION_COURT: CourtBundle = {
   bakeries: CONFECTION_BAKERIES,
   fish: CONFECTION_FISH,
   fisheries: CONFECTION_FISHERIES,
+  fallen: FALLEN,
 };

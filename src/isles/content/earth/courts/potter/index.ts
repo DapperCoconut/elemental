@@ -2,6 +2,7 @@ import type { CourtBundle } from '../../../../IslesTypes';
 import { POTTER_AREA } from './area';
 import { POTTER_ENCOUNTERS, POTTER_GIMMICKS } from './encounters';
 import { POTTER_FLOOR } from './floor';
+import { FALLEN } from './fallen';
 import { ART_GLAZE, POTTER_FISH, POTTER_FISHERIES, POTTER_ITEMS, POTTER_SCRIPTS, POTTER_SHOPS } from './items';
 import { POTTER_COLOR } from './palette';
 import { GLAZE_BOSS } from './prince';
@@ -37,4 +38,5 @@ export const POTTER_COURT: CourtBundle = {
   shops: POTTER_SHOPS,
   fish: POTTER_FISH,
   fisheries: POTTER_FISHERIES,
+  fallen: FALLEN,
 };

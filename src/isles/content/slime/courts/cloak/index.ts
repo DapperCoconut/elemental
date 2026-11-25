@@ -4,6 +4,7 @@ import { CLOAK_ENCOUNTERS, CLOAK_GIMMICKS } from './encounters';
 import { CLOAK_FLOOR } from './floor';
 import { ART_WHISPER, CLOAK_FISH, CLOAK_FISHERIES, CLOAK_ITEMS, CLOAK_SCRIPTS, CLOAK_SHOPS } from './items';
 import { CLOAK_COLOR } from './palette';
+import { FALLEN } from './fallen';
 import { WHISPER_BOSS } from './prince';
 import { CLOAK_QUESTS } from './quests';
 
@@ -38,4 +39,5 @@ export const CLOAK_COURT: CourtBundle = {
   shops: CLOAK_SHOPS,
   fish: CLOAK_FISH,
   fisheries: CLOAK_FISHERIES,
+  fallen: FALLEN,
 };

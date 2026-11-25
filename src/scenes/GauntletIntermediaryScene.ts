@@ -74,9 +74,9 @@ const INFINITY_ABSTRACT_COMBINED_ELEMENTS: ElementDef[] = [
   { id: 'gunpowder', name: 'Gunpowder'  },
   { id: 'echo',       name: 'Echo'  },
   { id: 'rubber',     name: 'Rubber'  },
-  { id: 'magic',      name: 'Magic'  },
+  { id: 'magic',      name: 'Math'   },
   { id: 'technology', name: 'Technology'  },
-  { id: 'silence',    name: 'Silence'  },
+  { id: 'silence',    name: 'Fear'     },
   { id: 'subterfuge', name: 'Subterfuge' },
 ];
 

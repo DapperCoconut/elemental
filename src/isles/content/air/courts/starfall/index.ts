@@ -10,6 +10,7 @@ import { constellationGimmick } from './gimmicks/constellation';
 import { telescopeGimmick } from './gimmicks/telescope';
 import { eclipseGimmick } from './gimmicks/eclipse';
 import { dyingStarGimmick } from './gimmicks/dyingStar';
+import { FALLEN } from './fallen';
 
 /**
  * The Starfall Court — Highspire's tier-4 court, an observatory city on the summit above the
@@ -43,4 +44,5 @@ export const STARFALL_COURT: CourtBundle = {
   shops: STARFALL_SHOPS,
   fish: STARFALL_FISH,
   fisheries: STARFALL_FISHERIES,
+  fallen: FALLEN,
 };

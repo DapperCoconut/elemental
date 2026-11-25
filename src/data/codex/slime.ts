@@ -1,7 +1,7 @@
 import { ElementCodex } from '../AbilityCodex';
 
 /**
- * Venom (element id `slime`) — the serpent. It was Acid, and Slime before that; the id never moved.
+ * Venom (element id `slime`) — the plague doctor. It was Acid, and Slime before that; the id never moved.
  *
  * Verified against `src/elements/slime.ts`, `kits/SlimeKit.ts`, `kits/AcidGrid.ts`, the slime
  * block of `data/Upgrades.ts` and Venom Mastery in `data/Mastery.ts`. Numbers here are the ones
@@ -9,84 +9,60 @@ import { ElementCodex } from '../AbilityCodex';
  */
 const slime: ElementCodex = {
   identity:
-    'A serpent that wins on two clocks at once. Every lash, bite and second spent on its acid lays '
-    + 'toxin, and toxin never fades: it burns, then drips, then weakens, then eats maximum HP, and at '
-    + '1000 it kills outright. The second clock is the floor — a grid of permanent acid whose coverage, '
-    + 'shown on the gauge across the top, decides how hard the bite lands, whether the whip carries '
-    + 'double toxin and when the mastery can shed. The long tail is part of its hitbox, so it is easy to '
-    + 'hit and hard to run from.',
+    'A plague doctor with a syringe gun. Its toxin does no damage: every stack makes each new negative '
+    + 'effect on the victim last 2% longer, up to three times as long at 100. The harm comes from what '
+    + 'gets stretched — the four poisons Pick Your Poison loads into the gun — and from the floor, a grid '
+    + 'of permanent acid that the shots trickle, the bomb floods and the rain falls on. Burrow under it '
+    + 'and come up biting to put every one of those effects back to full length.',
 
   passives: [
-    {
-      emoji: '🐍',
-      name: 'Serpentine',
-      basics:
-        'A long tail trails behind you, sampled from the path you walked — 14 knots 13px apart, about '
-        + '180px of serpent — and it counts as part of your hitbox. Any enemy shot that crosses it hits '
-        + 'you, even if it never came near your body. It adds no health. While you dodge the tail drops '
-        + 'out of the hitbox entirely, and the dodge itself carries you three times as far.',
-      effects: [
-        { tag: 'cost', label: 'The tail', detail: '14 knots 13px apart — about 180px behind you — and every one of them is hitbox. A shot within 9px of it hits you for its full damage. No extra health comes with it.' },
-        { tag: 'movement', label: 'Long dodge', detail: 'The Space dodge goes 3× as far: 1560 px/s for the 280ms dash instead of 520.' },
-        { tag: 'shield', label: 'Tail drops', detail: 'While the dodge lasts, the tail is not a hitbox at all — it is drawn as a faint after-image.' },
-        { tag: 'utility', label: 'Under the acid', detail: 'Burrowed, the tail goes under with you and cannot be hit either.' },
-      ],
-      notes: [
-        'An idle serpent still lies at full length: standing still does not shorten the tail.',
-        'Shed Skin (mastery) shortens it by a third each time, for the rest of the match.',
-      ],
-    },
     {
       emoji: '☠️',
       name: 'Toxin',
       basics:
-        'Stacks laid by the whip (1 a lash, 2 at 50% acid), the bite (12), standing on your acid (3 a '
-        + 'second) and Rattling Strike (×1.5). They never fade, and each tier keeps everything below it: '
-        + '25 burns for 3 a second; 50 makes the victim drip acid as they walk; 100 cuts their damage by '
-        + '20% and burns for 5; 250 takes 50 off their maximum HP; 500 takes another 100, cuts their damage '
-        + 'by a further 20% and burns for 8; and 1000 kills them.',
+        'Stacks laid by Inject (2 a hit), the bomb (5 to 25), cluster bombs (2), Shed Skin darts (1) and '
+        + 'standing on your acid (1 a second). They never fade and cap at 100. Each stack makes every new '
+        + 'negative effect that lands on that body last 2% longer — at 100 stacks, 200% longer. The '
+        + 'Burrow bite raises the count by 25%.',
       effects: [
-        { tag: 'dot', label: '25+', detail: '3 damage a second, every second, forever.' },
-        { tag: 'summon', label: '50+', detail: 'They drip acid as they walk — a 12px splash of your acid every 30px, laid a step behind them.' },
-        { tag: 'debuff', label: '100+', detail: 'They deal 20% less damage, and the burn rises to 5 a second.' },
-        { tag: 'debuff', label: '250+', detail: '50 maximum HP gone (not health — the cap).' },
-        { tag: 'debuff', label: '500+', detail: 'Another 100 maximum HP gone, another 20% off their damage (40% in all), and 8 a second.' },
-        { tag: 'damage', label: '1000', detail: 'Instant death — true damage, retried every 0.6s if something refuses it.' },
+        { tag: 'debuff', label: 'Longer debuffs', detail: '+2% duration per stack on every timed negative effect applied to them, from any source — burns, slows, stuns and your own four poisons alike.' },
+        { tag: 'utility', label: 'The cap', detail: '100 stacks: every new negative effect lasts 3× as long.' },
+        { tag: 'utility', label: 'Permanent', detail: '0 stacks are lost over time — toxin stays for the whole match.' },
       ],
       notes: [
-        'The drips at 50+ are your acid, so they count towards coverage and they poison whoever stands in them — usually the dripper.',
-        'Online, the stacks are decided on the serpent\'s machine and mirrored to the victim.',
+        'The stretch is applied the moment an effect lands, at the toxin they have right then. Effects that hold a separate timer per stack (frost) are not stretched.',
+        'Online, the stacks are decided on the venom\'s machine and mirrored to the victim.',
       ],
     },
     {
       emoji: '🟢',
       name: 'Acid Floor',
       basics:
-        'Your acid is a grid of 16px cells across the whole arena, so overlapping sprays never count '
+        'Your acid is a grid of 16px cells across the whole arena, so overlapping pools never count '
         + 'twice. Fresh acid glows: the first body to walk over a fresh cell takes 0.3 damage for it '
-        + 'and cools it — about 4 damage crossing a whole splash. Spent acid stays forever, and anyone '
-        + 'standing on any of your acid takes 1 damage and 3 toxin every second.',
+        + 'and cools it. Spent acid stays forever, and anyone standing on any of your acid takes 1 damage '
+        + 'and 1 toxin every second.',
       effects: [
-        { tag: 'damage', label: 'Fresh cells', detail: '0.3 damage per fresh cell walked over, which cools it — roughly 4 for crossing a full Vile Spray splash.' },
-        { tag: 'dot', label: 'Standing', detail: '1 damage and 3 toxin a second to anyone on your acid, the moment they step on and every second after.' },
+        { tag: 'damage', label: 'Fresh cells', detail: '0.3 damage per fresh cell walked over, which cools it — roughly 4 for crossing a whole bomb crater\'s width.' },
+        { tag: 'dot', label: 'Standing', detail: '1 damage and 1 toxin a second to anyone on your acid, the moment they step on and every second after.' },
         { tag: 'area', label: 'Permanent', detail: 'Acid never dries — 100% of what you lay is still on the floor when the match ends.' },
-        { tag: 'utility', label: 'Re-lighting', detail: 'Spraying over spent acid makes it fresh again.' },
+        { tag: 'utility', label: 'Re-lighting', detail: 'Laying acid over spent acid makes it fresh again.' },
       ],
       notes: [
-        'Your acid only hurts your enemies. Standing in it is the precondition for Snake Burrow and the 20-lash whip.',
+        'Your acid only hurts your enemies. Standing in it is the precondition for Burrow, and it is what Paralyzing and Melting need under the victim.',
       ],
     },
     {
       emoji: '📊',
       name: 'Acidification',
       basics:
-        'The gauge across the top of the screen is the share of the arena that is your acid. At 24% and '
-        + '50% Festering Bite reaches its second and third stage; at 50% every Poison Whip lash carries 2 '
-        + 'toxin instead of 1; and at 20%, 40%, 60% and 80% Venom Mastery earns one Shed Skin each.',
+        'The gauge across the top of the screen is the share of the arena that is your acid. At 15% and '
+        + '35% (the red lines) Acid Reflux\'s bomb grows a size, and the toxin a bomb lays climbs with every '
+        + 'point of coverage. With Venom Mastery, 20%, 40%, 60% and 80% each earn one Shed Skin.',
       effects: [
-        { tag: 'buff', label: 'Bite stages', detail: 'Under 24%: stage 1. 24–50%: stage 2. 50% or more: stage 3, which is also what Meltdown (F+) needs.' },
-        { tag: 'buff', label: 'Double toxin', detail: 'At 50% or more every whip lash lands 2 toxin instead of 1 — the red line on the gauge.' },
-        { tag: 'utility', label: 'Milestones', detail: '20%, 40%, 60% and 80% each hand over one Shed Skin, once per match — the diamonds on the gauge light up as you pass them.' },
+        { tag: 'buff', label: 'Bomb sizes', detail: 'Under 15%: 25 damage in 80px. 15–35%: 38 in 105px. 35% or more: 52 in 130px.' },
+        { tag: 'debuff', label: 'Bomb toxin', detail: '5 toxin plus 0.4 per percent of coverage, up to 25 — 9 at 10% acid, 19 at 35%.' },
+        { tag: 'utility', label: 'Milestones', detail: '20%, 40%, 60% and 80% each hand over one Shed Skin, once per match — the diamonds on the gauge appear with the mastery.' },
       ],
       notes: [
         'Venom Mastery tracks it two ways: 500% laid down across all matches, and a single-match high of 80%.',
@@ -95,123 +71,130 @@ const slime: ElementCodex = {
   ],
 
   abilities: {
-    'poison-whip': {
+    'venom-inject': {
       basics:
-        'A barrage of 15 lashes at 1 damage and 1 toxin each, staggered 25ms apart — or 20 lashes if '
-        + 'you are standing in your own acid when you press it. At 50% coverage every lash carries 2 '
-        + 'toxin. They fly 650 px/s from 30px out with up to ±5° of jitter. 0.4s cooldown.',
-      cast: 'Click, aimed at the cursor. The barrage is fired on the press.',
+        'Fires one blob of venom from the syringe gun at 720 px/s: 12 damage and 2 toxin. The blob dribbles '
+        + 'a 16px-wide line of acid behind it as it flies and leaves a 34px puddle under whoever it hits. The '
+        + 'barrel holds 3 shots; the third starts a 1-second reload in which you stab yourself with the '
+        + 'needle and draw it full again. 0.42s between shots.',
+      cast: 'Click, aimed at the cursor. Hold to keep firing.',
       effects: [
-        { tag: 'damage', label: 'The barrage', detail: '15 lashes at 1 damage each, 25ms apart — 15 damage if every one connects.' },
-        { tag: 'debuff', label: 'Toxin', detail: '1 toxin per lash that lands, or 2 at 50% coverage — up to 40 a volley.' },
-        { tag: 'damage', label: 'In your own acid', detail: '20 lashes instead of 15 while you stand on any of your acid.' },
-        { tag: 'utility', label: 'Availability', detail: '0.4s cooldown; 650 px/s with ±5° of jitter per lash.' },
+        { tag: 'damage', label: 'The shot', detail: '12 damage per blob, 720 px/s.' },
+        { tag: 'debuff', label: 'Toxin', detail: '2 toxin on every hit.' },
+        { tag: 'summon', label: 'Trickle', detail: 'An unbroken line of fresh acid 1 cell (16px) wide, from the needle to wherever the shot went.' },
+        { tag: 'summon', label: 'Puddle', detail: 'A 34px puddle of fresh acid under an enemy it hits.' },
+        { tag: 'cost', label: 'Reload', detail: '3 shots a barrel, then a 1s self-stab before the next one. 0.42s between shots.' },
       ],
       upgrade: {
         basics:
-          'Every lash that connects also eats 1 point of the target\'s maximum HP — 15 or 20 a full volley, '
+          'Every shot that connects also eats 12 points of the target\'s maximum HP — the damage it dealt, '
           + 'gone for the rest of the match.',
         effects: [
-          { tag: 'debuff', label: 'Max HP eaten', detail: 'Every lash that connects reduces the target\'s maximum HP by the 1 damage it dealt — 15 or 20 per full volley.', requiresUpgrade: 'click' },
+          { tag: 'debuff', label: 'Max HP eaten', detail: 'Every Inject hit reduces the target\'s maximum HP by the 12 damage it dealt.', requiresUpgrade: 'click' },
         ],
       },
       notes: [
-        'Each lash is its own projectile, so a shield charge is spent on a single lash — strip it first with Festering Bite.',
+        'A shot that passes within reach of your own Acid Reflux bomb in the air bursts it into cluster bombs, and is used up doing it.',
+        'The liquid in the barrel shows what is loaded: green is plain venom, anything else is a poison.',
       ],
     },
 
-    'vile-spray': {
+    'pick-your-poison': {
       basics:
-        'Throws three 58px splashes of acid along the aim line at 110px, 180px and 250px. Each one lays '
-        + 'fresh acid on the grid — roughly 1.5% of the arena per splash once it is not overlapping '
-        + 'anything. 6s cooldown, which is the real limit on how fast the gauge fills.',
-      cast: 'E, along the aim. Instant.',
+        'Four vials circle you: Disintegrating above, Paralyzing to the right, Purging below, Melting to '
+        + 'the left. Release toward one and your next Inject shot carries it. Disintegrating burns 5 a '
+        + 'second for 5s and each tick adds 3% damage taken (up to 15%) for 8s. Paralyzing blocks every '
+        + 'dash and dodge for 8s, with a 40% slow and slipping on your acid. Purging strips every positive '
+        + 'effect for 8s. Melting doubles the damage they take on your acid for 8s while they drip it. 7s cooldown.',
+      cast: 'Hold E to open the wheel, release toward a vial. A tap picks whichever the cursor is nearest.',
       effects: [
-        { tag: 'summon', label: 'Three splashes', detail: 'At 110px, 180px and 250px along the aim, each 58px in radius.' },
-        { tag: 'area', label: 'Coverage', detail: 'About 1.5% of a full arena per clean splash — fourteen casts to the 20% milestone if none of them overlap.' },
-        { tag: 'dot', label: 'On it', detail: 'Fresh cells nip (0.3 each), and standing on it is 1 damage and 3 toxin a second.' },
-        { tag: 'utility', label: 'Availability', detail: '6s cooldown.' },
+        { tag: 'dot', label: 'Disintegrating', detail: '5 damage a second for 5s — 5 ticks, 25 damage. Each tick is +3% damage taken for 8s, refreshing all stacks, up to 15%.' },
+        { tag: 'debuff', label: 'Paralyzing', detail: '8s: their dodge and every dash in their abilities does not move them (the rest of the ability still happens). On your acid they are slowed 40% and the floor is slippery.' },
+        { tag: 'debuff', label: 'Purging', detail: '8s of Purged: shields, evasion and every timed buff are stripped on the hit and again every 0.3s, and speed boosts are suppressed.' },
+        { tag: 'debuff', label: 'Melting', detail: '8s: ×2 damage taken while they stand on your acid, and a 13px puddle of it drips off them every 0.45s.' },
+        { tag: 'utility', label: 'Availability', detail: '7s cooldown, starting when the vial is loaded. 1 shot is loaded per pick.' },
       ],
       upgrade: {
         basics:
-          'Splashes spread on their own: every 2 seconds each one rolls a 20% chance to bud a smaller '
-          + 'splash 20–50px away, at 55% of the parent\'s radius with a floor of 18px. Budding stops at 60 '
-          + 'splashes.',
+          'The vial fills two shots instead of one: the next 2 Inject shots both carry the poison.',
         effects: [
-          { tag: 'summon', label: 'Budding', detail: 'Every 2s each splash rolls a 20% chance to spawn a child 20–50px away.', requiresUpgrade: 'e' },
-          { tag: 'area', label: 'Child size', detail: '55% of the parent\'s radius, floored at 18px.', requiresUpgrade: 'e' },
-          { tag: 'utility', label: 'Capped', detail: 'Budding stops at 60 splashes.', requiresUpgrade: 'e' },
+          { tag: 'buff', label: 'Double Dose', detail: '2 loaded shots per pick instead of 1.', requiresUpgrade: 'e' },
         ],
       },
       notes: [
-        'Placement is fixed at 110/180/250 regardless of the cursor distance.',
+        'All four are timed negative effects, so toxin stretches them: at 100 toxin Disintegrating runs 15 ticks and the others 24s.',
+        'A loaded shot that bursts your bomb hands its poison to all 5 cluster bombs.',
+        'Against a Purged invasion husk the hit also cancels a baked-in speed bonus and removes a variant\'s bonus max HP, once per husk.',
       ],
     },
 
-    'snake-burrow': {
+    'acid-reflux': {
       basics:
-        'Submerges you: fully invincible at ×1.25 move speed, drawn at 40% alpha under a churning mound, '
-        + 'with the tail under too. Only enterable while standing on your acid, and drifting off it forces '
-        + 'you up. 2s cooldown to enter; surfacing is free.',
-      cast: 'R to submerge, R again to surface.',
+        'The first press pulls an acid bomb out; the second lobs it at 300 px/s. It bursts on the first '
+        + 'enemy or wall it reaches into a pool of fresh acid — 25 damage in 80px — and lays 5 to 25 toxin '
+        + 'depending on how much of the arena is acid. At 15% acid the bomb is banded brass: 38 damage in '
+        + '105px. At 35% it is spiked and red-hot: 52 in 130px. Hit it in the air with Inject and it sheds '
+        + '5 cluster bombs. 9s cooldown.',
+      cast: 'R to pull the bomb out, R again to throw it at the cursor. The cooldown starts on the throw.',
       effects: [
-        { tag: 'shield', label: 'Invincible', detail: 'Fully invincible while burrowed — a flat immunity, not a reduction.' },
-        { tag: 'movement', label: 'Faster underground', detail: '×1.25 move speed while under.' },
-        { tag: 'cost', label: 'Acid only', detail: 'Entry needs acid underfoot; leaving your acid surfaces you.' },
-        { tag: 'utility', label: 'Availability', detail: '2s cooldown on entering. Surfacing is free and instant.' },
+        { tag: 'damage', label: 'The blast', detail: '25 damage in 80px; 38 in 105px at 15% acid; 52 in 130px at 35%.' },
+        { tag: 'summon', label: 'The crater', detail: 'The whole blast radius becomes fresh acid, with 6 to 10 gouts thrown past the rim.' },
+        { tag: 'debuff', label: 'Toxin', detail: '5 toxin plus 0.4 per percent of acid coverage, capped at 25.' },
+        { tag: 'summon', label: 'Cluster bombs', detail: 'An Inject shot passing the flying bomb bursts it once: 5 bomblets land 80–160px ahead after 0.5s, each a 44px pool, 8 damage and 2 toxin.' },
+        { tag: 'utility', label: 'Availability', detail: '9s cooldown from the throw; the bomb flies up to 4s if nothing stops it.' },
       ],
       upgrade: {
         basics:
-          'Coming up is an attack: 20 damage in a 90px radius every time you surface, and everyone caught '
-          + 'has their toxin multiplied by 1.5 and drips a 22px splash of your acid every second for 5 '
-          + 'seconds.',
+          'The acid a bomb leaves spreads on its own: every 2 seconds each crater and cluster pool rolls a '
+          + '20% chance to bud a smaller pool 20–50px away, at 55% of the parent\'s radius with a floor of 18px.',
         effects: [
-          { tag: 'damage', label: 'Surfacing blast', detail: '20 damage in a 90px radius whenever you un-burrow, by choice or forced out.', requiresUpgrade: 'r' },
-          { tag: 'debuff', label: 'Toxin ×1.5', detail: 'Every toxin stack on everyone caught is multiplied by 1.5 — 400 becomes 600.', requiresUpgrade: 'r' },
-          { tag: 'summon', label: 'Dripping', detail: 'They drop a 22px splash of your acid every 1s for 5s.', requiresUpgrade: 'r' },
+          { tag: 'summon', label: 'Budding', detail: 'Every 2s each bomb pool rolls a 20% chance to spawn a child 20–50px away.', requiresUpgrade: 'r' },
+          { tag: 'area', label: 'Child size', detail: '55% of the parent\'s radius, floored at 18px. Children bud too.', requiresUpgrade: 'r' },
+          { tag: 'utility', label: 'Capped', detail: 'Budding stops at 60 remembered pools.', requiresUpgrade: 'r' },
         ],
       },
       notes: [
-        'The ×1.5 is worth most late: surfacing under someone sitting at 340 toxin pushes them through 500.',
+        'The bomb\'s size is read when it is thrown, and the one in your hand already shows it.',
+        'The clustered bomb keeps flying and still bursts where it lands.',
+      ],
+    },
+
+    'venom-burrow': {
+      basics:
+        'Dive under your acid: fully invincible at ×1.35 move speed, and no attacking while under. Only '
+        + 'enterable while standing on your acid. Press again, or reach the end of the acid, and you come '
+        + 'up biting everything within 95px: 30 damage, every negative effect on them restored to the '
+        + 'length it was applied at, and their toxin raised by 25%. 5s cooldown, and 1.5s after surfacing '
+        + 'before you can go under again.',
+      cast: 'F to submerge, F again to surface and bite.',
+      effects: [
+        { tag: 'shield', label: 'Invincible', detail: '100% immune while burrowed — a flat immunity, not a reduction.' },
+        { tag: 'movement', label: 'Faster underground', detail: '×1.35 move speed while under.' },
+        { tag: 'damage', label: 'The bite', detail: '30 damage to every enemy within 95px of where you come up.' },
+        { tag: 'debuff', label: 'Restored', detail: 'Every timed negative effect still running on the bitten goes back to its full applied length — an 8s poison with 1s left has 8s again.' },
+        { tag: 'debuff', label: 'Toxin ×1.25', detail: 'Their toxin is multiplied by 1.25 — 40 becomes 50.' },
+        { tag: 'cost', label: 'Acid only', detail: 'Entry needs acid underfoot; leaving your acid surfaces you (with the bite). 5s cooldown, 1.5s lock after surfacing.' },
+      ],
+      upgrade: {
+        basics:
+          'Coming up is also a blast: 20 damage in a 90px radius, everyone caught drips a 22px splash of '
+          + 'your acid every second for 5 seconds, and the bite multiplies toxin by 1.5 instead of 1.25.',
+        effects: [
+          { tag: 'damage', label: 'Surfacing blast', detail: '20 damage in a 90px radius whenever you surface, by choice or forced out.', requiresUpgrade: 'f' },
+          { tag: 'debuff', label: 'Toxin ×1.5', detail: 'The bite multiplies toxin by 1.5 instead of 1.25 — 40 becomes 60.', requiresUpgrade: 'f' },
+          { tag: 'summon', label: 'Dripping', detail: 'They drop a 22px splash of your acid every 1s for 5s.', requiresUpgrade: 'f' },
+        ],
+      },
+      notes: [
+        'The restore counts the stretch toxin gave the effect when it landed.',
         'With the Murk divine perk, a toad hops about on the surface while you are under, dribbling 26px of acid wherever it lands.',
-      ],
-    },
-
-    'festering-bite': {
-      basics:
-        'Bite forward in a 110° arc. Purge goes first — it strips every buff the target has, shields '
-        + 'included — then the fangs deal 15 damage and 12 toxin. The bite grows with your coverage: '
-        + 'under 24% it reaches 70px and purges for 3s; at 24% it is 30 damage, 85px and 8s; at 50% it is '
-        + '45 damage, 100px and 15s. 6s cooldown.',
-      cast: 'F, toward the cursor. Instant, melee — every enemy in the arc is bitten.',
-      effects: [
-        { tag: 'damage', label: 'Stage 1 — under 24% acid', detail: '15 damage, 70px reach, 3s of Purged.' },
-        { tag: 'damage', label: 'Stage 2 — 24% to 50%', detail: '30 damage, 85px reach, 8s of Purged.' },
-        { tag: 'damage', label: 'Stage 3 — 50% or more', detail: '45 damage, 100px reach, 15s of Purged.' },
-        { tag: 'debuff', label: 'Toxin', detail: '12 toxin on every bite that lands.' },
-        { tag: 'debuff', label: 'Purged', detail: 'Every buff is stripped on the bite — shield charges, shield HP, clotted, weak and sap HP, evasion and timed buffs — and positive speed boosts stay suppressed for the duration.' },
-        { tag: 'debuff', label: 'Husks', detail: 'Against an invasion husk it also cancels a baked-in speed bonus and removes a variant\'s bonus max HP, once per husk.' },
-      ],
-      upgrade: {
-        basics:
-          'A stage-3 bite now melts: 3 seconds ticking once a second for 10% of current HP, 10% of max HP '
-          + 'and 10% of size (floored at 30%). Each tick drops a puddle dyed their colour that carries the '
-          + 'buffs the bite stripped; walk into one to wear them for 8 seconds.',
-        effects: [
-          { tag: 'dot', label: 'The melt', detail: 'A stage-3 bite melts for 3s: once a second, 10% of their current HP, 10% of their max HP and 10% of their size.', requiresUpgrade: 'f' },
-          { tag: 'summon', label: 'Melt puddles', detail: 'One 24px puddle per tick, each carrying a snapshot of the buffs the bite took.', requiresUpgrade: 'f' },
-          { tag: 'buff', label: 'Stealing them', detail: 'Walking into a puddle grants you those buffs for 8s, at their values.', requiresUpgrade: 'f' },
-        ],
-      },
-      notes: [
-        'Because the strip lands before the damage, a shield never absorbs the bite.',
       ],
     },
 
     'acid-apocalypse': {
       basics:
         'Eight seconds of acid rain over all of your acid at once. Every enemy standing on it takes 6 '
-        + 'damage every 0.5s — 12 a second, up to 96 — on top of the floor\'s own 1 damage and 3 toxin. '
+        + 'damage every 0.5s — 12 a second, up to 96 — on top of the floor\'s own 1 damage and 1 toxin. '
         + 'With no acid down it does nothing. 25s cooldown.',
       cast: 'Q. Instant, no lock.',
       effects: [
@@ -237,19 +220,19 @@ const slime: ElementCodex = {
   perks: {
     electrolysis: {
       basics:
-        'Your splashes become a circuit. Every 1.4 seconds a current arcs between two Vile Spray splashes '
-        + 'within 220px of each other, chosen at random, dealing 12 damage to anything within 20px of the '
-        + 'line and jolting it to 45% speed for 0.45s. One arc in five surges: 36 damage, and it jumps on to '
-        + 'a third splash.',
-      cast: 'Passive. It starts arcing the moment you have two splashes close enough to conduct.',
+        'Your pools become a circuit. Every 1.4 seconds a current arcs between two of your puddles or '
+        + 'craters within 220px of each other, chosen at random, dealing 12 damage to anything within 20px '
+        + 'of the line and jolting it to 45% speed for 0.45s. One arc in five surges: 36 damage, and it '
+        + 'jumps on to a third pool.',
+      cast: 'Passive. It starts arcing the moment you have two pools close enough to conduct.',
       effects: [
-        { tag: 'damage', label: 'The arc', detail: '12 damage to anything within 20px of the line between two splashes, every 1.4 seconds.' },
+        { tag: 'damage', label: 'The arc', detail: '12 damage to anything within 20px of the line between two pools, every 1.4 seconds.' },
         { tag: 'debuff', label: 'The jolt', detail: 'Anything the current crosses is dropped to 45% speed for 0.45s.' },
-        { tag: 'damage', label: 'Surge', detail: 'A 20% chance per arc: 36 damage instead of 12, and it chains to a third splash.' },
-        { tag: 'area', label: 'Conducting range', detail: '220px between splash centres.' },
+        { tag: 'damage', label: 'Surge', detail: 'A 20% chance per arc: 36 damage instead of 12, and it chains to a third pool.' },
+        { tag: 'area', label: 'Conducting range', detail: '220px between pool centres.' },
       ],
       notes: [
-        'One Vile Spray already leaves two pairs inside conducting range, and Spray Spread buds splashes 20–50px off their parents.',
+        'Inject puddles, bomb craters and cluster pools are all terminals; the thin trickle a shot leaves is not.',
       ],
     },
   },
@@ -259,7 +242,7 @@ const slime: ElementCodex = {
       basics:
         'Stepping off your acid starts a 5-second window in which you lay a print every 34px walked. '
         + 'Prints are 15px and deal 2 damage every 0.5s for 3 seconds, or 26px and 4 if laid within 3 '
-        + 'seconds of surfacing from Snake Burrow.',
+        + 'seconds of surfacing from Burrow.',
       effects: [
         { tag: 'utility', label: 'The window', detail: '5 seconds of prints from the moment you step off your acid.' },
         { tag: 'summon', label: 'Spacing', detail: 'One print every 34px walked.' },
@@ -273,19 +256,18 @@ const slime: ElementCodex = {
     'shed-skin': {
       basics:
         'No cooldown. Each acidification milestone — 20%, 40%, 60% and 80% — banks one shed, so a match '
-        + 'holds at most four. Shedding leaves your old skin lying where you were: your tail comes out 33% '
-        + 'shorter and you 15% faster, for the rest of the match and stacking each time, while 48 lashes '
-        + 'spiral out of you over 0.6s and a 48px pool and six 22px splashes of acid land around you.',
-      cast: 'Bindable to R, F or Q, replacing that slot\'s ability for the match. Refuses without a banked shed and says where the next one is.',
+        + 'holds at most four. Shedding makes you 15% faster for the rest of the match, stacking each '
+        + 'time, while 48 venom darts spiral out of you over 0.6s and a 48px pool and six 22px splashes of '
+        + 'acid land around you.',
+      cast: 'Bindable to R, F or Q, replacing that slot\'s ability for the match. Does nothing without a banked shed.',
       effects: [
         { tag: 'utility', label: 'Charges', detail: 'One shed at each of 20%, 40%, 60% and 80% coverage — four per match at most, no cooldown between them.' },
-        { tag: 'buff', label: 'Smaller', detail: 'Tail ×0.67 per shed — after four, about a fifth of its length.' },
         { tag: 'movement', label: 'Quicker', detail: '+15% move speed per shed, stacking: +60% after all four.' },
-        { tag: 'damage', label: 'The barrage', detail: '48 lashes spiralling out over 0.6s, each 1 damage with whip toxin (2 at 50% coverage).' },
+        { tag: 'damage', label: 'The barrage', detail: '48 darts spiralling out over 0.6s at 650 px/s, each 1 damage and 1 toxin.' },
         { tag: 'summon', label: 'Acid', detail: 'A 48px pool under you and six 22px splashes 40–80px around.' },
       ],
       notes: [
-        'A shorter tail is a smaller hitbox, so every shed makes you harder to hit as well as faster.',
+        'The gauge shows the four milestones as diamonds while Shed Skin is bound.',
       ],
     },
   },

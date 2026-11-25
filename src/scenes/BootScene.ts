@@ -844,6 +844,19 @@ export class BootScene extends Phaser.Scene {
     gfx.fillCircle(10.2, 4.6, 1.5);
     gfx.generateTexture('proj-acid-whip', 16, 12);
 
+    // Venom Inject blob: the hitbox sprite. SlimeKit draws the live, poison-coloured blob over it.
+    gfx.clear();
+    gfx.fillStyle(0x143d0a);
+    gfx.fillEllipse(13, 9, 16, 15);
+    gfx.fillTriangle(0, 9, 8, 4, 8, 14);
+    gfx.fillStyle(0x66cc44);
+    gfx.fillEllipse(13.5, 9, 12, 11);
+    gfx.fillStyle(0x88ff33);
+    gfx.fillEllipse(14.5, 8, 7, 6);
+    gfx.fillStyle(0xccff88, 0.95);
+    gfx.fillCircle(12.5, 6.5, 1.8);
+    gfx.generateTexture('proj-venom-blob', 22, 18);
+
     // Purge ball: a heavy, dark orb of concentrated acid with a neon rim eaten ragged, bubbles
     // trapped inside it and a wet bead where the light catches.
     gfx.clear();
@@ -1048,11 +1061,11 @@ export class BootScene extends Phaser.Scene {
     gfx.generateTexture('elem-rubber', 48, 48);
     gfx.clear();
 
-    // ── Magic element (abstract combined: slime + light) ─────────────────────
+    // ── Math element (id `magic`, abstract combined: slime + light) ──────────
 
-    // elem-magic — a plain arcane orb in one violet hue: ink rim to an orchid core, a purple
-    // rim light. The wizard hat (MagicAvatar.drawExtras) carries the character.
-    bakeOrb(gfx, { rim: 0x1a0a2e, shell: 0x2e1250, body: 0x552288, mid: 0x6e30b0, core: 0x9944ff, light: 0xcc88ff, glint: 0xf0dcff });
+    // elem-magic — Math's body: a plain slate-green orb, blackboard rim to a chalk-teal core.
+    // The mortarboard (MathAvatar.drawExtras) carries the character.
+    bakeOrb(gfx, { rim: 0x07110d, shell: 0x10241d, body: 0x1f5a4a, mid: 0x2b8a70, core: 0x3fd0ae, light: 0x8ef0d8, glint: 0xf2f6ea });
     gfx.generateTexture('elem-magic', 48, 48);
     gfx.clear();
 
@@ -1522,107 +1535,14 @@ export class BootScene extends Phaser.Scene {
     gfx.generateTexture('proj-fate-striker', 18, 18);
     gfx.clear();
 
-    // ── Silence element (abstract combined: slime + sound) ────────────────────
+    // ── Fear (element id `silence`) ────────────────────────────────────────────
     //
-    // Only four Silence textures survive the visual pass: the menu icon, and the three
-    // forms a Fighter is actually re-skinned into. Everything else Silence owns — watchers,
-    // grabbers, vultures, teeth, effigies, kin — is drawn per frame by SilenceVisuals, so
-    // it can blink, chew, sag and track you rather than sitting there as a stamp.
+    // One texture: the menu icon / body orb. Everything else is drawn per frame by FearVisuals.
 
-    // elem-silence — a plain orb of dark fog in one plum hue: near-black rim to an amethyst
-    // core, with an orchid rim light. The eye-stalk (SilenceAvatar.drawExtras) carries the
-    // character.
-    bakeOrb(gfx, { rim: 0x05000a, shell: 0x1a0022, body: 0x2a1038, mid: 0x3a1850, core: 0x6622aa, light: 0x8844cc, glint: 0xcc99ff });
+    // elem-silence — Fear's body (the element id is still `silence`): a plain orb of suit
+    // charcoal, near-black rim to a slate core. The mask, lapels and rose are FearAvatar's.
+    bakeOrb(gfx, { rim: 0x050506, shell: 0x121317, body: 0x24262d, mid: 0x30333d, core: 0x3f4350, light: 0x5a5f70, glint: 0xb4bcc5 });
     gfx.generateTexture('elem-silence', 48, 48);
-    gfx.clear();
-
-    // silence-blob — 110×110 hallway horror. The live mass of eyes, hands and teeth is
-    // painted over this every frame; what the texture carries is the bulk underneath it,
-    // so the moving parts have something solid to sit on.
-    for (let i = 0; i < 9; i++) {
-      const a = i * 2.399;
-      const d = 18 * Math.abs(Math.sin(i * 1.7));
-      gfx.fillStyle(i % 3 === 0 ? 0x0a0010 : 0x05000a, 1);
-      gfx.fillCircle(55 + Math.cos(a) * d, 58 + Math.sin(a) * d * 0.85, 30 + (i % 4) * 6);
-    }
-    gfx.fillStyle(0x05000a, 1);
-    gfx.fillCircle(55, 58, 48);
-    // A wet rim highlight along the top so the mass reads as three-dimensional.
-    gfx.lineStyle(3, 0x2a1038, 0.8);
-    gfx.beginPath();
-    gfx.arc(55, 58, 46, Math.PI * 1.15, Math.PI * 1.95);
-    gfx.strokePath();
-    gfx.generateTexture('silence-blob', 110, 110);
-    gfx.clear();
-
-    // silence-striker — 56×56 werewolf horror: hunched shoulders, a jagged fur silhouette,
-    // ears, a snout full of teeth and eyes that are already burning.
-    // Fur: an irregular ring of tapering spikes, longest across the shoulders.
-    gfx.fillStyle(0x0a0010, 1);
-    for (let i = 0; i < 26; i++) {
-      const a = (i / 26) * Math.PI * 2;
-      const shoulder = 1 + 0.4 * Math.abs(Math.cos(a));
-      const l = 22 * shoulder * (0.82 + 0.3 * Math.abs(Math.sin(i * 2.7)));
-      const w = 0.11;
-      gfx.fillTriangle(
-        28 + Math.cos(a - w) * 17, 30 + Math.sin(a - w) * 17,
-        28 + Math.cos(a + w) * 17, 30 + Math.sin(a + w) * 17,
-        28 + Math.cos(a) * l, 30 + Math.sin(a) * l,
-      );
-    }
-    gfx.fillStyle(0x1a0022, 1);
-    gfx.fillCircle(28, 30, 18);
-    gfx.fillStyle(0x0a0010, 1);
-    gfx.fillCircle(28, 30, 15);
-    // Ears.
-    for (const side of [-1, 1]) {
-      gfx.fillStyle(0x0a0010, 1);
-      gfx.fillTriangle(28 + side * 8, 18, 28 + side * 15, 20, 28 + side * 11, 5);
-      gfx.fillStyle(0x442255, 1);
-      gfx.fillTriangle(28 + side * 9.5, 17, 28 + side * 13, 18.5, 28 + side * 11, 9);
-    }
-    // Snout: a wedge pushed forward, gums and a double row of teeth.
-    gfx.fillStyle(0x0a0010, 1);
-    gfx.fillTriangle(20, 34, 36, 34, 28, 50);
-    gfx.fillStyle(0x661122, 1);
-    gfx.fillTriangle(22, 36, 34, 36, 28, 47);
-    gfx.fillStyle(0xddddcc, 1);
-    for (let i = 0; i < 5; i++) {
-      const tx = 23 + i * 2.6;
-      gfx.fillTriangle(tx, 36, tx + 1.8, 36, tx + 0.9, 41 - Math.abs(i - 2) * 1.1);
-      gfx.fillTriangle(tx, 46 - Math.abs(i - 2) * 1.4, tx + 1.8, 46 - Math.abs(i - 2) * 1.4, tx + 0.9, 41);
-    }
-    // Burning eyes, deep-set under a brow.
-    for (const side of [-1, 1]) {
-      gfx.fillStyle(0x05000a, 1);
-      gfx.fillEllipse(28 + side * 6.5, 27, 9, 6);
-      gfx.fillStyle(0xff2233, 1);
-      gfx.fillEllipse(28 + side * 6.5, 27, 6, 3.6);
-      gfx.fillStyle(0xffffff, 0.85);
-      gfx.fillCircle(28 + side * 5.4, 26.2, 1.2);
-    }
-    gfx.lineStyle(2, 0x05000a, 1);
-    gfx.lineBetween(20, 23, 26, 25);
-    gfx.lineBetween(36, 23, 30, 25);
-    gfx.generateTexture('silence-striker', 56, 56);
-    gfx.clear();
-
-    // silence-awakened — 72×72 the host cracked open. SilenceVisuals paints the split shell,
-    // the limbs and what is looking out of it every frame; the texture is the pale husk it
-    // all hangs on, so there is a body under the moving parts.
-    gfx.fillStyle(0x05000a, 0.5);
-    gfx.fillEllipse(36, 54, 46, 14);
-    gfx.fillStyle(0xddddcc, 0.55);
-    gfx.fillCircle(36, 34, 21);
-    gfx.fillStyle(0x0a0010, 0.9);
-    gfx.fillEllipse(36, 34, 10, 40);
-    // Hairline fractures spreading off the split.
-    gfx.lineStyle(1.4, 0x05000a, 0.8);
-    for (let i = 0; i < 6; i++) {
-      const a = -Math.PI / 2 + (i - 2.5) * 0.55;
-      gfx.lineBetween(36, 34 + (i - 2.5) * 4, 36 + Math.cos(a) * 20, 34 + (i - 2.5) * 4 + Math.sin(a) * 12);
-    }
-    gfx.generateTexture('silence-awakened', 72, 72);
     gfx.clear();
 
     // domain-shard — 10×4 black-purple elongated diamond for Domain Expansion

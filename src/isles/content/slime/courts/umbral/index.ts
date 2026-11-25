@@ -6,6 +6,7 @@ import { ART_DUSK, UMBRAL_FISH, UMBRAL_FISHERIES, UMBRAL_ITEMS, UMBRAL_SCRIPTS, 
 import { UMBRAL_COLOR } from './palette';
 import { DUSK_BOSS } from './prince';
 import { UMBRAL_QUESTS } from './quests';
+import { FALLEN } from './fallen';
 
 /**
  * The Umbral Court — shadow, tier 3 of Fangmire, Prince Dusk the Lamp-Snuffer.
@@ -37,4 +38,5 @@ export const UMBRAL_COURT: CourtBundle = {
   shops: UMBRAL_SHOPS,
   fish: UMBRAL_FISH,
   fisheries: UMBRAL_FISHERIES,
+  fallen: FALLEN,
 };

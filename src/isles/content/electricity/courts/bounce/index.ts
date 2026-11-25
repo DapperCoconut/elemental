@@ -2,6 +2,7 @@ import type { CourtBundle } from '../../../../IslesTypes';
 import { BOUNCE_AREA } from './area';
 import { BOUNCE_ENCOUNTERS, BOUNCE_GIMMICKS } from './encounters';
 import { BOUNCE_FLOOR } from './floor';
+import { FALLEN } from './fallen';
 import { ART_SPROCKET, BOUNCE_FISH, BOUNCE_FISHERIES, BOUNCE_ITEMS, BOUNCE_SCRIPTS, BOUNCE_SHOPS } from './items';
 import { BOUNCE_COLOR } from './palette';
 import { SPROCKET_BOSS } from './prince';
@@ -37,4 +38,5 @@ export const BOUNCE_COURT: CourtBundle = {
   shops: BOUNCE_SHOPS,
   fish: BOUNCE_FISH,
   fisheries: BOUNCE_FISHERIES,
+  fallen: FALLEN,
 };

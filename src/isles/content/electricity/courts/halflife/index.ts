@@ -1,6 +1,7 @@
 import type { CourtBundle } from '../../../../IslesTypes';
 import { HALFLIFE_AREA } from './area';
 import { HALFLIFE_ENCOUNTERS, HALFLIFE_GIMMICKS } from './encounters';
+import { FALLEN } from './fallen';
 import { HALFLIFE_FLOOR } from './floor';
 import { ART_ISOTOPE, HALFLIFE_FISH, HALFLIFE_FISHERIES, HALFLIFE_ITEMS, HALFLIFE_SCRIPTS, HALFLIFE_SHOPS } from './items';
 import { HALFLIFE_COLOR } from './palette';
@@ -37,4 +38,5 @@ export const HALFLIFE_COURT: CourtBundle = {
   shops: HALFLIFE_SHOPS,
   fish: HALFLIFE_FISH,
   fisheries: HALFLIFE_FISHERIES,
+  fallen: FALLEN,
 };

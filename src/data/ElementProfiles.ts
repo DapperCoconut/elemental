@@ -117,8 +117,8 @@ export const ELEMENT_PROFILES: Record<string, ElementProfile> = {
   },
   // `slime` is Venom (it was Acid) — the id kept the old name through both reworks.
   slime: {
-    archetype: 'Poisoner',
-    blurb: 'A serpent whose toxin never fades. Paint the floor with acid, stack the venom, and let 1000 do the rest.',
+    archetype: 'Plague Doctor',
+    blurb: 'A syringe gun and four poisons. Pick one, inject it, flood the floor with acid, and make every debuff outstay its welcome.',
     complexity: 4,
   },
   fate: {
@@ -169,9 +169,9 @@ export const ELEMENT_PROFILES: Record<string, ElementProfile> = {
     complexity: 3,
   },
   magic: {
-    archetype: 'Spellbook',
-    blurb: 'A wheel of five spells and an anchor to teleport back to. More options than keys.',
-    complexity: 3,
+    archetype: 'Scholar',
+    blurb: 'Type sums to stack pillars, rewrite a graph the size of the arena, then set them an exam.',
+    complexity: 5,
   },
   technology: {
     archetype: 'Saboteur',
@@ -179,8 +179,8 @@ export const ELEMENT_PROFILES: Record<string, ElementProfile> = {
     complexity: 4,
   },
   silence: {
-    archetype: 'Assassin',
-    blurb: 'Stealth, stalkers and rituals. Every cast is a setup for a backstab a minute from now.',
+    archetype: 'Slasher',
+    blurb: 'Phobias fill the enemy with fear; you drink it, then become the thing they were afraid of.',
     complexity: 5,
   },
   subterfuge: {

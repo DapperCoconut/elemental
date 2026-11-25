@@ -1,6 +1,7 @@
 import type { CourtBundle } from '../../../../IslesTypes';
 import { TREASURY_AREA } from './area';
 import { TREASURY_ENCOUNTERS, TREASURY_GIMMICKS } from './encounters';
+import { FALLEN } from './fallen';
 import { TREASURY_FLOOR } from './floor';
 import { ART_BULLION, TREASURY_FISH, TREASURY_FISHERIES, TREASURY_ITEMS, TREASURY_SCRIPTS, TREASURY_SHOPS } from './items';
 import { TREASURY_COLOR } from './palette';
@@ -37,4 +38,5 @@ export const TREASURY_COURT: CourtBundle = {
   shops: TREASURY_SHOPS,
   fish: TREASURY_FISH,
   fisheries: TREASURY_FISHERIES,
+  fallen: FALLEN,
 };

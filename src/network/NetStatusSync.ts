@@ -37,7 +37,7 @@ const MIRRORED_TIMERS = new Set([
   'molten', 'burning', 'lava-burn', 'oily-burn', 'toxic', 'bleeding', 'sickness',
   'frozen', 'chicken', 'disarmed', 'silenced', 'chain-bound', 'skewered', 'vibration', 'wrenched',
   'confused', 'wandering', 'hallucinating', 'lagging', 'panicked', 'intoxicated', 'unsteady',
-  'high-gravity', 'inverted', 'exposed', 'purged', 'heal-block', 'dark-link', 'oily',
+  'high-gravity', 'inverted', 'exposed', 'purged', 'venom-rot', 'venom-vuln', 'venom-paralyzed', 'venom-melting', 'heal-block', 'dark-link', 'oily',
   'gold-heart', 'midas', 'stalked', 'stunned', 'out-of-tune',
   'rad-mutated', 'over-radiated', 'devotion-slow', 'gold-hex', 'gold-statue', 'wood-slow',
   'pain-lock', 'pressure-slow', 'grounded', 'astra-slow',
@@ -139,8 +139,10 @@ const NUMERIC_FIELDS: NetNumericField[] = [
   { i: 'gvig', read: (f) => f.goldVigorCut, apply: (f, v) => { f.goldVigorCut = v; }, clear: (f) => { f.goldVigorCut = 0; } },
   // Devotion's faith: decided on the priest's sim; a mirror only ever raises it.
   { i: 'fth', read: (f) => f.devotionFaith, apply: (f, v) => { f.devotionFaith = Math.max(f.devotionFaith, v); }, clear: () => {} },
-  // Venom's toxin stacks: they never fade, and only the venom's sim lays them; a mirror only ever raises it.
+  // Venom's toxin stacks (0–100): they never fade, and only the venom's sim lays them; a mirror only ever raises it.
   { i: 'tox', read: (f) => f.toxinStacks, apply: (f, v) => { f.toxinStacks = Math.max(f.toxinStacks, v); }, clear: () => {} },
+  // Venom's Disintegrating: the vulnerability stacks that ride with the `venom-vuln` timer.
+  { i: 'vvs', read: (f) => f.venomVulnStacks, apply: (f, v) => { f.venomVulnStacks = v; }, clear: (f) => { f.venomVulnStacks = 0; } },
   // Wood's Taint: permanent, decided on the ent's sim; a mirror only ever raises it.
   { i: 'wtnt', read: (f) => f.woodTainted, apply: (f, v) => { f.woodTainted = Math.max(f.woodTainted, v); }, clear: () => {} },
   // Pressure Point's PainLock: what each cast costs rides with the timer above (a lock with no

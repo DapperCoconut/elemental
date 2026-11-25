@@ -359,21 +359,6 @@ export const ALL_PERKS: ElementPerks[] = [
 
   // ── Abstract triple perks (Lab Level 2 abstract tab, 4 nuclei) ──────────
   {
-    elementId: 'magic',
-    perks: [
-      {
-        id: 'thunder',
-        name: 'Thunder',
-        emoji: '⚡',
-        color: 0xffe066,
-        description: 'E and Q gain a 2-tap charge cycle. First press casts Lightning Call / Apocalypse Call (arming only). Second press fires the charged grimoire spell with bonus effects. Apocalypse Call also halves the next Q cooldown.',
-        ingredients: ['electricity', 'slime', 'light'],
-        tier: 'abstract-triple',
-        elementId: 'magic',
-      },
-    ],
-  },
-  {
     elementId: 'electricity',
     perks: [
       {
@@ -461,22 +446,6 @@ export const ALL_PERKS: ElementPerks[] = [
         ingredients: ['electricity', 'slime', 'fate'],
         tier: 'abstract-triple',
         elementId: 'slime',
-      },
-    ],
-  },
-  {
-    elementId: 'silence',
-    perks: [
-      {
-        // Torture predates the fog-stealth remaster; Ritual is the ceremony it belongs to now.
-        id: 'torture',
-        name: 'Torture',
-        emoji: '⛓️',
-        color: 0x881122,
-        description: 'Ritual stops killing quickly. A struck victim is racked instead: 4 dmg/s for 6s, and every tick adds 1s to their Silence. Ritual the same victim again while racked and the rack tightens — +2 dmg/s per stack, up to 3.',
-        ingredients: ['electricity', 'slime', 'sound'],
-        tier: 'abstract-triple',
-        elementId: 'silence',
       },
     ],
   },

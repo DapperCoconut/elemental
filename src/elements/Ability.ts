@@ -204,24 +204,29 @@ export interface CastContext {
   rubberBounceForm: () => void;
   rubberBandStart: () => void;
   rubberage: () => void;
-  // Magic (abstract combined: slime + light)
-  magicSparkleShot: (tx: number, ty: number) => void;
-  magicOpenGrimoire: () => void;
-  magicAnchorToggle: (tx: number, ty: number) => void;
-  magicMeditateBegin: () => void;
-  magicOpenNecronomicon: () => void;
+  // Math (element id `magic` — abstract combined: slime + light)
+  mathCrunch: (tx: number, ty: number) => void;
+  mathIntegrate: () => void;
+  mathRate: () => void;
+  mathDerive: () => void;
+  mathFortyTwo: () => void;
   // Technology (abstract combined: sound + light)
   techCruncherFire: (tx: number, ty: number) => void;
   techAdsCast: () => void;
   techUploadCast: (tx: number, ty: number) => void;
   techWebDragCast: () => void;
   techAdminCast: () => void;
-  // Silence (abstract combined: slime + sound)
-  silenceStab: (tx: number, ty: number) => void;
-  silenceSummonStalker: (tx: number, ty: number) => void;
-  silenceRitual: (tx: number, ty: number) => void;
-  silenceFeast: (tx: number, ty: number) => void;
-  silenceRun: (tx: number, ty: number) => void;
+  // Fear (element id `silence`)
+  fearPhobia: (tx: number, ty: number) => void;
+  fearGrasp: (tx: number, ty: number) => void;
+  fearGaze: () => void;
+  fearManifest: () => void;
+  fearClaustrophobia: () => void;
+  fearMassacre: (tx: number, ty: number) => void;
+  fearHaunt: () => void;
+  fearSignature: () => void;
+  fearDescent: () => void;
+  fearFall: () => void;
   // Echo (abstract combined: fate + light)
   echoEcholocation: (tx: number, ty: number) => void;
   echoGuess: (tx: number, ty: number) => void;
@@ -445,10 +450,10 @@ export interface CastContext {
   inkAnvil: (tx: number, ty: number) => void;
   inkFouxWorld: () => void;
   // Venom (element id `slime`). The kit owns the grid, the tail and every toxin tier.
-  acidWhip: (tx: number, ty: number) => void;
-  acidSpray: (tx: number, ty: number) => void;
+  acidInject: (tx: number, ty: number) => void;
+  acidPoison: (tx: number, ty: number) => void;
+  acidBomb: (tx: number, ty: number) => void;
   acidBurrow: () => void;
-  acidBite: (tx: number, ty: number) => void;
   acidApocalypse: () => void;
   hasPerk: (perkId: string) => boolean;
 }

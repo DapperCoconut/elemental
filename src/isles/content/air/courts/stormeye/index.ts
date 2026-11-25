@@ -10,6 +10,7 @@ import { HAILSTORM } from './gimmicks/hailstorm';
 import { EYE_OF_THE_STORM } from './gimmicks/eyeOfStorm';
 import { RAINCATCHER } from './gimmicks/raincatcher';
 import { THUNDERCLAP } from './gimmicks/thunderclap';
+import { FALLEN } from './fallen';
 
 /**
  * THE STORMEYE COURT — Highspire's walled town in the calm eye of a storm that never ends,
@@ -37,4 +38,5 @@ export const STORMEYE_COURT: CourtBundle = {
   shops: STORMEYE_SHOPS,
   fish: STORMEYE_FISH,
   fisheries: STORMEYE_FISHERIES,
+  fallen: FALLEN,
 };

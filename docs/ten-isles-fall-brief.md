@@ -1,6 +1,7 @@
 <!-- Brief for the Fall (hard mode) builders: 60 FALLEN builders (one court each), one FALLPOINT builder, one
 FALLEN KING builder. Engine owner: launch in waves of one isle (6 courts) — 17 at once exhausted the usage
-limit on the Pinnacle. On landing: tsc, `node .check-isles.mjs` (the ☄ line lists courts still pending),
+limit on the Pinnacle. Before each wave: `node .list-fallen-rules.mjs`. On landing: compare the wave's
+reports for cross-court repeats (send one back), tsc, `node .check-isles.mjs` (the ☄ line lists courts still pending),
 `npm run build`, update docs/ten-isles.md status. -->
 # The Fall — content builder brief (shared by every Fall builder)
 
@@ -95,6 +96,12 @@ dream thins and they half-remember who they really are. `look`: an `NpcLook` of 
   silence`, `ctx.dashing`, `ctx.shotsNear`, `onPlayerCast`, `*CooldownRate`, `ctx.airborne`) — never fake them.
 - Damage is at least 1 per call: never call `ctx.hit` / `tk.hitPlayer` every frame for a burn — tick it on your own
   clock (every 400–600 ms). The smoke run does not catch a per-frame drain.
+- **Read `docs/ten-isles/fallen-rules.md` before designing** — one line per Fallen fight already built, game-wide.
+  None of your five may share a shape with any of them (same hazard + same counter-play = a repeat, whatever the
+  dressing).
+- Sibling courts are being built beside you and cannot see your work. Stay inside your own court's trade and
+  avoid isle-wide motifs (tithes, tolls, rations) and the stock "scale weighs the blows each side landed" rule —
+  three Thornwild courts wrote it at once.
 - Fight names must be new across the whole game (the validator rejects one already used) — avoid the obvious
   word for your court's trade; it is probably taken.
 - Art: `drawGround` / `drawAir` / `drawHud` with layered, specific drawing of the things in the rule; a HUD

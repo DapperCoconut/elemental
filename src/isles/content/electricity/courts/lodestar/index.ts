@@ -6,6 +6,7 @@ import { ART_POLAR, LODESTAR_FISH, LODESTAR_FISHERIES, LODESTAR_ITEMS, LODESTAR_
 import { LODESTAR_COLOR } from './palette';
 import { POLAR_BOSS } from './prince';
 import { LODESTAR_QUESTS } from './quests';
+import { FALLEN } from './fallen';
 
 /**
  * The Lodestar Court — magnet, tier 3 of Voltreach, Prince Polar, True North.
@@ -38,4 +39,5 @@ export const LODESTAR_COURT: CourtBundle = {
   shops: LODESTAR_SHOPS,
   fish: LODESTAR_FISH,
   fisheries: LODESTAR_FISHERIES,
+  fallen: FALLEN,
 };

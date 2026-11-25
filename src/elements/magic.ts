@@ -1,56 +1,59 @@
 import { Element } from './Element';
 import { Ability } from './Ability';
 
-const sparkleShot: Ability = {
-  id: 'magic-sparkle-shot',
-  name: 'Sparkle Shot',
-  description: 'Launch a star-shaped projectile toward your cursor that stops after ~180px. After 1s stationary it bursts in a small AoE (14 dmg). Direct hit deals 6 dmg.',
+// Math. The element keeps the id `magic` — it took Magic's place, and saves, recipes, courts and
+// campaign tables all know the slot by that name. Everything a player sees says Math.
+
+const crunch: Ability = {
+  id: 'math-crunch',
+  name: 'Crunch the Numbers',
+  description: 'A sum is always up on the slate over your head. Type the answer on the number keys and a pillar of math joins the ring circling your cursor (up to 5) — a wrong answer just wipes the slate. Click and every pillar stops where it is and launches through the point you clicked: 16 dmg each, heavy knockback.',
   displayKey: 'Click',
-  cooldown: 3000,
-  cast(ctx) { ctx.magicSparkleShot(ctx.targetX, ctx.targetY); },
+  cooldown: 450,
+  cast(ctx) { ctx.mathCrunch(ctx.targetX, ctx.targetY); },
 };
 
-const grimoire: Ability = {
-  id: 'magic-grimoire',
-  name: 'Grimoire',
-  description: 'Hold to open a 5-spell wheel. ← / → to select, release to cast. (1: Flare — a slow orb that follows your cursor until it laps it once, then flies loose; 15 dmg + burn. 2: Splash — a huge, long-lived slowing pool. 3: Spur — 15 barbs scattered at your feet that slow and sting whoever steps on them. 4: Gust — dash to your cursor, drag whoever you pass back to the cast point, and burst for 15 with big knockback on landing. 5: Ward — a circle granting +3 shield HP/s and 25% damage resistance while you stand in it; the shield leaves with you.)',
+const integrate: Ability = {
+  id: 'math-integrate',
+  name: 'Integrate',
+  description: 'The graph y = x is always drawn across the arena, centred, and harmless on its own. Integrate rewrites it one step up: 1 → x → x²/2 → x³/6 → x⁴/24 — and every integration past y = x sinks the whole graph lower. (That\'s the + C.)',
   displayKey: 'E',
-  cooldown: 5000,
-  cast(ctx) { ctx.magicOpenGrimoire(); },
+  cooldown: 2500,
+  cast(ctx) { ctx.mathIntegrate(); },
 };
 
-const magicAnchor: Ability = {
-  id: 'magic-anchor',
-  name: 'Magic Missiles',
-  description: 'Paint a crosshair on the nearest enemy for 3s. While it holds, every click on them conjures a homing magic missile worth 2 damage — the spell is exactly as strong as your clicking finger is fast.',
+const rateOfPain: Ability = {
+  id: 'math-rate',
+  name: 'Rate of Pain',
+  description: 'The area between your graph and the bottom of the arena turns red for 3.5s and burns everyone in it every quarter second — 3 dmg on y = x, then 6, 9 and 13 as you integrate up to x⁴/24: each integral sits lower, so less ground burns, but much hotter. It follows the graph — integrate or differentiate while it burns and the red moves with the curve.',
   displayKey: 'R',
-  cooldown: 8000,
-  cast(ctx) { ctx.magicAnchorToggle(ctx.targetX, ctx.targetY); },
+  cooldown: 10000,
+  cast(ctx) { ctx.mathRate(); },
 };
 
-const meditate: Ability = {
-  id: 'magic-meditate',
-  name: 'Duplication',
-  description: 'Record a square of the arena at your cursor into a scroll — it flashes purple, and everything of yours inside (Flares, pools, barbs, trails, Wards, elementals) is written down. The scroll drops where the square was: drag it with the mouse and let go to conjure the whole recording again at the drop point. Free.',
+const derivitize: Ability = {
+  id: 'math-derive',
+  name: 'Derivitize',
+  description: 'Differentiate the graph one step down — and the old curve explodes along its whole length in nine big cluster bombs (24 dmg each), every one throwing three bomblets (10 dmg). Differentiating the flat line y = 1 blows it up and resets the board to y = x.',
   displayKey: 'F',
-  cooldown: 6000,
-  cast(ctx) { ctx.magicMeditateBegin(); },
+  cooldown: 7000,
+  cast(ctx) { ctx.mathDerive(); },
 };
 
-const necronomicon: Ability = {
-  id: 'magic-necronomicon',
-  name: 'Summon',
-  description: 'Hold to open a 5-summon wheel. ← / → to select, release to call. The elemental paces the top of the arena for 8s, assisting in its own way, and can be shot down. (1: Fire — bullet cones and fire pillars; 2: Water — waves that slam enemies into the wall, plus slowing pools; 3: Life — slowing vine darts and healing orbs that fly home to you; 4: Wind — raging mini tornadoes and lightning strokes; 5: Earth — walls that block only the enemy, and shield stone for you)',
+const fortyTwo: Ability = {
+  id: 'math-42',
+  name: '42',
+  description: 'Absorb every equation there is: the fight freezes for 2s. Then the enemy must sit five problems while still fighting — typed answers, Enter to submit, 7s each — climbing from easy sums to basically impossible calculus. Each one answered wrong or not at all hits them for 10 dmg, +5 more for every problem already failed.',
   displayKey: 'Q',
   isUltimate: true,
   cooldown: 30000,
-  cast(ctx) { ctx.magicOpenNecronomicon(); },
+  cast(ctx) { ctx.mathFortyTwo(); },
 };
 
 export const magicElement: Element = {
   id: 'magic',
-  name: 'Magic',
-  color: 0x9944ff,
-  emoji: '📖',
-  abilities: [sparkleShot, grimoire, magicAnchor, meditate, necronomicon],
+  name: 'Math',
+  color: 0x3fd0ae,
+  emoji: '🧮',
+  abilities: [crunch, integrate, rateOfPain, derivitize, fortyTwo],
 };

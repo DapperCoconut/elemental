@@ -6,6 +6,7 @@ import { ART_FETTER, SHACKLE_FISH, SHACKLE_FISHERIES, SHACKLE_ITEMS, SHACKLE_SCR
 import { SHACKLE_COLOR } from './palette';
 import { FETTER_BOSS } from './prince';
 import { SHACKLE_QUESTS } from './quests';
+import { FALLEN } from './fallen';
 
 /**
  * The Shackle Court — bind, tier 2 of Fangmire, Prince Fetter, Keeper of the Keys.
@@ -38,4 +39,5 @@ export const SHACKLE_COURT: CourtBundle = {
   shops: SHACKLE_SHOPS,
   fish: SHACKLE_FISH,
   fisheries: SHACKLE_FISHERIES,
+  fallen: FALLEN,
 };

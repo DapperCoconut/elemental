@@ -3,6 +3,7 @@ import { WILDHUNT_AREA } from './area';
 import { FANG_BOSS } from './boss';
 import { WILDHUNT_ENCOUNTERS } from './encounters';
 import { WILDHUNT_FLOOR } from './floor';
+import { FALLEN } from './fallen';
 import { HUNTING_BLINDS } from './gimmicks/blinds';
 import { FALCONRY } from './gimmicks/falconry';
 import { HORN_CALL } from './gimmicks/hornCall';
@@ -38,6 +39,7 @@ export const WILDHUNT_COURT: CourtBundle = {
   area: WILDHUNT_AREA,
   gimmicks: [QUARRY, STAG_RUT, HUNTING_BLINDS, HORN_CALL, FALCONRY],
   boss: FANG_BOSS,
+  fallen: FALLEN,
   items: WILDHUNT_ITEMS,
   scripts: WILDHUNT_SCRIPTS,
   shops: [{

@@ -63,6 +63,8 @@ interface SaveData {
   migratedSubterfugeId: boolean;
   /** Set once `restoreMagmaChalkIds` has run — see that function. Fresh saves are born stamped. */
   restoredMagmaChalk: boolean;
+  /** Set once `retireMagicKit` has run — see that function. Fresh saves are born stamped. */
+  retiredMagicKit: boolean;
   /** True once the screwdriver has been picked up off a shop page. */
   screwdriverFound: boolean;
   /**
@@ -225,6 +227,32 @@ function restoreMagmaChalkIds(d: SaveData): void {
 }
 
 /**
+ * Magic became Math on 2026-11-23 and kept the element id `magic`. Its five shop upgrades, its
+ * Thunder and Decay perks and its mastery (Levitate / Transmogrify) all modified spells that no
+ * longer exist, so they were removed — and whatever a save paid for them is handed back here:
+ * corrupt shards for each upgrade, 4 nuclei for Thunder, a Divine Nucleus for Decay.
+ *
+ * **Runs exactly once per save, guarded by `retiredMagicKit`.** The id is live, so a second pass
+ * would strip and refund whatever Math is given later.
+ */
+function retireMagicKit(d: SaveData): void {
+  const UPGRADE_PRICE: Record<string, number> = { click: 50, e: 75, r: 60, f: 50, q: 100 };
+  for (const slot of d.owned.magic ?? []) d.corruptShards += UPGRADE_PRICE[slot] ?? 0;
+  delete d.owned.magic;
+  delete d.active.magic;
+  const perks = d.unlockedPerks.magic ?? [];
+  if (perks.includes('thunder')) d.nuclei += 4;
+  if (perks.includes('decay')) d.divineNuclei += 1;
+  delete d.unlockedPerks.magic;
+  delete d.equippedPerks.magic;
+  delete d.masteryProgress.magic;
+  delete d.masteryEnabled.magic;
+  delete d.masteryBinds.magic;
+  if (d.quantumPassive === 'magic') d.quantumPassive = '';
+  if (d.quantumSixth.startsWith('magic:')) d.quantumSixth = '';
+}
+
+/**
  * Quantum research used to unlock *pairs* ("fire+water"); it now unlocks single elements.
  * Any old pair key counts as both of its halves researched — nobody loses an element they had
  * already earned a bond for. Idempotent: element ids never contain '+'.
@@ -285,6 +313,7 @@ function load(): SaveData {
         quantumAltQ: parsed.quantumAltQ ?? false,
         migratedSubterfugeId: parsed.migratedSubterfugeId ?? false,
         restoredMagmaChalk: parsed.restoredMagmaChalk ?? false,
+        retiredMagicKit: parsed.retiredMagicKit ?? false,
         screwdriverFound: parsed.screwdriverFound ?? false,
         screwdriverPage: parsed.screwdriverPage ?? -1,
         screwsRemoved: parsed.screwsRemoved ?? {},
@@ -312,6 +341,13 @@ function load(): SaveData {
         // Same rule as above: stamped to disk inside load(), or it would fire again next read.
         save(d);
       }
+      if (!d.retiredMagicKit) {
+        retireMagicKit(d);
+        d.retiredMagicKit = true;
+        // Same rule again: `magic` is still a live id (it is Math now, and will get upgrades of
+        // its own), so an unstamped save would refund Math's purchases on every load.
+        save(d);
+      }
       // Sanity: clear equipped perk if no longer unlocked. A two-slot element stores both ids
       // joined (see PERK_SEP), so each half is checked; a half that lapsed is dropped alone.
       for (const el of Object.keys(d.equippedPerks)) {
@@ -325,7 +361,7 @@ function load(): SaveData {
     // corrupted save — start fresh
   }
   // A save that never existed has nothing to migrate — born already stamped.
-  return { shards: 0, owned: {}, active: {}, nuclei: 0, unlockedElements: [], gauntletUnlocked: false, gauntletsCompleted: [], gauntletHardUnlocked: false, gauntletsCompletedHard: [], labLevel: 0, corruptShards: 0, huskJournal: [], apocalypseSeen: false, unlockedPerks: {}, equippedPerks: {}, unlockedMutations: [], infinityBestFightNormal: 0, infinityBestFightHard: 0, masteryProgress: {}, masteryEnabled: {}, masteryBinds: {}, achievements: [], equippedSkins: {}, divineNuclei: 0, kingDefeated: false, devourerDefeated: false, devourerChoice: '', bountyRerollOffset: 0, completedBountyKeys: [], passionQTaps: 0, passionQCensored: false, paperJournal: {}, quantumSlots: {}, quantumResearched: [], quantumResearching: '', quantumQuestProgress: {}, quantumUpgrades: {}, quantumPassive: '', quantumSixth: '', quantumAltQ: false, migratedSubterfugeId: true, restoredMagmaChalk: true, screwdriverFound: false, screwdriverPage: -1, screwsRemoved: {}, secretModesUnlocked: [], pendingUnstable: null, deathsByElement: {}, realityFountainLit: false, realityIntroSeen: false, realityDefeated: false, realityKillOrder: '', strongholdBest: {}, altUltsUnlocked: [], altUltsEquipped: [] };
+  return { shards: 0, owned: {}, active: {}, nuclei: 0, unlockedElements: [], gauntletUnlocked: false, gauntletsCompleted: [], gauntletHardUnlocked: false, gauntletsCompletedHard: [], labLevel: 0, corruptShards: 0, huskJournal: [], apocalypseSeen: false, unlockedPerks: {}, equippedPerks: {}, unlockedMutations: [], infinityBestFightNormal: 0, infinityBestFightHard: 0, masteryProgress: {}, masteryEnabled: {}, masteryBinds: {}, achievements: [], equippedSkins: {}, divineNuclei: 0, kingDefeated: false, devourerDefeated: false, devourerChoice: '', bountyRerollOffset: 0, completedBountyKeys: [], passionQTaps: 0, passionQCensored: false, paperJournal: {}, quantumSlots: {}, quantumResearched: [], quantumResearching: '', quantumQuestProgress: {}, quantumUpgrades: {}, quantumPassive: '', quantumSixth: '', quantumAltQ: false, migratedSubterfugeId: true, restoredMagmaChalk: true, retiredMagicKit: true, screwdriverFound: false, screwdriverPage: -1, screwsRemoved: {}, secretModesUnlocked: [], pendingUnstable: null, deathsByElement: {}, realityFountainLit: false, realityIntroSeen: false, realityDefeated: false, realityKillOrder: '', strongholdBest: {}, altUltsUnlocked: [], altUltsEquipped: [] };
 }
 
 function save(data: SaveData): void {

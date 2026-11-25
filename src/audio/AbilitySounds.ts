@@ -146,10 +146,10 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   'sub-treachery': 'curse-cast',
 
   // ── Venom (element id `slime`) ──
-  'poison-whip': 'whip',
-  'vile-spray': 'acid-spray',
-  'snake-burrow': 'burrow',
-  'festering-bite': ['trap-snap', 1.1, 1.05],
+  'venom-inject': ['acid-spray', 1.5, 0.7],
+  'pick-your-poison': ['slime-splat', 1.6, 0.8],
+  'acid-reflux': ['acid-spray', 0.8, 1.1],
+  'venom-burrow': 'burrow',
   'acid-apocalypse': ['acid-spray', 0.6, 1.35],
 
   // ── Oil ──
@@ -178,12 +178,12 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   'fate-cursed-talisman': 'card-throw',
   'fate-all-in': 'jackpot',
 
-  // ── Magic ──
-  'magic-sparkle-shot': 'sparkle',
-  'magic-grimoire': 'spellbook',
-  'magic-anchor': ['stone-slam', 0.9],
-  'magic-meditate': ['holy-chord', 1, 0.8],
-  'magic-necronomicon': 'incantation',
+  // ── Math (element id `magic`) ──
+  'math-crunch': ['whoosh', 0.8],
+  'math-integrate': ['crystal-chime', 1.2],
+  'math-rate': ['dark-drain', 1.1],
+  'math-derive': ['crystal-shatter', 0.9],
+  'math-42': 'incantation',
 
   // ── Growth ──
   'growth-click': ['slime-splat', 1.25, 0.9],
@@ -226,11 +226,17 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   'rubberage': ['boing', 0.6, 1.3],
 
   // ── Silence ──
-  'silence-stab': 'stab',
-  'silence-watch': ['hush', 1.35, 0.75],
-  'silence-ritual': 'curse-cast',
-  'silence-feast': ['claw', 0.8, 1.1],
-  'silence-run': 'heartbeat',
+  // Fear (element id `silence`) — FearKit plays each ability's own sound; these are the cast cues under them.
+  'fear-phobia': ['hush', 1.35, 0.6],
+  'fear-grasp': ['tentacle', 0.9, 0.7],
+  'fear-gaze': ['dark-drain', 0.8, 0.7],
+  'fear-manifest': 'curse-cast',
+  'fear-claustrophobia': ['quake', 0.7],
+  'fear-massacre': ['whoosh', 0.7, 0.8],
+  'fear-haunt': ['heartbeat', 0.8],
+  'fear-signature': ['hush', 0.7],
+  'fear-descent': ['dark-drain', 0.6],
+  'fear-fall': ['stone-rise', 0.6],
 
   // ── Technology ──
   'tech-cruncher': 'glitch',
@@ -548,7 +554,6 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   'syringe-shot': ['stab', 1.45, 0.9],
   'acid-walker': 'sizzle',
   'natural-clot': 'status-regen',
-  'levitate': ['status-invincible', 1.1, 0.9],
   'springboard': ['boing', 1.1],
   'atom-nhilego': ['explosion-large', 1.2],
   'byte-bomb': ['glitch', 0.8, 1.15],
@@ -579,7 +584,6 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   'secret-upgrades': 'mutate',
   'shed-skin': ['acid-spray', 0.8, 1.2],
   'steel-shield': ['shield-up', 0.85, 1.1],
-  'transmogrify': ['spellbook', 1.1],
   'mortar-command': 'mortar-launch',
   'vulcanization': ['boing', 0.75, 1.15],
   'vpn': ['upload', 0.9],

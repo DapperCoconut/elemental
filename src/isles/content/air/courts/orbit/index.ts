@@ -7,6 +7,7 @@ import { ORBIT_QUESTS } from './quests';
 import { ORBIT_GIMMICKS } from './gimmicks';
 import { PERIGEE_BOSS } from './boss';
 import { ORBIT_FISH, ORBIT_FISHERIES, ORBIT_ITEMS, ORBIT_SCRIPTS, ORBIT_SHOPS } from './items';
+import { FALLEN } from './fallen';
 
 /**
  * The Orbit Court — gravity, tier 3, Prince Perigee. A brass orrery town on islets of rock hung
@@ -38,4 +39,5 @@ export const ORBIT_COURT: CourtBundle = {
   shops: ORBIT_SHOPS,
   fish: ORBIT_FISH,
   fisheries: ORBIT_FISHERIES,
+  fallen: FALLEN,
 };

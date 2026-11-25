@@ -2,6 +2,7 @@ import type { CourtBundle } from '../../../../IslesTypes';
 import { STONEHOLD_AREA } from './area';
 import { STONEHOLD_ENCOUNTERS, STONEHOLD_GIMMICKS } from './encounters';
 import { STONEHOLD_FLOOR } from './floor';
+import { FALLEN } from './fallen';
 import {
   ART_BOULD, STONEHOLD_BAKERIES, STONEHOLD_FISH, STONEHOLD_FISHERIES, STONEHOLD_ITEMS, STONEHOLD_SCRIPTS, STONEHOLD_SHOPS,
 } from './items';
@@ -42,4 +43,5 @@ export const STONEHOLD_COURT: CourtBundle = {
   bakeries: STONEHOLD_BAKERIES,
   fish: STONEHOLD_FISH,
   fisheries: STONEHOLD_FISHERIES,
+  fallen: FALLEN,
 };

@@ -55,16 +55,6 @@ export const DIVINE_PERKS: PerkDef[] = [
     elementId: 'life',
   },
   {
-    id: 'decay',
-    name: 'Decay',
-    emoji: '☠️',
-    color: 0x77cc55,
-    description: 'Press E while the Grimoire is on cooldown to reset it, at the cost of 25 dark energy. Press Q while the Necronomicon is on cooldown to reset that, at the cost of 99 — almost always a death sentence unless you are clean.',
-    ingredients: ['life', 'slime'],
-    tier: 'divine',
-    elementId: 'magic',
-  },
-  {
     id: 'storm',
     name: 'Storm',
     emoji: '⛈️',
@@ -243,19 +233,6 @@ export const DIVINE_PERKS: PerkDef[] = [
     ingredients: ['earth', 'light'],
     tier: 'divine',
     elementId: 'metal',
-  },
-  {
-    // The last cell in the 5×5 grid. Life and sound are both things Silence has spent its
-    // whole kit refusing, so the perk is built as a trade rather than a gift: the watchers
-    // get a voice, and the voice is what gives you away.
-    id: 'hymn',
-    name: 'Hymn',
-    emoji: '🎼',
-    color: 0x88ddaa,
-    description: 'Your watchers learn to breathe. Each one hums a ring that drags anything inside it slowly toward the eye, and six seconds of an enemy held in a hum matures that watcher on the spot. But the song carries: while an enemy stands in one of your hums you bleed stealth instead of banking it.',
-    ingredients: ['life', 'sound'],
-    tier: 'divine',
-    elementId: 'silence',
   },
   {
     id: 'call-of-the-void',

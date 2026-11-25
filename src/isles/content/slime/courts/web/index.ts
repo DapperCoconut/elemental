@@ -1,6 +1,7 @@
 import type { CourtBundle } from '../../../../IslesTypes';
 import { WEB_AREA } from './area';
 import { WEB_ENCOUNTERS, WEB_GIMMICKS } from './encounters';
+import { FALLEN } from './fallen';
 import { WEB_FLOOR } from './floor';
 import { ART_WEFT, WEB_FISH, WEB_FISHERIES, WEB_ITEMS, WEB_SCRIPTS, WEB_SHOPS } from './items';
 import { WEB_COLOR } from './palette';
@@ -37,4 +38,5 @@ export const WEB_COURT: CourtBundle = {
   shops: WEB_SHOPS,
   fish: WEB_FISH,
   fisheries: WEB_FISHERIES,
+  fallen: FALLEN,
 };

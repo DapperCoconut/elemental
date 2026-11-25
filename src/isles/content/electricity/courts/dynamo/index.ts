@@ -2,6 +2,7 @@ import type { CourtBundle } from '../../../../IslesTypes';
 import { DYNAMO_AREA } from './area';
 import { DYNAMO_ENCOUNTERS, DYNAMO_GIMMICKS } from './encounters';
 import { DYNAMO_FLOOR } from './floor';
+import { FALLEN } from './fallen';
 import {
   ART_VOLT, DYNAMO_BAKERIES, DYNAMO_FISH, DYNAMO_FISHERIES, DYNAMO_ITEMS, DYNAMO_SCRIPTS, DYNAMO_SHOPS,
 } from './items';
@@ -41,4 +42,5 @@ export const DYNAMO_COURT: CourtBundle = {
   bakeries: DYNAMO_BAKERIES,
   fish: DYNAMO_FISH,
   fisheries: DYNAMO_FISHERIES,
+  fallen: FALLEN,
 };

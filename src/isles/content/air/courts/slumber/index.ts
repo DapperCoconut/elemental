@@ -2,6 +2,7 @@ import type { CourtBundle } from '../../../../IslesTypes';
 import { SLUMBER_AREA } from './area';
 import { REVERIE_BOSS } from './boss';
 import { SLUMBER_ENCOUNTERS } from './encounters';
+import { FALLEN } from './fallen';
 import { slumberFloor } from './floor';
 import { BAD_DREAM } from './gimmicks/badDream';
 import { COUNTING_SHEEP } from './gimmicks/countingSheep';
@@ -42,4 +43,5 @@ export const SLUMBER_COURT: CourtBundle = {
   shops: SLUMBER_SHOPS,
   fish: SLUMBER_FISH,
   fisheries: SLUMBER_FISHERIES,
+  fallen: FALLEN,
 };

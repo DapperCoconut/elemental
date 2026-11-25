@@ -3,8 +3,8 @@ import type { InvasionFx, HuskStatus } from '../invasion/InvasionKit';
 import type { NetStatusEntry } from './NetStatusSync';
 import type { NetConquestSnap } from '../elements/kits/ConquestKit';
 
-/** Bump when the wire protocol or gameplay sync changes incompatibly. (61: Savor replaces Slime — `savor-*` relays.) */
-export const NET_PROTOCOL_VERSION = 61;
+/** Bump when the wire protocol or gameplay sync changes incompatibly. (61: Savor replaces Slime — `savor-*` relays. 64: Venom rework — new cast ids, `venom-*` status timers, `acid-pick/bomb-hold/cluster` relays.) */
+export const NET_PROTOCOL_VERSION = 64;
 
 /** A co-op room holds the host plus up to three guests. PvP still needs exactly two. */
 export const MAX_PLAYERS = 4;

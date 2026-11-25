@@ -2,6 +2,7 @@ import type { CourtBundle } from '../../../../IslesTypes';
 import { GRAVE_AREA } from './area';
 import { GRAVE_ENCOUNTERS, GRAVE_GIMMICKS } from './encounters';
 import { GRAVE_FLOOR } from './floor';
+import { FALLEN } from './fallen';
 import { ART_MORTIS, GRAVE_FISH, GRAVE_FISHERIES, GRAVE_ITEMS, GRAVE_SCRIPTS, GRAVE_SHOPS } from './items';
 import { GRAVE_COLOR } from './palette';
 import { MORTIS_BOSS } from './prince';
@@ -37,4 +38,5 @@ export const GRAVE_COURT: CourtBundle = {
   shops: GRAVE_SHOPS,
   fish: GRAVE_FISH,
   fisheries: GRAVE_FISHERIES,
+  fallen: FALLEN,
 };

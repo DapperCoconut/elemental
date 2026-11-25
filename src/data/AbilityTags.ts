@@ -17,6 +17,8 @@ export type AbilityTag = 'rmb' | 'hold' | 'recast';
 export const ABILITY_TAGS: Record<string, readonly AbilityTag[]> = {
   // Fire
   'flame-body': ['recast'],
+  // Fear (element id `silence`): Haunt is recast to swing the hook, and again to slam whoever it caught
+  'fear-haunt': ['recast'],
   // Water
   'pressure-dagger': ['hold'],
   // Earth
@@ -54,7 +56,9 @@ export const ABILITY_TAGS: Record<string, readonly AbilityTag[]> = {
   'electro-dash': ['recast'],
   'pain-battery': ['hold'],
   // Venom
-  'snake-burrow': ['recast'],
+  'pick-your-poison': ['hold'],
+  'acid-reflux': ['recast'],
+  'venom-burrow': ['recast'],
   // Sound
   fermata: ['recast'],
   // Light
@@ -74,10 +78,6 @@ export const ABILITY_TAGS: Record<string, readonly AbilityTag[]> = {
   'rubber-punch': ['hold'],
   'rubber-sling': ['hold'],
   'rubber-band': ['hold', 'recast'],
-  // Magic
-  'magic-grimoire': ['hold'],
-  'magic-anchor': ['rmb'],
-  'magic-necronomicon': ['hold'],
   // Technology
   'tech-webdrag': ['hold'],
   // Echo

@@ -35,7 +35,7 @@ import { IllusionAvatar } from './IllusionVisuals';
 import { JusticeAvatar } from './JusticeVisuals';
 import { LifeAvatar } from './LifeVisuals';
 import { LightAvatar } from './LightVisuals';
-import { MagicAvatar } from './MagicVisuals';
+import { MathAvatar } from './MathVisuals';
 import { MagmaAvatar } from './MagmaVisuals';
 import { MagnetAvatar } from './MagnetVisuals';
 import { ClothAvatar } from './ClothVisuals';
@@ -53,7 +53,7 @@ import { RubberAvatar } from './RubberVisuals';
 import { RuinAvatar } from './RuinVisuals';
 import { SandAvatar } from './SandVisuals';
 import { ShadowAvatar } from './ShadowVisuals';
-import { SilenceAvatar } from './SilenceVisuals';
+import { FearAvatar } from './FearVisuals';
 import { SoulAvatar } from './SoulVisuals';
 import { SoundAvatar } from './SoundVisuals';
 import { SubterfugeAvatar } from './SubterfugeVisuals';
@@ -110,9 +110,9 @@ const ELEMENT_AVATARS: Record<string, ElementAvatarFactory> = {
   gunpowder: (s, t) => new GunpowderAvatar(s, t),
   echo: (s, t) => new EchoAvatar(s, t),
   rubber: (s, t) => new RubberAvatar(s, t),
-  magic: (s, t) => new MagicAvatar(s, t),
+  magic: (s, t) => new MathAvatar(s, t),
   technology: (s, t) => new TechnologyAvatar(s, t),
-  silence: (s, t) => new SilenceAvatar(s, t),
+  silence: (s, t) => new FearAvatar(s, t, 'player'),
   subterfuge: (s, t) => new SubterfugeAvatar(s, t),
 
   justice: (s, t) => new JusticeAvatar(s, t),
@@ -185,9 +185,9 @@ const AVATAR_CLASSES: Record<string, abstract new (...args: never[]) => BaseAvat
   gunpowder: GunpowderAvatar,
   echo: EchoAvatar,
   rubber: RubberAvatar,
-  magic: MagicAvatar,
+  magic: MathAvatar,
   technology: TechnologyAvatar,
-  silence: SilenceAvatar,
+  silence: FearAvatar,
   subterfuge: SubterfugeAvatar,
   justice: JusticeAvatar,
   dream: DreamAvatar,
