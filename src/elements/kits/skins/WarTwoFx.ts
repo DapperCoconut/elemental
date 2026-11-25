@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { FxBase, TAU, easeIn, easeOut } from '../ElementVisuals';
-import { jitter } from '../ConquestVisuals';
-import type { ConquestColorFn } from '../ConquestVisuals';
+import { jitter } from '../EmotionVisuals';
+import type { EmotionColorFn as ConquestColorFn } from '../EmotionVisuals';
 
 /**
  * The WW2 skin's Conquest art: every building and every unit the element puts on the board,

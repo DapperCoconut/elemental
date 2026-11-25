@@ -1150,248 +1150,270 @@ export class AirDraft {
 }
 
 
+// ── The air knife ─────────────────────────────────────────────────────────
+
+/**
+ * A knife made of air: a leaf-shaped blade that is mostly an outline — a pale body you can see
+ * through, one bright edge, and a curl of wind wrapped round the grip where a handle would be.
+ * The assassin has no steel; this is what the stab, the volley, the dagger field and the knives
+ * swinging round the Tornado Blade are all drawn with. `(x, y)` is the grip, the blade runs
+ * along `angle`.
+ */
+export function drawAirKnife(
+  g: Phaser.GameObjects.Graphics,
+  tint: AirColorFn,
+  x: number, y: number,
+  angle: number, len: number,
+  alpha = 1,
+  spin = 0,
+): void {
+  if (alpha <= 0.01) return;
+  const c = Math.cos(angle), s = Math.sin(angle);
+  const nx = -s, ny = c;
+  const w = len * 0.16;
+  const at = (f: number, side: number): [number, number] =>
+    [x + c * len * f + nx * w * side, y + s * len * f + ny * w * side];
+  const tip = at(1, 0), belly = at(0.42, 1), back = at(0.5, -0.55), heelA = at(0.12, 0.7), heelB = at(0.12, -0.5);
+
+  // Displaced air around the blade.
+  g.fillStyle(tint(AIR.sky), alpha * 0.22);
+  g.fillEllipse(x + c * len * 0.5, y + s * len * 0.5, len * 1.15, len * 0.5);
+  // Blade body.
+  g.fillStyle(tint(AIR.mist), alpha * 0.62);
+  g.beginPath();
+  g.moveTo(heelA[0], heelA[1]);
+  g.lineTo(belly[0], belly[1]);
+  g.lineTo(tip[0], tip[1]);
+  g.lineTo(back[0], back[1]);
+  g.lineTo(heelB[0], heelB[1]);
+  g.closePath();
+  g.fillPath();
+  // The cutting edge, bright; the spine, faint.
+  g.lineStyle(1.6, tint(AIR.white), alpha * 0.95);
+  g.beginPath();
+  g.moveTo(heelA[0], heelA[1]); g.lineTo(belly[0], belly[1]); g.lineTo(tip[0], tip[1]);
+  g.strokePath();
+  g.lineStyle(1, tint(AIR.steel), alpha * 0.7);
+  g.beginPath();
+  g.moveTo(tip[0], tip[1]); g.lineTo(back[0], back[1]); g.lineTo(heelB[0], heelB[1]);
+  g.strokePath();
+  // Guard and the wind-wrapped grip.
+  g.lineStyle(1.8, tint(AIR.cyan), alpha * 0.9);
+  g.lineBetween(x + c * len * 0.1 + nx * w * 1.25, y + s * len * 0.1 + ny * w * 1.25,
+    x + c * len * 0.1 - nx * w * 1.05, y + s * len * 0.1 - ny * w * 1.05);
+  g.fillStyle(tint(AIR.frost), alpha * 0.8);
+  windCurl(g, x - c * len * 0.16, y - s * len * 0.16, angle + 0.5 + Math.sin(spin * 5) * 0.4, len * 0.34, 1.6, 1.4);
+}
+
 // ── AirAvatar ─────────────────────────────────────────────────────────────
 
-/** Plain pale-sky ball hands: a soft steel halo, the sky shell, a mist core and one glint. */
+/** Gloved hands: a slate halo, a dark shell, a storm-blue core and one cold glint. */
 const AIR_AVATAR: AvatarSpec = {
   hands: [
-    { r: 9, color: AIR.steel, alpha: 0.24 },
-    { r: 6.4, color: AIR.sky, alpha: 0.9 },
-    { r: 3.6, color: AIR.mist, alpha: 1 },
-    { r: 1.6, color: AIR.white, alpha: 0.95, ox: -1.8, oy: -1.8 },
+    { r: 9, color: AIR.storm, alpha: 0.22 },
+    { r: 6.4, color: AIR.slate, alpha: 0.95 },
+    { r: 3.8, color: AIR.storm, alpha: 1 },
+    { r: 1.5, color: AIR.mist, alpha: 0.9, ox: -1.8, oy: -1.8 },
   ],
-  eyeWhite: AIR.mist,
+  eyeWhite: AIR.cyan,
   eyePupil: AIR.void,
-  // Air's hands are the fastest of any element's — they smear harder than fire's or water's.
   squash: { div: 11, x: 0.7, y: 0.36 },
 };
 
 /**
- * The wind dancer: a plain pale-sky orb (the baked `elem-air`), the shared eyes, two plain ball
- * hands, and ONE accessory — a folding fan worn upright at the crown like a crest. The fan is
- * still the dancer's tell: `setFanSpread` snaps the crest open when an ability fires and lets it
- * fold back at idle, so the kit's open/shut cue survives without a fan in each hand.
+ * The hooded assassin. The pale sky orb (the baked `elem-air`) is the face inside a deep cowl:
+ * the hood sits over the top of the body and throws a shadow across the eye band, so the eyes
+ * are two slivers of light and nothing else. A cloak streams off the back in three tails that
+ * flap against the facing, and three chimes hang off its hem on threads, swinging with her.
  *
- * Detail: a painted blossom sprig on the fan leaf, a swinging silk tassel off its pivot, breeze
- * lines across the lower body and a tiny wind curl circling each hand.
+ * `setKnife` shows the air knife in the casting hand (it forms just before a stab and blows
+ * away just after). `setSolidBody` paints the orb itself, for the moments the kit has hidden the
+ * fighter sprite and drawn the rig somewhere else — levitating over the fight.
  *
- * Mastered: a bigger fan with gilded ribs, a gold edge and a glow behind it, a cyclone ring of
- * wind curls (with a feather riding it) wrapping the body, white eyes, gold-rimmed hands.
+ * Mastered: gilded chimes with a glow, a gold hood trim, white eyes, a longer cloak.
  */
 export class AirAvatar extends BaseAvatar {
   private fx: AirFx;
-  /** How wide the fan crest is held open, 0–1. Driven by `setFanSpread` while an ability runs. */
-  private fanOpen = 1;
-  private fanOpenTarget = 1;
+  private knife = 0;
+  private knifeTarget = 0;
+  private solidBody = false;
+  private chimeSwing = 0;
+  private lastX = 0;
 
   constructor(scene: Phaser.Scene, tint: AirColorFn, depth = 6) {
     super(scene, tint, depth, AIR_AVATAR);
     this.fx = new AirFx(scene, tint);
   }
 
-  /**
-   * Snap the fan open or shut. The kit calls this so a strike visibly opens it and the walk
-   * back to idle folds it again, instead of the fan sitting at one width all match.
-   */
-  setFanSpread(open: number): void {
-    this.fanOpenTarget = Phaser.Math.Clamp(open, 0.08, 1);
-  }
+  /** 0 = empty hand, 1 = the knife fully formed. Eased, so it condenses and disperses. */
+  setKnife(v: number): void { this.knifeTarget = Phaser.Math.Clamp(v, 0, 1); }
+  /** Paint the orb body as well — for when the fighter sprite itself is hidden. */
+  setSolidBody(on: boolean): void { this.solidBody = on; }
 
-  /**
-   * Mastery tell: white eyes, a wider cyan corona with a frost rim on each hand — and, in the
-   * painted layers, a gilded fan with a blossom-gold glow, a cyclone ring of wind curls
-   * circling the body and feathers riding it.
-   */
   protected applyMastery(on: boolean): void {
-    this.setEyeWhite(on ? AIR.white : AIR.mist);
+    this.setEyeWhite(on ? AIR.white : AIR.cyan);
     this.forEachHandLayer(0, (halo) => {
-      halo.setRadius(on ? 13 : 9);
-      halo.setFillStyle(this.tint(on ? AIR.cyan : AIR.steel), on ? 0.36 : 0.24);
+      halo.setRadius(on ? 12 : 9);
+      halo.setFillStyle(this.tint(on ? AIR.cyan : AIR.storm), on ? 0.34 : 0.22);
     });
     this.forEachHandLayer(1, (shell) => {
-      if (on) shell.setStrokeStyle(1.6, this.tint(AIR.bolt), 0.9);
+      if (on) shell.setStrokeStyle(1.4, this.tint(AIR.bolt), 0.9);
       else shell.setStrokeStyle();
     });
   }
 
-  /** Fast-moving hands shed feathers rather than dust — she is moulting the whole fight. */
   protected emitTrail(x: number, y: number): void {
-    if (Math.random() < 0.4) this.fx.featherPuff(x, y, 1, 5);
-    else this.fx.motes(x, y, 1, { speed: 26, size: 2.2, life: 440, swirl: 1.8, depth: 5 });
+    this.fx.motes(x, y, 1, { speed: 26, size: 2.2, life: 380, swirl: 1.8, depth: 5 });
   }
 
-  /** A soft pressure wash under the fighter; brighter once mastered. */
-  protected drawGlow(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number): void {
-    const k = this.intensity * (this.mastered ? 1.15 : 1);
-    g.fillStyle(this.tint(this.mastered ? AIR.cyan : AIR.sky), a * (this.mastered ? 0.26 : 0.2) * k);
-    g.fillCircle(x, y, 28 * k);
-    g.fillStyle(this.tint(AIR.steel), a * 0.16 * k);
-    g.fillEllipse(x, y + 8, 36 * k, 14 * k);
-    // Mastery cyclone, back half — the curls passing behind the body.
-    if (this.mastered) this.drawCyclone(g, x, y, a, false);
-  }
+  /** Under the sprite: the ground shade and the cloak streaming off her back. */
+  protected drawGlow(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
+    g.fillStyle(this.tint(AIR.steel), a * 0.16 * this.intensity);
+    g.fillEllipse(x, y + 9, 40, 15);
 
-  /**
-   * The mastery cyclone: five wind curls chasing each other round the body on a tilted
-   * ellipse, with a feather riding it. Painted in two passes — the far half under the sprite
-   * from `drawGlow`, the near half over it from `drawExtras` — so the ring wraps the body.
-   */
-  private drawCyclone(g: Phaser.GameObjects.Graphics, x: number, y: number, alpha: number, front: boolean): void {
-    const rx = 31, ry = 10, cy = y + 6;
-    for (let i = 0; i < 5; i++) {
-      const p = this.t * 2.2 + (i / 5) * TAU;
-      const isFront = Math.sin(p) > 0;
-      if (isFront !== front) continue;
-      const px = x + Math.cos(p) * rx, py = cy + Math.sin(p) * ry;
-      const tangent = Math.atan2(Math.cos(p) * ry, -Math.sin(p) * rx);
-      g.fillStyle(this.tint(AIR.steel), alpha * 0.45);
-      windCurl(g, px, py, tangent, 18, 3.6, 0.5);
-      g.fillStyle(this.tint(i % 2 ? AIR.cyan : AIR.mist), alpha * 0.9);
-      windCurl(g, px, py, tangent, 14, 2.2, 0.5);
-    }
-    // A feather caught in the ring.
-    const fp = this.t * 2.2 + 0.6;
-    if ((Math.sin(fp) > 0) === front) {
-      const fx = x + Math.cos(fp) * rx, fy = cy + Math.sin(fp) * ry;
-      const fa = Math.atan2(Math.cos(fp) * ry, -Math.sin(fp) * rx) + Math.sin(this.t * 5) * 0.3;
-      g.fillStyle(this.tint(AIR.white), alpha * 0.95);
-      g.fillEllipse(fx, fy, 9, 3);
-      g.lineStyle(0.8, this.tint(AIR.storm), alpha * 0.8);
-      g.lineBetween(fx - Math.cos(fa) * 5, fy - Math.sin(fa) * 5, fx + Math.cos(fa) * 5, fy + Math.sin(fa) * 5);
-    }
-  }
-
-  /**
-   * Breeze lines across the lower body: two thin curls drifting sideways and a tiny swirl,
-   * kept below the eye band so the face stays clean.
-   */
-  protected drawBody(g: Phaser.GameObjects.Graphics, x: number, y: number, _a: number, alpha: number): void {
-    for (let i = 0; i < 2; i++) {
-      const drift = ((this.t * 0.5 + i * 0.5) % 1);
-      const px = x - 14 + drift * 10;
-      const py = y + 8 + i * 6;
-      const fade = Math.sin(drift * Math.PI);
-      g.lineStyle(1.4, this.tint(AIR.white), alpha * 0.7 * fade);
-      g.beginPath();
-      for (let k = 0; k <= 8; k++) {
-        const f = k / 8;
-        const lx = px + f * (18 - i * 4);
-        const ly = py + Math.sin(f * Math.PI * 1.4 + this.t * 2) * 1.4;
-        if (k === 0) g.moveTo(lx, ly); else g.lineTo(lx, ly);
+    // Three cloak tails, rooted on the far side of the body from where she is looking.
+    const back = this.facing + Math.PI;
+    const len = (this.mastered ? 40 : 32) * (0.9 + 0.1 * this.intensity);
+    for (let i = 0; i < 3; i++) {
+      const off = (i - 1) * 0.42;
+      const rootA = back + off;
+      const rx = x + Math.cos(rootA) * 13, ry = y + Math.sin(rootA) * 13 + 3;
+      const SEG = 7;
+      const L: [number, number][] = [], R: [number, number][] = [];
+      for (let k = 0; k <= SEG; k++) {
+        const f = k / SEG;
+        // The flap: a wave running down the tail, bigger toward the tip.
+        const wave = Math.sin(this.t * 9 - f * 4.2 + i * 1.7) * (0.1 + f * 0.42);
+        const ang = back + off * (1 - f * 0.5) + wave;
+        const px = rx + Math.cos(ang) * len * f, py = ry + Math.sin(ang) * len * f;
+        const w = (i === 1 ? 8.5 : 6.5) * (1 - f * 0.86);
+        const nx = -Math.sin(ang), ny = Math.cos(ang);
+        L.push([px + nx * w, py + ny * w]);
+        R.push([px - nx * w, py - ny * w]);
       }
-      g.strokePath();
+      g.fillStyle(this.tint(i === 1 ? AIR.slate : AIR.void), alpha * 0.94);
+      g.beginPath();
+      g.moveTo(L[0][0], L[0][1]);
+      for (let k = 1; k <= SEG; k++) g.lineTo(L[k][0], L[k][1]);
+      for (let k = SEG; k >= 0; k--) g.lineTo(R[k][0], R[k][1]);
+      g.closePath();
+      g.fillPath();
+      // A lighter fold line down the middle tail.
+      if (i === 1) {
+        g.lineStyle(1, this.tint(AIR.storm), alpha * 0.7);
+        g.beginPath();
+        g.moveTo((L[0][0] + R[0][0]) / 2, (L[0][1] + R[0][1]) / 2);
+        for (let k = 1; k <= SEG; k++) g.lineTo((L[k][0] + R[k][0]) / 2, (L[k][1] + R[k][1]) / 2);
+        g.strokePath();
+      }
     }
-    // Little spiral curl on the cheek-side of the belly.
-    g.lineStyle(1.2, this.tint(AIR.storm), alpha * 0.55);
+  }
+
+  /** Over the sprite, under the eyes: the orb when asked for, and the mantle on her shoulders. */
+  protected drawBody(g: Phaser.GameObjects.Graphics, x: number, y: number, _a: number, alpha: number): void {
+    if (this.solidBody) {
+      g.fillStyle(this.tint(AIR.storm), alpha);
+      g.fillCircle(x, y, 22);
+      g.fillStyle(this.tint(AIR.sky), alpha);
+      g.fillCircle(x - 1, y - 1, 19.5);
+      g.fillStyle(this.tint(AIR.mist), alpha * 0.8);
+      g.fillCircle(x - 6, y - 7, 8);
+    }
+    // Mantle: a dark collar across the lower third, cut to a point at the chest.
+    g.fillStyle(this.tint(AIR.slate), alpha * 0.96);
     g.beginPath();
     for (let k = 0; k <= 14; k++) {
-      const f = k / 14;
-      const ang = this.t * 1.5 + f * Math.PI * 2.4;
-      const r = 1 + f * 3.6;
-      const px = x + 10 + Math.cos(ang) * r, py = y + 12 + Math.sin(ang) * r;
+      const ang = 0.12 + (k / 14) * (Math.PI - 0.24);
+      const px = x + Math.cos(ang) * 22.5, py = y + Math.sin(ang) * 22.5;
       if (k === 0) g.moveTo(px, py); else g.lineTo(px, py);
     }
+    g.lineTo(x - 13, y + 7);
+    g.lineTo(x, y + 13);
+    g.lineTo(x + 13, y + 7);
+    g.closePath();
+    g.fillPath();
+    g.lineStyle(1.2, this.tint(AIR.storm), alpha * 0.8);
+    g.beginPath();
+    g.moveTo(x - 13, y + 7); g.lineTo(x, y + 13); g.lineTo(x + 13, y + 7);
     g.strokePath();
+    // The clasp.
+    g.fillStyle(this.tint(this.mastered ? AIR.charge : AIR.steel), alpha);
+    g.fillCircle(x, y + 13, 2.2);
   }
 
-  /**
-   * The fan crest, pivoting just above the crown (`y - 16`) and opening upward, so it never
-   * covers the eyes. A plain leaf and ribs — no fringe or beads — and a slight sway with the
-   * dance. Mastered: bigger, gilded ribs, and a glow behind the leaf.
-   */
+  /** Over everything: the hood and its shadow, the chimes, and the knife. */
   protected drawExtras(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
     void a;
     const m = this.mastered;
-    // Spread eases toward its target so an ability opening the fan is a movement, not a jump.
-    this.fanOpen += (this.fanOpenTarget - this.fanOpen) * 0.18;
-    const spread = 0.3 + this.fanOpen * 0.55;
-    const r = (m ? 19 : 15.5) * this.intensity;
-    const cx = x + Math.cos(this.facing) * 1.5;
-    const cy = y - 15;
-    const up = -Math.PI / 2 + Math.sin(this.t * 2.4) * 0.1;
-    const ribs = 6;
-    const inner = r * 0.18;
+    const lean = Math.cos(this.facing) * 2;
 
-    if (m) {
-      g.fillStyle(this.tint(AIR.bolt), alpha * (0.2 + 0.08 * Math.sin(this.t * 3)));
-      g.beginPath();
-      g.moveTo(cx, cy);
-      g.arc(cx, cy, r * 1.22, up - spread - 0.08, up + spread + 0.08);
-      g.closePath();
-      g.fillPath();
-    }
+    // The shadow the cowl throws over the face — this is what leaves the eyes barely there.
+    g.fillStyle(this.tint(AIR.void), alpha * 0.66);
+    g.fillEllipse(x + lean * 0.6, y - 4.5, 36, 13);
 
-    // Leaf: scalloped between ribs so it reads as pleated paper, not a pie slice.
-    g.fillStyle(this.tint(AIR.mist), alpha * 0.92);
+    // Hood: a cowl over the top of the orb, peaked, with the point blown back.
+    const tipA = this.facing + Math.PI + Math.sin(this.t * 7) * 0.18;
+    const tipX = x + Math.cos(tipA) * 9, tipY = y - 31 + Math.sin(this.t * 7 + 1) * 1.2;
+    g.fillStyle(this.tint(AIR.slate), alpha);
     g.beginPath();
-    g.moveTo(cx + Math.cos(up - spread) * inner, cy + Math.sin(up - spread) * inner);
-    const SEG = ribs * 4;
-    for (let i = 0; i <= SEG; i++) {
-      const f = i / SEG;
-      const ang = up - spread + f * spread * 2;
-      const dip = 1 - 0.08 * Math.pow(Math.sin(f * (ribs - 1) * Math.PI), 2);
-      g.lineTo(cx + Math.cos(ang) * r * dip, cy + Math.sin(ang) * r * dip);
+    g.moveTo(x - 24.5, y - 2);
+    for (let k = 0; k <= 12; k++) {
+      const ang = Math.PI + (k / 12) * Math.PI;
+      const bulge = 24.5 + Math.sin((k / 12) * Math.PI) * 3;
+      const px = x + Math.cos(ang) * bulge, py = y - 2 + Math.sin(ang) * bulge;
+      if (k === 6) g.lineTo(tipX, tipY);
+      g.lineTo(px, py);
     }
-    g.lineTo(cx + Math.cos(up + spread) * inner, cy + Math.sin(up + spread) * inner);
+    // The opening: a shallow arch over the brow, so the face is a slot under the cowl.
+    for (let k = 0; k <= 10; k++) {
+      const f = k / 10;
+      g.lineTo(x + 24.5 - f * 49 + lean * 0.4 * Math.sin(f * Math.PI), y - 2 - Math.sin(f * Math.PI) * 6.5);
+    }
     g.closePath();
     g.fillPath();
-    // One sky band along the leaf's edge so it separates from the pale body underneath.
-    g.lineStyle(1.4, this.tint(AIR.steel), alpha * 0.7);
+    // Fold shading on the crown, and the rim of the opening.
+    g.fillStyle(this.tint(AIR.void), alpha * 0.55);
+    g.fillEllipse(x + 6 - lean, y - 19, 20, 9);
+    g.lineStyle(m ? 2 : 1.5, this.tint(m ? AIR.charge : AIR.storm), alpha * 0.95);
     g.beginPath();
-    g.arc(cx, cy, r * 0.94, up - spread, up + spread);
+    for (let k = 0; k <= 10; k++) {
+      const f = k / 10;
+      const px = x + 24.5 - f * 49 + lean * 0.4 * Math.sin(f * Math.PI), py = y - 2 - Math.sin(f * Math.PI) * 6.5;
+      if (k === 0) g.moveTo(px, py); else g.lineTo(px, py);
+    }
     g.strokePath();
 
-    // Ribs, gilded once mastered.
-    const rib = m ? AIR.bolt : AIR.wood;
-    for (let i = 0; i < ribs; i++) {
-      const ang = up - spread + (i / (ribs - 1)) * spread * 2;
-      g.lineStyle(m ? 1.8 : 1.4, this.tint(rib), alpha * 0.9);
-      g.lineBetween(
-        cx + Math.cos(ang) * inner * 0.4, cy + Math.sin(ang) * inner * 0.4,
-        cx + Math.cos(ang) * r, cy + Math.sin(ang) * r,
-      );
-    }
-    // A painted motif on the leaf: a blossom sprig — three petals and a stem — in pink.
-    const motifA = up + spread * 0.35, motifR = r * 0.62;
-    const mx = cx + Math.cos(motifA) * motifR, my = cy + Math.sin(motifA) * motifR;
-    g.lineStyle(0.9, this.tint(AIR.woodDark), alpha * 0.6);
-    g.lineBetween(mx, my, cx + Math.cos(up - spread * 0.25) * r * 0.5, cy + Math.sin(up - spread * 0.25) * r * 0.5);
-    g.fillStyle(this.tint(AIR.blossom), alpha * 0.95 * this.fanOpen);
-    for (let k = 0; k < 5; k++) {
-      const pa = (k / 5) * TAU + this.t * 0.2;
-      g.fillCircle(mx + Math.cos(pa) * 1.8, my + Math.sin(pa) * 1.8, 1.4);
-    }
-    g.fillStyle(this.tint(AIR.charge), alpha * this.fanOpen);
-    g.fillCircle(mx, my, 0.9);
-    // Gold edge band once mastered.
-    if (m) {
-      g.lineStyle(1.6, this.tint(AIR.charge), alpha * 0.9);
-      g.beginPath();
-      g.arc(cx, cy, r * 0.99, up - spread, up + spread);
-      g.strokePath();
+    // Chimes: three tubes on threads off the cloak's hem. They swing with her own movement
+    // (the rig has no velocity, so it is read off how far the anchor moved) and with the wind.
+    const moved = x - this.lastX;
+    this.lastX = x;
+    this.chimeSwing += (Phaser.Math.Clamp(-moved * 0.09, -0.9, 0.9) - this.chimeSwing) * 0.12;
+    for (let i = 0; i < 3; i++) {
+      const hx = x + (i - 1) * 13, hy = y + (i === 1 ? 19 : 15);
+      const sw = this.chimeSwing + Math.sin(this.t * (3.4 + i * 0.6) + i * 2.1) * 0.22;
+      const tl = 5 + (i === 1 ? 2 : 0), cl = i === 1 ? 9 : 7;
+      const ex = hx + Math.sin(sw) * tl, ey = hy + Math.cos(sw) * tl;
+      const bx = ex + Math.sin(sw) * cl, by = ey + Math.cos(sw) * cl;
+      g.lineStyle(0.8, this.tint(AIR.steel), alpha * 0.9);
+      g.lineBetween(hx, hy, ex, ey);
+      if (m) {
+        g.lineStyle(5.5, this.tint(AIR.bolt), alpha * 0.3);
+        g.lineBetween(ex, ey, bx, by);
+      }
+      g.lineStyle(3, this.tint(m ? AIR.charge : AIR.steel), alpha);
+      g.lineBetween(ex, ey, bx, by);
+      g.lineStyle(1, this.tint(m ? AIR.bolt : AIR.white), alpha * 0.9);
+      g.lineBetween(ex - 0.8, ey, bx - 0.8, by);
+      // The striker bead under the tube.
+      g.fillStyle(this.tint(m ? AIR.bolt : AIR.mist), alpha);
+      g.fillCircle(bx + Math.sin(sw * 1.6) * 1.5, by + 2.4, 1.2);
     }
 
-    // Pivot rivet.
-    g.fillStyle(this.tint(m ? AIR.charge : AIR.woodDark), alpha);
-    g.fillCircle(cx, cy, 2.4);
-    // A silk tassel hanging off the pivot, swinging with the dance.
-    const sw = Math.sin(this.t * 3.1) * 0.35 + Math.cos(this.facing) * 0.2;
-    const tx = cx + 5 + Math.sin(sw) * 6, ty = cy + 6;
-    g.lineStyle(1, this.tint(m ? AIR.charge : AIR.wood), alpha * 0.9);
-    g.lineBetween(cx + 1.5, cy + 1, tx, ty);
-    g.fillStyle(this.tint(m ? AIR.charge : AIR.blossom), alpha);
-    g.fillCircle(tx, ty, 1.6);
-    g.fillTriangle(tx - 1.6, ty + 0.5, tx + 1.6, ty + 0.5, tx + Math.sin(sw) * 1.5, ty + 5);
-
-    // A tiny curl of wind circling each hand.
-    for (let i = 0; i < 2; i++) {
-      const hp = this.t * 6 + i * Math.PI;
-      const hx = this.armX[i] + Math.cos(hp) * 9, hy = this.armY[i] + Math.sin(hp) * 9;
-      g.fillStyle(this.tint(m ? AIR.cyan : AIR.white), alpha * 0.7);
-      windCurl(g, hx, hy, hp + Math.PI / 2, m ? 11 : 8, m ? 2 : 1.5, 0.8);
+    // The knife, condensing in the casting hand.
+    this.knife += (this.knifeTarget - this.knife) * 0.3;
+    if (this.knife > 0.03) {
+      const h = this.castHand();
+      drawAirKnife(g, this.tint, h.x, h.y, this.facing, 12 + 14 * this.knife, alpha * this.knife, this.t);
     }
-
-    // Mastery cyclone, front half.
-    if (m) this.drawCyclone(g, x, y, alpha, true);
   }
 }

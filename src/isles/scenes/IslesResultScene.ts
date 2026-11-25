@@ -8,6 +8,8 @@ import {
 } from '../IslesRegistry';
 import { CINE_FALL_END, FALLEN_ARTIFACT } from '../content/meteor/spec';
 import * as Quests from '../systems/Quests';
+import * as Unrest from '../systems/Unrest';
+import { Coop } from '../net/IslesCoop';
 import type { IslesFightPayload } from '../IslesTypes';
 
 /**
@@ -63,7 +65,10 @@ export class IslesResultScene extends Phaser.Scene {
     this.events.once('shutdown', () => this.events.off('update', tick));
 
     const king = this.payload.kind === 'monarch' && this.payload.id === PINNACLE.monarch.id;
-    const title = this.won ? (king ? (this.payload.hard ? 'THE CASE IS CLOSED' : 'THE THRONE IS EMPTY') : this.payload.kind === 'councilor' ? 'SEAT EMPTIED' : this.payload.kind === 'monarch' ? 'THE CROWN FALLS' : this.payload.kind === 'prince' ? 'PRINCE DEFEATED' : 'VICTORY') : 'DRIVEN BACK';
+    const role = this.payload.kind === 'unrest' ? this.payload.id.split(':')[2] : '';
+    const title = role
+      ? (role === 'revolt' ? (this.won ? 'REVOLT PUT DOWN' : 'THE COURT FALLS') : role === 'leader' ? (this.won ? 'COURT RECLAIMED' : 'DRIVEN BACK') : this.won ? 'INSURGENT DOWN' : 'DRIVEN BACK')
+      : this.won ? (king ? (this.payload.hard ? 'THE CASE IS CLOSED' : 'THE THRONE IS EMPTY') : this.payload.kind === 'councilor' ? 'SEAT EMPTIED' : this.payload.kind === 'monarch' ? 'THE CROWN FALLS' : this.payload.kind === 'prince' ? 'PRINCE DEFEATED' : 'VICTORY') : 'DRIVEN BACK';
     this.add.text(W / 2, 92, title, {
       fontFamily: FONT_DISPLAY, fontSize: '46px', color: this.won ? '#ffd27a' : '#e07a7a',
       stroke: '#1a0a04', strokeThickness: 8,
@@ -103,6 +108,7 @@ export class IslesResultScene extends Phaser.Scene {
 
   private foeLabel(): string {
     const p = this.payload;
+    if (p.kind === 'unrest') return this.foe;
     if (p.kind === 'encounter' || p.kind === 'warden' || p.kind === 'councilor') {
       const e = getEncounter(p.id);
       return e ? (e.mastered ? `${e.foeName} — ${e.seat ?? e.name}` : `${e.name} — ${e.foeName}`) : p.id;
@@ -111,18 +117,47 @@ export class IslesResultScene extends Phaser.Scene {
     return def ? `${def.name}, ${def.title}` : p.id;
   }
 
+  /** An unrest fight's foe, read before settling (a settled revolt no longer has one). */
+  private foe = '';
+
   /** Apply everything this fight earned, exactly once. */
   private settle(): void {
     if (!Save.hasActive()) return;
     const p = this.payload;
     const s = Save.S();
     const push = (text: string, color = '#f2e6d0', big = false) => this.lines.push({ text, color, big });
+    if (p.coop?.guest) {
+      // A guest in someone else's world: the world is theirs to change. You take home what you earned.
+      const e = getEncounter(p.id);
+      if (p.kind === 'unrest') this.foe = e ? `${e.foeName} — ${e.name}` : 'The unrest';
+      if (this.won) s.stats.wins += 1; else s.stats.losses += 1;
+      if (!this.won) { push('The party was driven back.', '#d8c8b0'); Save.persist(); return; }
+      const king = p.kind === 'monarch' && p.id === PINNACLE.monarch.id;
+      const coins = king ? 1000 : p.kind === 'monarch' ? 400 : p.kind === 'prince' ? 120 : Math.round((e?.coins ?? 30) * 0.6);
+      const orbs = king ? 12 : p.kind === 'monarch' ? 6 : p.kind === 'prince' ? 2 : p.kind === 'councilor' || p.id.endsWith(':leader') ? 1 : 0;
+      Save.addCoins(coins);
+      push(`+${coins} 🪙 coins`, '#ffd27a', true);
+      if (orbs) { Save.addOrbs(orbs); push(`+${orbs} 🔮 orbs`, '#d0a8ff'); }
+      push(Coop.isGuest ? `Fought for ${Coop.nameOf(0)}'s world. What it changes is theirs.` : 'The party has gone. You are back in your own world.', '#9dd8ff');
+      Save.persist();
+      return;
+    }
+    if (p.kind === 'unrest') {
+      // The unrest keeps its own books: a lost revolt costs the court, a won one pays.
+      const e = getEncounter(p.id);
+      this.foe = e ? `${e.foeName} — ${e.name}` : 'The unrest';
+      if (this.won) s.stats.wins += 1; else s.stats.losses += 1;
+      if (!this.won) push('You limp back to where you stood.', '#d8c8b0');
+      for (const n of Unrest.settle(p, this.won)) push(n.text, n.color, n.big);
+      Save.persist();
+      return;
+    }
     if (!this.won) {
       s.stats.losses += 1;
       Save.persist();
       push('You limp back to where you stood.', '#d8c8b0');
       push('Nothing was lost but pride.', '#a89880');
-      if (s.meal) { /* the meal was eaten either way */ }
+      for (const n of Unrest.tick(p)) push(n.text, n.color, n.big);
       return;
     }
     s.stats.wins += 1;
@@ -261,6 +296,8 @@ export class IslesResultScene extends Phaser.Scene {
         }
       }
     }
+    // A day has passed: revolts elsewhere burn down their fuses, and a new one may rise.
+    for (const n of Unrest.tick(p)) push(n.text, n.color, n.big);
     Save.persist();
   }
 

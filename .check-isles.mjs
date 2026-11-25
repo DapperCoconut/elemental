@@ -36,6 +36,10 @@ export * as R from ${JSON.stringify(join(process.cwd(), 'src/isles/IslesRegistry
 export { ELEMENT_DATA_MAP } from ${JSON.stringify(join(process.cwd(), 'src/data/ElementRoster.ts'))};
 export { ALL_PERKS } from ${JSON.stringify(join(process.cwd(), 'src/data/Perks.ts'))};
 export { BossToolkit } from ${JSON.stringify(join(process.cwd(), 'src/boss/framework/BossToolkit.ts'))};
+export * as U from ${JSON.stringify(join(process.cwd(), 'src/isles/systems/Unrest.ts'))};
+export * as SV from ${JSON.stringify(join(process.cwd(), 'src/isles/IslesSave.ts'))};
+export * as UL from ${JSON.stringify(join(process.cwd(), 'src/isles/content/unrest/lines.ts'))};
+export * as DM from ${JSON.stringify(join(process.cwd(), 'src/isles/content/unrest/darkMarket.ts'))};
 `);
 globalThis.localStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
 globalThis.window = globalThis; globalThis.navigator = { userAgent: 'node' }; globalThis.document = { createElement: () => ({ getContext: () => null, style: {} }), addEventListener() {} };
@@ -44,7 +48,7 @@ await build({
   entryPoints: [entry], bundle: true, format: 'esm', platform: 'node', outfile: out, logLevel: 'error',
   plugins: [{ name: 'stub-phaser', setup(b) { b.onResolve({ filter: /^phaser$/ }, () => ({ path: stub })); } }],
 });
-const { R, ELEMENT_DATA_MAP, BossToolkit, ALL_PERKS } = await import(pathToFileURL(out).href);
+const { R, ELEMENT_DATA_MAP, BossToolkit, ALL_PERKS, U, SV, UL, DM } = await import(pathToFileURL(out).href);
 const PERK_IDS = new Set(ALL_PERKS.flatMap((e) => (e.perks ?? []).map((p) => p.id)));
 rmSync(dir, { recursive: true, force: true });
 
@@ -517,6 +521,8 @@ for (const c of R.allCourts()) {
   for (const c of R.allCourts().filter((c) => !phCourts.has(c.id))) tryRun(`${c.id} floor`, () => c.floor(G, 960, 640, rng));
   const STATIONS = [[150, 160], [480, 360], [810, 560], [810, 160], [150, 560], [480, 160], [480, 560], [150, 360], [810, 360]].map(([x, y]) => ({ x, y }));
   const encs = [...new Map([...R.allCourts().flatMap((c) => c.encounters), ...R.allEncounters()].map((e) => [e.gimmick, e])).values()].filter((e) => e.gimmick);
+  // The unrest's street-fight rules are in no bundle: smoke them too (the `-strong` halves as hard).
+  for (const g of R.allGimmicks()) if (g.id.startsWith('unrest-')) encs.push({ gimmick: g.id, fallen: g.id.endsWith('-strong') });
   for (const e of encs) {
     const g = R.getGimmick(e.gimmick);
     if (!g) continue;
@@ -595,6 +601,114 @@ for (const c of R.allCourts()) {
       }
     });
   }
+}
+
+// ── The unrest: revolts, anarchy, the dark market (docs/ten-isles/unrest.md) ──
+{
+  const say2 = (m) => err(`unrest: ${m}`);
+  for (const g of R.allGimmicks()) if (g.id.startsWith('unrest-') && g.rules.length > 150) say2(`${g.id}: rules text over 150 chars (${g.rules.length})`);
+  // Every line anyone can say during it fits the dialogue box.
+  const pools = Object.entries(UL).flatMap(([k, v]) => (Array.isArray(v) ? v.flat().map((l) => [k, l]) : k === 'ISLE_VOICES' ? Object.entries(v).flatMap(([isle, o]) => Object.values(o).map((l) => [`${k}.${isle}`, l])) : []));
+  for (const [k, l] of pools) if (typeof l === 'string' && l.length > 140) say2(`${k}: line over 140 chars (${l.length}): ${l.slice(0, 40)}…`);
+  for (const isle of R.ISLES) if (!UL.ISLE_VOICES[isle.id]) say2(`no unrest voice for isle ${isle.id}`);
+  // Every court has a dark market, and every dark charm really is its twin with a price attached.
+  for (const c of R.allCourts().filter((c) => !phCourts.has(c.id))) {
+    const shop = R.getShop(DM.darkShopIdOf(c.id));
+    if (!shop || !shop.stock.length) { warn(`unrest: ${c.id} has no charms on sale, so its dark market is empty`); continue; }
+    for (const id of shop.stock) {
+      const d = R.getIsleItem(id), b = R.getIsleItem(DM.baseIdOf(id) ?? '');
+      if (!d || !b) { say2(`${c.id}: dark item ${id} or its twin is missing`); continue; }
+      if (d.script !== b.script) say2(`${id}: script differs from its twin's`);
+      if (!(d.price > b.price)) say2(`${id}: must cost more than ${b.id}`);
+      const t = DM.taintOf(b.id);
+      for (const k of Object.keys(t.curse)) if (d.effect?.[k] === undefined) say2(`${id}: lost its curse (${k})`);
+    }
+  }
+  // A whole cycle on a finished save: a revolt rises, is ignored into anarchy, and is fought back.
+  const real = Math.random;
+  let seed = 12345;
+  Math.random = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  try {
+    for (const kingless of [false, true]) {
+      SV.createSlot(0, 'check', 'fire');
+      const s = SV.S();
+      s.princes = R.allCourts().map((c) => c.prince.id);
+      s.waystones = R.ISLES.map((i) => i.port);
+      if (kingless) s.flags.push('king-fallen');
+      const fight = { slot: 0, kind: 'encounter', id: 'x', area: 'emberport', pos: { x: 0, y: 0 }, hard: false };
+      let rose = 0, fell = 0;
+      for (let i = 0; i < 80; i++) {
+        U.tick(fight);
+        for (const { court, u } of U.active()) {
+          const foes = U.standing(court.id);
+          const want = u.state === 'revolt' ? 1 : U.insurgentsLeft(u) || 1;
+          if (foes.length !== want) say2(`${court.id}: ${foes.length} rebels standing, want ${want}`);
+          for (const e of foes) {
+            if (R.getEncounter(e.id)?.foeName !== e.foeName) say2(`${e.id}: does not resolve to the same fight twice`);
+            if (!R.getGimmick(e.gimmick)) say2(`${e.id}: gimmick ${e.gimmick} missing`);
+            if (!ELEMENT_DATA_MAP[e.foeElement]) say2(`${e.id}: unknown element ${e.foeElement}`);
+            if (e.perk && !PERK_IDS.has(e.perk)) say2(`${e.id}: unknown perk ${e.perk}`);
+            const a = R.getArea(court.area);
+            if (!a || e.at.x < 0 || e.at.y < 0 || e.at.x > a.w || e.at.y > a.h) say2(`${e.id}: stands outside ${court.area}`);
+            for (const l of [...e.challenge, ...e.beaten]) if (l.length > 140) say2(`${e.id}: line over 140 chars (${l.length})`);
+          }
+          if (u.state === 'anarchy') {
+            for (const k of ['gimmick', 'foeElement']) if (new Set(foes.map((e) => e[k])).size !== foes.length) say2(`${court.id}: two insurgents share a ${k}`);
+            if (new Set(foes.map((e) => `${e.at.x},${e.at.y}`)).size !== foes.length) say2(`${court.id}: two insurgents share a post`);
+          }
+        }
+        rose = Math.max(rose, U.active().length);
+        fell = Math.max(fell, U.active().filter((x) => x.u.state === 'anarchy').length);
+      }
+      if (!rose) say2(`no revolt rose in 80 fights (${kingless ? 'kingless' : 'calm'})`);
+      if (!fell) say2(`no ignored revolt became anarchy in 80 fights (${kingless ? 'kingless' : 'calm'})`);
+      // Fight one court all the way back.
+      const hot = U.active().find((x) => x.u.state === 'anarchy');
+      if (hot) {
+        const id = hot.court.id;
+        const un = (what) => ({ ...fight, kind: 'unrest', id: `unrest:${id}:${what}`, court: id });
+        for (let i = 0; i < U.insurgentCount(hot.u); i++) U.settle(un(`i${i}`), true);
+        if (U.standing(id)[0]?.unrest?.role !== 'leader') say2(`${id}: the ringleader did not come out after the insurgents fell`);
+        U.settle(un('leader'), true);
+        if (U.stateOf(id)) say2(`${id}: still in unrest after its ringleader fell`);
+        if (R.getEncounter(`unrest:${id}:leader`)) say2(`${id}: a settled unrest still resolves a fight`);
+      }
+      const calm = U.active().find((x) => x.u.state === 'revolt');
+      if (calm) {
+        U.settle({ ...fight, kind: 'unrest', id: `unrest:${calm.court.id}:revolt`, court: calm.court.id }, false);
+        if (U.stateOf(calm.court.id)?.state !== 'anarchy') say2(`${calm.court.id}: losing to the agitator did not bring anarchy`);
+      }
+      SV.deleteSlot(0);
+    }
+  } catch (e) { say2(`cycle threw: ${e?.stack ?? e}`); }
+  Math.random = real;
+  console.log(`Unrest: ${R.allGimmicks().filter((g) => g.id.startsWith('unrest-')).length} street rules, ${R.allItems().filter((i) => i.id.startsWith('dark-')).length} dark-market charms`);
+}
+
+// ── Co-op: a guest's view of the host's world never leaks into the guest's own save ──
+{
+  const bad = (m) => err(`co-op visit: ${m}`);
+  try {
+    SV.createSlot(0, 'guest', 'water');
+    const own = SV.S();
+    own.coins = 77; own.encounters.push('mine-1'); own.flags.push('mine-flag'); own.area = 'emberport'; own.pos = { x: 5, y: 6 };
+    const host = { encounters: ['h1', 'h2'], princes: ['hp'], monarchs: [], quests: { q: { stage: 1 } }, flags: ['king-fallen'],
+      unrest: { hearth: { state: 'anarchy', seed: 3, fuse: 0, down: [], strong: true } }, unrestClock: 4, hard: false,
+      shelf: { encounters: [], princes: [], monarchs: [], flags: [] }, chests: ['c'], waystones: ['w'] };
+    SV.setVisiting({ ...host, area: 'hearth', pos: { x: -1, y: -1 } });
+    const v = SV.S();
+    if (v.coins !== 77 || v.element !== 'water') bad('pockets are not the guest\'s own');
+    if (v.encounters.length !== 2 || !SV.test({ prince: 'hp' }) || !SV.test({ unrest: 'hearth', state: 'anarchy' }) || SV.test({ encounter: 'mine-1' })) bad('the world is not the host\'s');
+    SV.markEncounter('h3'); SV.setFlag('seen'); SV.setPlace('hearth', { x: 100, y: 100 }); SV.addCoins(3); SV.touchWaystone('x');
+    if (SV.S().coins !== 80) bad('coins earned while visiting were lost');
+    SV.refreshVisit({ ...host, encounters: ['h1', 'h2', 'h9'] });
+    if (!SV.test({ encounter: 'h9' }) || SV.S().area !== 'hearth') bad('a fresh snapshot did not land, or moved the visitor');
+    SV.setVisiting(null);
+    const home = SV.S();
+    if (home.encounters.join() !== 'mine-1' || home.flags.join() !== 'mine-flag' || home.area !== 'emberport' || home.pos.x !== 5 || home.waystones.includes('x')) bad('visiting wrote into the guest\'s own world');
+    if (home.coins !== 80) bad('coins did not come home');
+    SV.deleteSlot(0);
+  } catch (e) { bad(`threw: ${e?.stack ?? e}`); }
 }
 
 // sfx scan over source text

@@ -60,8 +60,28 @@ export interface IslesSlot {
   hard: boolean;
   /** The other world's progress — the waking world's while you are in the Fall, the Fall's while awake. */
   shelf: WorldProgress;
-  /** Fights won / lost, for the journal. */
-  stats: { wins: number; losses: number; fish: number; voyages: number; sunk: number };
+  /** Fights won / lost, for the journal. `quelled` revolts put down, `reclaimed` courts won back from anarchy. */
+  stats: { wins: number; losses: number; fish: number; voyages: number; sunk: number; quelled: number; reclaimed: number };
+  /** Courts in revolt or anarchy *in the world you are standing in*, by court id (see `systems/Unrest`). */
+  unrest: Record<string, CourtUnrest>;
+  /** Fights left before the next revolt breaks out. -1: not yet rolled (too few courts are free). */
+  unrestClock: number;
+}
+
+/**
+ * A freed court that is being taken back. A `revolt` is one agitator and a fuse; let the fuse run out (or
+ * lose to the agitator) and it becomes `anarchy`: insurgents in the streets, a ringleader, and a dark market.
+ */
+export interface CourtUnrest {
+  state: 'revolt' | 'anarchy';
+  /** Fixes who rose, what they fight with and where they stand — the same every visit. */
+  seed: number;
+  /** Revolt: fights you may fight elsewhere before it boils over. */
+  fuse: number;
+  /** Anarchy: indices of the insurgents already beaten. */
+  down: number[];
+  /** It began after the Obsidian King fell: everyone in it is stronger. */
+  strong: boolean;
 }
 
 /** The part of a save that differs between the waking world and the Fall. */
@@ -71,6 +91,8 @@ export interface WorldProgress {
   monarchs: string[];
   /** Only the world-state flags (`isWorldFlag`). */
   flags: string[];
+  unrest?: Record<string, CourtUnrest>;
+  unrestClock?: number;
 }
 
 /**
@@ -147,7 +169,8 @@ export function freshSlot(name: string, element: string): IslesSlot {
     boat: { owned: null, upgrades: {}, ubers: [], uber: null },
     wastesBest: 0, waystones: ['emberport'], chests: [], hard: false,
     shelf: { encounters: [], princes: [], monarchs: [], flags: [] },
-    stats: { wins: 0, losses: 0, fish: 0, voyages: 0, sunk: 0 },
+    stats: { wins: 0, losses: 0, fish: 0, voyages: 0, sunk: 0, quelled: 0, reclaimed: 0 },
+    unrest: {}, unrestClock: -1,
   };
 }
 
@@ -176,12 +199,67 @@ export function deleteSlot(i: number): void {
   persist();
 }
 
+// ── Visiting (co-op) ───────────────────────────────────────────────────
+
+/**
+ * The part of a slot that is *the world* rather than *the player*: what has been beaten and freed, quest
+ * stages, flags, chests, where you are standing. A co-op guest walks the host's world with their own
+ * pockets, so while visiting these fields come from the host's snapshot and everything else — coins, orbs,
+ * keys, items, charms, genes, the boat, the element — stays the guest's own.
+ */
+const WORLD_KEYS = new Set<string>([
+  'encounters', 'princes', 'monarchs', 'quests', 'flags', 'unrest', 'unrestClock', 'hard', 'shelf', 'chests', 'waystones', 'area', 'pos',
+]);
+
+export type VisitWorld = Pick<IslesSlot,
+  'encounters' | 'princes' | 'monarchs' | 'quests' | 'flags' | 'unrest' | 'unrestClock' | 'hard' | 'shelf' | 'chests' | 'waystones' | 'area' | 'pos'>;
+
+let visit: VisitWorld | null = null;
+let visitView: { slot: IslesSlot; view: IslesSlot } | null = null;
+
+/**
+ * Walk someone else's world (`null` to come home). Nothing written to the world while visiting is ever
+ * saved: it lands on the snapshot, which the host replaces with the truth a moment later.
+ */
+export function setVisiting(world: VisitWorld | null): void {
+  visit = world;
+  visitView = null;
+}
+export const isVisiting = (): boolean => visit !== null;
+/** Swap in a fresh snapshot from the host without losing where the visitor is standing. */
+export function refreshVisit(world: Omit<VisitWorld, 'area' | 'pos'>): void {
+  if (!visit) return;
+  visit = { ...world, area: visit.area, pos: visit.pos };
+  visitView = null;
+}
+
 /** The live slot. Throws only if nothing was ever created — scenes guard with `hasActive()`. */
 export function S(): IslesSlot {
   const data = load();
   const s = data.slots[data.activeSlot ?? 0];
   if (!s) throw new Error('No active Isles slot');
-  return s;
+  if (!visit) return s;
+  if (visitView?.slot !== s) {
+    const world = visit as unknown as Record<string, unknown>;
+    const view = new Proxy(s, {
+      get: (t, k) => (typeof k === 'string' && WORLD_KEYS.has(k) ? world[k] : Reflect.get(t, k)),
+      set: (t, k, v) => {
+        if (typeof k === 'string' && WORLD_KEYS.has(k)) { world[k] = v; return true; }
+        return Reflect.set(t, k, v);
+      },
+    });
+    visitView = { slot: s, view };
+  }
+  return visitView.view;
+}
+
+/** The world half of the live slot, for the host to send its guests. */
+export function worldSnapshot(): Omit<VisitWorld, 'area' | 'pos'> {
+  const s = S();
+  return {
+    encounters: s.encounters, princes: s.princes, monarchs: s.monarchs, quests: s.quests, flags: s.flags,
+    unrest: s.unrest, unrestClock: s.unrestClock, hard: s.hard, shelf: s.shelf, chests: s.chests, waystones: s.waystones,
+  };
 }
 
 export function hasActive(): boolean {
@@ -264,12 +342,15 @@ export function setFall(on: boolean): void {
   if (s.hard === on) return;
   const mine: WorldProgress = {
     encounters: s.encounters, princes: s.princes, monarchs: s.monarchs, flags: s.flags.filter(isWorldFlag),
+    unrest: s.unrest, unrestClock: s.unrestClock,
   };
   const theirs = s.shelf;
   s.encounters = theirs.encounters;
   s.princes = theirs.princes;
   s.monarchs = theirs.monarchs;
   s.flags = [...s.flags.filter((f) => !isWorldFlag(f)), ...theirs.flags];
+  s.unrest = theirs.unrest ?? {};
+  s.unrestClock = theirs.unrestClock ?? -1;
   s.shelf = mine;
   s.hard = on;
   persist();
@@ -380,6 +461,7 @@ export function test(c: Cond | undefined): boolean {
   if ('monarchs' in c) return s.monarchs.filter((m) => m !== 'obsidian-king').length >= c.monarchs;
   if ('seats' in c) return seatsWon() >= c.seats;
   if ('fall' in c) return s.hard === c.fall;
+  if ('unrest' in c) { const u = s.unrest[c.unrest]; return !!u && (!c.state || u.state === c.state); }
   if ('not' in c) return !test(c.not);
   if ('all' in c) return c.all.every(test);
   if ('any' in c) return c.any.some(test);

@@ -4,7 +4,6 @@ import { BaseAvatar } from '../../../elements/kits/ElementVisuals';
 import { FireFx, FIRE, FireAvatar, FireWreath } from '../../../elements/kits/FireVisuals';
 import { WaterFx, WATER, WaterAvatar } from '../../../elements/kits/WaterVisuals';
 import { LifeFx, LIFE, LifeAvatar, PlantArtType, SEED_COLOR } from '../../../elements/kits/LifeVisuals';
-import { AirFx, AIR, AirAvatar, AirDraft } from '../../../elements/kits/AirVisuals';
 import { EarthFx, EARTH, EarthAvatar, StoneShield } from '../../../elements/kits/EarthVisuals';
 
 /**
@@ -38,12 +37,6 @@ function lifeStage(ctx: PreviewCtx): { fx: LifeFx; av: BaseAvatar } {
   av.setFacing(ctx.aim);
   return { fx, av };
 }
-function airStage(ctx: PreviewCtx): { fx: AirFx; av: BaseAvatar } {
-  const fx = ctx.capture(() => new AirFx(ctx.scene, ctx.tint).setSink(ctx.sink));
-  const av = ctx.useAvatar(() => new AirAvatar(ctx.scene, ctx.tint));
-  av.setFacing(ctx.aim);
-  return { fx, av };
-}
 function earthStage(ctx: PreviewCtx): { fx: EarthFx; av: BaseAvatar } {
   const fx = ctx.capture(() => new EarthFx(ctx.scene, ctx.tint).setSink(ctx.sink));
   const av = ctx.useAvatar(() => new EarthAvatar(ctx.scene, ctx.tint));
@@ -67,55 +60,6 @@ function meter(
     g.strokeRoundedRect(o.x, o.y, o.w, 9, 4);
   });
 }
-
-// ══ AIR — passives ════════════════════════════════════════════════════
-
-export const airWindDodge: PreviewScript = {
-  duration: 4200,
-  caption: 'Passive — banked by landing abilities, spent only on hits it actually saves',
-  run(ctx) {
-    const { fx, av } = airStage(ctx);
-    ctx.addDummy();
-    let pool = 0;
-    meter(ctx, { x: ctx.cx - 46, y: ctx.cy - 54, w: 92, color: AIR.cyan, read: () => pool });
-    // Three abilities landing, each banking its real figure, then a hit that gets voided.
-    const bank = (at: number, amount: number, play: () => void): void => ctx.at(at, () => {
-      play();
-      pool += amount;
-      fx.motes(ctx.cx, ctx.cy - 40, 8, { speed: 90, life: 620 });
-    });
-    bank(400, 0.15, () => { av.play('punch', ctx.aim); fx.ring(ctx.tx, ctx.ty, 10, 40, AIR.frost, 380, 3, 6); });
-    bank(1300, 0.25, () => { av.play('dash', ctx.aim); fx.gustBurst(ctx.tx, ctx.ty, 44); });
-    bank(2200, 0.10, () => { av.play('sweep', ctx.aim); fx.spinFlourish(ctx.cx, ctx.cy, 115); });
-    // The payoff: an incoming hit finds nobody there, and the pool pays for it.
-    ctx.at(3100, () => {
-      fx.staticSnap(ctx.cx, ctx.cy, 34);
-      fx.haze(ctx.cx, ctx.cy, 5, 60, 7);
-      pool = Math.max(0, pool - 0.5);
-    });
-  },
-};
-
-export const airMomentum: PreviewScript = {
-  duration: 4600,
-  caption: 'Passive — +5%/s untouched, capped at 100%; −10% every hit taken',
-  run(ctx) {
-    const { fx, av } = airStage(ctx);
-    ctx.addDummy();
-    let m = 0;
-    meter(ctx, { x: ctx.cx - 46, y: ctx.cy - 54, w: 92, color: AIR.bolt, read: () => m });
-    // Real rate: 5% a second. Over the loop that is a visible, honest climb.
-    ctx.onFrame((dt) => { m = Math.min(1, m + (dt / 1000) * 0.05 * 4); });
-    ctx.at(600, () => av.play('sweep', ctx.aim));
-    ctx.at(1800, () => av.play('punch', ctx.aim));
-    // A single clean hit knocks it back down — nothing else does.
-    ctx.at(3000, () => {
-      fx.flash(ctx.cx, ctx.cy, 26);
-      fx.motes(ctx.cx, ctx.cy, 10, { speed: 200, life: 420 });
-      m = Math.max(0, m - 0.10 * 4);
-    });
-  },
-};
 
 // ══ EARTH — passive ═══════════════════════════════════════════════════
 
@@ -264,42 +208,6 @@ export const lifePerkMycology: PreviewScript = {
         }
       });
       for (const [dx, dy] of spots) fx.healBloom(ctx.cx + dx, ctx.cy + dy, 22);
-    });
-  },
-};
-
-export const airPerkHawk: PreviewScript = {
-  duration: 3400,
-  caption: 'Perk — F throws an eagle: it drags THEM to your cursor, not you to them',
-  run(ctx) {
-    const { fx, av } = airStage(ctx);
-    ctx.addDummy();
-    ctx.at(300, () => {
-      av.setHold('reach', ctx.aim);
-      const bird = ctx.adopt(ctx.scene.add.graphics().setDepth(7));
-      ctx.onFrame((_dt, elapsed) => {
-        const t = Phaser.Math.Clamp((elapsed - 300) / 500, 0, 1);
-        bird.clear();
-        if (t <= 0 || t >= 1) return;
-        AirFx.drawHawk(bird, ctx.tint, ctx.cx + 30 + (ctx.tx - ctx.cx) * t, ctx.cy, 0, elapsed / 90);
-      });
-      ctx.at(500, () => {
-        bird.clear();
-        fx.gustBurst(ctx.tx, ctx.ty, 34);
-        // The reversal: the dummy comes to the caster's cursor.
-        const drag = ctx.adopt(ctx.scene.add.graphics().setDepth(5));
-        ctx.onFrame((_dt, elapsed) => {
-          const t = Phaser.Math.Clamp((elapsed - 800) / 700, 0, 1);
-          drag.clear();
-          if (t <= 0) return;
-          const dx = ctx.tx + (ctx.cx + 70 - ctx.tx) * t;
-          drag.fillStyle(0x2b2f3d, 1); drag.fillCircle(dx, ctx.ty, 17);
-          drag.fillStyle(0x3c4254, 1); drag.fillCircle(dx, ctx.ty, 13);
-          drag.lineStyle(1.5, ctx.tint(AIR.frost), 0.5 * (1 - t));
-          drag.lineBetween(ctx.cx, ctx.cy, dx, ctx.ty);
-        });
-        ctx.at(700, () => { av.setHold(null); fx.staticSnap(ctx.cx + 70, ctx.ty, 26); });
-      });
     });
   },
 };
@@ -522,50 +430,6 @@ export const lifeMasteryReap: PreviewScript = {
   },
 };
 
-export const airMasteryWeatherCycle: PreviewScript = {
-  duration: 5400,
-  caption: 'Mastery — the winds record 5s of presses, then dance them all back, no cooldowns asked',
-  run(ctx) {
-    const { fx, av } = airStage(ctx);
-    const RECORD_AT = 400, RECORD_MS = 2200;
-    const ring = ctx.adopt(ctx.scene.add.graphics().setDepth(8));
-    const count = ctx.adopt(ctx.scene.add.text(ctx.cx, ctx.cy - 60, '', {
-      fontSize: '12px', fontFamily: 'Arial Black', color: '#bbe8ff',
-    }).setOrigin(0.5).setDepth(12));
-    ctx.onFrame((_dt, elapsed) => {
-      ring.clear();
-      if (elapsed < RECORD_AT) return;
-      const recording = elapsed < RECORD_AT + RECORD_MS;
-      const replaying = !recording && elapsed < RECORD_AT + RECORD_MS * 2 + 200;
-      if (recording) {
-        AirFx.drawWeatherRing(ring, ctx.tint, ctx.cx, ctx.cy, 52, elapsed / 1000, (elapsed - RECORD_AT) / RECORD_MS, false, 1);
-      } else if (replaying) {
-        AirFx.drawWeatherRing(ring, ctx.tint, ctx.cx, ctx.cy, 58, elapsed / 1000, 1, true, 0.9);
-      }
-    });
-    // The window opens.
-    ctx.at(RECORD_AT, () => {
-      av.play('raise', ctx.aim, 520);
-      fx.ring(ctx.cx, ctx.cy, 20, 150, AIR.cyan, 520, 5, 6);
-      fx.motes(ctx.cx, ctx.cy, 22, { speed: 200, life: 700, swirl: 2.2 });
-    });
-    // Two presses inside it: a splice and a spin, each written down.
-    const splice = () => { av.play('sweep', ctx.aim); fx.fanCut(ctx.cx, ctx.cy, ctx.aim, 100, 0.95); fx.muzzleGust(ctx.cx + 20, ctx.cy, ctx.aim); };
-    const spin = () => { av.play('sweep', ctx.aim); fx.spinFlourish(ctx.cx, ctx.cy, 115); };
-    ctx.at(RECORD_AT + 500, () => { splice(); count.setText('🌀 1'); });
-    ctx.at(RECORD_AT + 1400, () => { spin(); count.setText('🌀 2'); });
-    // The window shuts and the winds let go — the same two, on the same beats.
-    ctx.at(RECORD_AT + RECORD_MS, () => {
-      av.play('flex');
-      fx.ring(ctx.cx, ctx.cy, 24, 190, AIR.white, 560, 5, 6);
-      fx.motes(ctx.cx, ctx.cy, 26, { speed: 240, life: 800, swirl: -2.2 });
-      count.setText('🌀 CYCLE ×2').setColor('#ffffff');
-    });
-    ctx.at(RECORD_AT + RECORD_MS + 500, () => { splice(); fx.motes(ctx.cx, ctx.cy, 6, { speed: 160, life: 420 }); });
-    ctx.at(RECORD_AT + RECORD_MS + 1400, () => { spin(); fx.motes(ctx.cx, ctx.cy, 6, { speed: 160, life: 420 }); count.setText(''); });
-  },
-};
-
 export const earthMasteryUnbreakable: PreviewScript = {
   duration: 4000,
   caption: 'Mastery passive — cannot be moved, and no single hit exceeds 50 damage',
@@ -619,65 +483,6 @@ export const earthMasteryDustScreen: PreviewScript = {
 //
 // Both of these are showcases for subjects that already had codex text but no loop. They are
 // the last two gaps in the registry.
-
-/**
- * Air's mastery passive.
- *
- * `air:passive:momentum` above already shows the meter climbing, so this one shows the thing
- * the meter *is*: actual speed. The caster laps the frame, the lap gets visibly faster as the
- * bar fills, and the real `AirDraft` — the same ring the kit wires under a momentum-carrying
- * player, at the same `AIR.sky` colour and the same intensity curve — thickens with it. Then
- * one hit lands and the whole thing steps backwards.
- */
-export const airMasteryDancersMomentum: PreviewScript = {
-  duration: 9000,
-  scale: 0.9,
-  bodyTexture: '',
-  caption: "Mastery passive — +5% speed a second untouched, to +100%. One hit taken costs 10%",
-  run(ctx) {
-    const fx = ctx.capture(() => new AirFx(ctx.scene, ctx.tint).setSink(ctx.sink));
-    const av = ctx.useAvatar(() => new AirAvatar(ctx.scene, ctx.tint));
-    av.setFacing(ctx.aim);
-    // The kit's own figures: 5% a second, capped at 100%, 10% off a hit that gets through.
-    const PER_SEC = 0.05;
-    const MAX = 1.0;
-    const HIT_LOSS = 0.10;
-    let m = 0;
-    // The real aura the kit builds for a momentum-carrying player, with the kit's own params.
-    const draft = ctx.capture(() => new AirDraft(ctx.scene, ctx.tint, 32, 1, 2, 9, AIR.sky));
-
-    // The caster actually runs, at the actual multiplier — the lap is the whole point.
-    const orbit = { r: Math.min(ctx.w, ctx.h) * 0.3, a: 0 };
-    const at = { x: ctx.cx, y: ctx.cy };
-    ctx.onFrame((dt) => {
-      // 4× the real rate so a 20-second climb fits a 9-second loop; the *ratio* is honest.
-      m = Math.min(MAX, m + (dt / 1000) * PER_SEC * 4);
-      orbit.a += (dt / 1000) * 1.15 * (1 + m);
-      at.x = ctx.cx + Math.cos(orbit.a) * orbit.r;
-      at.y = ctx.cy + Math.sin(orbit.a) * orbit.r * 0.62;
-      av.setFacing(orbit.a + Math.PI / 2);
-      av.update(dt, at.x, at.y, 1);
-      draft.setIntensity(0.55 + (m / MAX) * 0.95);
-      draft.update(dt, at.x, at.y, 1);
-    });
-    meter(ctx, { x: ctx.cx - 46, y: 10, w: 92, color: AIR.bolt, read: () => m });
-    const read = ctx.adopt(ctx.scene.add.text(ctx.cx, 30, '', {
-      fontSize: '11px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif',
-      color: '#8fe6ff',
-    }).setOrigin(0.5).setDepth(10));
-    ctx.onFrame(() => read.setText(`+${Math.round(m * 100)}% MOVE SPEED`));
-
-    // A hit gets through. Nothing else in the game takes it down.
-    for (const when of [4200, 6600]) {
-      ctx.at(when, () => {
-        fx.flash(at.x, at.y, 26);
-        fx.motes(at.x, at.y, 12, { speed: 220, life: 460 });
-        fx.staticSnap(at.x, at.y, 30);
-        m = Math.max(0, m - HIT_LOSS);
-      });
-    }
-  },
-};
 
 /**
  * Life's only passive — the board itself.

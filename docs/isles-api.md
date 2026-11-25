@@ -462,3 +462,17 @@ MeteorDef    { keys; sealedName; openName; sealed[]; short[] /*{n} {need}*/; off
   reads the world you stand in. `courtChampions(court)` (registry) is the live list: 5, or 10 in the Fall.
 - Every Fall fight has `ctx.hard === true` (foe HP ×1.3, `tk.damageScale` 1.25; bot +1 difficulty).
 - The Obsidian King's hard extra phase is `king/fallen.ts` (`KING_FALLEN: KingPart`), phase index 3.
+
+## The unrest additions (2026-11-24) — `docs/ten-isles/unrest.md`
+```ts
+Cond |= { unrest: courtId; state?: 'revolt' | 'anarchy' }   // the court is being taken back (no state = either)
+EncounterDef += power?: n     // foe damage × (folded into player.islesIncomingMult by the fight kit)
+               loadout?: 1–5  // buildNpcLoadout level: 3/4 upgrades, 5 = all + mastery
+               unrest?: { court; role: 'revolt'|'insurgent'|'leader'; index? }   // set by systems/Unrest only
+IslesFightPayload.kind |= 'unrest'      // id `unrest:<court>:revolt | i<n> | leader`
+registerEncounterResolver(f)            // fights written from the save; getEncounter falls back to it
+allGimmicks()
+```
+`Unrest`: `stateOf(court)`, `active()`, `standing(court)`, `tick(payload)` / `settle(payload, won)` (result scene
+only), `hudLine(court)`, `debugCycle(court)` (cheat saves, U key). The engine speaks for a troubled court by default;
+list `Talk`s with the `unrest` Cond first to override.

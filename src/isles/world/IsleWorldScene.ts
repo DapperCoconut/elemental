@@ -27,6 +27,11 @@ import { Fishing } from './Fishing';
 import { CheatTravel } from './CheatTravel';
 import * as Quests from '../systems/Quests';
 import { prepareLoadout } from '../systems/Genome';
+import * as Unrest from '../systems/Unrest';
+import { UnrestWorld, type Roamer } from './UnrestWorld';
+import { CoopWorld } from './CoopWorld';
+import { Coop } from '../net/IslesCoop';
+import type { FightCall } from '../net/IslesMsg';
 
 /**
  * The Ten Isles' open world. One area at a time — a court, the port, a dungeon — painted by its
@@ -79,6 +84,9 @@ interface Champion {
   beaten: boolean;
   /** A councilor's obsidian mask, drawn over the walker's face. */
   mask?: Phaser.GameObjects.Graphics;
+  /** Where they are standing — `enc.at`, unless they roam (an insurgent). */
+  pos: Pt;
+  roam?: Roamer;
 }
 
 interface BossStand {
@@ -97,8 +105,8 @@ interface Interactable {
   use: () => void;
   /** Lower wins when two overlap. */
   prio: number;
-  /** An NPC that moves — the spot follows them. */
-  src?: Actor;
+  /** Someone who moves — the spot follows them. */
+  src?: { x: number; y: number };
   /** The champion / quest foe this is the challenge for (so a departing foe takes it along). */
   championOf?: Champion;
 }
@@ -130,7 +138,7 @@ export class IsleWorldScene extends Phaser.Scene {
   private facing = Math.PI / 2;
   private moving = false;
   private leaving = false;
-  private initData: { area?: string; pos?: Pt; arriveFrom?: string; after?: IslesFightPayload } = {};
+  private initData: { area?: string; pos?: Pt; arriveFrom?: string; after?: IslesFightPayload; note?: string } = {};
 
   private keys!: Record<string, Phaser.Input.Keyboard.Key>;
   private walker!: TownWalker;
@@ -171,10 +179,14 @@ export class IsleWorldScene extends Phaser.Scene {
   private labels: Phaser.GameObjects.Text[] = [];
 
   private cheatTravel: CheatTravel | null = null;
+  /** This area's revolt / anarchy, if it is a court and has one (see `UnrestWorld`). */
+  private unrest!: UnrestWorld;
+  /** The co-op party in this area (inert outside one). */
+  private coop: CoopWorld | null = null;
 
   constructor() { super({ key: 'IsleWorldScene' }); }
 
-  init(data: { area?: string; pos?: Pt; arriveFrom?: string; after?: IslesFightPayload }): void {
+  init(data: { area?: string; pos?: Pt; arriveFrom?: string; after?: IslesFightPayload; note?: string }): void {
     this.initData = data ?? {};
     this.leaving = false;
     this.actors = [];
@@ -191,6 +203,7 @@ export class IsleWorldScene extends Phaser.Scene {
     this.gloomRt = null;
     this.gloomBrush = null;
     this.cheatTravel = null;
+    this.coop = null;
   }
 
   create(): void {
@@ -219,6 +232,8 @@ export class IsleWorldScene extends Phaser.Scene {
     this.gPoi = this.add.graphics().setDepth(-7000);
     this.gOver = this.add.graphics().setDepth(9000);
     this.buildPieces();
+    this.unrest = new UnrestWorld(this, def, (x, y, r) => this.blocked(x, y, r));
+    this.unrest.build();
     this.placePlayer();
     this.buildExits();
     this.buildNpcs();
@@ -230,7 +245,7 @@ export class IsleWorldScene extends Phaser.Scene {
 
     this.updateCamera(true);
 
-    this.keys = this.input.keyboard!.addKeys('W,A,S,D,UP,DOWN,LEFT,RIGHT,SHIFT,E,SPACE,ENTER,TAB,G,M,ESC,Q,I,T') as Record<string, Phaser.Input.Keyboard.Key>;
+    this.keys = this.input.keyboard!.addKeys('W,A,S,D,UP,DOWN,LEFT,RIGHT,SHIFT,E,SPACE,ENTER,TAB,G,M,ESC,Q,I,T,U') as Record<string, Phaser.Input.Keyboard.Key>;
     this.input.keyboard!.addCapture('TAB,SPACE');
     this.dialogue = new WorldDialogue(this);
     this.ledger = new LedgerPanel(this);
@@ -244,16 +259,27 @@ export class IsleWorldScene extends Phaser.Scene {
 
     const onResume = () => { this.graceUntil = this.time.now + 150; this.refreshHud(); };
     this.events.on('resume', onResume);
+    this.coop = new CoopWorld(this, def.id, {
+      follow: (area, o) => this.travel(area, o, true),
+      lead: (area, o) => this.travel(area, o),
+      fight: (call, asked) => this.fightCalled(call, asked),
+      redraw: () => { if (!this.leaving) { this.leaving = true; this.scene.restart({ area: this.def.id, pos: { x: Math.round(this.px), y: Math.round(this.py) } }); } },
+      home: (why) => { this.leaving = true; this.scene.start('IsleWorldScene', { note: why }); },
+      toast: (s) => this.toast(s),
+      busy: () => this.leaving || this.dialogue.isOpen || this.ledger.isOpen || this.fishing.busy,
+    }, HUD_Z + 1);
     // Scene events outlive a restart — unhook so returning to an area doesn't stack handlers.
-    this.events.once('shutdown', () => this.events.off('resume', onResume));
+    this.events.once('shutdown', () => { this.events.off('resume', onResume); this.coop?.destroy(); this.coop = null; });
 
     this.graceUntil = this.time.now + 400;
     this.saveAt = this.time.now + 4000;
     Save.setPlace(def.id, { x: this.px, y: this.py });
     if (Save.touchWaystone(def.id)) { /* areas are discovered by visiting */ }
     this.areaBanner();
+    if (this.initData.note) this.time.delayedCall(700, () => this.toast(this.initData.note!));
     this.cameras.main.fadeIn(350, 0, 0, 0);
     if (!Save.hasFlag('isles-prologue')) this.time.delayedCall(900, () => this.prologue());
+    else this.time.delayedCall(1200, () => this.unrestNotice());
   }
 
   /** First landfall: the ferryman who rowed you in, and the shape of the whole campaign. */
@@ -273,6 +299,26 @@ export class IsleWorldScene extends Phaser.Scene {
       ],
       onDone: () => this.toast('📜 Look for someone in Emberport who needs a hand.'),
     });
+  }
+
+  /** The first revolt you walk into, and the first court you find in anarchy: what it is and how it ends. */
+  private unrestNotice(): void {
+    const court = this.unrest.court;
+    const u = this.unrest.u;
+    if (!court || !u || this.leaving || this.dialogue.isOpen) return;
+    const flag = `unrest-seen-${u.state}`;
+    if (Save.hasFlag(flag)) return;
+    Save.setFlag(flag);
+    const lines = u.state === 'revolt' ? [
+      `${court.name} is in revolt. An agitator has climbed onto a crate where ${court.prince.name} used to sit.`,
+      'Face them and it ends there. They fight with a rule borrowed from some other court, and they hit harder than they should.',
+      `Leave it — ${u.fuse} more fights anywhere — or lose to them, and this court falls into anarchy.`,
+    ] : [
+      `${court.name} has fallen into anarchy. Its people are hiding; its shops are shut.`,
+      'Insurgents hold the streets. Beat every one of them and their ringleader will come out to hold the seat.',
+      'Beat the ringleader and the court is free again. Until then, one trader is open: the dark market, by the road in.',
+    ];
+    this.dialogue.open({ name: u.state === 'revolt' ? 'A notice, nailed to the gate' : 'A notice, half burnt', lines, accent: 0xd8563a, portrait: signPortrait });
   }
 
   // ── Building ─────────────────────────────────────────────────────────
@@ -360,6 +406,9 @@ export class IsleWorldScene extends Phaser.Scene {
 
   private buildNpcs(): void {
     for (const n of this.presentNpcs()) this.actors.push(this.makeActor(n));
+    // A court in anarchy has one trader left: the dark market, set up by the road you came in on.
+    const dealer = this.unrest.dealer(this.freeSpotNear({ x: this.def.spawn.x - 90, y: this.def.spawn.y + 30 }));
+    if (dealer) this.actors.push(this.makeActor(dealer));
     // The wanderer stands a little way in from where you arrived.
     const isleId = isleOf(this.def.id);
     const w = isleId ? getWanderer(isleId) : undefined;
@@ -396,7 +445,8 @@ export class IsleWorldScene extends Phaser.Scene {
 
   private buildCrowd(): void {
     const c = this.def.crowd;
-    if (!c || !c.paths.length || !c.looks.length) return;
+    // In anarchy nobody is out walking.
+    if (!c || !c.paths.length || !c.looks.length || this.unrest.anarchy) return;
     const r = this.rng;
     for (let i = 0; i < c.count; i++) {
       const path = c.paths[i % c.paths.length];
@@ -420,7 +470,9 @@ export class IsleWorldScene extends Phaser.Scene {
 
   private buildChampions(): void {
     const court = courtOfArea(this.def.id);
-    const encs: EncounterDef[] = court ? [...courtChampions(court)] : [];
+    // In anarchy the court's own champions are gone to ground with everyone else.
+    const encs: EncounterDef[] = court && !this.unrest.anarchy ? [...courtChampions(court)] : [];
+    encs.push(...this.unrest.foes());
     for (const p of this.def.pois) if (p.kind === 'encounter') { const e = getEncounter(p.id); if (e && !encs.includes(e)) encs.push(e); }
     // A quest's own foe stands here only while that quest is waiting on the fight.
     for (const e of Quests.duelsIn(this.def.id)) if (!encs.includes(e)) encs.push(e);
@@ -431,10 +483,14 @@ export class IsleWorldScene extends Phaser.Scene {
     const beaten = !enc.quest && Save.S().encounters.includes(enc.id);
     const walker = new TownWalker(this, enc.foeElement, enc.at.x, enc.at.y, { bare: true });
     if (beaten) walker.container.setAlpha(0.55);
-    const plate = this.add.text(enc.at.x, enc.at.y - 62, beaten ? `${enc.foeName}` : `${enc.fallen ? '☄' : '⚔'} ${enc.foeName}\n${enc.mastered ? enc.seat ?? enc.name : enc.name}`, {
-      fontFamily: FONT_UI, fontSize: '11px', color: beaten ? '#a8a090' : enc.mastered ? '#c9b0ff' : enc.fallen ? '#ff9a78' : enc.quest ? '#9dd8ff' : '#ffcf9a', stroke: '#000', strokeThickness: 3, align: 'center',
+    const role = enc.unrest?.role;
+    const tag = role === 'revolt' ? 'REVOLT' : role === 'leader' ? 'RINGLEADER' : role === 'insurgent' ? 'INSURGENT' : '';
+    const plate = this.add.text(enc.at.x, enc.at.y - 62, beaten ? `${enc.foeName}` : tag ? `⚑ ${enc.foeName}\n${tag} — ${enc.name}` : `${enc.fallen ? '☄' : '⚔'} ${enc.foeName}\n${enc.mastered ? enc.seat ?? enc.name : enc.name}`, {
+      fontFamily: FONT_UI, fontSize: '11px', color: beaten ? '#a8a090' : tag ? '#ff7a6a' : enc.mastered ? '#c9b0ff' : enc.fallen ? '#ff9a78' : enc.quest ? '#9dd8ff' : '#ffcf9a', stroke: '#000', strokeThickness: 3, align: 'center',
     }).setOrigin(0.5, 1).setDepth(9200);
-    const c: Champion = { enc, walker, plate, beaten };
+    const c: Champion = { enc, walker, plate, beaten, pos: { ...enc.at } };
+    // Insurgents do not hold a post: they roam their patch of the court.
+    if (role === 'insurgent') { c.roam = this.unrest.roamer(enc.at); c.pos = c.roam; }
     if (enc.fallen) {
       // One of the Fallen Five: the scorch of the star under their feet, cold once they are beaten.
       c.mask = this.add.graphics().setDepth(enc.at.y - 0.5);
@@ -451,7 +507,7 @@ export class IsleWorldScene extends Phaser.Scene {
 
   private championInteractable(c: Champion): Interactable {
     return {
-      x: c.enc.at.x, y: c.enc.at.y, r: REACH + 6, prio: 2,
+      x: c.pos.x, y: c.pos.y, r: REACH + 6, prio: 2, src: c.pos,
       label: () => (c.beaten ? `${c.enc.foeName} (beaten)` : `Challenge ${c.enc.foeName}`),
       use: () => this.approachChampion(c),
     };
@@ -603,20 +659,22 @@ export class IsleWorldScene extends Phaser.Scene {
   private talkTo(a: Actor): void {
     if (a.wanderer) { this.talkWanderer(a); return; }
     const id = a.def.id;
+    // Quests are the world's, and in a party the world is the host's: a guest only gets the small talk.
+    const mine = !Coop.isGuest;
     // 1. A live quest wants this conversation.
-    const obj = Quests.talkObjectiveFor(id);
+    const obj = mine ? Quests.talkObjectiveFor(id) : null;
     if (obj && (obj.o.kind === 'talk' || obj.o.kind === 'deliver')) {
       this.say(a, { lines: obj.o.lines, onDone: () => { this.toastAll(obj.run()); this.afterQuestTalk(obj.q.id, a); } });
       return;
     }
     // 2. A quest from them is ready to hand in.
-    const ready = allQuests().find((q) => q.giver === id && Quests.isReady(q));
+    const ready = mine ? allQuests().find((q) => q.giver === id && Quests.isReady(q)) : undefined;
     if (ready) {
       this.say(a, { lines: ready.complete, onDone: () => this.toastAll(Quests.complete(ready)) });
       return;
     }
     // 3. They have something to ask of you.
-    const offer = allQuests().find((q) => q.giver === id && Quests.offerable(q));
+    const offer = mine ? allQuests().find((q) => q.giver === id && Quests.offerable(q)) : undefined;
     if (offer) {
       this.say(a, {
         lines: offer.offer,
@@ -633,10 +691,12 @@ export class IsleWorldScene extends Phaser.Scene {
     }
     // 4. Small talk, then the counter if they keep one.
     const block = this.pickTalk(id, a.def.talks);
-    const lines = block?.lines ?? ['…'];
+    // A court in anarchy: they are hiding, and their counter is shut. In revolt: a worried word first.
+    const trouble = this.unrest.talkFor(a.def);
+    const lines = trouble?.replace ? trouble.lines : [...(trouble?.lines ?? []), ...(block?.lines ?? ['…'])];
     const active = allQuests().find((q) => q.giver === id && Quests.isActive(q.id));
     const remind = active && !Quests.isReady(active) ? [`(${active.name}: ${active.stages[Quests.state(active.id)!.stage]?.hint ?? ''})`] : [];
-    const role = a.def.role;
+    const role = trouble?.closed ? undefined : a.def.role;
     this.say(a, {
       lines: [...lines, ...remind],
       choices: role ? [{ label: roleVerb(role.kind), pick: () => this.openRole(role.kind, role.id, a.def.look.accent) }, { label: 'Leave', pick: () => {} }] : undefined,
@@ -652,6 +712,9 @@ export class IsleWorldScene extends Phaser.Scene {
     if (!w) return;
     const areaBlocks = w.byArea[this.def.id] ?? [];
     const n = TALKS.get(`wanderer:${this.def.id}`) ?? 0;
+    // Trouble here comes first, and again every few words after.
+    const trouble = n % 4 === 0 ? this.unrest.wandererLine() : null;
+    if (trouble) { TALKS.set(`wanderer:${this.def.id}`, n + 1); this.say(a, { lines: [trouble] }); return; }
     const block = (n % 3 !== 2 ? this.pickTalk(`wanderer:${this.def.id}`, areaBlocks) : null)
       ?? this.pickTalk('wanderer:general', w.general);
     if (n % 3 === 2) TALKS.set(`wanderer:${this.def.id}`, n + 1);
@@ -673,8 +736,10 @@ export class IsleWorldScene extends Phaser.Scene {
 
   private sail(dest: string): void {
     // Fallpoint is not sailed to: the Ferryman rows you, boat or no boat.
+    if (Coop.isGuest) { this.toast('Only the host charts the course. Wait on the quay.'); return; }
     if (dest === FALLPOINT) { this.travel(FALLPOINT, { pos: { ...FALLPOINT_LANDING } }); return; }
     if (!Save.S().boat.owned) { this.toast('You need a boat.'); return; }
+    Coop.send({ k: 'sea', dest });
     Save.setPlace(this.def.id, { x: this.px, y: this.py });
     // A voyage is fought from the deck with your whole element: it runs in the arena (SeaVoyageKit), no opponent aboard.
     const s = Save.S();
@@ -704,11 +769,16 @@ export class IsleWorldScene extends Phaser.Scene {
     const portrait = (g: Phaser.GameObjects.Graphics, x: number, y: number, t: number, talking: boolean) =>
       drawNpc(g, e.look, { x, y, t, look: 0.4, moving: false, talking, scale: 2.7 });
     const lines = c.beaten ? e.beaten : e.challenge;
-    const gimmick = e.mastered
+    const u = e.unrest ? Unrest.stateOf(e.unrest.court) : undefined;
+    const gimmick = e.unrest
+      ? (e.unrest.role === 'revolt' ? `REVOLT — “${e.name}” — ${u?.fuse ?? 0} fights until it boils over`
+        : e.unrest.role === 'leader' ? `RINGLEADER — “${e.name}” — ${e.loadout === 5 ? 'mastered, ' : ''}perked, the mob at their back`
+        : `INSURGENT — “${e.name}”`) + (u?.strong ? ' — KINGLESS' : '')
+      : e.mastered
       ? `${e.seat ?? 'Councilor'} — decree: “${e.name}” — PERFECTED`
       : e.fallen ? `“${e.name}” — ☄ FALLEN — every upgrade, mastered`
       : `“${e.name}” — difficulty ${'★'.repeat(e.difficulty)}${'☆'.repeat(5 - e.difficulty)}`;
-    const kind: IslesFightPayload['kind'] = e.mastered ? 'councilor' : getCourt(e.court) ? 'encounter' : 'warden';
+    const kind: IslesFightPayload['kind'] = e.unrest ? 'unrest' : e.mastered ? 'councilor' : getCourt(e.court) ? 'encounter' : 'warden';
     this.dialogue.open({
       name: e.foeName, title: gimmick, portrait, accent: e.mastered ? OBS.seam : e.fallen ? 0xff5a3a : 0xff7a4a, lines,
       choices: [
@@ -753,12 +823,31 @@ export class IsleWorldScene extends Phaser.Scene {
     }
   }
 
-  private launchFight(p: { kind: IslesFightPayload['kind']; id: string; court?: string }, foeElement: string, difficulty: number, enc?: EncounterDef): void {
+  /** The party's fight: the host called it (guest), or a guest asked the host for it. */
+  private fightCalled(call: FightCall, asked: boolean): void {
+    if (this.leaving) return;
+    this.dialogue.close();
+    this.ledger.close();
+    const enc = call.kind === 'prince' || call.kind === 'monarch' ? undefined : getEncounter(call.id);
+    this.launchFight({ kind: call.kind, id: call.id, court: call.court }, call.foeElement, call.difficulty, enc, asked ? undefined : call);
+  }
+
+  private launchFight(p: { kind: IslesFightPayload['kind']; id: string; court?: string }, foeElement: string, difficulty: number, enc?: EncounterDef, called?: FightCall): void {
     const s = Save.S();
+    // In a party a fight is everybody's. A guest asks the host for it; the host calls it for all.
+    let call = called;
+    if (!call && Coop.together) {
+      const ask: FightCall = { kind: p.kind, id: p.id, court: p.court, foeElement, difficulty, n: 1, seed: 0 };
+      if (Coop.isGuest) { Coop.send({ k: 'fight', call: ask }); this.toast('Calling the party to the fight…'); return; }
+      // Everyone out walking goes in; anyone still in a fight of their own sits it out.
+      call = { ...ask, n: 1 + Coop.walkersReady(), seed: (Math.random() * 0x7fffffff) | 0 };
+      if (call.n > 1) Coop.send({ k: 'fight', call });
+    }
     Save.setPlace(this.def.id, { x: this.px, y: this.py });
     const payload: IslesFightPayload = {
       slot: Save.activeIndex(), kind: p.kind, id: p.id, court: p.court, area: this.def.id,
       pos: { x: Math.round(this.px), y: Math.round(this.py) }, hard: s.hard,
+      ...(call && call.n > 1 ? { coop: { n: call.n, seed: call.seed, guest: Coop.isGuest } } : {}),
     };
     const meal = prepareLoadout();
     if (meal) { Save.take(meal, 1); s.meal = Save.count(meal) > 0 ? meal : null; Save.persist(); }
@@ -776,6 +865,9 @@ export class IsleWorldScene extends Phaser.Scene {
         bossId: boss ? bossIdFor(p.id) : undefined,
         isles: payload,
         playerPerk: PlayerData.getEquippedPerk(s.element),
+        // A rebel of the unrest: as many upgrades as its `loadout` says, and (a ringleader) a perk.
+        ...(enc?.loadout ? { npcLoadout: buildNpcLoadout(foeElement, enc.loadout) } : {}),
+        ...(enc?.unrest && enc.perk ? { npcPerk: enc.perk } : {}),
         // One of the Fallen Five: every upgrade and the mastery, but no perk — that is the Council's.
         ...(enc?.fallen ? { npcLoadout: buildNpcLoadout(foeElement, 5) } : {}),
         // A councilor is the element perfected: every upgrade, its mastery, its bound enhancement and a perk.
@@ -796,6 +888,7 @@ export class IsleWorldScene extends Phaser.Scene {
   }
 
   private openChest(p: Extract<Poi, { kind: 'chest' }>): void {
+    if (Coop.isGuest) { this.toast('This is the host\'s world: its chests are theirs to open.'); return; }
     const s = Save.S();
     if (s.chests.includes(p.id)) { this.toast('Empty.'); return; }
     if (!Save.unlocked(p.open)) { this.toast('Locked tight.'); Sfx.play('ui-denied'); return; }
@@ -823,6 +916,7 @@ export class IsleWorldScene extends Phaser.Scene {
    * world and the Fall — stepping through trades the save's progress lists (`Save.setFall`) and reloads here.
    */
   private useMeteor(): void {
+    if (Coop.isGuest) { this.toast('The star answers to whoever\'s world this is.'); return; }
     const m = getMeteor();
     const s = Save.S();
     // A cheat save opens the locks for nothing, so the Fall can be tested without a finished campaign.
@@ -892,6 +986,7 @@ export class IsleWorldScene extends Phaser.Scene {
 
   private pullLever(p: Extract<Poi, { kind: 'lever' }>): void {
     if (Save.hasFlag(p.flag)) { this.toast('Already pulled.'); return; }
+    if (Coop.isGuest) { this.toast('This is the host\'s world: the lever is theirs to pull.'); return; }
     Save.setFlag(p.flag);
     Sfx.play('gear-turn');
     this.cameras.main.shake(180, 0.004);
@@ -929,8 +1024,10 @@ export class IsleWorldScene extends Phaser.Scene {
   }
 
   /** Go to another area. */
-  travel(to: string, o: { arriveFrom?: string; pos?: Pt }): void {
+  travel(to: string, o: { arriveFrom?: string; pos?: Pt }, following = false): void {
     if (this.leaving) return;
+    // A party goes together: a guest asks the host to lead on; the host's going takes everyone.
+    if (!following && this.coop?.travel(to, o)) return;
     this.leaving = true;
     Sfx.play('whoosh');
     this.cameras.main.fadeOut(300, 0, 0, 0);
@@ -986,6 +1083,14 @@ export class IsleWorldScene extends Phaser.Scene {
     if (this.cheatTravel) {
       if (JD(k.T)) this.cheatTravel.toggle();
       else if (back && this.cheatTravel.isOpen) { this.cheatTravel.close(); return; }
+      // Cheat saves: U walks this court through peace → revolt → anarchy → peace.
+      const here = courtOfArea(this.def.id);
+      if (JD(k.U) && here) {
+        Unrest.debugCycle(here.id);
+        this.leaving = true;
+        this.scene.restart({ area: this.def.id, pos: { x: Math.round(this.px), y: Math.round(this.py) } });
+        return;
+      }
     }
     if (JD(k.TAB) || JD(k.I)) { this.openOverlay('IslesInventoryScene'); return; }
     if (JD(k.G)) { this.openOverlay('IslesGeneScene'); return; }
@@ -1026,7 +1131,14 @@ export class IsleWorldScene extends Phaser.Scene {
         { label: 'Resume', pick: () => {} },
         { label: 'Isle map (M)', pick: () => this.openMap() },
         { label: 'Inventory (TAB)', pick: () => this.openOverlay('IslesInventoryScene') },
-        { label: 'Save & quit to title', pick: () => { Save.setPlace(this.def.id, { x: this.px, y: this.py }); this.scene.start('TitleScene'); } },
+        ...(Coop.active
+          ? [{ label: Coop.isHost ? `Close the room (${Coop.roomCode ?? '…'})` : 'Leave the party', pick: () => {
+            const guest = Coop.isGuest;
+            Coop.leave();
+            if (guest) { this.leaving = true; this.scene.start('IsleWorldScene', { note: 'You are back in your own world.' }); } else this.toast('The room is closed.');
+          } }]
+          : [{ label: 'Play with friends — open this world', pick: () => { Coop.host(); this.toast('Opening a room… the code will show at the top left.'); } }]),
+        { label: 'Save & quit to title', pick: () => { Save.setPlace(this.def.id, { x: this.px, y: this.py }); Coop.leave(); this.scene.start('TitleScene'); } },
       ],
     });
   }
@@ -1068,12 +1180,19 @@ export class IsleWorldScene extends Phaser.Scene {
     this.drawMarks(t);
     this.updateActors(dt, now, view);
     this.updateCrowd(dt, now, view);
+    this.unrest.update(now, view);
+    this.coop?.update(now, { x: this.px, y: this.py, f: this.facing, m: live && this.moving }, dt);
     for (const c of this.champions) {
-      const on = inView(view, c.enc.at.x, c.enc.at.y);
+      const near = Math.hypot(this.px - c.pos.x, this.py - c.pos.y) < 150;
+      // A roaming insurgent stops and squares up when you come close.
+      if (c.roam && live && !near) this.unrest.roam(c.roam, dt, now);
+      const on = inView(view, c.pos.x, c.pos.y);
       c.walker.container.setVisible(on);
       c.plate.setVisible(on);
       c.mask?.setVisible(on);
-      if (on) c.walker.update(dt, c.enc.at.x, c.enc.at.y, false, Math.atan2(this.py - c.enc.at.y, this.px - c.enc.at.x));
+      if (c.roam) c.plate.setPosition(c.pos.x, c.pos.y - 62);
+      const walking = !!c.roam && c.roam.moving && live && !near;
+      if (on) c.walker.update(dt, c.pos.x, c.pos.y, walking, walking ? c.roam!.face : Math.atan2(this.py - c.pos.y, this.px - c.pos.x));
     }
     for (const b of this.bosses) {
       const on = inView(view, b.at.x, b.at.y);
@@ -1104,7 +1223,8 @@ export class IsleWorldScene extends Phaser.Scene {
 
   private updateActors(dt: number, now: number, view: Rect): void {
     for (const a of this.actors) {
-      const wander = a.def.wander ?? 0;
+      const cower = this.unrest.cowers(a.def);
+      const wander = cower ? 0 : a.def.wander ?? 0;
       if (wander > 0 && !a.talking) {
         if (!a.moving && now > a.idleUntil) {
           const ang = Math.random() * Math.PI * 2, r = Math.random() * wander;
@@ -1128,12 +1248,12 @@ export class IsleWorldScene extends Phaser.Scene {
       const on = inView(view, a.x, a.y);
       a.g.clear();
       a.g.setDepth(a.y);
-      if (on) drawNpc(a.g, a.def.look, { x: a.x, y: a.y, t: now / 1000 + a.def.at.x, look: a.look, moving: a.moving, talking: a.talking });
+      if (on) drawNpc(a.g, a.def.look, { x: a.x, y: a.y, t: now / 1000 + a.def.at.x, look: a.look, moving: a.moving, talking: a.talking, cower });
       a.plate.setPosition(a.x, a.y - 50 * (a.def.look.size ?? 1)).setAlpha(dP < 220 ? 1 : 0);
       // Barks
       if (a.bubble && now > a.bubble.until) { a.bubble.t.destroy(); a.bubble = null; }
       if (a.bubble) a.bubble.t.setPosition(a.x, a.y - 66 * (a.def.look.size ?? 1));
-      if (!a.bubble && !a.talking && dP < 170 && now > a.nextBark && a.def.barks?.length) {
+      if (!a.bubble && !a.talking && !cower && dP < 170 && now > a.nextBark && a.def.barks?.length) {
         const b = this.pickTalk(`bark:${a.def.id}`, a.def.barks);
         const line = b?.lines[Math.floor(Math.random() * b.lines.length)];
         if (line) a.bubble = { t: this.bubbleText(a.x, a.y - 66, line), until: now + 3600 };
@@ -1143,7 +1263,8 @@ export class IsleWorldScene extends Phaser.Scene {
   }
 
   private updateCrowd(dt: number, now: number, view: Rect): void {
-    const barks = this.def.crowd?.barks ?? [];
+    const uneasy = this.unrest.barks();
+    const barks: Talk[] = uneasy ? [{ lines: uneasy }] : this.def.crowd?.barks ?? [];
     for (const w of this.crowd) {
       if (now > w.idleUntil) {
         const a = w.path[w.seg], b = w.path[w.seg + 1];
@@ -3803,6 +3924,8 @@ export class IsleWorldScene extends Phaser.Scene {
       const outside = this.px < 0 || this.py < 0 || this.px > this.def.w || this.py > this.def.h;
       if (outside && rectHit(e.rect, this.px, this.py, 4)) {
         this.travel(e.exit.to, { arriveFrom: this.def.id });
+        // Still here (a guest, waiting on the host to lead): step back inside the gate.
+        if (!this.leaving) { const p = this.exitInside(e.exit); this.px = p.x; this.py = p.y; }
         return;
       }
     }
@@ -3879,10 +4002,14 @@ export class IsleWorldScene extends Phaser.Scene {
       const n = all.filter((e) => s.encounters.includes(e.id)).length;
       sub += s.princes.includes(court.prince.id) ? '  ·  FREED' : `  ·  champions ${n}/${all.length}`;
     }
+    if (court && Unrest.stateOf(court.id)) sub += `  ·  ${Unrest.hudLine(court.id)}`;
     if (s.hard) sub = `☄ THE FALL  ·  ${sub}`;
     this.hudArea.setText(sub);
     const rows = Quests.tracker(this.def.id).slice(0, 4);
-    this.hudTracker.setText(rows.map((r) => `${r.ready ? '✔' : '◆'} ${r.name}\n${r.hint}`).join('\n'));
+    // Trouble elsewhere heads the tracker: where it is, and how long it will keep.
+    const trouble = Unrest.active().filter((x) => x.court.id !== court?.id).slice(0, 3)
+      .map((x) => `${x.u.state === 'revolt' ? '⚠' : '☠'} ${x.court.name}\n${Unrest.hudLine(x.court.id).replace(/^. [A-Z]+ — /, '')}`);
+    this.hudTracker.setText([...trouble, ...rows.map((r) => `${r.ready ? '✔' : '◆'} ${r.name}\n${r.hint}`)].join('\n'));
   }
 
   private updateHud(now: number): void {
@@ -3919,7 +4046,7 @@ export class IsleWorldScene extends Phaser.Scene {
       g.fillStyle(e.open ? 0xffe2b0 : 0xa05040, 1);
       g.fillRect(x0 + Phaser.Math.Clamp(e.rect.x + e.rect.w / 2, 0, this.def.w) * sx - 3, y0 + Phaser.Math.Clamp(e.rect.y + e.rect.h / 2, 0, this.def.h) * sy - 3, 6, 6);
     }
-    for (const c of this.champions) { g.fillStyle(c.beaten ? 0x6a6a6a : c.enc.quest ? 0x6ac8ff : 0xff6a3a, 1); g.fillCircle(x0 + c.enc.at.x * sx, y0 + c.enc.at.y * sy, 2.5); }
+    for (const c of this.champions) { g.fillStyle(c.beaten ? 0x6a6a6a : c.enc.quest ? 0x6ac8ff : 0xff6a3a, 1); g.fillCircle(x0 + c.pos.x * sx, y0 + c.pos.y * sy, c.enc.unrest ? 3.2 : 2.5); }
     for (const b of this.bosses) { g.fillStyle(0xff3a5a, 1); g.fillCircle(x0 + b.at.x * sx, y0 + b.at.y * sy, 4); }
     for (const a of this.actors) {
       const quest = allQuests().some((q) => q.giver === a.def.id && (Quests.offerable(q) || Quests.isReady(q)));
@@ -3930,6 +4057,7 @@ export class IsleWorldScene extends Phaser.Scene {
       if (p.kind === 'waystone') { g.fillStyle(0x7ad8ff, 1); g.fillCircle(x0 + p.at.x * sx, y0 + p.at.y * sy, 3); }
       if (p.kind === 'water') { g.fillStyle(0x4a9ad8, 0.6); g.fillRect(x0 + p.shape.x * sx, y0 + p.shape.y * sy, p.shape.w * sx, p.shape.h * sy); }
     }
+    for (const o of this.coop?.dots() ?? []) { g.fillStyle(0x7ad8ff, 1); g.fillCircle(x0 + o.x * sx, y0 + o.y * sy, 3); }
     g.fillStyle(0xffffff, 1); g.fillCircle(x0 + this.px * sx, y0 + this.py * sy, 3);
     g.lineStyle(1, 0x000000, 1); g.strokeCircle(x0 + this.px * sx, y0 + this.py * sy, 3);
   }
@@ -3960,8 +4088,9 @@ export class IsleWorldScene extends Phaser.Scene {
     const t1 = this.add.text(W / 2, 110, this.def.name.toUpperCase(), {
       fontFamily: FONT_DISPLAY, fontSize: '34px', color: '#ffe2b0', stroke: '#1a0a04', strokeThickness: 7,
     }).setOrigin(0.5).setScrollFactor(0).setDepth(HUD_Z + 3).setAlpha(0);
-    const t2 = this.add.text(W / 2, 148, court ? `${this.def.subtitle} — ${court.prince.name}, ${court.prince.title}` : this.def.subtitle, {
-      fontFamily: FONT_UI, fontSize: '16px', color: '#e8c8a0', stroke: '#000', strokeThickness: 4,
+    const trouble = this.unrest.subtitle();
+    const t2 = this.add.text(W / 2, 148, trouble ?? (court ? `${this.def.subtitle} — ${court.prince.name}, ${court.prince.title}` : this.def.subtitle), {
+      fontFamily: FONT_UI, fontSize: '16px', color: trouble ? '#ff9a78' : '#e8c8a0', stroke: '#000', strokeThickness: 4,
     }).setOrigin(0.5).setScrollFactor(0).setDepth(HUD_Z + 3).setAlpha(0);
     this.tweens.add({ targets: [t1, t2], alpha: 1, duration: 500, hold: 2200, yoyo: true, onComplete: () => { t1.destroy(); t2.destroy(); } });
     if (this.initData.after?.kind === 'prince' && court) {

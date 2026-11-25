@@ -3,6 +3,8 @@ import { isCheatMode } from '../../data/Cheats';
 import { FONT_DISPLAY, FONT_UI } from '../../ui';
 import { Sfx } from '../../audio';
 import * as Save from '../IslesSave';
+import * as Unrest from '../systems/Unrest';
+import { Coop } from '../net/IslesCoop';
 import { getArea, courtOfArea, isleOf, getIsle, ALL_ISLE_IDS, ISLES, benchSeats, courtChampions } from '../IslesRegistry';
 import { benchOf } from '../content/pinnacle/spec';
 import { drawPinnacle, OBS } from '../art/PinnacleArt';
@@ -213,6 +215,11 @@ export class IslesMapScene extends Phaser.Scene {
     const ws = a.pois.find((p) => p.kind === 'waystone');
     const pos = ws && 'at' in ws ? { x: ws.at.x, y: ws.at.y + 46 } : a.spawn;
     Sfx.play('teleport');
+    // A party travels together: a guest asks the host to take everyone; the host's waystone takes everyone.
+    if (Coop.together) {
+      Coop.send({ k: 'goto', area: id, x: pos.x, y: pos.y });
+      if (Coop.isGuest) { this.close(); return; }
+    }
     Save.setPlace(id, pos);
     this.scene.stop('IsleWorldScene');
     this.scene.start('IsleWorldScene', { area: id, pos });
@@ -590,6 +597,19 @@ export class IslesMapScene extends Phaser.Scene {
       g.fillStyle(a ? col : 0x7a6a5a, 1); g.fillCircle(p.x, p.y, 16);
       if (freed) { g.fillStyle(0xffffff, 1); g.fillRect(p.x + 10, p.y - 30, 2, 18); g.fillStyle(0x6aff9a, 1); g.fillTriangle(p.x + 12, p.y - 30, p.x + 26, p.y - 25, p.x + 12, p.y - 20); }
       if (attuned) { g.lineStyle(2, 0x3a8ad8, 1); g.strokeCircle(p.x, p.y, 23); }
+      const trouble = court ? Unrest.stateOf(court.id) : undefined;
+      if (trouble) {
+        // A court in revolt smoulders on the chart; one in anarchy burns, its freedom flag struck.
+        const hot = trouble.state === 'anarchy';
+        const k = 0.5 + Math.sin(t * (hot ? 7 : 4) + p.x) * 0.5;
+        g.lineStyle(3, hot ? 0xd81a1a : 0xff9a2a, 0.5 + k * 0.5); g.strokeCircle(p.x, p.y, 27 + k * 3);
+        for (let i = 0; i < (hot ? 3 : 1); i++) {
+          const fx = p.x - 12 + i * 12, fy = p.y - 16 - (i % 2) * 4, fl = Math.sin(t * 9 + i * 2) * 2;
+          g.fillStyle(0xff5a1a, 1); g.fillTriangle(fx - 5, fy, fx + 5, fy, fx + fl, fy - 14);
+          g.fillStyle(0xffd27a, 1); g.fillTriangle(fx - 2.5, fy, fx + 2.5, fy, fx - fl * 0.5, fy - 8);
+        }
+        if (hot) { g.lineStyle(3, 0xb81a1a, 1); g.lineBetween(p.x + 6, p.y - 32, p.x + 28, p.y - 16); }
+      }
       if (id === this.from) {
         const bob = Math.sin(t * 4) * 3;
         g.fillStyle(0xc81a1a, 1); g.fillTriangle(p.x - 7, p.y - 34 + bob, p.x + 7, p.y - 34 + bob, p.x, p.y - 22 + bob);
@@ -666,7 +686,9 @@ export class IslesMapScene extends Phaser.Scene {
         const court = courtOfArea(id);
         const label = a?.name ?? id;
         let sub = '';
-        if (court) sub = s.princes.includes(court.prince.id) ? 'freed' : `${courtChampions(court).filter((e) => s.encounters.includes(e.id)).length}/${courtChampions(court).length} · ${court.prince.name}`;
+        const trouble = court ? Unrest.stateOf(court.id) : undefined;
+        if (court && trouble) sub = trouble.state === 'revolt' ? `⚠ REVOLT — ${trouble.fuse} left` : `☠ ANARCHY — ${Unrest.insurgentsLeft(trouble) || 'ringleader'}${Unrest.insurgentsLeft(trouble) ? ' insurgents' : ''}`;
+        else if (court) sub = s.princes.includes(court.prince.id) ? 'freed' : `${courtChampions(court).filter((e) => s.encounters.includes(e.id)).length}/${courtChampions(court).length} · ${court.prince.name}`;
         else if (benchSeats(id).length) sub = `${benchSeats(id).filter((e) => s.encounters.includes(e)).length}/${benchSeats(id).length} seats`;
         const t = txt(p.x, p.y + 24, `${label}${sub ? `\n${sub}` : ''}`, { fontFamily: FONT_UI, fontSize: '12px', color: id === this.sel ? '#1a0a00' : '#3a2412', align: 'center', fontStyle: id === this.sel ? 'bold' : 'normal' }).setOrigin(0.5, 0);
         const z = this.add.zone(p.x, p.y, 48, 48).setInteractive({ useHandCursor: true });

@@ -46,6 +46,12 @@ export type Cond =
    * crown back on its head), `{ fall: false }` in the waking world. See `docs/ten-isles/fall.md`.
    */
   | { fall: boolean }
+  /**
+   * The court is being taken back (`systems/Unrest`): in `revolt` (an agitator, a fuse), in `anarchy`
+   * (insurgents, a ringleader, a dark market), or — with no `state` — either. Use it under `{ not: … }` for
+   * lines that only fit a court at peace.
+   */
+  | { unrest: string; state?: 'revolt' | 'anarchy' }
   | { not: Cond }
   | { all: Cond[] }
   | { any: Cond[] };
@@ -461,6 +467,12 @@ export interface EncounterDef {
    * drawn star-scarred, and fights with every upgrade of its element and its mastery.
    */
   fallen?: boolean;
+  /** Multiplier on the damage the foe deals (stat-boosted rebels). Default 1. */
+  power?: number;
+  /** Bot loadout level 1–5 (`buildNpcLoadout`): 3 three upgrades, 4 four, 5 all of them and the mastery. */
+  loadout?: number;
+  /** A fight of the unrest (never in a bundle — `systems/Unrest` writes these from the save). */
+  unrest?: { court: string; role: 'revolt' | 'insurgent' | 'leader'; index?: number };
 }
 
 /** What a gimmick may touch. Built per fight by `IslesFightKit`. */
@@ -839,7 +851,8 @@ export interface IsleDef {
 /** What rides ArenaScene's `isles` payload. */
 export interface IslesFightPayload {
   slot: number;
-  kind: 'encounter' | 'prince' | 'monarch' | 'warden' | 'councilor' | 'voyage';
+  /** `unrest`: a revolt's agitator, an insurgent or a ringleader — an encounter written by `systems/Unrest`. */
+  kind: 'encounter' | 'prince' | 'monarch' | 'warden' | 'councilor' | 'voyage' | 'unrest';
   /** Encounter id, prince id or monarch id (a voyage: its destination). */
   id: string;
   /** `kind: 'voyage'` — where the boat is bound: an isle id, `'pinnacle'` or `'wastes'`. Fought from the deck (SeaVoyageKit). */
@@ -849,6 +862,11 @@ export interface IslesFightPayload {
   area: string;
   pos: Pt;
   hard: boolean;
+  /**
+   * Fought by a co-op party (`net/IslesCoop`): `n` players went in, every rule rolls from `seed`, and a
+   * `guest` takes home coins and orbs but changes nothing in the world (it is the host's).
+   */
+  coop?: { n: number; seed: number; guest: boolean };
 }
 
 /** Everything one court contributes. Each court folder exports one of these. */

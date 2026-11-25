@@ -19,6 +19,12 @@ export const ABILITY_TAGS: Record<string, readonly AbilityTag[]> = {
   'flame-body': ['recast'],
   // Fear (element id `silence`): Haunt is recast to swing the hook, and again to slam whoever it caught
   'fear-haunt': ['recast'],
+  // Emotion (element id `conquest`): the click also drags soldiers; Q again slams the standard down
+  'emotion-stab': ['hold'],
+  'emotion-nationalism': ['recast'],
+  // Air: hold the click for the barrage; F is pressed again on each ring
+  'pierce-the-skies': ['hold'],
+  'air-combo': ['recast'],
   // Water
   'pressure-dagger': ['hold'],
   // Earth

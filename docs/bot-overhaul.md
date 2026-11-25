@@ -154,7 +154,7 @@ fate, creation, growth, rubber, acid, hunt, time; then the remainder). For each 
   `up(owner, slot)`, but the base rotation has not been rewritten and the movement profile
   has not been retuned.
 
-- **Conquest (2026-08-12), step 2 + step 4 only.** Conquest Mastery shipped, so the kit now has
+- **Conquest (2026-08-12), step 2 + step 4 only.** *(History: Conquest was replaced by Emotion on 2026-11-25 — see the Emotion section at the end. `ConquestKit` no longer exists.)* Conquest Mastery shipped, so the kit now has
   its npc half. `npcMasteryActive` drives `setMastered` (a crown on the helm) and the
   Dictatorship passive runs for the bot exactly as it does for the player — the pike scales with
   whatever is banked, which a hoarding bot gets for free. `NPC_MASTERY_BINDS.conquest` gives up
@@ -777,3 +777,43 @@ Magic was replaced by Math (`MathKit`). `doMagicAbilities` reads only the kit's 
 - `npcMathPillars`, `npcMathExamRunning`, `npcMathBusy` (42's cutscene).
 
 The kit, not the AI, does the bot's sums (`BOT_SOLVE_MS` + slack from `castSkipChance`) and creeps its "cursor" after the target.
+
+## Emotion (element id `conquest`) — rebuilt 2026-11-25
+
+Conquest was replaced by Emotion (`EmotionKit`). The army is board state the AI routine has no view
+of, so **the kit plays it** (`EmotionKit.updateBot`): every soldier without a quarry is sent at
+whoever is nearest it (the bot's "drag", every 0.9s + slack from `castSkipChance`), and the grand
+standard is slammed when a target is inside 60% of the blast (92% after 2.5s held, or at 20% HP,
+or just before the 10s runs out). `doEmotionAbilities` reads only published fields:
+
+- `npcEmotionStance` — holding the standard: cast nothing, walk straight at the target.
+- `npcEmotionBusy` — winding up or charging: every cast would be refused (and refunded).
+- `npcEmotionRallyCount` — troops → Maximum Nationalism (2+ soldiers within the rally ring, or the target under 200px).
+- `npcEmotionEcstasyCount` — troops → Euphoria (2+ soldiers would turn ecstatic; the charge is aimed at the target but cast for the army).
+- `npcEmotionDepressEdge` — health lead → Depress (the damage amp only exists while the bot is the healthier one).
+- `npcEmotionTroops` — Rile while fewer than six are standing.
+
+Gotcha: soldiers are `TroopBody` fighters in `enemies` (npc-owned) / `player.bodySections`
+(player-owned), so a bot fighting Emotion hits them with whatever it throws at the player — but
+nothing tells it to *aim* at them. No mastery, upgrades or perks yet.
+
+- **Air — the assassin (2026-11-25, replaces the wind dancer; Weather Cycle and every `airTornado*` /
+  `airWindDodge` / `npcAirWeatherSlot` / `npcAirGustRecall` field above are gone).** Stealth (0–100,
+  banked in the kit's own clouds) is the fuel for everything, so the kit does three things the cast
+  list cannot: `AirKit.updateBot` turns a bot with under 60 stealth toward its nearest cloud when the
+  target is more than 230px off (it keeps the AI's speed, only the heading changes) and throws the
+  0.5s jab flurry after a stab; `openRing` schedules the Combo's two timed presses (lands 90% of the
+  time minus 70% of `castSkipChance`); `beyGoal` steers the Tornado Blade — to an own dagger field
+  within 260px first, then at the target. `doAirAbilities` reads only published fields:
+
+  - `npcAirBusy` — lunging, spinning or levitating: cast nothing.
+  - `npcAirPierceReach` — how far a stab thrown now reaches (lunge from stealth + 62px of knife).
+  - `npcAirBackstab` / `npcAirTargetWinded` — Knock → stab (in the blind spot, or they cannot turn): stab first.
+  - `npcAirFieldLive` — Combo's dagger field → Tornado Blade (the Blade collects the knives).
+  - `npcAirBigStab` — clouds → stab (over 50 stealth and in reach).
+  - `npcAirCoverPays` — cloud → Cloud Cover (in a cloud, cloak off, under 60 stealth: doubled gain).
+  - `npcAirComboLive` — a ring is up: F is the kit's.
+
+  Gotchas: a cloaked player sets `targetInvisible`; a bot is `isLocked` while `airKit.locksNpc()`
+  (shoved by Knock, lunging, or spinning). Winded bots do not know to stand still — they run the
+  gauge dry and crawl, which is the intended read of the debuff. No mastery, upgrades or element perks yet.

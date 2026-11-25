@@ -60,7 +60,7 @@ The `CastContext` (defined in `src/elements/Ability.ts`) is a large object passe
 Menu, campaign, gauntlet and online lobby all read `src/data/ElementRoster.ts` — **never hand-copy the roster**.
 Cards come from `src/ui/ElementSelectGrid.ts` (no emoji on a card; live portrait), profiles from
 `src/data/ElementProfiles.ts` (a new element needs an entry). Id traps: `sand` is Time, `dune` is Sand, `slime`
-is Venom, `gum` is Savor, `chalk` is Paint, `magic` is Math (kit: `MathKit`), `silence` is Fear (kit: `FearKit`). Details: `docs/claude/element-selection.md`.
+is Venom, `gum` is Savor, `chalk` is Paint, `magic` is Math (kit: `MathKit`), `silence` is Fear (kit: `FearKit`), `conquest` is Emotion (kit: `EmotionKit`). Details: `docs/claude/element-selection.md`.
 
 ### Menu Dioramas
 

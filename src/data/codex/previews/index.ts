@@ -119,16 +119,11 @@ export const PREVIEWS: Record<string, PreviewScript> = {
   'life:thorn-drag:up': life.thornDragUpgraded,
 
   // ── Air ──
-  'air:wind-splice': air.windSplice,
-  'air:wind-splice:up': air.windSpliceUpgraded,
-  'air:spin-dance': air.spinDance,
-  'air:spin-dance:up': air.spinDanceUpgraded,
-  'air:gale-glaive': air.galeGlaive,
-  'air:gale-glaive:up': air.galeGlaiveUpgraded,
-  'air:sky-grapple': air.skyGrapple,
-  'air:sky-grapple:up': air.skyGrappleUpgraded,
-  'air:wind-breaker': air.windBreaker,
-  'air:wind-breaker:up': air.windBreakerUpgraded,
+  'air:pierce-the-skies': air.pierce,
+  'air:air-knock': air.knock,
+  'air:cloud-cover': air.cloudCover,
+  'air:air-combo': air.combo,
+  'air:tornado-blade': air.tornadoBlade,
 
   // ── Earth ──
   'earth:bash': earth.bash,
@@ -812,17 +807,12 @@ export const PREVIEWS: Record<string, PreviewScript> = {
   'technology:tech-admin': technology.admin,
   'technology:tech-admin:up': technology.adminUpgraded,
 
-  // ── Conquest ──
-  'conquest:conquest-banner': conquest.banner,
-  'conquest:conquest-banner:up': conquest.bannerUpgraded,
-  'conquest:conquest-barracks': conquest.barracks,
-  'conquest:conquest-barracks:up': conquest.barracksUpgraded,
-  'conquest:conquest-turret': conquest.turret,
-  'conquest:conquest-turret:up': conquest.turretUpgraded,
-  'conquest:conquest-barricade': conquest.barricade,
-  'conquest:conquest-barricade:up': conquest.barricadeUpgraded,
-  'conquest:conquest-expansion': conquest.expansion,
-  'conquest:conquest-expansion:up': conquest.expansionUpgraded,
+  // ── Emotion (element id `conquest`) ──
+  'conquest:emotion-stab': conquest.stab,
+  'conquest:emotion-rile': conquest.rile,
+  'conquest:emotion-depress': conquest.depress,
+  'conquest:emotion-euphoria': conquest.euphoria,
+  'conquest:emotion-nationalism': conquest.nationalism,
   // ── Fear (id `silence`) ──
   'silence:fear-phobia': silence.phobia,
   'silence:fear-grasp': silence.grasp,
@@ -838,8 +828,7 @@ export const PREVIEWS: Record<string, PreviewScript> = {
   'silence:passive:reassurance': silence.passiveReassurance,
 
   // ── Passives ──
-  'air:passive:wind-dodge': subj.airWindDodge,
-  'air:passive:momentum': subj.airMomentum,
+  'air:passive:clouds': air.passiveClouds,
   'life:passive:the-garden': subj.lifeTheGarden,
   'earth:passive:the-shield': subj.earthShieldPassive,
   'ice:passive:frost-stacks': ice.passiveFrostStacks,
@@ -948,11 +937,7 @@ export const PREVIEWS: Record<string, PreviewScript> = {
   'sound:passive:out-of-tune': sound.outOfTune,
   'technology:passive:the-cruncher-streak': technology.theCruncherStreak,
   'technology:passive:two-screens': technology.twoScreens,
-  'conquest:passive:the-board': conquest.theBoard,
-  'conquest:passive:authority': conquest.authorityPassive,
-  'conquest:passive:one-path-only': conquest.onePathOnly,
-  'conquest:mastery:dictatorship': conquest.masteryDictatorship,
-  'conquest:mastery:market': conquest.masteryMarket,
+  'conquest:passive:soldiers': conquest.passiveSoldiers,
 
   // ── Perks ──
   'fire:perk:alcohol': subj.firePerkAlcohol,
@@ -961,11 +946,6 @@ export const PREVIEWS: Record<string, PreviewScript> = {
   'water:perk:water-splashy': water.perkSplashy,
   'water:perk:water-poseidon': water.perkPoseidon,
   'life:perk:mycology': subj.lifePerkMycology,
-  'air:perk:hawk': subj.airPerkHawk,
-  'air:perk:air-quick': air.perkQuick,
-  'air:perk:air-gust': air.perkGust,
-  'air:perk:air-vacuum': air.perkVacuum,
-  'air:perk:air-blowback': air.perkBlowback,
   'earth:perk:obsidian': subj.earthPerkObsidian,
   'ice:perk:rink': ice.perkRink,
   'ice:perk:snow': ice.perkSnow,
@@ -1011,8 +991,6 @@ export const PREVIEWS: Record<string, PreviewScript> = {
   'water:mastery:siphon': subj.waterMasterySiphon,
   'life:mastery:thorn-thrash': subj.lifeMasteryThornThrash,
   'life:mastery:reap': subj.lifeMasteryReap,
-  'air:mastery:dancers-momentum': subj.airMasteryDancersMomentum,
-  'air:mastery:weather-cycle': subj.airMasteryWeatherCycle,
   'earth:mastery:unbreakable': subj.earthMasteryUnbreakable,
   'earth:mastery:dust-screen': subj.earthMasteryDustScreen,
   'ice:mastery:viral-frost': ice.masteryViralFrost,
@@ -1083,7 +1061,7 @@ export function getPreview(
  * so, because a passive has no cast to watch for and a perk can rewrite what a key does. They
  * share the registry under a namespaced key so there is one place to look:
  *
- *   `fire:mastery:heatwave`   `water:perk:stalagmite`   `air:passive:wind-dodge`
+ *   `fire:mastery:heatwave`   `water:perk:stalagmite`   `air:passive:clouds`
  */
 export function getSubjectPreview(
   elementId: string, kind: 'passive' | 'perk' | 'mastery', id: string,

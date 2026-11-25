@@ -21,6 +21,9 @@ import { PINNACLE_ISLE } from './content/pinnacle';
 import { METEOR_BUNDLE } from './content/meteor';
 import { FALLPOINT } from './content/meteor/spec';
 import { BOATS, DOCK_UPGRADES } from './content/sea';
+import { RIOT_GIMMICKS } from './content/unrest/riot';
+import { LEADER_GIMMICKS } from './content/unrest/ringleader';
+import { darken, darkShop } from './content/unrest/darkMarket';
 
 /**
  * Every isle's content, flattened into lookup tables. Isles register by being listed in
@@ -109,6 +112,21 @@ for (const b of BUNDLES) {
   }
 }
 
+// The unrest: its street-fight rules, and a dark market for every court — the tainted twin of each charm
+// that court's own counters sell (see `content/unrest/darkMarket`).
+for (const g of [...RIOT_GIMMICKS, ...LEADER_GIMMICKS]) put(gimmicks, g.id, g, 'gimmick');
+for (const b of BUNDLES) {
+  for (const cb of b.courts) {
+    const charms = [...new Set(cb.shops.flatMap((s) => s.stock))].filter((id) => {
+      const it = items.get(id);
+      return !!it && it.kind === 'charm' && it.price !== undefined;
+    });
+    for (const id of charms) { const d = darken(items.get(id)!); put(items, d.id, d, 'item'); }
+    const shop = darkShop(cb.court.id, cb.court.name, charms);
+    put(shops, shop.id, shop, 'shop');
+  }
+}
+
 // Fallpoint — the meteor's shoal — rides the Pinnacle's bundle (the Ferryman is its wanderer there too).
 put(areas, METEOR_BUNDLE.area.id, METEOR_BUNDLE.area, 'area');
 isleOfArea.set(METEOR_BUNDLE.area.id, PINNACLE_ISLE.isle.id);
@@ -167,7 +185,14 @@ export const allIslesBosses = (): WorldBossDef[] => [...bosses.values()];
 
 export const getArea = (id: string) => areas.get(id);
 export const getCourt = (id: string) => courts.get(id);
-export const getEncounter = (id: string) => encounters.get(id);
+/**
+ * Fights that are not in any bundle — the unrest's agitators, insurgents and ringleaders are written from
+ * the save by `systems/Unrest`, which registers itself here.
+ */
+let dynamicEncounter: (id: string) => EncounterDef | undefined = () => undefined;
+export function registerEncounterResolver(f: (id: string) => EncounterDef | undefined): void { dynamicEncounter = f; }
+export const getEncounter = (id: string) => encounters.get(id) ?? dynamicEncounter(id);
+export const allGimmicks = (): GimmickDef[] => [...gimmicks.values()];
 export const getGimmick = (id: string) => gimmicks.get(id);
 export const getIslesBoss = (worldId: string) => bosses.get(worldId);
 export const getIsleItem = (id: string) => items.get(id);

@@ -39,9 +39,14 @@ import type { BoatDef, IsleDef, Pt } from '../IslesTypes';
  * when broken, glass reefs that surface after a seam-flash warning, and the Shroud's last squalls.
  */
 
-/** The ship sits mid-screen, bow up; her stem is here. */
+/** The ship sits low on the screen, bow up, so the sea ahead of her is long enough to read. */
 const SHIP_X = 480;
-const BOW_Y = 128;
+/** Her stern rests here whatever her length — just above the ability tray; the bow falls out of that. */
+const STERN_Y = 600;
+/** Where a mid-sized hull's stem lands (only the pre-`start` default; `start` sets the real one). */
+const BOW_Y = STERN_Y - 360;
+/** How far ahead of the stem a beast lies when it crosses the bow. */
+const BEAST_LEAD = 68;
 /** How much of her length the bow takes to fill out to full beam. */
 const BOW_FRAC = 0.38;
 /** How far inside the hull's edge the crew's feet stop. */
@@ -308,7 +313,7 @@ export class SeaVoyageKit {
     // A bigger boat is more deck to stand on — and more hull for the sea to find.
     this.shipLen = Math.round(190 + this.boat.len * 3.85);
     this.shipHw = Math.round(this.shipLen * 0.27);
-    this.bowY = BOW_Y;
+    this.bowY = STERN_Y - this.shipLen;
     this.kx = SHIP_X; this.ky = this.bowY + 44;
 
     // Nobody to duel out here: the opponent's body is shelved for the whole voyage.
@@ -1247,8 +1252,9 @@ export class SeaVoyageKit {
     const b = this.beast;
     if (!b) return;
     if (b.phase === 'rise') {
-      b.y = Phaser.Math.Linear(b.y, 60, 0.03);
-      if (b.y > 52) { b.phase = 'fight'; b.t = 0; }
+      const lie = this.bowY - BEAST_LEAD;
+      b.y = Phaser.Math.Linear(b.y, lie, 0.03);
+      if (b.y > lie - 8) { b.phase = 'fight'; b.t = 0; }
       return;
     }
     if (b.phase === 'sink') {
@@ -1259,7 +1265,7 @@ export class SeaVoyageKit {
     // It works round the ship: lying off one beam, then crossing ahead of the bow to the other.
     const u = Math.tanh(3 * Math.sin(b.t * 0.32));
     b.x = SHIP_X + (this.shipHw + 140) * u;
-    b.y = 60 + (this.shipLen * 0.42 + Math.sin(b.t * 1.1) * 40) * u * u;
+    b.y = this.bowY - BEAST_LEAD + (this.shipLen * 0.42 + Math.sin(b.t * 1.1) * 40) * u * u;
     b.nextAttack -= dt;
     if (b.attack) {
       b.attackT += dt;

@@ -18,8 +18,8 @@ section current as work lands.
 - **Items do things,** not just stats — each runs a bespoke script.
 - **Dialogue reacts.** Every NPC has lines per world state (default → quest stages → court freed →
   monarch fallen → revolt/anarchy).
-- **Solo, duo or trio.** Co-op is online over the existing PeerJS rooms (later milestone); every
-  system is written player-agnostic.
+- **Solo, duo or trio.** Co-op is online over the existing PeerJS rooms: the host's save is the world, friends
+  walk it and fight in it with their own element and pockets (`docs/ten-isles/coop.md`).
 
 ## Currencies
 
@@ -68,6 +68,8 @@ only the overview (this file) and its own isle:
 | Solmara (light) | `docs/ten-isles/light.md` |
 | **The Obsidian Pinnacle** (the finale) | `docs/ten-isles/pinnacle.md` — builder brief `docs/ten-isles-pinnacle-brief.md` |
 | **The meteor and the Fall** (hard mode) | `docs/ten-isles/fall.md` — builder brief `docs/ten-isles-fall-brief.md` |
+| **The unrest** (revolts, anarchy, the dark market) | `docs/ten-isles/unrest.md` |
+| **Co-op** (duo / trio over PeerJS rooms) | `docs/ten-isles/coop.md` |
 
 A new isle gets a new file here before its builders launch.
 
@@ -293,7 +295,9 @@ A new isle gets a new file here before its builders launch.
   Not runtime-tested. Known validator gaps: no check that a rule is exploitable or that the bot uses its exploit;
   smoke never sets `stunnedUntil` and its `shotsNear` mock is one fixed shot; older (pre-Light) Fallen gimmicks still
   use `ctx.float` text pop-ups.
-- Not yet built: revolts / anarchy / dark market; online co-op.
+- Still to do: remove the Classic campaign — blocked on a design pass, because Classic is load-bearing (the Vault's
+  57 chests are paid in Classic keys, the ten unstable elements' upgrades unlock from its Corrupt worlds, and the
+  Amalgam / Reality finale lives in it). User chose to keep it for now (2026-11-24).
 - 2026-11-24: **sailing is fought from the deck.** `SeaVoyageScene` is gone; `SeaVoyageKit` runs inside ArenaScene
   (isles payload `kind: 'voyage'`, launched by `IsleWorldScene.sail`, hosted and updated last by IslesFightKit; the npc
   is shelved and `this.isles?.kind === 'voyage'` keeps its AI dormant). The boat sails herself and is a deck to walk on
@@ -303,3 +307,19 @@ A new isle gets a new file here before its builders launch.
   slams) washes over the deck at the player, `CREW_HIT` 40 HP per plank's worth; at 1 HP they go OVERBOARD (hold lost,
   boat kept). A beast is one strike target. Dock upgrades re-read: Long Rudder = fewer hull-bound rocks, Bow Cannon =
   an automatic bow gun, Trawl Net = reach from the rail, Sails = shorter crossings. Not runtime-tested.
+- 2026-11-24: **the unrest — revolts, anarchy, the dark market** (`docs/ten-isles/unrest.md`). Engine-level, so all
+  sixty courts have it: every fight is a day; agitators rise in freed courts (one fight: random element, a borrowed
+  court rule, upgrades and heavier stats, a fuse); lose or ignore it and the court falls to anarchy — a ruined
+  overlay drawn over the court's own painter, cowering townsfolk, shut shops, roaming insurgents under six new
+  street rules, then a ringleader under *Mob Rule* — and a dark-market dealer selling a tainted twin of every charm
+  that court sells (240 generated). Quicker and stronger once the King is dead. Save: `unrest` / `unrestClock`
+  (shelved with the world by `setFall`); Cond `{ unrest }`; `EncounterDef.power` / `loadout`; payload kind `unrest`;
+  `registerEncounterResolver`. Validator smoke-runs the rules and simulates the whole cycle. Not runtime-tested;
+  no court has bespoke unrest dialogue or a hand-painted ruin yet.
+- 2026-11-24: **online co-op, first version** (`docs/ten-isles/coop.md`). Host opens their world from the ESC menu;
+  friends press J on the voyage screen and join by room code. Host-owned world mirrored to guests through
+  `IslesSave.setVisiting` (a proxy: world fields from the host's snapshot, pockets the guest's own, nothing written
+  home); shared roaming (`CoopWorld`: walkers, party-wide gates and waystones, fights called for everyone); shared
+  fights (`CoopFight`: one host-authoritative health pool, foe scaled per player, down-and-get-up instead of dying,
+  ally figures). Net protocol 66 (`{ t: 'isles' }`). Type-checked and built; **not runtime-tested** — the foe's
+  attacks are still per screen (see the doc's limits).

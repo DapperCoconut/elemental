@@ -6,6 +6,7 @@ import { TownWalker } from '../../campaign/town/TownWalker';
 import * as Save from '../IslesSave';
 import { getArea, ISLES } from '../IslesRegistry';
 import { drawPinnacle } from '../art/PinnacleArt';
+import { Coop } from '../net/IslesCoop';
 
 /**
  * The Ten Isles' front door: three save slots over a moonlit sea, and — for an empty slot — the
@@ -31,10 +32,12 @@ export class IslesSlotScene extends Phaser.Scene {
   create(): void {
     Music.play('campaign');
     this.mode = 'slots';
+    // Back at the front door: any party is over.
+    Coop.leave();
     this.sel = Save.activeIndex();
     this.elements = allSelectableElements().filter((e) => e.id !== 'quantum');
     this.bg = this.add.graphics();
-    this.keys = this.input.keyboard!.addKeys('W,S,A,D,UP,DOWN,LEFT,RIGHT,E,SPACE,ENTER,ESC,X,DELETE') as Record<string, Phaser.Input.Keyboard.Key>;
+    this.keys = this.input.keyboard!.addKeys('W,S,A,D,UP,DOWN,LEFT,RIGHT,E,SPACE,ENTER,ESC,X,DELETE,J') as Record<string, Phaser.Input.Keyboard.Key>;
     this.render();
   }
 
@@ -48,6 +51,8 @@ export class IslesSlotScene extends Phaser.Scene {
       if (up) { this.sel = (this.sel + 2) % 3; Sfx.play('ui-hover'); this.render(); }
       if (down) { this.sel = (this.sel + 1) % 3; Sfx.play('ui-hover'); this.render(); }
       if (go) this.choose(this.sel);
+      // J: take this voyage into a friend's world.
+      if (JD(k.J) && Save.slots()[this.sel]) { Save.setActive(this.sel); Sfx.play('ui-click'); this.scene.start('IslesJoinScene'); return; }
       if ((JD(k.X) || JD(k.DELETE)) && Save.slots()[this.sel]) { this.mode = 'confirmDelete'; this.render(); }
       if (back) this.scene.start('TitleScene');
     } else if (this.mode === 'pick') {
@@ -166,7 +171,7 @@ export class IslesSlotScene extends Phaser.Scene {
     });
     const help = this.mode === 'confirmDelete'
       ? `Delete ${slots[this.sel]?.name ?? 'this voyage'} forever?  E = delete · ESC = keep`
-      : 'W/S choose · E start · X delete · ESC back';
+      : 'W/S choose · E start · J join a friend · X delete · ESC back';
     this.text(W / 2, 540, help, { fontFamily: FONT_UI, fontSize: '15px', color: this.mode === 'confirmDelete' ? '#ff8a7a' : '#b89878', stroke: '#000', strokeThickness: 3 }).setOrigin(0.5);
   }
 

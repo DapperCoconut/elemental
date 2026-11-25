@@ -115,7 +115,7 @@ import { MagmaKit, MagmaArenaApi } from '../elements/kits/MagmaKit';
 import { IllusionKit, IllusionArenaApi } from '../elements/kits/IllusionKit';
 import { DepthsKit, DepthsArenaApi } from '../elements/kits/DepthsKit';
 import { PassionKit, PassionArenaApi, ARK_ID } from '../elements/kits/PassionKit';
-import { ConquestKit, ConquestArenaApi } from '../elements/kits/ConquestKit';
+import { EmotionKit, EmotionArenaApi } from '../elements/kits/EmotionKit';
 import { RuinKit, RuinArenaApi } from '../elements/kits/RuinKit';
 import { SandKit, SandArenaApi } from '../elements/kits/SandKit';
 import { PaperKit, PaperArenaApi } from '../elements/kits/PaperKit';
@@ -565,8 +565,8 @@ export class ArenaScene extends Phaser.Scene {
 
   // Life state lives in LifeKit — see src/elements/kits/LifeKit.ts
 
-  // Air keeps nothing in this scene: the wind dancer's abilities, upgrades, mastery and world
-  // objects all live in AirKit — see src/elements/kits/AirKit.ts.
+  // Air keeps nothing in this scene: the assassin's clouds, abilities and world objects all
+  // live in AirKit — see src/elements/kits/AirKit.ts.
 
   // NPC mirror state
   private npcSpeedMult = 1;
@@ -745,8 +745,8 @@ export class ArenaScene extends Phaser.Scene {
   private inkHudCards: InkHudCard[] = [];
   /** The real E/R/F/Q keys while an Ink anvil has shuffled them. Null when they are in place. */
   private inkKeyBase: Phaser.Input.Keyboard.Key[] | null = null;
-  /** Conquest (test element) — managed by ConquestKit. The board, the economy and everything on it. */
-  private conquestKit!: ConquestKit;
+  /** Emotion (element id `conquest`) — managed by EmotionKit: the flag, the army and what it is feeling. */
+  private emotionKit!: EmotionKit;
   /** Passion (test element) — managed by PassionKit. The love bars, the pistol, the rose and the pose. */
   private passionKit!: PassionKit;
   /** Ruin (test element) — managed by RuinKit. The wedge, the locks, the skewer, the spikes and the rot. */
@@ -922,7 +922,6 @@ export class ArenaScene extends Phaser.Scene {
 
   // ── Air kit (mastery only — base air abilities still live in this scene) ──
   private airKit!: AirKit;
-  private airMasteryOn = false;
 
   // ── Oil mastery ───────────────────────────────────────────────────────
   private oilMasteryOn = false;
@@ -978,7 +977,6 @@ export class ArenaScene extends Phaser.Scene {
   private chalkMasteryOn = false;
   private psychicMasteryOn = false;
   private depthsMasteryOn = false;
-  private conquestMasteryOn = false;
   private ruinMasteryOn = false;
   private marrowMasteryOn = false;
   private waxMasteryOn = false;
@@ -1612,37 +1610,31 @@ export class ArenaScene extends Phaser.Scene {
         get npc() { return arena.npc; },
         get enemies() { return arena.reachableEnemies; },
         get scene(): Phaser.Scene { return arena; },
+        get projectiles() { return arena.projectiles; },
         get eKey() { return arena.keyFor('air', arena.eKey); },
         get rKey() { return arena.keyFor('air', arena.rKey); },
         get fKey() { return arena.keyFor('air', arena.fKey); },
         get qKey() { return arena.keyFor('air', arena.qKey); },
         get nukeChanneling() { return arena.nukeChanneling; },
-        get width() { return arena.scale.width; },
-        get height() { return arena.scale.height; },
-        get masteryActive() { return arena.airMasteryOn && arena.playerIs('air'); },
         get isPlayerAir() { return arena.playerIs('air'); },
         get isNpcAir() { return arena.npcElement.id === 'air'; },
-        // Sky Grapple drives the player's body itself, so it has to be able to *set* this.
+        get isOnline() { return arena.isOnline; },
+        get isInvasion() { return arena.isInvasion; },
+        get npcSlack() { return arena.npcDifficulty?.castSkipChance ?? 0; },
+        // The lunge and the Tornado Blade drive the player's body, so they have to *set* this.
         get isDodging() { return arena.isDodging; },
         set isDodging(v: boolean) { arena.isDodging = v; },
         get pointerX() { return arena.input.activePointer.worldX; },
         get pointerY() { return arena.input.activePointer.worldY; },
         get worldBounds() { return arena.physics.world.bounds; },
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
-        masteryBindFor: (slot) => arena.masteryBindForElement('air', slot),
-        recordMasteryStat: (key, amount) => {
-          if (arena.playerIs('air')) PlayerData.addMasteryStat('air', key, amount);
-        },
-        get npcMasteryActive() { return arena.npcMasteryOn && arena.npcElement.id === 'air'; },
-        npcMasteryBindFor: (slot) => arena.npcMasteryBindFor(slot),
-        get npcAutonomous() { return !arena.isOnline; },
-        showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
+        isTargetable: (f) => !arena.isInvasion || !(f instanceof Husk) || arena.invasionKit.isHuskTargetable(f),
         spawnDamageNumber: (x, y, amount) => arena.spawnDamageNumber(x, y, amount),
         spawnHitFlash: (x, y, color) => arena.spawnHitFlash(x, y, color),
         airColor: (owner, base) => arena.skinsKit.airColor(owner, base),
         skinId: (owner) => arena.skinsKit.skinId(owner),
         unlockAchievement: (id) => arena.unlockAchievement(id),
-        hasUpgrade: (slot) => arena.hasUpgradeFor('air', slot),
+        broadcast: (id) => arena.broadcastMasteryCast(id),
         hasPerk: (owner, perkId) => arena.hasPerk(owner, perkId),
       };
       this.airKit = new AirKit(airApi);
@@ -3482,12 +3474,12 @@ export class ArenaScene extends Phaser.Scene {
       this.savorKit = new SavorKit(savorApi);
     }
 
-    // ── Conquest kit (test element) ───────────────────────────
-    if (this.conquestKit) {
-      this.conquestKit.reset();
+    // ── Emotion kit (element id `conquest`) ───────────────────
+    if (this.emotionKit) {
+      this.emotionKit.reset();
     } else {
       const arena = this;
-      const conquestApi: ConquestArenaApi = {
+      const emotionApi: EmotionArenaApi = {
         get scene(): Phaser.Scene { return arena; },
         get player() { return arena.player; },
         get npc() { return arena.npc; },
@@ -3497,32 +3489,23 @@ export class ArenaScene extends Phaser.Scene {
         get rKey() { return arena.keyFor('conquest', arena.rKey); },
         get fKey() { return arena.keyFor('conquest', arena.fKey); },
         get qKey() { return arena.keyFor('conquest', arena.qKey); },
-        get pointerWasDown() { return arena.pointerWasDown; },
-        get rightPointerWasDown() { return arena.rightPointerWasDown; },
         get elementId() { return arena.liveElementFor('conquest'); },
         get npcElementId() { return arena.npcElement.id; },
+        get bounds() { return arena.physics.world.bounds; },
+        get isOnline() { return arena.isOnline; },
+        get isInvasion() { return arena.isInvasion; },
         get width() { return arena.scale.width; },
-        get height() { return arena.scale.height; },
-        hasUpgrade: (slot) => arena.hasUpgradeFor('conquest', slot),
-        hasNpcUpgrade: (slot) => arena.hasNpcUpgrade(slot),
-        conquestColor: (owner, base) => arena.skinsKit.conquestColor(owner, base),
+        get npcSlack() { return arena.npcDifficulty?.castSkipChance ?? 0; },
+        isTargetable: (f) => !arena.isInvasion || !(f instanceof Husk) || arena.invasionKit.isHuskTargetable(f),
+        emotionColor: (owner, base) => arena.skinsKit.conquestColor(owner, base),
         skinId: (owner) => arena.skinsKit.skinId(owner),
-        spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
-        showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
-        getNearestEnemy: (x, y) => arena.getNearestEnemy(x, y),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
-        openUpgradeMenu: () => arena.openConquestMenu(),
-        get npcIsNetReplica() { return arena.isOnline; },
-        get isCoop() { return arena.isOnline && arena.isInvasion; },
-        get masteryActive() { return arena.conquestMasteryOn && arena.playerIs('conquest'); },
-        get npcMasteryActive() { return arena.npcMasteryOn && arena.npcElement.id === 'conquest'; },
-        masteryBindFor: (slot) => arena.masteryBindForElement('conquest', slot),
-        npcMasteryBindFor: (slot) => arena.npcMasteryBindFor(slot),
-        recordMasteryStat: (key, amount) => {
-          if (arena.playerIs('conquest')) PlayerData.addMasteryStat('conquest', key, amount);
-        },
+        setPlayerYankUntil: (t) => { arena.fearPlayerYankUntil = Math.max(arena.fearPlayerYankUntil, t); },
+        addEnemyBody: (f) => arena.addMapEnemy(f),
+        removeEnemyBody: (f) => arena.removeMapEnemy(f),
+        broadcast: (id) => arena.broadcastMasteryCast(id),
       };
-      this.conquestKit = new ConquestKit(conquestApi);
+      this.emotionKit = new EmotionKit(emotionApi);
     }
 
     // Rubber kit construction / reset
@@ -4231,7 +4214,7 @@ export class ArenaScene extends Phaser.Scene {
           // Reality's split phase). Without this the fall-through below would
           // send the shot into the boss instead.
           this.applyProjectileToEnemy(proj, target);
-        } else if (this.duoKit.owns(target) || this.secretMapKit.ownsBody(target)) {
+        } else if (this.duoKit.owns(target) || this.secretMapKit.ownsBody(target) || this.emotionKit.ownsBody(target)) {
           // Duo's second opponent and the Graveyard's risen have bodies of their
           // own. Without this they would fall through to the `this.npc` route
           // below and quietly damage the front bot instead of themselves.
@@ -4286,7 +4269,7 @@ export class ArenaScene extends Phaser.Scene {
           (proj.body as Phaser.Physics.Arcade.Body).stop();
           return;
         }
-        // Air's wind dodge is not checked here: it is installed as the fighter's damage
+        // Air's stealth dodge is not checked here: it is installed as the fighter's damage
         // absorber by AirKit, so it covers area and tick damage too rather than projectiles
         // alone. A dodged projectile is stopped below when takeDamage reports nothing landed.
         // Gravity Mastery — Gravity Aura: 20% chance to catch the projectile instead of taking the hit.
@@ -4585,8 +4568,6 @@ export class ArenaScene extends Phaser.Scene {
           onIllusionMsg: (msg) => arena.illusionKit.handleNetMsg(msg),
         onPsychicMsg: (msg) => arena.psychicKit.handleNetMsg(msg),
         onPaintMsg: (msg) => arena.chalkKit.handleNetMsg(msg),
-          conquestSnapshot: () => arena.conquestKit.netSnapshot(),
-          onConquestSnapshot: (snap) => arena.conquestKit.applyNetSnapshot(snap),
           replayNpcMastery: (enhId, tx, ty) => arena.replayNpcMastery(enhId, tx, ty),
           onNpcQuantumSwap: (elementId, upgrades, masteryBinds, masteryOn, skin) => {
             arena.applyNpcElement(elementId, { upgrades, masteryBinds, masteryOn, skin });
@@ -4677,9 +4658,6 @@ export class ArenaScene extends Phaser.Scene {
     // Pause menu: Esc opens PauseMenuScene overlay.
     // Online: pausing would desync the peers, so ESC-ESC forfeits instead.
     kb.on('keydown-ESC', () => {
-      // The Conquest modal owns this press (its own handler closes it) — otherwise the
-      // same ESC would also pause, or worse, arm the online forfeit prompt.
-      if (this.scene.isActive('ConquestMenuScene')) return;
       if (this.isOnline) {
         if (this.gameEnded) return;
         if (this.time.now < this.onlineForfeitArmedUntil) {
@@ -5027,6 +5005,7 @@ export class ArenaScene extends Phaser.Scene {
           showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
           spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
           victory: () => arena.endGame(true),
+          defeat: () => arena.endGame(false),
         });
       }
       this.islesKit.reset(this.isles);
@@ -5246,7 +5225,6 @@ export class ArenaScene extends Phaser.Scene {
   private applyMasteryFlags(): void {
     this.fireMasteryOn = this.masteryOnFor('fire');
     this.waterMasteryOn = this.masteryOnFor('water');
-    this.airMasteryOn = this.masteryOnFor('air');
     this.oilMasteryOn = this.masteryOnFor('oil');
     this.lifeMasteryOn = this.masteryOnFor('life');
     this.earthMasteryOn = this.masteryOnFor('earth');
@@ -5283,7 +5261,6 @@ export class ArenaScene extends Phaser.Scene {
     // Psychic's mastery was redone after the chess rework; the old one may have left the flag on.
     this.psychicMasteryOn = this.masteryOnFor('psychic') && isMasteryComplete('psychic');
     this.depthsMasteryOn = this.masteryOnFor('depths');
-    this.conquestMasteryOn = this.masteryOnFor('conquest');
     this.ruinMasteryOn = this.masteryOnFor('ruin');
     this.marrowMasteryOn = this.masteryOnFor('marrow');
     this.waxMasteryOn = this.masteryOnFor('wax');
@@ -5387,7 +5364,7 @@ export class ArenaScene extends Phaser.Scene {
     const is = (id: string): boolean => (owner === 'player' ? this.playerIs(id) : this.npcElement.id === id);
     const drains: [string, { rebirthDrain(o: 'player' | 'npc'): string | null } | undefined][] = [
       ['gunpowder', this.gunpowderKit], ['fortune', this.fortuneKit], ['subterfuge', this.subterfugeKit],
-      ['sound', this.soundKit], ['soul', this.soulKit], ['conquest', this.conquestKit],
+      ['sound', this.soundKit], ['soul', this.soulKit], ['conquest', this.emotionKit],
       ['metal', this.metalKit], ['electricity', this.electricityKit], ['light', this.lightKit],
       ['growth', this.growthKit], ['marrow', this.marrowKit], ['justice', this.justiceKit],
       ['pressure', this.pressureKit], ['astra', this.astraKit], ['bind', this.bindKit],
@@ -5449,6 +5426,16 @@ export class ArenaScene extends Phaser.Scene {
     // ids never come through here — OnlineKit replays those as casts.)
     if (enhId.startsWith('pressure-')) {
       if (this.npcElement.id === 'pressure') this.pressureKit.replayNet(enhId);
+      return;
+    }
+    // Air: the sky, the stab as it actually landed, the cloak, the Combo's presses and the Blade.
+    if (enhId.startsWith('airx-')) {
+      this.airKit.replayNet(enhId);
+      return;
+    }
+    // Emotion: the army's snapshot, what was taken off one of our soldiers, and the standard's slam.
+    if (enhId.startsWith('emx-')) {
+      this.emotionKit.replayNet(enhId);
       return;
     }
     // Fear: the meter, the rune, the statues' secret and the maze. `fear-mp` (a maze position) comes
@@ -5630,13 +5617,6 @@ export class ArenaScene extends Phaser.Scene {
         break;
       case 'magma-saw-off':
         if (this.npcElement.id === 'magma') this.magmaKit.doNpcSawOff();
-        break;
-      case 'weather-cycle':
-        if (this.npcElement.id === 'air') this.airKit.doWeatherCycle('npc');
-        break;
-      // Air's Gust perk: the second R that teleports onto the glaive.
-      case 'air-gust-recall':
-        if (this.npcElement.id === 'air') this.airKit.doGustRecall('npc');
         break;
       case 'shadow-beacon':
         if (this.npcElement.id === 'shadow') this.shadowKit.doNpcShadowBeacon(tx, ty);
@@ -5974,11 +5954,11 @@ export class ArenaScene extends Phaser.Scene {
       'passion-grenade':       0xe8b93a,
       'passion-crucifix':      0xc08a50,
       'passion-ascendance':    0xff9a2e,
-      'conquest-banner':       0xe8503c,
-      'conquest-barracks':     0x7a5230,
-      'conquest-turret':       0x8f9aa6,
-      'conquest-barricade':    0xb8b2a4,
-      'conquest-expansion':    0xe8c23a,
+      'emotion-stab':          0xe8503c,
+      'emotion-rile':          0xd6dde6,
+      'emotion-depress':       0x4a72b8,
+      'emotion-euphoria':      0xffe24a,
+      'emotion-nationalism':   0xe8c23a,
       'fireball':       0xff6600,
       'flame-dash':     0xff3300,
       'pressure-bomb':  0xff8800,
@@ -5996,12 +5976,11 @@ export class ArenaScene extends Phaser.Scene {
       'grow':           0x44ff88,
       'thorns':         0xcc2222,
       'thorn-drag':     0x116611,
-      'wind-splice':    0xccddff,
-      'spin-dance':     0x88ddff,
-      'gale-glaive':    0xb4854a,
-      'sky-grapple':    0x6699cc,
-      'wind-breaker':   0x2255aa,
-      'weather-cycle':  0xbbe8ff,
+      'pierce-the-skies': 0xccddff,
+      'air-knock':      0x88ddff,
+      'cloud-cover':    0xe4f2ff,
+      'air-combo':      0x6699cc,
+      'tornado-blade':  0x2255aa,
       'curling-bomb':   0x88ccff,
       'stab':           0xaa8844,
       'shield-up':      0x997744,
@@ -6411,10 +6390,10 @@ export class ArenaScene extends Phaser.Scene {
    * debuff that misses *everything* stops reading as distress and starts reading as a stun.
    */
   private scatterAim(caster: Fighter, tx: number, ty: number): { x: number; y: number } {
-    // Silence's Stalk: a Stalked fighter can only cast down the way they are slowly turning,
+    // Silence's Stalk and Air's Knock: a Stalked or winded fighter can only cast down the way they are slowly turning,
     // whatever the cursor says. The distance to the cursor is kept so ground-targeted casts
     // still land as far out as asked.
-    if (caster && Date.now() < caster.stalkedUntil) {
+    if (caster && (Date.now() < caster.stalkedUntil || Date.now() < caster.airWindedUntil)) {
       const d = Phaser.Math.Distance.Between(caster.x, caster.y, tx, ty);
       tx = caster.x + Math.cos(caster.facingAngle) * d;
       ty = caster.y + Math.sin(caster.facingAngle) * d;
@@ -6503,11 +6482,11 @@ export class ArenaScene extends Phaser.Scene {
       growPlants: () => this.lifeKit.doFertilize('player'),
       thornPlants: () => this.lifeKit.doRootShield('player', targetX, targetY),
       startThornDrag: () => this.lifeKit.doThrive(),
-      airSplice: (x, y) => this.airKit.doSplice('player', x, y),
-      airSpinDance: (x, y) => this.airKit.doSpinDance('player', x, y),
-      airGaleGlaive: (x, y) => this.airKit.doGaleGlaive('player', x, y),
-      airSkyGrapple: (x, y) => this.airKit.doSkyGrapple('player', x, y),
-      airWindBreaker: (x, y) => this.airKit.doWindBreaker('player', x, y),
+      airPierce: (x, y) => this.airKit.doPierce('player', x, y),
+      airKnock: (x, y) => this.airKit.doKnock('player', x, y),
+      airCloudCover: () => this.airKit.doCloudCover('player'),
+      airCombo: (x, y) => this.airKit.doCombo('player', x, y),
+      airTornadoBlade: () => this.airKit.doTornadoBlade('player'),
       addShieldHp: (amount) => { this.player.shieldHp = Math.min(100, this.player.shieldHp + amount); },
       getShieldHp: () => this.player.shieldHp,
       setShieldHp: (amount) => { this.player.shieldHp = Math.max(0, amount); },
@@ -6871,9 +6850,11 @@ export class ArenaScene extends Phaser.Scene {
       passionGrenade: (tx, ty) => this.passionKit.doGrenade('player', tx, ty),
       passionCrucifix: (tx, ty) => this.passionKit.doCrucifix('player', tx, ty),
       passionAscendance: (tx, ty) => this.passionKit.doAscendance('player', tx, ty),
-      conquestBanner: () => this.conquestKit.doBanner('player', targetX, targetY),
-      conquestBuild: (kind) => this.conquestKit.doBuild('player', kind),
-      conquestExpansion: () => this.conquestKit.doExpansion('player'),
+      emotionStab: () => this.emotionKit.doStab('player', targetX, targetY),
+      emotionRile: () => this.emotionKit.doRile('player'),
+      emotionDepress: () => this.emotionKit.doDepress('player', targetX, targetY),
+      emotionEuphoria: () => this.emotionKit.doEuphoria('player', targetX, targetY),
+      emotionNationalism: () => this.emotionKit.doNationalism('player'),
       hasPerk: (perkId) => this.hasPerk('player', perkId),
     };
   }
@@ -6932,11 +6913,11 @@ export class ArenaScene extends Phaser.Scene {
       growPlants: () => this.lifeKit.doFertilize('npc'),
       thornPlants: () => this.lifeKit.doRootShield('npc', targetX, targetY),
       startThornDrag: () => { /* state set in NPC cast reaction */ },
-      airSplice: (x, y) => this.airKit.doSplice('npc', x, y),
-      airSpinDance: (x, y) => this.airKit.doSpinDance('npc', x, y),
-      airGaleGlaive: (x, y) => this.airKit.doGaleGlaive('npc', x, y),
-      airSkyGrapple: (x, y) => this.airKit.doSkyGrapple('npc', x, y),
-      airWindBreaker: (x, y) => this.airKit.doWindBreaker('npc', x, y),
+      airPierce: (x, y) => this.airKit.doPierce('npc', x, y),
+      airKnock: (x, y) => this.airKit.doKnock('npc', x, y),
+      airCloudCover: () => this.airKit.doCloudCover('npc'),
+      airCombo: (x, y) => this.airKit.doCombo('npc', x, y),
+      airTornadoBlade: () => this.airKit.doTornadoBlade('npc'),
       addShieldHp: (amount) => { if (this.npcElement.id !== 'earth') this.npc.shieldHp = Math.min(100, this.npc.shieldHp + amount); },
       getShieldHp: () => this.npc.shieldHp,
       setShieldHp: (amount) => { this.npc.shieldHp = Math.max(0, amount); },
@@ -7294,9 +7275,11 @@ export class ArenaScene extends Phaser.Scene {
       passionGrenade: (tx, ty) => this.passionKit.doGrenade('npc', tx, ty),
       passionCrucifix: (tx, ty) => this.passionKit.doCrucifix('npc', tx, ty),
       passionAscendance: (tx, ty) => this.passionKit.doAscendance('npc', tx, ty),
-      conquestBanner: () => this.conquestKit.doBanner('npc', targetX, targetY),
-      conquestBuild: (kind) => this.conquestKit.doBuild('npc', kind),
-      conquestExpansion: () => this.conquestKit.doExpansion('npc'),
+      emotionStab: () => this.emotionKit.doStab('npc', targetX, targetY),
+      emotionRile: () => this.emotionKit.doRile('npc'),
+      emotionDepress: () => this.emotionKit.doDepress('npc', targetX, targetY),
+      emotionEuphoria: () => this.emotionKit.doEuphoria('npc', targetX, targetY),
+      emotionNationalism: () => this.emotionKit.doNationalism('npc'),
       hasPerk: (perkId) => this.hasPerk('npc', perkId),
     };
   }
@@ -7338,11 +7321,11 @@ export class ArenaScene extends Phaser.Scene {
       growPlants: () => {},
       thornPlants: () => {},
       startThornDrag: () => {},
-      airSplice: () => {},
-      airSpinDance: () => {},
-      airGaleGlaive: () => {},
-      airSkyGrapple: () => {},
-      airWindBreaker: () => {},
+      airPierce: () => {},
+      airKnock: () => {},
+      airCloudCover: () => {},
+      airCombo: () => {},
+      airTornadoBlade: () => {},
       addShieldHp: () => {},
       getShieldHp: () => 0,
       setShieldHp: () => {},
@@ -7661,9 +7644,11 @@ export class ArenaScene extends Phaser.Scene {
       passionGrenade: () => {},
       passionCrucifix: () => {},
       passionAscendance: () => {},
-      conquestBanner: () => {},
-      conquestBuild: () => {},
-      conquestExpansion: () => {},
+      emotionStab: () => {},
+      emotionRile: () => {},
+      emotionDepress: () => {},
+      emotionEuphoria: () => {},
+      emotionNationalism: () => {},
       hasPerk: () => false,
     };
   }
@@ -9790,7 +9775,6 @@ export class ArenaScene extends Phaser.Scene {
   endCoopRun(wavesCompleted: number, shardsEarned: number): void {
     if (this.gameEnded) return;
     this.gameEnded = true;
-    if (this.scene.isActive('ConquestMenuScene')) this.scene.stop('ConquestMenuScene');
     this.invasionCoopKit?.onMatchEnded();
     Music.stop(0.5);
     Sfx.play('defeat');
@@ -10203,9 +10187,6 @@ export class ArenaScene extends Phaser.Scene {
   private endGame(playerWon: boolean): void {
     if (this.gameEnded) return;
     this.gameEnded = true;
-    // The Conquest upgrade modal runs over the live arena; the arena ending must take
-    // the menu down with it, or it would sit over the results screen forever.
-    if (this.scene.isActive('ConquestMenuScene')) this.scene.stop('ConquestMenuScene');
     if (this.isOnline) this.onlineKit?.onMatchEnded();
 
     // The fight music drops out under the sting so the result lands cleanly.
@@ -10352,24 +10333,9 @@ export class ArenaScene extends Phaser.Scene {
   private openPauseMenu(): void {
     if (this.gameEnded) return;
     if (this.scene.isPaused()) return;
-    // ESC while the Conquest modal is up belongs to that modal (it closes it) — opening the
-    // pause menu on the same press would freeze the arena underneath a half-closed shop.
-    if (this.scene.isActive('ConquestMenuScene')) return;
     this.pausedAt = Date.now();
     this.scene.launch('PauseMenuScene', { parentSceneKey: this.scene.key });
     this.scene.pause();
-  }
-
-  /**
-   * Conquest's building upgrade menu. It no longer pauses the match: the arena keeps running
-   * underneath the modal, the player is held still, and the Fighter menu guard cuts incoming
-   * damage to 5% while they read a four-tier tree. Reading time now costs real time.
-   */
-  private openConquestMenu(): void {
-    if (this.gameEnded) return;
-    if (this.scene.isPaused()) return;
-    if (this.scene.isActive('ConquestMenuScene')) return;
-    this.scene.launch('ConquestMenuScene', { parentSceneKey: this.scene.key, host: this.conquestKit });
   }
 
   /**
@@ -10632,7 +10598,6 @@ export class ArenaScene extends Phaser.Scene {
       gluttony: (t, d) => { if (!skip('gluttony')) this.gluttonyKit.update(t, d); },
       ruin: (t, d) => { if (!skip('ruin')) this.ruinKit.update(t, d); },
       dune: (t, d) => { if (!skip('dune')) this.sandKit.update(t, d); },
-      conquest: (t, d) => { if (!skip('conquest')) this.conquestKit.update(t, d); },
       passion: (t, d) => { if (!skip('passion')) this.passionKit.update(t, d); },
       growth: (t, d) => { if (!skip('growth')) this.growthKit.update(t, d); },
       rubber: (t, d) => { if (!skip('rubber')) this.rubberKit.update(t, d); },
@@ -10787,9 +10752,9 @@ export class ArenaScene extends Phaser.Scene {
     }
     const click = this.playerElement.abilities.find((a) => a.displayKey === 'Click');
     // Clicks whose button is also a drag (press picks up, release drops) must never see a
-    // fake release: Conquest's board, Technology's Web Drag while it is on, and String's
+    // fake release: Emotion's soldiers, Technology's Web Drag while it is on, and String's
     // Metal Spool (a held click winds the spool; a pulsed release would throw plain strings).
-    const dragClick = !click || click.id === 'conquest-banner'
+    const dragClick = !click || click.id === 'emotion-stab'
       || (this.elementId === 'technology' && this.techKit.isPlayerDragMode())
       || (this.elementId === 'string' && this.hasUpgradeFor('string', 'click'));
     if (dragClick || abilityTags(click.id).includes('hold')) {
@@ -10837,13 +10802,6 @@ export class ArenaScene extends Phaser.Scene {
     // around in. Mask the pointer the same way, so paging the bestiary doesn't
     // also swing at the bookshelf behind it.
     if (this.isInvasion && this.invasionKit?.isOverlayOpen()) {
-      pointer.isDown = false;
-      pointer.buttons &= ~1;
-    }
-
-    // Conquest's upgrade modal runs over the live arena — mask the pointer so a
-    // buy-button click can't also land on the board (or fire an ability) beneath it.
-    if (this.scene.isActive('ConquestMenuScene')) {
       pointer.isDown = false;
       pointer.buttons &= ~1;
     }
@@ -11075,7 +11033,7 @@ export class ArenaScene extends Phaser.Scene {
       this.playerSpeedMult *= this.waterKit.getPlayerSpeedMult();
     } else if (this.elementId === 'air') {
       this.playerSpeedMult = time < this.playerGeyserBuffUntil ? 1.5 : 1;
-      // Air Mastery — Dancer's Momentum, and the stride Wind Breaker costs her.
+      // Air: the held barrage is thrown standing nearly still.
       this.playerSpeedMult *= this.airKit.getPlayerSpeedMult();
     } else if (this.elementId === 'technology') {
       this.playerSpeedMult = time < this.playerGeyserBuffUntil ? 1.5 : 1;
@@ -11104,7 +11062,7 @@ export class ArenaScene extends Phaser.Scene {
     if (this.npcElement.id === 'creation') {
       this.npcSpeedMult = this.creationKit.computeNpcSpeedMult(time, this.npcSpeedMult);
     }
-    // Air NPC: the funnel keeps her feet but takes her stride.
+    // Air NPC: likewise, while the kit is jabbing for it.
     if (this.npcElement.id === 'air') {
       this.npcSpeedMult *= this.airKit.getNpcSpeedMult();
     }
@@ -11184,11 +11142,11 @@ export class ArenaScene extends Phaser.Scene {
       this.playerSpeedMult *= this.chalkKit.getPlayerSpeedMult();
       this.npcSpeedMult *= this.chalkKit.getNpcSpeedMult();
     }
-    // Conquest: Speedy Walls and Force Shield, on whoever is standing beside their own masonry.
-    // Pulled for the same reason Justice is — ConquestKit.update() runs after movement resolves.
+    // Emotion: winding up Euphoria (rooted) or carrying the grand standard (faster).
+    // Pulled for the same reason Justice is — EmotionKit.update() runs after movement resolves.
     if (this.playerIs('conquest') || this.npcElement.id === 'conquest') {
-      this.playerSpeedMult *= this.conquestKit.getPlayerSpeedMult();
-      this.npcSpeedMult *= this.conquestKit.getNpcSpeedMult();
+      this.playerSpeedMult *= this.emotionKit.getPlayerSpeedMult();
+      this.npcSpeedMult *= this.emotionKit.getNpcSpeedMult();
     }
     // Dream: a Good Dream's haste on the dreamer, and a Night Terror's exhaustion on whoever
     // came out of the corridor. Pulled for the same reason — DreamKit.update() runs after the
@@ -11382,6 +11340,12 @@ export class ArenaScene extends Phaser.Scene {
     // ── Astra: smitten. Online, likewise, through `spd`. ──
     if (!this.isOnline) this.playerSpeedMult *= this.player.astraSlowMult();
     this.npcSpeedMult *= this.npc.astraSlowMult();
+    // ── Air: winded and out of stamina. Online, likewise, through `spd`. ──
+    if (!this.isOnline) this.playerSpeedMult *= this.player.airWindedSpeedMult();
+    this.npcSpeedMult *= this.npc.airWindedSpeedMult();
+    // ── Emotion: depressed. Online, likewise, through `spd`. ──
+    if (!this.isOnline) this.playerSpeedMult *= this.player.emotionSlowMult();
+    this.npcSpeedMult *= this.npc.emotionSlowMult();
     // ── Ink: flattened by an anvil. Online, likewise, through `spd`. ──
     if (!this.isOnline) this.playerSpeedMult *= this.player.inkFlatSlowMult();
     this.npcSpeedMult *= this.npc.inkFlatSlowMult();
@@ -11541,9 +11505,6 @@ export class ArenaScene extends Phaser.Scene {
     // The journal and the telescope are full-screen: they also hold you still.
     if (this.isInvasion && this.invasionKit?.isOverlayOpen()) playerBody.setVelocity(0, 0);
 
-    // Conquest's upgrade modal runs over the live arena: it holds you still too, and the
-    // Fighter menu guard cuts incoming damage to 5% while you read.
-    if (this.scene.isActive('ConquestMenuScene')) playerBody.setVelocity(0, 0);
     // Paint's Splotch canvas is a menu too (the kit owns its 5% guard).
     if (this.elementId === 'chalk' && this.chalkKit.holdsPlayerStill()) playerBody.setVelocity(0, 0);
 
@@ -11710,7 +11671,7 @@ export class ArenaScene extends Phaser.Scene {
     } else if (this.elementId === 'gum') {
       this.savorKit.handleInput(time, pointer, mouseX, mouseY);
     } else if (this.elementId === 'conquest') {
-      this.conquestKit.handleInput(time, pointer, mouseX, mouseY);
+      this.emotionKit.handleInput(time, pointer, mouseX, mouseY);
     } else if (this.elementId === 'passion') {
       this.passionKit.handleInput(time, pointer, mouseX, mouseY);
     } else if (this.elementId === 'silence') {
@@ -11930,7 +11891,7 @@ export class ArenaScene extends Phaser.Scene {
 
     // ── NPC AI ───────────────────────────────────────────────────
     const aiState: NpcAiState = {
-      isLocked: this.npcNukeChanneling || this.npc.frozenUntil > time || (this.npc.magicChainBound && time < this.npc.magicChainBoundEnd) || time < this.fearKit.getNpcYankUntil() || (this.airKit.isNpcHawkDragged() || this.airKit.isNpcSwept()) || (this.npcElement.id === 'rubber' && this.rubberKit.isBounceFormActive('npc')) || this.waterKit.isNpcSplit() || this.npc.chickenUntil > Date.now() || this.techKit.isNpcDragged() || this.crystalKit.isCarried(this.npc) || this.justiceKit.isLocked('npc') || this.justiceKit.isOnTrial(this.npc) || this.justiceKit.isBeingKicked(this.npc) || this.dreamKit.locksNpcAi() || this.sandKit.locksNpcAbilities() || this.fireKit.isSupernovaActive('npc') || this.marrowKit.locksNpc() || this.mythKit.isTrapped(this.npc),
+      isLocked: this.npcNukeChanneling || this.npc.frozenUntil > time || (this.npc.magicChainBound && time < this.npc.magicChainBoundEnd) || time < this.fearKit.getNpcYankUntil() || time < this.emotionKit.getNpcYankUntil() || this.airKit.locksNpc() || (this.npcElement.id === 'rubber' && this.rubberKit.isBounceFormActive('npc')) || this.waterKit.isNpcSplit() || this.npc.chickenUntil > Date.now() || this.techKit.isNpcDragged() || this.crystalKit.isCarried(this.npc) || this.justiceKit.isLocked('npc') || this.justiceKit.isOnTrial(this.npc) || this.justiceKit.isBeingKicked(this.npc) || this.dreamKit.locksNpcAi() || this.sandKit.locksNpcAbilities() || this.fireKit.isSupernovaActive('npc') || this.marrowKit.locksNpc() || this.mythKit.isTrapped(this.npc),
       hasActiveGeyser: this.geysers.some((g) => g.owner === 'npc'),
       flameBodyActive: this.fireKit.isNpcFlameBodyActive(),
       // Fire: a charge that would light the bot's own booze around its target (Alcohol → R),
@@ -11949,9 +11910,14 @@ export class ArenaScene extends Phaser.Scene {
         npcLifeFertilize: this.lifeKit.npcFertilizeReady(),
         npcLifeShieldAt: this.lifeKit.npcShieldTarget() ?? undefined,
       } : {}),
-      airTornadoActive: this.airKit.isTornadoActive('npc'),
-      airWindDodge: this.airKit.getWindDodge('npc'),
-      npcAirGustRecall: this.airKit.npcGustRecallReady(),
+      npcAirBusy: this.airKit.npcAirBusy(),
+      npcAirPierceReach: this.airKit.npcAirPierceReach(),
+      npcAirBigStab: this.airKit.npcAirBigStab(),
+      npcAirBackstab: this.airKit.npcAirBackstab(),
+      npcAirTargetWinded: this.airKit.npcAirTargetWinded(),
+      npcAirCoverPays: this.airKit.npcAirCoverPays(),
+      npcAirFieldLive: this.airKit.npcAirFieldLive(),
+      npcAirComboLive: this.airKit.npcAirComboLive(),
       earthShieldHp: this.earthKit.getNpcShieldHp(),
       npcEarthRocksActive: this.earthKit.getNpcRocksActive(),
       // Biome Builder: the target standing on the bot's own mountain turns a Quake into a rockfall,
@@ -11970,7 +11936,6 @@ export class ArenaScene extends Phaser.Scene {
       iceBlockActive: this.iceKit.isNpcBlockUpActive(),
       npcIceBombSlot: this.iceKit.npcBombSlot(),
       npcIceBombAim: this.iceKit.npcBombShotAim(),
-      npcAirWeatherSlot: this.airKit.npcWeatherSlot(),
       npcCrystalShredderSlot: this.crystalKit.npcShredderSlot(),
       npcGrowthDna: this.growthKit.getDna('npc'),
       npcGrowthHasNestOrClone: this.growthKit.hasNest('npc') || this.growthKit.hasClone('npc'),
@@ -12002,6 +11967,8 @@ export class ArenaScene extends Phaser.Scene {
         this.fearKit.npcBlinded()
         || (this.playerIs('technology') && (this.techKit.isPlayerSheltered() || this.techKit.isPlayerAdminInvisible()))
         || this.depthsKit.isCamoFull('player')
+        // Air — Cloud Cover: wrapped in rain, there is nothing to see.
+        || this.airKit.isCloaked('player')
         // Paper Mastery — Restructure: there is no body there at all, only shards.
         || (this.playerIs('paper') && this.paperKit.isTorn('player'))
         // Wax Mastery — Smoke-out: in the smoke, or behind it.
@@ -12175,11 +12142,13 @@ export class ArenaScene extends Phaser.Scene {
       npcAcidPoisonWorth: this.slimeKit.npcPoisonWorth(),
       npcAcidBombWorth: this.slimeKit.npcBombWorth(),
       npcAcidShedSlot: this.slimeKit.npcShedSlot(),
-      // Conquest: the bot has to physically stand on the square it means to build on, so its
-      // build queue is a destination before it is ever a cast.
-      conquestSeekPoint: this.conquestKit.npcSeekPoint() ?? undefined,
-      npcConquestReady: this.conquestKit.npcReadyToBuild() ?? undefined,
-      npcConquestAuthority: this.conquestKit.npcAuthority(),
+      // Emotion: the kit plays the army; these are what the bot's own casts hang on.
+      npcEmotionBusy: this.emotionKit.npcEmotionBusy(),
+      npcEmotionStance: this.emotionKit.npcEmotionStance(),
+      npcEmotionTroops: this.emotionKit.npcEmotionTroops(),
+      npcEmotionEcstasyCount: this.emotionKit.npcEmotionEcstasyCount(),
+      npcEmotionRallyCount: this.emotionKit.npcEmotionRallyCount(),
+      npcEmotionDepressEdge: this.emotionKit.npcEmotionDepressEdge(),
       // Sound: the kit keeps the bot's metronome and baton itself; the rotation reads whether the
       // Fermata detonation is worth pressing, the song it wants, and whether it is on stage.
       npcSoundDetonate: this.soundKit.npcDetonateReady(),
@@ -12397,12 +12366,6 @@ export class ArenaScene extends Phaser.Scene {
         aiState,
       );
     this.npcCastId = npcCastId;
-    // A Conquest build only lands once the bot is standing on the square, so the destination
-    // it was walking to is retired here rather than inside the kit — this is the only place
-    // that knows the cast actually went through.
-    if (npcCastId && npcCastId.startsWith('conquest-') && npcCastId !== 'conquest-banner') {
-      this.conquestKit.npcClearSeek();
-    }
 
     // ── Invasion mode update ──────────────────────────────────────
     if (this.isInvasion) {
@@ -12718,9 +12681,8 @@ export class ArenaScene extends Phaser.Scene {
     // Unconditional for the same reason Bind is: candies, loans, drained bodies and a Salt Crash
     // pile of slimeballs all outlive the slime that made them. It early-outs itself.
     this.savorKit.update(time, delta);
-    if (this.playerIs('conquest') || this.npcElement.id === 'conquest') {
-      this.conquestKit.update(time, delta);
-    }
+    // Unconditional: soldiers, arrows and a Depressed status outlive a Quantum swap. It early-outs itself.
+    this.emotionKit.update(time, delta);
     if (this.playerIs('passion') || this.npcElement.id === 'passion') {
       this.passionKit.update(time, delta);
     }
@@ -12781,7 +12743,7 @@ export class ArenaScene extends Phaser.Scene {
         this.npcElement.id === 'fate');
     }
 
-    // Air's Wind Breaker holds its captives by position, so the kit has to run
+    // Air's lunge, Knock's shove and the Tornado Blade all drive bodies, so the kit has to run
     // after NPC AI and husk movement have written their velocities for this frame.
     if (this.playerIs('air') || this.npcElement.id === 'air') this.airKit.update(time, delta);
 
@@ -13011,10 +12973,9 @@ export class ArenaScene extends Phaser.Scene {
       } else if (entry.abilityId.startsWith('hunt-')) {
         // Blast counts charges and Q counts the beast's own clock, so the kit owns every hunt bar.
         entry.fill.setSize(entry.maxWidth * this.huntKit.getBarRatio(entry.abilityId, time), entry.fill.height);
-      } else if (entry.abilityId === 'market') {
-        // The Market is placed on a private 600ms timer rather than through `castAbility`, so
-        // the cooldown map has nothing under this id for the card to read.
-        entry.fill.setSize(entry.maxWidth * this.conquestKit.getBarRatio(entry.abilityId, time), entry.fill.height);
+      } else if (entry.abilityId.startsWith('emotion-')) {
+        // Euphoria's card fills with its wind-up and Nationalism's drains with the standard.
+        entry.fill.setSize(entry.maxWidth * this.emotionKit.getBarRatio(entry.abilityId), entry.fill.height);
       } else if (entry.abilityId === 'pre-move') {
         // Pre-move is on the kit's own clock: the card shows the choosing/armed window, then
         // the cooldown.
@@ -13038,18 +12999,12 @@ export class ArenaScene extends Phaser.Scene {
         } else {
           entry.fill.setSize(entry.maxWidth * this.player.getCooldownRatio('splash'), entry.fill.height);
         }
-      } else if (entry.abilityId === 'spin-dance') {
-        // Charges, not a cooldown: full the moment one is banked, draining toward the next.
-        // A second banked charge is invisible on a bar, so it goes in the sub-label instead.
-        entry.fill.setSize(entry.maxWidth * this.airKit.getSpinChargeRatio(), entry.fill.height);
-        if (entry.desc && this.hasUpgrade('e')) {
-          entry.desc.setText(`Charges: ${this.airKit.getSpinCharges()}/2`);
-        }
-      } else if (entry.abilityId === 'wind-breaker' && this.airKit.isTornadoActive('player')) {
-        // While she *is* the tornado the card reads as held, not as recharging.
-        entry.fill.setSize(entry.maxWidth, entry.fill.height);
-      } else if (entry.abilityId === 'weather-cycle') {
-        entry.fill.setSize(entry.maxWidth * this.airKit.getWeatherCooldownRatio(time), entry.fill.height);
+      } else if (entry.abilityId === 'cloud-cover' && this.airKit.isCloaked('player')) {
+        // While the cloak is on the card is its health, not a cooldown.
+        entry.fill.setSize(entry.maxWidth * this.airKit.getCoverRatio(), entry.fill.height);
+      } else if (entry.abilityId === 'tornado-blade' && this.airKit.isBladeActive('player')) {
+        // Likewise the Blade: the card is the stamina it is spinning on.
+        entry.fill.setSize(entry.maxWidth * this.airKit.getBladeRatio(), entry.fill.height);
       } else if (entry.abilityId === 'grav-bomb') {
         if (this.gravityKit.isGravBombHolding()) {
           entry.fill.setSize(entry.maxWidth * this.player.chargeRatio, entry.fill.height);
@@ -13335,7 +13290,7 @@ export class ArenaScene extends Phaser.Scene {
     report?: (px: number, py: number) => void,
   ): number {
     const kits: SummonPurgeTarget[] = [
-      this.conquestKit, this.soulKit, this.subterfugeKit, this.creationKit, this.huntKit,
+      this.emotionKit, this.soulKit, this.subterfugeKit, this.creationKit, this.huntKit,
       this.growthKit, this.oilKit, this.crystalKit, this.fearKit, this.shadowKit,
       this.soundKit, this.magmaKit, this.lifeKit, this.techKit, this.illusionKit,
       this.paperKit, this.sandKit, this.quantumCoreKit, this.clothKit, this.marrowKit, this.chalkKit, this.waxKit, this.clayKit,
@@ -13459,8 +13414,6 @@ export class ArenaScene extends Phaser.Scene {
   private dealAoeDamageFromOwner(cx: number, cy: number, radius: number, damage: number, owner: 'player' | 'npc', except?: Fighter): void {
     // Any AoE can chip Fear's rune and its marble statues.
     this.fearKit.notifyAoeDamage(cx, cy, radius, owner, damage);
-    // ...and Conquest soldiers, who have no body of their own for the loops below to find.
-    this.conquestKit.notifyAoeDamage(cx, cy, radius, owner, damage);
     // ...and an Illusion Guise clone, which banks the blast rather than taking it.
     this.illusionKit.notifyAoe(cx, cy, radius, damage, owner);
     // ...and a Radiation Test Dummy, which is a hit on its owner down the link.

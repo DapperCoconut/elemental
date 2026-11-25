@@ -1,10 +1,10 @@
 import Peer, { DataConnection } from 'peerjs';
 import type { InvasionFx, HuskStatus } from '../invasion/InvasionKit';
 import type { NetStatusEntry } from './NetStatusSync';
-import type { NetConquestSnap } from '../elements/kits/ConquestKit';
+import type { IslesMsg } from '../isles/net/IslesMsg';
 
 /** Bump when the wire protocol or gameplay sync changes incompatibly. (61: Savor replaces Slime — `savor-*` relays. 64: Venom rework — new cast ids, `venom-*` status timers, `acid-pick/bomb-hold/cluster` relays.) */
-export const NET_PROTOCOL_VERSION = 65;
+export const NET_PROTOCOL_VERSION = 67;
 
 /** A co-op room holds the host plus up to three guests. PvP still needs exactly two. */
 export const MAX_PLAYERS = 4;
@@ -131,17 +131,6 @@ export type NetPaintMsg =
   | { t: 'pnt'; k: 'still'; d: number[] }
   // Yin-Yang: white on my bars and black on yours, [slot, u%, v%] per dab.
   | { t: 'pnt'; k: 'yy'; own: number[]; foe: number[] };
-
-/**
- * Conquest ships its whole board rather than events.
- *
- * Every other element's online state is a handful of timers, so a relayed cast plus the peer's
- * own replay of it is enough. Conquest's state is 126 squares, up to eighteen buildings with
- * two upgrade paths each, and a garrison — all of it derived from a chain of earlier decisions,
- * so a single dropped event leaves the two sims permanently disagreeing about who owns what.
- * The snapshot is a few hundred bytes at 4 Hz and cannot drift.
- */
-export type NetConquestMsg = { t: 'cnq'; s: NetConquestSnap };
 
 /** A single husk's networked state, as broadcast by the invasion co-op host. */
 export interface NetHuskState {
@@ -304,12 +293,13 @@ export type NetMsg =
   | { t: 'boss'; name: string; color: string }
   | { t: 'revived' } // reviver → the one revived (sendTo)
   | { t: 'runEnd'; wavesCompleted: number; shardsEarned: number }
+  // Ten Isles co-op (66): everything it says rides in one envelope — see `isles/net/IslesCoop`.
+  | { t: 'isles'; m: IslesMsg }
   | NetTechMsg
   | NetSilenceMsg
   | NetIllusionMsg
   | NetPsychicMsg
-  | NetPaintMsg
-  | NetConquestMsg;
+  | NetPaintMsg;
 
 export type NetStatus = 'idle' | 'starting' | 'hosting' | 'joining' | 'connected' | 'error';
 

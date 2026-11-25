@@ -1,150 +1,173 @@
 import Phaser from 'phaser';
 import { CastContext } from '../Ability';
 import { Fighter } from '../../entities/Fighter';
-import { AIR, AirAvatar, AirColorFn, AirDraft, AirFx, ArmGesture, ArmHold } from './AirVisuals';
+import { Projectile } from '../../combat/Projectile';
+import { AIR, AirAvatar, AirColorFn, AirFx, ArmGesture, drawAirKnife } from './AirVisuals';
+import {
+  FieldKnife, SparkPoint,
+  beyBurst, coverBurst, drawBey, drawCloud, drawCover, drawDaggerField, drawLevitation, drawScar,
+  drawSparkTrail, drawStealthGauge, drawStealthWisps, drawTimingRing, drawWinded, flipBurst, jabFlick,
+  knifeHit, knockBlast, pierceBurst, ringVerdict, shredSparks,
+} from './AirBladeVisuals';
 import { BaseAvatar } from './ElementVisuals';
 import { makeSkinAvatar } from './skins/SkinAvatars';
-import { SakuraDraft, SakuraFx } from './skins/SakuraFx';
+import { SakuraFx } from './skins/SakuraFx';
 import { meterGain } from '../../combat/Meters';
 import { Sfx } from '../../audio';
 
 type Owner = 'player' | 'npc';
+type Body = Phaser.Physics.Arcade.Body;
+const BOTH: Owner[] = ['player', 'npc'];
 
-// ── Wind dodge ────────────────────────────────────────────────────────────────
+// ── Passive: clouds and stealth ───────────────────────────────────────────────
 
-/**
- * The dancer's whole defensive economy. Wind dodge is banked by landing dances and spent only
- * by dodges that actually saved a hit — never by a timer — so a fight where nothing touches you
- * keeps everything you earned, and a fight where everything does strips you in ten hits.
- */
-const DODGE_PER_DODGE = 0.10;
-/** Sky Grapple's landing payout. */
-const GRAPPLE_DODGE = 0.25;
-/** A returning Gale Glaive that catches someone, and E+'s clean two-hit pair. */
-const GLAIVE_DODGE = 0.15;
-const EXPERT_PAIR_DODGE = 0.15;
-/** Q+ (Eye of the Storm): every attack that lands during the tornado. */
-const EYE_DODGE = 0.10;
+const STEALTH_MAX = 100;
+/** Stealth a second while standing in one of your own clouds (doubled under Cloud Cover). */
+const STEALTH_PER_S = 12;
+/** Dodge chance at full stealth; it scales straight down to nothing at none. */
+const DODGE_AT_MAX = 0.33;
+/** Past this, Pierce the Skies is the big one — and the clouds leave when it is used. */
+const BIG_STEALTH = 50;
+const CLOUD_COUNT = 4;
+const CLOUD_R_MIN = 95;
+const CLOUD_R_MAX = 130;
+const CLOUD_SPEED_MIN = 14;
+const CLOUD_SPEED_MAX = 24;
+/** A cloud is wider than it is tall: its footprint is an ellipse this much flatter. */
+const CLOUD_FLAT = 0.62;
+/** How fast scattered clouds leave, and how long the sky stays empty before more crawl in. */
+const CLOUD_FLEE_SPEED = 900;
+const CLOUD_RETURN_MS = 5000;
+/** Enemy projectiles inside a cloud keep only this share of their speed. */
+const CLOUD_SHOT_SPEED = 0.25;
+/** Stealth at which the Sharpshooter achievement (and the Sand skin) unlocks. */
+const PERFECT_STEALTH = STEALTH_MAX;
 
-// ── Wind Splice (Click) ───────────────────────────────────────────────────────
+// ── Click: Pierce the Skies ───────────────────────────────────────────────────
 
-const SPLICE_CUT_RANGE = 100;
-/** Half-angle of the near cut. Wide enough to be a dance step, narrow enough to be aimed. */
-const SPLICE_CUT_HALF = 0.95;
-const SPLICE_CUT_DAMAGE = 20;
-const SHEAR_DAMAGE = 12;
-const SHEAR_SPEED = 640;
-const SHEAR_RANGE = 760;
-const SHEAR_HIT_RADIUS = 28;
-/** Click+ (Whirlwind): every Nth splice throws a free Spin Dance. */
-const WHIRLWIND_EVERY = 3;
+const PIERCE_ID = 'pierce-the-skies';
+const PIERCE_DAMAGE = 14;
+const PIERCE_DAMAGE_PER_STEALTH = 0.36;
+const PIERCE_LUNGE = 50;
+const PIERCE_LUNGE_PER_STEALTH = 2.3;
+const PIERCE_LUNGE_SPEED = 1500;
+/** How far the knife reaches past where the lunge ends, and how wide the thrust is. */
+const PIERCE_REACH = 62;
+const PIERCE_HALF_W = 24;
+const BACKSTAB_MULT = 2;
+/** Attacker must be inside this half-angle of dead behind the target. */
+const BACKSTAB_HALF = Math.PI / 3;
+const SCAR_MS = 2600;
+/** The held barrage: how long the button must be down, then one small stab this often. */
+const JAB_HOLD_MS = 260;
+const JAB_EVERY_MS = 110;
+const JAB_DAMAGE = 3;
+const JAB_REACH = 82;
+const JAB_HALF = 0.34;
+const JAB_SPEED_MULT = 0.6;
 
-// ── Spin Dance (E) ────────────────────────────────────────────────────────────
+// ── E: Knock ──────────────────────────────────────────────────────────────────
 
-const SPIN_COOLDOWN_MS = 6000;
-const SPIN_RADIUS = 115;
-const SPIN_DAMAGE = 20;
-/** What one connecting Spin Dance takes off every other ability. */
-const SPIN_CD_REFUND_MS = 2000;
-/** E+ (Expert Dancer): a second charge, and the window that turns it into a flip. */
-const FLIP_WINDOW_MS = 1800;
-const FLIP_HALF_LEN = 135;
-const FLIP_HALF_WID = 46;
+const KNOCK_ID = 'air-knock';
+const KNOCK_RANGE = 100;
+const KNOCK_HALF = 0.62;
+const KNOCK_DAMAGE = 10;
+const KNOCK_SHOVE = 380;
+const KNOCK_SHOVE_MS = 170;
+const WINDED_MS = 6000;
+/** "200% slower": a third of an ordinary turn. An unwinded fighter turns instantly. */
+const WINDED_TURN_RAD_PER_S = 1.6;
+/** Stamina is 0–1: seconds of walking to empty it, seconds of standing to fill it. */
+const STAMINA_DRAIN_S = 2.2;
+const STAMINA_REFILL_S = 1.6;
+const MOVING_SPEED = 20;
 
-// ── Gale Glaive (R) ───────────────────────────────────────────────────────────
+// ── R: Cloud Cover ────────────────────────────────────────────────────────────
 
-const GLAIVE_SPEED = 940;
-const GLAIVE_RADIUS = 30;
-const GLAIVE_OUT_DAMAGE = 15;
-const GLAIVE_BACK_DAMAGE = 20;
-const GLAIVE_PARK_MS = 2000;
-const GLAIVE_TICK_MS = 400;
-const GLAIVE_TICK_DAMAGE = 10;
-/** R+ (Gale Afterimage): how long the wooden phantoms stand, and what their ticks are worth. */
-const AFTERIMAGE_MS = 5000;
-const AFTERIMAGE_TICK_DAMAGE = 7;
+const COVER_ID = 'cloud-cover';
+const COVER_HP = 25;
+const COVER_DECAY = 5;
+const COVER_DECAY_MS = 3000;
+/** How much of herself the wearer still sees. Everyone else sees nothing. */
+const COVER_SELF_ALPHA = 0.42;
 
-// ── Sky Grapple (F) ───────────────────────────────────────────────────────────
+// ── F: Combo ──────────────────────────────────────────────────────────────────
 
-const GRAPPLE_SPEED = 1400;
-const GRAPPLE_MAX_MS = 420;
-/** How near the hook line has to pass for F+ to count it as a ram. */
-const RAM_RADIUS = 44;
-/** F+ (Final Flight): the window of your own damage it cashes in, and the share it takes. */
-const FINAL_FLIGHT_WINDOW_MS = 10000;
-const FINAL_FLIGHT_SHARE = 0.5;
-const FINAL_FLIGHT_KNOCKBACK = 620;
+const COMBO_ID = 'air-combo';
+const VOLLEY_KNIVES = 6;
+const VOLLEY_SPREAD = 0.2;
+const VOLLEY_SPEED = 900;
+const VOLLEY_RANGE = 640;
+const VOLLEY_DAMAGE = 6;
+const VOLLEY_STAGGER_MS = 40;
+/** The ring: how long after the volley it appears, how long it takes to close, and from where to where. */
+const RING_DELAY_MS = 280;
+const RING_MS = 560;
+const RING_R0 = 96;
+const RING_MARK_R = 26;
+/** A press this long before the ring lands, or this long after, counts. */
+const RING_EARLY_MS = 150;
+const RING_LATE_MS = 110;
+const LEVITATE_MS = 3000;
+const LEVITATE_LIFT = 78;
+/** The second ring lands this long before she would come down on her own. */
+const RING2_BEFORE_LANDING_MS = 800;
+/** The rain: twelve knives in four files of three. */
+const FIELD_COLS = 4;
+const FIELD_ROWS = 3;
+const FIELD_HALF_W = 80;
+const FIELD_HALF_H = 54;
+const FIELD_STRIKE_DAMAGE = 16;
+const FIELD_STRIKE_AT_MS = 240;
+const FIELD_STEP_DAMAGE = 5;
+const FIELD_STEP_MS = 350;
+const FIELD_MS = 7000;
 
-// ── Wind Breaker (Q) ──────────────────────────────────────────────────────────
+// ── Q: Tornado Blade ──────────────────────────────────────────────────────────
 
-const TORNADO_MS = 5000;
-const TORNADO_RADIUS = 155;
-/** Captives are held between these two radii — close enough to hurt, far enough to be visible. */
-const TORNADO_ORBIT_MIN = 62;
-const TORNADO_ORBIT_MAX = 140;
-const TORNADO_ORBIT_SPEED = 3.4;
-const TORNADO_TICK_MS = 500;
-const TORNADO_TICK_DAMAGE = 12;
-/** The dancer is a funnel, not a runner — she keeps her feet but loses her stride. */
-const TORNADO_SPEED_MULT = 0.6;
-/** The throw at the end: how fast, and what hitting the wall costs. */
-const LAUNCH_SPEED = 1150;
-const LAUNCH_WALL_DAMAGE = 25;
-/** Storm perk (divine): the extra a lightning strike adds to each grind inside the funnel. */
-const STORM_BOLT_DAMAGE = 10;
+const BEY_ID = 'tornado-blade';
+/** Stamina is in seconds: it drains one a second, and faster when she is hit. */
+const BEY_STAMINA = 6;
+const BEY_STAMINA_PER_STEALTH = 0.04;
+const BEY_HIT_DRAIN_PER_DAMAGE = 0.04;
+const BEY_ACCEL = 1700;
+const BEY_MAX_SPEED = 640;
+/** Drag per second, as an exponent: low, which is what makes it skate. */
+const BEY_DRAG = 1.2;
+const BEY_RADIUS = 30;
+const BEY_WALL_BOUNCE = 0.8;
+const BEY_SHRED_MS = 900;
+const BEY_TICK_MS = 100;
+const BEY_TICK_DAMAGE = 4;
+/** Storm perk (divine): the lightning each grinding tick carries. */
+const STORM_BOLT_DAMAGE = 2;
+/** Speed kept while grinding inside somebody. */
+const BEY_SHRED_SPEED = 0.12;
+const BEY_LAUNCH_SPEED = 720;
+/** How long after being thrown off somebody before it can bite them again. */
+const BEY_REHIT_MS = 600;
+/** How long each grinding tick leaves its victim attacking at half speed. */
+const BEY_SLOW_ATTACK_MS = 300;
+const BEY_ORBIT_R = 46;
+const BEY_ORBIT_DAMAGE = 6;
+const BEY_TRAIL_MS = 650;
+/** The close-up: how far the camera pushes in, and how slow the world gets (offline only). */
+const DRAMA_ZOOM = 0.28;
+const DRAMA_SLOW = 0.45;
 
-// ── Mastery ───────────────────────────────────────────────────────────────────
+// ── Net ───────────────────────────────────────────────────────────────────────
 
-/** Dancer's Momentum: speed gained per second on her feet, and the ceiling on it. */
-const MOMENTUM_PER_SEC = 0.05;
-const MOMENTUM_MAX = 1.0;
-/** What one hit taken knocks off the momentum. */
-const MOMENTUM_HIT_LOSS = 0.10;
-/** Weather Cycle (mastery bindable): the winds record for this long, then play it all back. */
-const WEATHER_ID = 'weather-cycle';
-const WEATHER_COOLDOWN_MS = 30000;
-const WEATHER_RECORD_MS = 5000;
-/** Bot: the cycle is opened with the player this close, so the five seconds record a real exchange. */
-const NPC_WEATHER_RANGE = 320;
-
-/** The five abilities the cycle can record, and the key each is known by to the sound layer. */
-type WeatherCastId = 'wind-splice' | 'spin-dance' | 'gale-glaive' | 'sky-grapple' | 'wind-breaker';
-const WEATHER_KEYS: Record<WeatherCastId, string> = {
-  'wind-splice': 'Click', 'spin-dance': 'E', 'gale-glaive': 'R', 'sky-grapple': 'F', 'wind-breaker': 'Q',
-};
-
-/** One recorded press: which ability, how far into the window, and where it was aimed. */
-interface WeatherCast {
-  id: WeatherCastId;
-  at: number;
-  tx: number;
-  ty: number;
-}
-// ── Element perks ─────────────────────────────────────────────────────────────
-
-/** Quick: every cooldown the dancer has, the kit's own clocks (spin charges, the cycle) included. */
-const QUICK_COOLDOWN_MULT = 0.8;
-/** Gust: the press id that relays a recall, and how close the bot lets the glaive get first. */
-const GUST_RECALL_ID = 'air-gust-recall';
-const NPC_GUST_RECALL_RANGE = 90;
-/** Vacuum: the aura's reach, its draw (added to velocity, never set), and the hits it softens. */
-const VACUUM_RADIUS = 170;
-const VACUUM_PULL_PER_S = 55;
-const VACUUM_INCOMING_MULT = 0.85;
-/** Blowback: the share of a dodged hit thrown back, and the steeper price of each dodge. */
-const BLOWBACK_SHARE = 0.2;
-const BLOWBACK_DODGE_COST = 0.15;
-
-/** Wind dodge at which the Sharpshooter achievement (and the Sand skin) unlocks. */
-const PERFECT_DODGE = 1.0;
+/** Pseudo-cast prefix for everything that is a press or a state rather than an ability cast. */
+const NET = 'airx-';
+const NET_SKY_MS = 600;
 
 /** Which arm gesture the opponent's rig plays when the NPC lands each ability. */
-const NPC_GESTURES: Record<string, ArmGesture> = {
-  'wind-splice': 'punch',
-  'spin-dance': 'sweep',
-  'gale-glaive': 'punch',
-  'sky-grapple': 'dash',
-  'wind-breaker': 'raise',
+const GESTURES: Record<string, ArmGesture> = {
+  [PIERCE_ID]: 'punch',
+  [KNOCK_ID]: 'clap',
+  [COVER_ID]: 'flex',
+  [COMBO_ID]: 'sweep',
+  [BEY_ID]: 'raise',
 };
 
 // ── Arena API interface ────────────────────────────────────────────────────────
@@ -154,39 +177,31 @@ export interface AirArenaApi {
   readonly npc: Fighter;
   readonly enemies: Fighter[];
   readonly scene: Phaser.Scene;
+  readonly projectiles: Phaser.Physics.Arcade.Group | null;
   readonly eKey: Phaser.Input.Keyboard.Key;
   readonly rKey: Phaser.Input.Keyboard.Key;
   readonly fKey: Phaser.Input.Keyboard.Key;
   readonly qKey: Phaser.Input.Keyboard.Key;
   readonly nukeChanneling: boolean;
-  readonly width: number;
-  readonly height: number;
   /** True when the local player's element is air. */
   readonly isPlayerAir: boolean;
   /** True when the opponent's element is air. */
   readonly isNpcAir: boolean;
-  /** True only when the player is air AND Air Mastery is switched on. */
-  readonly masteryActive: boolean;
-  /** World-space cursor: the glaive parks on it and Wind Breaker throws along it. */
+  readonly isOnline: boolean;
+  readonly isInvasion: boolean;
+  /** How often this difficulty's bot fumbles: 0 for the best, towards 1 for the worst. */
+  readonly npcSlack: number;
+  /** World-space cursor: the Tornado Blade chases it, and the rain of knives lands on it. */
   readonly pointerX: number;
   readonly pointerY: number;
   readonly worldBounds: Phaser.Geom.Rectangle;
   /**
-   * Sky Grapple places the player's body itself, so WASD has to stand down for the flight —
-   * the same flag Hunt's pounce and Gunpowder's retreat use.
+   * The lunge and the Tornado Blade place the player's body themselves, so WASD has to stand
+   * down for them — the same flag Hunt's pounce and Gunpowder's retreat use.
    */
   isDodging: boolean;
   buildPlayerContext(x: number, y: number): CastContext;
-  /** Mastery enhancement id bound over the given ability slot, or null if that slot is unchanged. */
-  masteryBindFor(slot: string): string | null;
-  recordMasteryStat(key: string, amount: number): void;
-  /** True when the opponent is air with Element Mastery on (a Nightmare bot or an online peer). */
-  readonly npcMasteryActive: boolean;
-  /** The opponent's mastery bind over `slot`, or null — drives the bot's own Weather Cycle. */
-  npcMasteryBindFor(slot: string): string | null;
-  /** True when the opponent is driven by the local AI rather than replayed from a peer. */
-  readonly npcAutonomous: boolean;
-  showFloatingText(x: number, y: number, text: string, color: string): void;
+  isTargetable(f: Fighter): boolean;
   spawnDamageNumber(x: number, y: number, amount: number): void;
   spawnHitFlash(x: number, y: number, color: number): void;
   /** Skins: maps an air visual color through the owner's skin. */
@@ -195,141 +210,143 @@ export interface AirArenaApi {
   skinId(owner: Owner): string | null;
   /** Idempotent achievement unlock with in-arena popup. */
   unlockAchievement(id: string): void;
-  hasUpgrade(slot: string): boolean;
+  /** Online: send a press or a state to the other machine (`replayNet` there). */
+  broadcast(id: string): void;
   hasPerk(owner: Owner, perkId: string): boolean;
 }
 
 // ── Internal world objects ─────────────────────────────────────────────────────
 
-/** Wind Splice's far half: a sheet of sheared air travelling on its own. */
-interface Shear {
+interface Cloud {
+  x: number;
+  y: number;
+  r: number;
+  vx: number;
+  seed: number;
+  /** Torn away by a big stab: flying off, and no longer a cloud anybody can stand in. */
+  fleeing: boolean;
+}
+
+interface Knife {
   owner: Owner;
   x: number;
   y: number;
   vx: number;
   vy: number;
   travelled: number;
+  /** ms until it leaves the hand. */
+  delay: number;
   t: number;
-  damage: number;
-  hit: Set<Fighter>;
 }
 
-type GlaivePhase = 'out' | 'park' | 'back' | 'phantom';
-
-/** The pair of fans thrown as one spindle, and the wooden memory R+ leaves in their place. */
-interface Glaive {
+interface Field {
+  id: number;
   owner: Owner;
   x: number;
   y: number;
-  parkX: number;
-  parkY: number;
-  phase: GlaivePhase;
-  /** When the current phase ends — only meaningful for `park` and `phantom`. */
+  knives: FieldKnife[];
+  bornAt: number;
   until: number;
+  struck: boolean;
+  lastStep: Map<Fighter, number>;
+}
+
+interface Scar { owner: Owner; x0: number; y0: number; x1: number; y1: number; until: number }
+
+interface Shove { target: Fighter; vx: number; vy: number; until: number }
+
+interface Lunge { ang: number; left: number }
+
+/** The Combo between presses. */
+interface ComboState {
+  /** 1 = waiting to flip, 2 = in the air waiting to rain. */
+  stage: 1 | 2;
+  /** When the ring starts closing, and when it lands on her. */
+  ringFrom: number;
+  ringAt: number;
+  /** Bot only: when the kit presses for it (0 = it will let the ring go). */
+  botPressAt: number;
+}
+
+interface Shred { target: Fighter; until: number; lastTick: number; inAng: number }
+
+interface Bey {
+  stamina: number;
+  max: number;
+  vx: number;
+  vy: number;
   spin: number;
-  lastTickAt: number;
-  /** Targets already caught on this leg; cleared when the glaive turns for home. */
-  hit: Set<Fighter>;
-  /** Gust perk: the thrower can still teleport to this glaive with a second R. */
-  gust: boolean;
+  tilt: number;
+  shred: Shred | null;
+  /** Who it has just been thrown off, and until when it cannot bite them again. */
+  immune: Map<Fighter, number>;
+  /** Knives picked up from a dagger field, swinging round it. */
+  orbit: number;
+  trail: SparkPoint[];
 }
 
-/** An enemy thrown out of Wind Breaker, flying until a wall stops it. */
-interface Launch {
-  owner: Owner;
-  target: Fighter;
-  vx: number;
-  vy: number;
-  expireAt: number;
-}
-
-interface Hawk {
-  g: Phaser.GameObjects.Graphics;
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
-  expireAt: number;
-  t: number;
-}
-
-/** Everything one side of the dance owns. Mirrored so an air NPC plays the full kit. */
+/** Everything one assassin owns. Mirrored so an air NPC plays the full kit. */
 interface Side {
   owner: Owner;
-  /** Wind dodge, mirrored onto `Fighter.windDodge` every frame for the status tray. */
-  dodge: number;
-  /** Sky Grapple's i-frames. */
-  invulnUntil: number;
-  /** Spin Dance charges, kept fractional so the ability card can drain smoothly. */
-  spinCharges: number;
-  lastSpinAt: number;
-  /** E+: the first half of a pair connected, so a clean second half pays out. */
-  spinPairArmed: boolean;
-  spinPairHit: boolean;
-  /** Click+ (Whirlwind) counter. */
-  spliceCount: number;
-  /** Wind Breaker. */
-  tornadoUntil: number;
-  tornadoLastTickAt: number;
-  tornadoCaptives: Map<Fighter, { angle: number; dist: number }>;
-  /** Rolling ledger of damage this side dealt, for F+ (Final Flight). */
-  ledger: Array<{ at: number; amount: number }>;
-  /** Mastery passive: the momentum bonus, 0–MOMENTUM_MAX. */
-  momentum: number;
-  /** Last seen `rawDamageTaken`, so a hit can be detected without an event subscription. */
-  lastRawTaken: number;
-  /** Weather Cycle's own cooldown (mastery bindables never touch the ability table). */
-  weatherLastCastAt: number;
-  /** When the recording window closes; 0 while the winds are not listening. */
-  weatherUntil: number;
-  /** Every press made inside the window, in order. */
-  weatherLog: WeatherCast[];
-  /** The log being played back, consumed from the front; null when nothing is replaying. */
-  weatherReplay: WeatherCast[] | null;
-  /** When the playback began, so each cast lands on the beat it was recorded on. */
-  weatherReplayAt: number;
-  /** True for the duration of one replayed cast, so the replay never records itself. */
-  weatherReplaying: boolean;
+  stealth: number;
+  inCloud: boolean;
+  clouds: Cloud[];
+  /** While the sky is empty after a scatter: when new clouds start crawling in. */
+  cloudsBackAt: number;
+  lunge: Lunge | null;
+  /** How long the knife stays formed in her hand. */
+  knifeUntil: number;
+  /** Player: when the button went down. Bot: until when the kit is jabbing for it. */
+  holdSince: number;
+  jabUntil: number;
+  lastJabAt: number;
+  coverHp: number;
+  coverNextDecayAt: number;
+  combo: ComboState | null;
+  levFrom: number;
+  levUntil: number;
+  bey: Bey | null;
+  /** Latched, so `forceInvisible` is handed back exactly once. */
+  hidden: boolean;
 }
 
 function makeSide(owner: Owner): Side {
   return {
     owner,
-    dodge: 0,
-    invulnUntil: 0,
-    spinCharges: 1,
-    lastSpinAt: -Infinity,
-    spinPairArmed: false,
-    spinPairHit: false,
-    spliceCount: 0,
-    tornadoUntil: 0,
-    tornadoLastTickAt: 0,
-    tornadoCaptives: new Map(),
-    ledger: [],
-    momentum: 0,
-    lastRawTaken: 0,
-    weatherLastCastAt: -Infinity,
-    weatherUntil: 0,
-    weatherLog: [],
-    weatherReplay: null,
-    weatherReplayAt: 0,
-    weatherReplaying: false,
+    stealth: 0,
+    inCloud: false,
+    clouds: [],
+    cloudsBackAt: 0,
+    lunge: null,
+    knifeUntil: 0,
+    holdSince: 0,
+    jabUntil: 0,
+    lastJabAt: 0,
+    coverHp: 0,
+    coverNextDecayAt: 0,
+    combo: null,
+    levFrom: 0,
+    levUntil: 0,
+    bey: null,
+    hidden: false,
   };
 }
 
 // ── AirKit ────────────────────────────────────────────────────────────────────
 
 /**
- * The wind dancer, whole: her character rig, her five abilities, her upgrades and her mastery.
+ * The hooded assassin, whole: her rig, her clouds, her five abilities and her bot.
  *
- * Two ideas hold the element together. The first is **wind dodge** — a dodge pool that is only
- * ever spent by dodges that saved a hit, so it is a resource you build and defend rather than a
- * buff that ticks away. Every ability in the kit either feeds it or spends the tempo it buys.
- * The second is **tempo**: Spin Dance pays back cooldown on contact, so the dancer who keeps
- * connecting keeps her whole kit up, and the one who whiffs is left with a click.
+ * One number holds the element together: **stealth**, 0–100, earned by standing in her own
+ * clouds. It is a dodge chance while it is banked (a third of hits at full), it is how far and how
+ * hard Pierce the Skies goes when it is spent, and it is how long the Tornado Blade spins. The
+ * rest of the kit is ways to earn it safely (Cloud Cover), ways to make the stab count (Knock
+ * leaves them unable to turn, and a stab in the back is doubled), and somewhere to spend the time
+ * in between (the Combo and its field of knives, which the Blade can pick up).
  *
- * Everything here runs for both sides — an air NPC (and an online air opponent, whose casts are
- * replayed through the same `do*` entry points) dances with the full kit, not a stub.
+ * Who decides what: each machine simulates its own assassin (`simulates`). An online opponent's
+ * is drawn from her casts and from the `airx-` relays in `replayNet`, and nothing she does is
+ * decided here.
  */
 export class AirKit {
   // ── Visuals ─────────────────────────────────────────────────────────────
@@ -337,52 +354,43 @@ export class AirKit {
   private readonly ncol: AirColorFn;
   private readonly pfx: AirFx;
   private readonly nfx: AirFx;
-  /** Sakura skin: the same effects drawn as cherry blossom and ninja steel. Visual only. */
+  /** Sakura skin: the same bursts drawn as cherry blossom. Visual only. */
   private readonly psak: SakuraFx;
   private readonly nsak: SakuraFx;
   private playerAvatar: BaseAvatar | null = null;
   private npcAvatar: BaseAvatar | null = null;
-  /** Everything airborne — shears, glaives, the hawk. Over the fighters. */
-  private airGfx: Phaser.GameObjects.Graphics | null = null;
-  /** The tornado funnel. Under the fighters, so a captive is visible inside it. */
+  /** Scars and dagger fields: on the floor, under the fighters. */
   private groundGfx: Phaser.GameObjects.Graphics | null = null;
+  /** Knives, the Blade, rings, gauges: over the fighters. */
+  private airGfx: Phaser.GameObjects.Graphics | null = null;
+  /** The clouds, over everything in the arena. */
+  private skyGfx: Phaser.GameObjects.Graphics | null = null;
   private vizT = 0;
-
-  /** Sustained rig pose and when it lapses. */
-  private playerHold: ArmHold = null;
-  private playerHoldUntil = 0;
-  private playerHoldAngle = 0;
-
-  /** The draft riding on a dancer with wind dodge banked, one per side. */
-  private dodgeDraft: AirDraft | null = null;
-  private npcDodgeDraft: AirDraft | null = null;
-  /** Mastery momentum draft, player only. */
-  private momentumDraft: AirDraft | null = null;
 
   // ── Sim ─────────────────────────────────────────────────────────────────
   private sides: Record<Owner, Side> = { player: makeSide('player'), npc: makeSide('npc') };
-  private shears: Shear[] = [];
-  private glaives: Glaive[] = [];
-  private launches: Launch[] = [];
-
-  // -- Hawk perk (Air): F throws a bird instead of a hook --
-  private hawks: Hawk[] = [];
-  private hawkDragUntil = 0;
-  private hawkDragX = 0;
-  private hawkDragY = 0;
-
+  private knives: Knife[] = [];
+  private fields: Field[] = [];
+  private scars: Scar[] = [];
+  private shoves: Shove[] = [];
+  private nextFieldId = 1;
   /** Fighters we installed a damage absorber on, so `reset` can take them back off. */
   private absorbed = new Set<Fighter>();
-  /** Fighters whose perk multipliers this kit has written, so they can be handed back. */
-  private perkMultsWritten = new Set<Fighter>();
-  /** Vacuum: who each side's aura is holding right now, for the entry callout and the resist. */
-  private vacuumed: Record<Owner, Set<Fighter>> = { player: new Set(), npc: new Set() };
-  /** Blowback: true while a reflected hit is landing, so two Blowback dancers cannot rally forever. */
-  private blowingBack = false;
+  /** True while this kit is the one holding `isDodging` down. */
+  private drivingPlayer = false;
+  private pointerWasDown = false;
 
-  // last known aim, captured in handleInput so update() can steer the rig
-  private lastMouseX = 0;
-  private lastMouseY = 0;
+  // ── The close-up ────────────────────────────────────────────────────────
+  private drama = 0;
+  private camRef: Phaser.Cameras.Scene2D.Camera | null = null;
+  private camZoomF = 1;
+  private camDX = 0;
+  private camDY = 0;
+  private slowed = false;
+
+  // ── Net ─────────────────────────────────────────────────────────────────
+  private netSeq = 0;
+  private lastSkyAt = 0;
 
   constructor(private readonly arena: AirArenaApi) {
     this.pcol = (base) => arena.airColor('player', base);
@@ -394,53 +402,42 @@ export class AirKit {
   }
 
   reset(): void {
-    // Visuals — every GameObject dies with the old scene run, so rebuild lazily in update().
+    // Every GameObject dies with the old scene run, so rebuild lazily in update().
     if (this.playerAvatar) { this.playerAvatar.destroy(); this.playerAvatar = null; }
     if (this.npcAvatar) { this.npcAvatar.destroy(); this.npcAvatar = null; }
-    if (this.dodgeDraft) { this.dodgeDraft.destroy(); this.dodgeDraft = null; }
-    if (this.npcDodgeDraft) { this.npcDodgeDraft.destroy(); this.npcDodgeDraft = null; }
-    if (this.momentumDraft) { this.momentumDraft.destroy(); this.momentumDraft = null; }
-    if (this.airGfx) { this.airGfx.destroy(); this.airGfx = null; }
-    if (this.groundGfx) { this.groundGfx.destroy(); this.groundGfx = null; }
+    for (const g of [this.groundGfx, this.airGfx, this.skyGfx]) g?.destroy();
+    this.groundGfx = null;
+    this.airGfx = null;
+    this.skyGfx = null;
     this.vizT = 0;
-
-    this.playerHold = null;
-    this.playerHoldUntil = 0;
-    this.playerHoldAngle = 0;
 
     // Hand the absorbers back before the fighters are replaced, or a stale closure keeps
     // answering for a body that no longer exists.
     for (const f of this.absorbed) f.damageAbsorber = null;
     this.absorbed.clear();
-    for (const f of this.perkMultsWritten) { f.perkCooldownMult = 1; f.perkIncomingMult = 1; }
-    this.perkMultsWritten.clear();
-    this.vacuumed = { player: new Set(), npc: new Set() };
-    this.blowingBack = false;
+
+    this.restoreDrama();
+    if (this.drivingPlayer) { this.arena.isDodging = false; this.drivingPlayer = false; }
 
     this.sides = { player: makeSide('player'), npc: makeSide('npc') };
-    this.shears = [];
-    this.glaives = [];
-    this.launches = [];
-
-    for (const h of this.hawks) h.g.destroy();
-    this.hawks = [];
-    this.hawkDragUntil = 0;
-    this.hawkDragX = 0;
-    this.hawkDragY = 0;
-
-    this.ledgerSeen.clear();
-    this.lastMouseX = 0;
-    this.lastMouseY = 0;
+    this.knives = [];
+    this.fields = [];
+    this.scars = [];
+    this.shoves = [];
+    this.nextFieldId = 1;
+    this.pointerWasDown = false;
+    this.netSeq = 0;
+    this.lastSkyAt = 0;
   }
 
   // ── Small helpers ────────────────────────────────────────────────────────
 
   private get now(): number { return this.arena.scene.time.now; }
+  private sakura(owner: Owner): boolean { return this.arena.skinId(owner) === 'sakura'; }
   private fx(owner: Owner): AirFx {
     const sak = this.sakura(owner);
     return owner === 'player' ? (sak ? this.psak : this.pfx) : (sak ? this.nsak : this.nfx);
   }
-  private sakura(owner: Owner): boolean { return this.arena.skinId(owner) === 'sakura'; }
   private col(owner: Owner): AirColorFn { return owner === 'player' ? this.pcol : this.ncol; }
   private fighter(owner: Owner): Fighter { return owner === 'player' ? this.arena.player : this.arena.npc; }
   private avatar(owner: Owner): BaseAvatar | null {
@@ -449,1469 +446,1340 @@ export class AirKit {
   private alive(f: Fighter | null | undefined): f is Fighter {
     return !!f && f.active && f.hp > 0;
   }
+  private isAir(owner: Owner): boolean {
+    return owner === 'player' ? this.arena.isPlayerAir : this.arena.isNpcAir;
+  }
+  private body(f: Fighter): Body { return f.body as Body; }
+  private bodyR(f: Fighter): number { return Math.max(12, f.displayWidth * 0.42); }
+
+  /**
+   * Whether this machine decides what this side's kit does. An online opponent (or a co-op ally
+   * in the npc slot of an Invasion) is simulated on its own machine: here it is drawn, nothing more.
+   */
+  private simulates(owner: Owner): boolean {
+    return owner === 'player' || (!this.arena.isOnline && !this.arena.isInvasion);
+  }
+
+  /** Whether the other duellist is somebody to hide from, rather than an ally. */
+  private hidesFromViewer(owner: Owner): boolean {
+    return owner === 'npc' && !this.arena.isInvasion;
+  }
 
   /** Everything this side is allowed to hurt. */
   private targetsOf(owner: Owner): Fighter[] {
-    if (owner === 'npc') return this.alive(this.arena.player) ? [this.arena.player] : [];
-    return this.arena.enemies.filter((e) => this.alive(e));
+    if (owner === 'npc') {
+      if (this.arena.isInvasion) return [];
+      return this.arena.player.bodies().filter((f) => this.alive(f));
+    }
+    return this.arena.enemies.filter((e) => this.alive(e) && this.arena.isTargetable(e));
   }
 
-  private body(f: Fighter): Phaser.Physics.Arcade.Body {
-    return f.body as Phaser.Physics.Arcade.Body;
+  private mainTarget(owner: Owner): Fighter | null {
+    const f = this.fighter(owner);
+    let best: Fighter | null = null;
+    let bestD = Infinity;
+    for (const t of this.targetsOf(owner)) {
+      const d = Phaser.Math.Distance.Between(f.x, f.y, t.x, t.y);
+      if (d < bestD) { bestD = d; best = t; }
+    }
+    return best;
   }
 
   private aimOf(owner: Owner, tx?: number, ty?: number): number {
     const f = this.fighter(owner);
-    if (tx !== undefined && ty !== undefined) return Math.atan2(ty - f.y, tx - f.x);
+    if (tx !== undefined && ty !== undefined && (tx !== f.x || ty !== f.y)) return Math.atan2(ty - f.y, tx - f.x);
     if (owner === 'player') return this.playerAim();
-    const p = this.arena.player;
-    return Math.atan2(p.y - f.y, p.x - f.x);
+    const t = this.mainTarget(owner) ?? this.arena.player;
+    return Math.atan2(t.y - f.y, t.x - f.x);
   }
 
+  /** Read off the live cursor, so it is right even on a frame `handleInput` did not run (Quantum). */
   private playerAim(): number {
     const { player } = this.arena;
-    const ax = this.lastMouseX || player.x + 1;
-    const ay = this.lastMouseY || player.y;
-    return Math.atan2(ay - player.y, ax - player.x);
+    return Math.atan2(this.arena.pointerY - player.y, this.arena.pointerX - player.x);
   }
 
-  // ── Wind dodge ───────────────────────────────────────────────────────────
-
-  /**
-   * Bank wind dodge. Uncapped on purpose — past 100% the roll simply cannot fail, and the
-   * overflow is the buffer that keeps it from failing for the next several hits either.
-   */
-  private addDodge(owner: Owner, amount: number, label: string): void {
-    const s = this.sides[owner];
-    s.dodge += amount;
+  /** Every hit this kit lands goes through here — and only on the machine that decides it. */
+  private hit(owner: Owner, t: Fighter, dmg: number, color: number = AIR.frost): void {
+    if (!this.simulates(owner) || dmg <= 0) return;
     const f = this.fighter(owner);
-    if (this.alive(f)) {
-      this.arena.showFloatingText(
-        f.x, f.y - 40,
-        `🍃 ${label} +${Math.round(amount * 100)}% (${Math.round(s.dodge * 100)}%)`,
-        '#ccddff',
-      );
-      this.fx(owner).featherPuff(f.x, f.y, 5);
-    }
-    if (owner === 'player' && s.dodge >= PERFECT_DODGE) this.arena.unlockAchievement('sharpshooter');
+    t.takeDamage(Math.max(1, Math.round(dmg)), { source: f, sourceX: f.x, sourceY: f.y });
+    this.arena.spawnHitFlash(t.x, t.y, this.col(owner)(color));
+  }
+
+  /** True when the attacker is standing in the target's blind spot. */
+  private behind(attacker: Fighter, t: Fighter): boolean {
+    const toAttacker = Math.atan2(attacker.y - t.y, attacker.x - t.x);
+    return Math.abs(Phaser.Math.Angle.Wrap(toAttacker - (t.facingAngle + Math.PI))) <= BACKSTAB_HALF;
+  }
+
+  private relay(owner: Owner, id: string): void {
+    if (owner === 'player' && this.arena.isOnline) this.arena.broadcast(`${NET}${id}:${this.netSeq++}`);
+  }
+
+  private sfx(owner: Owner, name: string, rate = 1, volume = 0.7): void {
+    Sfx.playAt(name, this.fighter(owner).x, { rate, volume: owner === 'player' ? volume : volume * 0.7 });
+  }
+
+  /** The gates `castAbility` would have applied, for presses that never go through it. */
+  private gagged(f: Fighter): boolean {
+    const wall = Date.now();
+    return wall < f.disarmedUntil || wall < f.silencedUntil || wall < f.chickenUntil;
+  }
+
+  // ── Passive: stealth and the dodge ───────────────────────────────────────
+
+  private dodgeChance(owner: Owner): number {
+    const f = this.fighter(owner);
+    if (!this.isAir(owner) || !f || f.passivesSealed()) return 0;
+    return (this.sides[owner].stealth / STEALTH_MAX) * DODGE_AT_MAX;
   }
 
   /**
-   * The one gate every hit on an air dancer passes through. Installed as the fighter's
-   * `damageAbsorber` so it covers melee, area and tick damage too — a dodge that only worked on
-   * projectiles would miss most of what actually kills you.
+   * The one gate every hit on an assassin passes through. Installed as the fighter's
+   * `damageAbsorber` so it covers melee, area and tick damage too. In order: nothing reaches her
+   * in the air; the cloak takes what would have reached her; the Blade pays for hits in stamina
+   * (and still takes them); and otherwise stealth rolls its dodge.
    */
   private absorb(owner: Owner, amount: number): boolean {
     const s = this.sides[owner];
     const f = this.fighter(owner);
-    if (!this.alive(f)) return false;
-    // Self-inflicted damage is not something you can dance out of the way of.
-    if (f.damageWasSelfInflicted) return false;
-    const blowback = this.arena.hasPerk(owner, 'air-blowback');
+    if (!this.alive(f) || f.damageWasSelfInflicted) return false;
 
-    if (this.now < s.invulnUntil) {
-      s.lastRawTaken = f.rawDamageTaken;
-      this.arena.spawnDamageNumber(f.x, f.y - 34, -1); // DODGED
-      this.fx(owner).motes(f.x, f.y, 6, { speed: 160, size: 2.4, life: 320, swirl: 2, depth: 7 });
-      if (blowback) this.blowback(owner, amount);
+    if (this.now < s.levUntil) {
+      this.fx(owner).motes(f.x, f.y, 4, { speed: 120, size: 2.2, life: 260, swirl: 2, depth: 7 });
       return true;
     }
-    // Memory's Rebirth: no wind dodge while the passive is sealed.
-    if (s.dodge <= 0 || f.passivesSealed()) return false;
-    if (Math.random() >= s.dodge) return false;
-
-    s.dodge = Math.max(0, s.dodge - (blowback ? BLOWBACK_DODGE_COST : DODGE_PER_DODGE));
-    // `rawDamageTaken` was already incremented upstream of the absorber, so the momentum poll
-    // would read a dodge as a hit. Move its watermark past this one: nothing touched her.
-    s.lastRawTaken = f.rawDamageTaken;
+    if (s.coverHp > 0) {
+      s.coverHp -= amount;
+      this.fx(owner).motes(f.x, f.y, 6, { speed: 170, size: 2.4, life: 320, swirl: 2, depth: 7 });
+      if (s.coverHp <= 0) this.endCover(owner, true);
+      else this.relay(owner, `cov:${Math.ceil(s.coverHp)}`);
+      return true;
+    }
+    if (s.bey) {
+      s.bey.stamina -= amount * BEY_HIT_DRAIN_PER_DAMAGE;
+      return false;
+    }
+    if (Math.random() >= this.dodgeChance(owner)) return false;
     this.arena.spawnDamageNumber(f.x, f.y - 34, -1); // DODGED
-    this.fx(owner).featherPuff(f.x, f.y, 5);
-    this.fx(owner).bloom(f.x, f.y, 44, 7, 6);
-    if (owner === 'player') this.arena.recordMasteryStat('windDodges', 1);
-    if (blowback) this.blowback(owner, amount);
+    this.fx(owner).motes(f.x, f.y, 7, { speed: 150, size: 2.6, life: 360, swirl: 2.4, depth: 7 });
+    this.fx(owner).ring(f.x, f.y, 8, 40, AIR.mist, 260, 2, 7);
     return true;
   }
 
-  /**
-   * Blowback perk: the air a dodge displaced keeps going, back the way the hit came. Nothing on
-   * a hit says who threw it, so it goes to the nearest enemy — in a duel, that is the thrower.
-   */
-  private blowback(owner: Owner, amount: number): void {
-    if (this.blowingBack) return;
-    const dmg = Math.round(amount * BLOWBACK_SHARE);
-    if (dmg < 1) return;
-    const f = this.fighter(owner);
-    let near: Fighter | null = null;
-    let best = Infinity;
-    for (const t of this.targetsOf(owner)) {
-      const d = Phaser.Math.Distance.Between(f.x, f.y, t.x, t.y);
-      if (d < best) { best = d; near = t; }
-    }
-    if (!near) return;
-    this.blowingBack = true;
-    try {
-      near.takeDamage(dmg);
-    } finally {
-      this.blowingBack = false;
-    }
-    const ang = Math.atan2(near.y - f.y, near.x - f.x);
-    const fx = this.fx(owner);
-    fx.muzzleGust(f.x + Math.cos(ang) * 18, f.y + Math.sin(ang) * 18, ang, 0.8);
-    fx.slipstream(f.x, f.y, near.x, near.y);
-    fx.gustBurst(near.x, near.y, 40, { duration: 320, dust: false });
-    this.arena.spawnHitFlash(near.x, near.y, this.col(owner)(AIR.white));
-    this.arena.showFloatingText(near.x, near.y - 44, '💨 BLOWBACK', '#e4f2ff');
-  }
-
   private installAbsorbers(): void {
-    const wire = (owner: Owner, isAir: boolean) => {
+    for (const owner of BOTH) {
       const f = this.fighter(owner);
-      if (!f) return;
-      if (isAir) {
-        // Install once and leave it: rebuilding the closure every frame would churn, and
-        // overwriting a foreign absorber would quietly break whoever else set one.
-        if (this.absorbed.has(f)) return;
-        if (f.damageAbsorber !== null) return;
+      if (!f) continue;
+      if (this.isAir(owner) && this.simulates(owner)) {
+        // Install once and leave it: overwriting a foreign absorber would quietly break whoever
+        // else set one (Time's Remain uses the same slot).
+        if (this.absorbed.has(f) || f.damageAbsorber !== null) continue;
         f.damageAbsorber = (amount) => this.absorb(owner, amount);
         this.absorbed.add(f);
       } else if (this.absorbed.has(f)) {
         f.damageAbsorber = null;
         this.absorbed.delete(f);
       }
+    }
+  }
+
+  // ── Passive: clouds ──────────────────────────────────────────────────────
+
+  private newCloud(i: number, entering: boolean): Cloud {
+    const b = this.arena.worldBounds;
+    const r = Phaser.Math.Between(CLOUD_R_MIN, CLOUD_R_MAX);
+    // Spread down the arena in lanes, so there is always one within reach.
+    const lane = (i + 0.5) / CLOUD_COUNT;
+    return {
+      x: entering ? b.x - r - i * 150 : b.x + Math.random() * b.width,
+      y: b.y + b.height * Phaser.Math.Clamp(lane + (Math.random() - 0.5) * 0.16, 0.1, 0.9),
+      r,
+      vx: Phaser.Math.Between(CLOUD_SPEED_MIN, CLOUD_SPEED_MAX),
+      seed: Math.floor(Math.random() * 1000),
+      fleeing: false,
     };
-    wire('player', this.arena.isPlayerAir);
-    wire('npc', this.arena.isNpcAir);
+  }
+
+  private cloudAt(owner: Owner, x: number, y: number): Cloud | null {
+    for (const c of this.sides[owner].clouds) {
+      if (c.fleeing) continue;
+      const dx = (x - c.x) / c.r, dy = (y - c.y) / (c.r * CLOUD_FLAT);
+      if (dx * dx + dy * dy < 1) return c;
+    }
+    return null;
+  }
+
+  private updateClouds(owner: Owner, dt: number): void {
+    const s = this.sides[owner];
+    if (!this.isAir(owner)) { s.clouds = []; return; }
+    const b = this.arena.worldBounds;
+
+    if (this.simulates(owner)) {
+      if (!s.clouds.length && this.now >= s.cloudsBackAt) {
+        const entering = s.cloudsBackAt > 0;
+        for (let i = 0; i < CLOUD_COUNT; i++) s.clouds.push(this.newCloud(i, entering));
+      }
+    }
+    for (let i = s.clouds.length - 1; i >= 0; i--) {
+      const c = s.clouds[i];
+      // A replica's sky is mirrored, so its wind — and its fleeing clouds — run the other way.
+      const dir = c.vx < 0 ? -1 : 1;
+      c.x += (c.fleeing ? CLOUD_FLEE_SPEED * dir : c.vx) * dt;
+      if (dir > 0 ? c.x - c.r * 1.9 <= b.right : c.x + c.r * 1.9 >= b.x) continue;
+      if (c.fleeing) { s.clouds.splice(i, 1); continue; }
+      if (!this.simulates(owner)) continue;
+      // Off the far side: come round again on a new line.
+      c.x = b.x - c.r;
+      c.y = b.y + b.height * (0.1 + Math.random() * 0.8);
+    }
+  }
+
+  /** Every cloud this side has is torn away. New ones crawl in a few seconds later. */
+  private scatterClouds(owner: Owner): void {
+    const s = this.sides[owner];
+    for (const c of s.clouds) {
+      if (c.fleeing) continue;
+      c.fleeing = true;
+      this.fx(owner).gustBurst(c.x, c.y, c.r * 0.7, { duration: 420, dust: false, depth: 9 });
+    }
+    s.cloudsBackAt = this.now + CLOUD_RETURN_MS;
+  }
+
+  private tickStealth(owner: Owner, dt: number): void {
+    const s = this.sides[owner];
+    const f = this.fighter(owner);
+    if (!this.isAir(owner) || !this.alive(f)) { s.inCloud = false; return; }
+    s.inCloud = !!this.cloudAt(owner, f.x, f.y);
+    if (!this.simulates(owner)) return;
+    // Memory's Rebirth: nothing banks while the passive is sealed. Nor from up in the air.
+    if (!s.inCloud || f.passivesSealed() || this.now < s.levUntil) return;
+    const before = s.stealth;
+    const rate = STEALTH_PER_S * (s.coverHp > 0 ? 2 : 1);
+    s.stealth = Math.min(STEALTH_MAX, s.stealth + meterGain(f, rate * dt));
+    if (before < BIG_STEALTH && s.stealth >= BIG_STEALTH) {
+      // Crossing the line that makes the next stab the big one is worth a tell.
+      this.fx(owner).ring(f.x, f.y, 10, 46, AIR.white, 320, 3, 7);
+      if (owner === 'player') this.sfx(owner, 'gust', 1.5, 0.4);
+    }
+    if (owner === 'player' && before < PERFECT_STEALTH && s.stealth >= PERFECT_STEALTH) {
+      this.arena.unlockAchievement('sharpshooter');
+    }
+  }
+
+  /** Enemy shots crossing a cloud lose three quarters of their speed for as long as they are in it. */
+  private slowShots(dt: number): void {
+    const group = this.arena.projectiles;
+    if (!group) return;
+    const back = (1 - CLOUD_SHOT_SPEED) * dt;
+    for (const owner of BOTH) {
+      if (!this.sides[owner].clouds.length) continue;
+      for (const obj of group.getChildren()) {
+        const p = obj as Projectile;
+        if (!p.active || p.isFromPlayer === (owner === 'player')) continue;
+        if (!this.cloudAt(owner, p.x, p.y)) continue;
+        const v = (p.body as Body | null)?.velocity;
+        if (!v) continue;
+        // Taken off the position rather than the velocity: a homing shot rewrites its velocity
+        // every frame, and a shot that leaves the cloud has to get its speed back on its own.
+        p.x -= v.x * back;
+        p.y -= v.y * back;
+      }
+    }
+  }
+
+  // ── Click: Pierce the Skies ──────────────────────────────────────────────
+
+  /**
+   * The stab. Everything about it scales off stealth — how far she is thrown, how hard it lands,
+   * how much of a production it is — and it takes all of it. A press with more than half the
+   * bar behind it also empties the sky.
+   */
+  doPierce(owner: Owner, tx: number, ty: number): void {
+    const f = this.fighter(owner);
+    // A replica's stab arrives whole in `airx-p` — the cast alone does not know her stealth.
+    if (!this.alive(f) || !this.simulates(owner)) return;
+    const s = this.sides[owner];
+    const ang = this.aimOf(owner, tx, ty);
+    const stealth = s.stealth;
+    const power = stealth / STEALTH_MAX;
+    const lunge = PIERCE_LUNGE + stealth * PIERCE_LUNGE_PER_STEALTH;
+    const end = this.lungeEnd(f, ang, lunge);
+    const len = Phaser.Math.Distance.Between(f.x, f.y, end.x, end.y) + PIERCE_REACH;
+
+    // Everything on the line from where she stands to where the knife ends up, once each.
+    const c = Math.cos(ang), sn = Math.sin(ang);
+    let backstab = false;
+    for (const t of this.targetsOf(owner)) {
+      const dx = t.x - f.x, dy = t.y - f.y;
+      const along = dx * c + dy * sn;
+      const across = Math.abs(-dx * sn + dy * c);
+      const r = this.bodyR(t);
+      if (along < -r || along > len + r || across > PIERCE_HALF_W + r) continue;
+      const bs = this.behind(f, t);
+      backstab = backstab || bs;
+      this.hit(owner, t, (PIERCE_DAMAGE + stealth * PIERCE_DAMAGE_PER_STEALTH) * (bs ? BACKSTAB_MULT : 1),
+        bs ? AIR.charge : AIR.white);
+    }
+
+    s.stealth = 0;
+    s.lunge = { ang, left: len - PIERCE_REACH };
+    if (stealth > BIG_STEALTH) this.scatterClouds(owner);
+    this.pierceShow(owner, f.x, f.y, ang, len, power, backstab);
+    this.relay(owner, `p:${Math.round(f.x)}:${Math.round(f.y)}:${ang.toFixed(3)}:${Math.round(len)}:${power.toFixed(2)}:${backstab ? 1 : 0}`);
+    // A bot follows a stab that got it into range with a short flurry.
+    if (owner === 'npc') s.jabUntil = this.now + 500;
+  }
+
+  /** Where a lunge of `dist` along `ang` actually ends, with the arena's walls in the way. */
+  private lungeEnd(f: Fighter, ang: number, dist: number): { x: number; y: number } {
+    const b = this.arena.worldBounds;
+    const r = 22;
+    return {
+      x: Phaser.Math.Clamp(f.x + Math.cos(ang) * dist, b.x + r, b.right - r),
+      y: Phaser.Math.Clamp(f.y + Math.sin(ang) * dist, b.y + r, b.bottom - r),
+    };
+  }
+
+  /** What a stab looks and sounds like, on whichever machine is showing it. */
+  private pierceShow(owner: Owner, x: number, y: number, ang: number, len: number, power: number, backstab: boolean): void {
+    const s = this.sides[owner];
+    const big = power * STEALTH_MAX > BIG_STEALTH;
+    s.knifeUntil = this.now + 380;
+    this.avatar(owner)?.play('punch', ang, big ? 420 : 300);
+    pierceBurst(this.fx(owner), this.col(owner), x, y, ang, len, power, backstab);
+    this.sfx(owner, big ? 'slash' : 'air-snipe', big ? 0.7 : 1.3, big ? 1 : 0.7);
+    if (!big) return;
+    this.sfx(owner, 'gust', 0.8, 0.9);
+    this.scars.push({
+      owner, x0: x, y0: y, x1: x + Math.cos(ang) * len, y1: y + Math.sin(ang) * len, until: this.now + SCAR_MS,
+    });
+    this.arena.scene.cameras.main.shake(160 + power * 140, 0.004 + power * 0.006);
+  }
+
+  private updateLunge(owner: Owner, dt: number): void {
+    const s = this.sides[owner];
+    if (!s.lunge) return;
+    const f = this.fighter(owner);
+    if (!this.alive(f) || s.lunge.left <= 0) {
+      if (this.alive(f)) this.body(f).setVelocity(0, 0);
+      s.lunge = null;
+      return;
+    }
+    const step = Math.min(s.lunge.left, PIERCE_LUNGE_SPEED * dt);
+    // Driven as a velocity, so the arena's walls and blockers stop her like anything else.
+    const v = step / Math.max(dt, 0.001);
+    this.body(f).setVelocity(Math.cos(s.lunge.ang) * v, Math.sin(s.lunge.ang) * v);
+    s.lunge.left -= step;
+    if (Math.random() < 0.7) {
+      this.fx(owner).motes(f.x, f.y, 1, { angle: s.lunge.ang + Math.PI, spread: 0.5, speed: 90, size: 2.6, life: 300, depth: 5 });
+    }
+  }
+
+  /** One small stab of the held barrage. Takes no stealth and throws her nowhere. */
+  private jab(owner: Owner, ang: number): void {
+    const f = this.fighter(owner);
+    if (!this.alive(f)) return;
+    const s = this.sides[owner];
+    s.lastJabAt = this.now;
+    // A little scatter, so a barrage is a flurry and not one stab drawn eight times.
+    const a = ang + (Math.random() - 0.5) * 0.3;
+    for (const t of this.targetsOf(owner)) {
+      const d = Phaser.Math.Distance.Between(f.x, f.y, t.x, t.y);
+      if (d > JAB_REACH + this.bodyR(t)) continue;
+      const off = Math.abs(Phaser.Math.Angle.Wrap(Math.atan2(t.y - f.y, t.x - f.x) - ang));
+      if (off > JAB_HALF && d > this.bodyR(t)) continue;
+      this.hit(owner, t, JAB_DAMAGE * (this.behind(f, t) ? BACKSTAB_MULT : 1), AIR.mist);
+    }
+    this.jabShow(owner, a);
+    this.relay(owner, `j:${a.toFixed(2)}`);
+  }
+
+  private jabShow(owner: Owner, ang: number): void {
+    const f = this.fighter(owner);
+    this.sides[owner].knifeUntil = this.now + 200;
+    this.avatar(owner)?.play('punch', ang, 130);
+    jabFlick(this.fx(owner), this.col(owner), f.x, f.y, ang, JAB_REACH);
+    this.sfx(owner, 'air-snipe', 1.7 + Math.random() * 0.3, 0.3);
+  }
+
+  // ── E: Knock ─────────────────────────────────────────────────────────────
+
+  /** A short, hard blast. Whoever it catches is winded: slow to turn, and on a stamina gauge. */
+  doKnock(owner: Owner, tx: number, ty: number): void {
+    const f = this.fighter(owner);
+    if (!this.alive(f)) return;
+    const ang = this.aimOf(owner, tx, ty);
+    this.avatar(owner)?.play('clap', ang);
+    knockBlast(this.fx(owner), this.col(owner), f.x, f.y, ang, KNOCK_RANGE, KNOCK_HALF);
+    this.sfx(owner, 'gust', 1.4, 0.9);
+    if (!this.simulates(owner)) return;
+
+    for (const t of this.targetsOf(owner)) {
+      const d = Phaser.Math.Distance.Between(f.x, f.y, t.x, t.y);
+      const r = this.bodyR(t);
+      if (d > KNOCK_RANGE + r) continue;
+      const off = Math.abs(Phaser.Math.Angle.Wrap(Math.atan2(t.y - f.y, t.x - f.x) - ang));
+      if (off > KNOCK_HALF && d > r) continue;
+      this.hit(owner, t, KNOCK_DAMAGE, AIR.white);
+      t.airWindedUntil = Date.now() + WINDED_MS;
+      t.airStamina = 1;
+      t.airExhausted = false;
+      // The shove only lands on bodies this machine moves: a remote player walks on their own.
+      if (!t.netGhost && t !== this.arena.player) {
+        this.shoves.push({ target: t, vx: Math.cos(ang) * KNOCK_SHOVE, vy: Math.sin(ang) * KNOCK_SHOVE, until: this.now + KNOCK_SHOVE_MS });
+      }
+      this.fx(owner).ring(t.x, t.y, 8, 44, AIR.white, 300, 3, 7);
+    }
+  }
+
+  private updateShoves(): void {
+    for (let i = this.shoves.length - 1; i >= 0; i--) {
+      const sh = this.shoves[i];
+      if (this.now >= sh.until || !this.alive(sh.target)) { this.shoves.splice(i, 1); continue; }
+      this.body(sh.target).setVelocity(sh.vx, sh.vy);
+    }
+  }
+
+  /**
+   * Facing, and what being winded does to it. `Fighter.facingAngle` is what a backstab is judged
+   * against, and — for somebody winded — the only way they can aim (`ArenaScene.scatterAim`), so
+   * it is kept true here whenever an assassin is in the fight: the player faces the cursor, a bot
+   * faces where it is walking. Winded, either one only swings round at a third of a turn.
+   */
+  private updateFacing(dt: number): void {
+    const wall = Date.now();
+    const seen = new Set<Fighter>();
+    const turn = (f: Fighter | undefined, want: number | null): void => {
+      if (!f || seen.has(f) || !this.alive(f) || f.netGhost) return;
+      seen.add(f);
+      if (want === null) return;
+      if (wall < f.airWindedUntil) {
+        f.facingAngle = Phaser.Math.Angle.RotateTo(f.facingAngle, want, WINDED_TURN_RAD_PER_S * dt);
+      } else {
+        f.facingAngle = want;
+      }
+    };
+    const { player, npc } = this.arena;
+    turn(player, this.playerAim());
+    // A winded bot is trying to look at whoever it is fighting; otherwise it looks where it walks.
+    const walking = (f: Fighter): number | null => {
+      const v = this.body(f)?.velocity;
+      return v && Math.hypot(v.x, v.y) > 12 ? Math.atan2(v.y, v.x) : null;
+    };
+    if (this.alive(npc)) {
+      turn(npc, wall < npc.airWindedUntil && this.alive(player)
+        ? Math.atan2(player.y - npc.y, player.x - npc.x) : walking(npc));
+    }
+    for (const e of this.arena.enemies) if (this.alive(e)) turn(e, walking(e));
+  }
+
+  /**
+   * The stamina gauge on everybody who is winded. Walking drains it and standing fills it; run it
+   * dry and they are exhausted — a crawl (`Fighter.airWindedSpeedMult`) until it is full again.
+   */
+  private updateWinded(dt: number): void {
+    const wall = Date.now();
+    const seen = new Set<Fighter>();
+    for (const f of [this.arena.player, this.arena.npc, ...this.arena.enemies]) {
+      if (!f || seen.has(f)) continue;
+      seen.add(f);
+      if (wall >= f.airWindedUntil || !this.alive(f)) {
+        if (f.airExhausted || f.airStamina < 1) { f.airExhausted = false; f.airStamina = 1; }
+        continue;
+      }
+      const v = this.body(f)?.velocity;
+      const moving = !!v && Math.hypot(v.x, v.y) > MOVING_SPEED;
+      if (f.airExhausted) {
+        f.airStamina += dt / STAMINA_REFILL_S;
+        if (f.airStamina >= 1) { f.airStamina = 1; f.airExhausted = false; }
+      } else if (moving) {
+        f.airStamina -= dt / STAMINA_DRAIN_S;
+        if (f.airStamina <= 0) {
+          f.airStamina = 0;
+          f.airExhausted = true;
+          this.pfx.ring(f.x, f.y, 6, 34, AIR.slate, 320, 3, 7);
+        }
+      } else {
+        f.airStamina = Math.min(1, f.airStamina + dt / STAMINA_REFILL_S);
+      }
+    }
+  }
+
+  // ── R: Cloud Cover ───────────────────────────────────────────────────────
+
+  /** Wrap up in rain. Gone from sight, and whatever would have hit her hits the cloak. */
+  doCloudCover(owner: Owner): void {
+    const f = this.fighter(owner);
+    if (!this.alive(f)) return;
+    const s = this.sides[owner];
+    s.coverHp = COVER_HP;
+    s.coverNextDecayAt = this.now + COVER_DECAY_MS;
+    this.avatar(owner)?.play('flex', undefined, 520);
+    coverBurst(this.fx(owner), this.col(owner), f.x, f.y, false);
+    this.sfx(owner, 'rain', 1.3, 0.7);
+  }
+
+  private endCover(owner: Owner, broke: boolean): void {
+    const s = this.sides[owner];
+    const f = this.fighter(owner);
+    s.coverHp = 0;
+    if (this.alive(f)) {
+      coverBurst(this.fx(owner), this.col(owner), f.x, f.y, true);
+      this.sfx(owner, 'gust', broke ? 1.6 : 1.1, 0.6);
+    }
+    this.relay(owner, 'cov:0');
+  }
+
+  private updateCover(owner: Owner): void {
+    const s = this.sides[owner];
+    if (s.coverHp <= 0 || !this.simulates(owner)) return;
+    if (!this.alive(this.fighter(owner))) { s.coverHp = 0; return; }
+    if (this.now < s.coverNextDecayAt) return;
+    s.coverNextDecayAt += COVER_DECAY_MS;
+    s.coverHp -= COVER_DECAY;
+    if (s.coverHp <= 0) this.endCover(owner, false);
+    else this.relay(owner, `cov:${Math.ceil(s.coverHp)}`);
+  }
+
+  // ── F: Combo ─────────────────────────────────────────────────────────────
+
+  /** The opener: six knives down the aim, and the ring starts closing. */
+  doCombo(owner: Owner, tx: number, ty: number): void {
+    const f = this.fighter(owner);
+    if (!this.alive(f)) return;
+    const s = this.sides[owner];
+    const ang = this.aimOf(owner, tx, ty);
+    this.avatar(owner)?.play('sweep', ang);
+    this.sfx(owner, 'slash', 1.3, 0.8);
+    for (let i = 0; i < VOLLEY_KNIVES; i++) {
+      const a = ang + ((i / (VOLLEY_KNIVES - 1)) - 0.5) * 2 * VOLLEY_SPREAD;
+      // Out from the middle: the centre pair leaves first.
+      const order = Math.abs(i - (VOLLEY_KNIVES - 1) / 2);
+      this.knives.push({
+        owner, x: f.x, y: f.y, vx: Math.cos(a) * VOLLEY_SPEED, vy: Math.sin(a) * VOLLEY_SPEED,
+        travelled: 0, delay: order * VOLLEY_STAGGER_MS, t: 0,
+      });
+    }
+    this.openRing(owner, 1, this.now + RING_DELAY_MS);
+  }
+
+  private openRing(owner: Owner, stage: 1 | 2, from: number): void {
+    const s = this.sides[owner];
+    const ringAt = from + RING_MS;
+    let botPressAt = 0;
+    if (owner === 'npc' && this.simulates(owner)) {
+      // A bot's timing is as good as its difficulty: the best ones answer nearly every ring.
+      const lands = Math.random() < 0.9 - this.arena.npcSlack * 0.7;
+      botPressAt = lands ? ringAt - 40 + Math.random() * 80 : 0;
+    }
+    s.combo = { stage, ringFrom: from, ringAt, botPressAt };
+  }
+
+  /** F pressed with a ring up: on the beat it is the next move, off it the combo is over. */
+  private pressCombo(owner: Owner): void {
+    const s = this.sides[owner];
+    const f = this.fighter(owner);
+    const cmb = s.combo;
+    if (!cmb || !this.alive(f) || this.gagged(f)) return;
+    // Before the ring is even on screen there is nothing to answer yet.
+    if (this.now < cmb.ringFrom) return;
+    const off = this.now - cmb.ringAt;
+    if (off < -RING_EARLY_MS || off > RING_LATE_MS) { this.missCombo(owner); return; }
+    ringVerdict(this.fx(owner), this.col(owner), f.x, f.y, RING_MARK_R, true);
+    if (cmb.stage === 1) {
+      this.flip(owner);
+      this.relay(owner, 'flip');
+    } else {
+      const aim = owner === 'player'
+        ? { x: this.arena.pointerX, y: this.arena.pointerY }
+        : (this.mainTarget(owner) ?? f);
+      this.rain(owner, aim.x, aim.y, this.nextFieldId++);
+    }
+  }
+
+  private missCombo(owner: Owner): void {
+    const s = this.sides[owner];
+    const f = this.fighter(owner);
+    if (!s.combo) return;
+    s.combo = null;
+    if (this.alive(f)) {
+      ringVerdict(this.fx(owner), this.col(owner), f.x, f.y, RING_MARK_R, false);
+      this.sfx(owner, 'air-snipe', 0.5, 0.5);
+    }
+    this.relay(owner, 'miss');
+  }
+
+  /** Second beat: off the floor and out of reach for three seconds, with one more ring to come. */
+  private flip(owner: Owner): void {
+    const s = this.sides[owner];
+    const f = this.fighter(owner);
+    s.levFrom = this.now;
+    s.levUntil = this.now + LEVITATE_MS;
+    this.avatar(owner)?.play('raise', undefined, 700);
+    flipBurst(this.fx(owner), this.col(owner), f.x, f.y, LEVITATE_LIFT);
+    this.sfx(owner, 'gust', 1.2, 0.9);
+    // The last ring lands while she is still well up in the air: answer it and the rain is how
+    // she comes down; miss it and she just drifts down at the end of the three seconds.
+    this.openRing(owner, 2, s.levUntil - RING2_BEFORE_LANDING_MS - RING_MS);
+  }
+
+  /** Third beat: a rank of knives into the floor at the cursor. It stays, and it cuts feet. */
+  private rain(owner: Owner, x: number, y: number, id: number): void {
+    const s = this.sides[owner];
+    s.combo = null;
+    // Down she comes, whenever in the three seconds it was called.
+    s.levUntil = Math.min(s.levUntil, this.now + 180);
+    const knives: FieldKnife[] = [];
+    for (let cx = 0; cx < FIELD_COLS; cx++) {
+      for (let cy = 0; cy < FIELD_ROWS; cy++) {
+        knives.push({
+          dx: ((cx + 0.5) / FIELD_COLS - 0.5) * 2 * (FIELD_HALF_W - 14),
+          dy: ((cy + 0.5) / FIELD_ROWS - 0.5) * 2 * (FIELD_HALF_H - 12),
+          lean: (((cx * 7 + cy * 13) % 5) - 2) * 0.06,
+          delay: cx * 35 + cy * 20,
+        });
+      }
+    }
+    this.fields.push({
+      id, owner, x, y, knives, bornAt: this.now, until: this.now + FIELD_MS, struck: false, lastStep: new Map(),
+    });
+    this.avatar(owner)?.play('slam', Math.atan2(y - this.fighter(owner).y, x - this.fighter(owner).x));
+    this.sfx(owner, 'slash', 0.8, 1);
+    this.relay(owner, `rain:${Math.round(x)}:${Math.round(y)}:${id}`);
+  }
+
+  private updateCombo(owner: Owner): void {
+    const s = this.sides[owner];
+    const cmb = s.combo;
+    if (!cmb || !this.simulates(owner)) return;
+    if (!this.alive(this.fighter(owner))) { s.combo = null; return; }
+    if (cmb.botPressAt > 0 && this.now >= cmb.botPressAt) { this.pressCombo(owner); return; }
+    // Let go by: the ring closed and nobody answered it.
+    if (this.now > cmb.ringAt + RING_LATE_MS) this.missCombo(owner);
+  }
+
+  private inField(fd: Field, x: number, y: number, pad = 0): boolean {
+    return Math.abs(x - fd.x) <= FIELD_HALF_W + pad && Math.abs(y - fd.y) <= FIELD_HALF_H + pad;
+  }
+
+  private updateKnives(dt: number, delta: number): void {
+    const b = this.arena.worldBounds;
+    for (let i = this.knives.length - 1; i >= 0; i--) {
+      const k = this.knives[i];
+      if (k.delay > 0) {
+        k.delay -= delta;
+        // Still in the hand: it leaves from wherever she is now.
+        const f = this.fighter(k.owner);
+        if (f) { k.x = f.x; k.y = f.y; }
+        continue;
+      }
+      k.x += k.vx * dt;
+      k.y += k.vy * dt;
+      k.travelled += VOLLEY_SPEED * dt;
+      k.t += dt;
+      let done = k.travelled >= VOLLEY_RANGE || !b.contains(k.x, k.y);
+      for (const t of this.targetsOf(k.owner)) {
+        if (Phaser.Math.Distance.Between(k.x, k.y, t.x, t.y) > this.bodyR(t) + 10) continue;
+        this.hit(k.owner, t, VOLLEY_DAMAGE, AIR.mist);
+        done = true;
+        break;
+      }
+      if (done) {
+        knifeHit(this.fx(k.owner), k.x, k.y, Math.atan2(k.vy, k.vx));
+        this.knives.splice(i, 1);
+      }
+    }
+  }
+
+  private updateFields(): void {
+    for (let i = this.fields.length - 1; i >= 0; i--) {
+      const fd = this.fields[i];
+      if (this.now >= fd.until) { this.fields.splice(i, 1); continue; }
+      const age = this.now - fd.bornAt;
+      if (!fd.struck && age >= FIELD_STRIKE_AT_MS) {
+        fd.struck = true;
+        this.fx(fd.owner).dustMark(fd.x, fd.y, FIELD_HALF_W);
+        this.fx(fd.owner).ring(fd.x, fd.y, 20, FIELD_HALF_W * 1.2, AIR.white, 320, 3, 4);
+        this.arena.scene.cameras.main.shake(120, 0.004);
+        for (const t of this.targetsOf(fd.owner)) {
+          if (!this.inField(fd, t.x, t.y, this.bodyR(t) * 0.5)) continue;
+          this.hit(fd.owner, t, FIELD_STRIKE_DAMAGE, AIR.white);
+          fd.lastStep.set(t, this.now);
+        }
+        continue;
+      }
+      if (!fd.struck) continue;
+      // Stepping on it: only feet that are moving get cut.
+      for (const t of this.targetsOf(fd.owner)) {
+        if (!this.inField(fd, t.x, t.y)) continue;
+        const v = this.body(t)?.velocity;
+        if (!v || Math.hypot(v.x, v.y) <= MOVING_SPEED) continue;
+        if (this.now - (fd.lastStep.get(t) ?? 0) < FIELD_STEP_MS) continue;
+        fd.lastStep.set(t, this.now);
+        this.hit(fd.owner, t, FIELD_STEP_DAMAGE, AIR.mist);
+      }
+    }
+  }
+
+  // ── Q: Tornado Blade ─────────────────────────────────────────────────────
+
+  /** Fans out, feet off the floor: she is a spinning top until the stamina runs out. */
+  doTornadoBlade(owner: Owner): void {
+    const f = this.fighter(owner);
+    if (!this.alive(f)) return;
+    const s = this.sides[owner];
+    const max = BEY_STAMINA + s.stealth * BEY_STAMINA_PER_STEALTH;
+    const v = this.body(f).velocity;
+    s.bey = {
+      stamina: max, max, vx: v.x, vy: v.y, spin: 0, tilt: 0, shred: null, immune: new Map(), orbit: 0, trail: [],
+    };
+    s.combo = null;
+    s.lunge = null;
+    beyBurst(this.fx(owner), this.col(owner), f.x, f.y, false);
+    this.sfx(owner, 'tornado', 1.1, 1);
+  }
+
+  private endBey(owner: Owner): void {
+    const s = this.sides[owner];
+    if (!s.bey) return;
+    s.bey = null;
+    const f = this.fighter(owner);
+    if (this.alive(f)) {
+      beyBurst(this.fx(owner), this.col(owner), f.x, f.y, true);
+      this.sfx(owner, 'gust', 0.8, 0.8);
+      if (this.simulates(owner)) this.body(f).setVelocity(0, 0);
+    }
+    this.relay(owner, 'bey:0');
+  }
+
+  /** Where the Blade is trying to get to: the cursor, or — for a bot — its knives, then its enemy. */
+  private beyGoal(owner: Owner): { x: number; y: number } {
+    if (owner === 'player') return { x: this.arena.pointerX, y: this.arena.pointerY };
+    const f = this.fighter(owner);
+    const s = this.sides[owner];
+    // Synergy: a field of its own knives within reach is worth collecting before the chase.
+    if (s.bey && s.bey.orbit === 0) {
+      const fd = this.fields.find((o) => o.owner === owner && o.struck
+        && Phaser.Math.Distance.Between(f.x, f.y, o.x, o.y) < 260);
+      if (fd) return fd;
+    }
+    return this.mainTarget(owner) ?? f;
+  }
+
+  private updateBey(owner: Owner, dt: number): void {
+    const s = this.sides[owner];
+    const bey = s.bey;
+    if (!bey) return;
+    const f = this.fighter(owner);
+    if (!this.alive(f)) { s.bey = null; return; }
+    bey.spin += dt * (bey.shred ? 44 : 26);
+
+    // The line of sparks, wherever the body is — a replica's too.
+    const last = bey.trail[bey.trail.length - 1];
+    if (!last || Phaser.Math.Distance.Between(last.x, last.y, f.x, f.y) > 9) {
+      bey.trail.push({ x: f.x, y: f.y + 10, at: this.now });
+    }
+    while (bey.trail.length && this.now - bey.trail[0].at > BEY_TRAIL_MS) bey.trail.shift();
+
+    if (!this.simulates(owner)) return;
+    const body = this.body(f);
+    const b = this.arena.worldBounds;
+
+    bey.stamina -= dt;
+    if (bey.stamina <= 0) { this.endBey(owner); return; }
+
+    for (const [t, until] of bey.immune) if (this.now >= until) bey.immune.delete(t);
+
+    // Knives swinging round it: each one that finds somebody cuts them and is gone.
+    for (let i = 0; i < bey.orbit; i++) {
+      const a = bey.spin * 0.35 + (i / bey.orbit) * Math.PI * 2;
+      const kx = f.x + Math.cos(a) * BEY_ORBIT_R, ky = f.y + Math.sin(a) * BEY_ORBIT_R;
+      const t = this.targetsOf(owner).find((o) => Phaser.Math.Distance.Between(kx, ky, o.x, o.y) <= this.bodyR(o) + 8);
+      if (!t) continue;
+      this.hit(owner, t, BEY_ORBIT_DAMAGE, AIR.white);
+      knifeHit(this.fx(owner), kx, ky, a);
+      bey.orbit--;
+      this.relay(owner, `orb:${bey.orbit}`);
+      break;
+    }
+    // Rolling over her own field takes the knives up out of the floor.
+    for (let i = this.fields.length - 1; i >= 0; i--) {
+      const fd = this.fields[i];
+      if (fd.owner !== owner || !fd.struck || !this.inField(fd, f.x, f.y)) continue;
+      bey.orbit += fd.knives.length;
+      this.fx(owner).vortexCore(fd.x, fd.y, FIELD_HALF_W * 0.7, 360);
+      this.sfx(owner, 'slash', 1.6, 0.7);
+      this.fields.splice(i, 1);
+      this.relay(owner, `take:${fd.id}:${bey.orbit}`);
+    }
+
+    if (bey.shred) {
+      const sh = bey.shred;
+      const t = sh.target;
+      if (!this.alive(t) || this.now >= sh.until) {
+        // Thrown off, back the way it came in.
+        const out = this.alive(t) ? Math.atan2(f.y - t.y, f.x - t.x) : sh.inAng + Math.PI;
+        const away = Math.abs(Phaser.Math.Angle.Wrap(out - (sh.inAng + Math.PI))) < 1.2 ? out : sh.inAng + Math.PI;
+        bey.vx = Math.cos(away) * BEY_LAUNCH_SPEED;
+        bey.vy = Math.sin(away) * BEY_LAUNCH_SPEED;
+        if (this.alive(t)) bey.immune.set(t, this.now + BEY_REHIT_MS);
+        bey.shred = null;
+        this.fx(owner).gustBurst(f.x, f.y, 60, { duration: 300, dust: false });
+        this.sfx(owner, 'slash', 0.6, 1);
+        this.relay(owner, 'shred:0');
+      } else {
+        // Grinding: dragged slowly through them, ticking, and their own attacks slowed.
+        if (this.now - sh.lastTick >= BEY_TICK_MS) {
+          sh.lastTick = this.now;
+          const storm = this.arena.hasPerk(owner, 'storm');
+          this.hit(owner, t, BEY_TICK_DAMAGE + (storm ? STORM_BOLT_DAMAGE : 0), AIR.charge);
+          if (storm) this.fx(owner).staticSnap(t.x, t.y, 30);
+          t.airShredUntil = Date.now() + BEY_SLOW_ATTACK_MS;
+          shredSparks(this.fx(owner), (f.x + t.x) / 2, (f.y + t.y) / 2, Math.atan2(f.y - t.y, f.x - t.x));
+        }
+        bey.vx = Math.cos(sh.inAng) * BEY_MAX_SPEED * BEY_SHRED_SPEED;
+        bey.vy = Math.sin(sh.inAng) * BEY_MAX_SPEED * BEY_SHRED_SPEED;
+      }
+    } else {
+      // Skating: pulled at the goal, barely any grip, so it overshoots and swings back.
+      const goal = this.beyGoal(owner);
+      const gx = goal.x - f.x, gy = goal.y - f.y;
+      const gd = Math.hypot(gx, gy);
+      if (gd > 6) {
+        bey.vx += (gx / gd) * BEY_ACCEL * dt;
+        bey.vy += (gy / gd) * BEY_ACCEL * dt;
+      }
+      const drag = Math.exp(-BEY_DRAG * dt);
+      bey.vx *= drag;
+      bey.vy *= drag;
+      const sp = Math.hypot(bey.vx, bey.vy);
+      if (sp > BEY_MAX_SPEED) { bey.vx *= BEY_MAX_SPEED / sp; bey.vy *= BEY_MAX_SPEED / sp; }
+
+      // Walls throw it back.
+      const hitX = (f.x <= b.x + BEY_RADIUS && bey.vx < 0) || (f.x >= b.right - BEY_RADIUS && bey.vx > 0);
+      const hitY = (f.y <= b.y + BEY_RADIUS && bey.vy < 0) || (f.y >= b.bottom - BEY_RADIUS && bey.vy > 0);
+      if (hitX) bey.vx *= -BEY_WALL_BOUNCE;
+      if (hitY) bey.vy *= -BEY_WALL_BOUNCE;
+      if ((hitX || hitY) && sp > 160) {
+        shredSparks(this.fx(owner), f.x, f.y, Math.atan2(bey.vy, bey.vx));
+        this.sfx(owner, 'slash', 1.8, 0.4);
+      }
+
+      // Contact: bite into the first body it touches.
+      for (const t of this.targetsOf(owner)) {
+        if (bey.immune.has(t)) continue;
+        if (Phaser.Math.Distance.Between(f.x, f.y, t.x, t.y) > BEY_RADIUS + this.bodyR(t)) continue;
+        const inAng = sp > 40 ? Math.atan2(bey.vy, bey.vx) : Math.atan2(t.y - f.y, t.x - f.x);
+        bey.shred = { target: t, until: this.now + BEY_SHRED_MS, lastTick: 0, inAng };
+        this.fx(owner).flash(t.x, t.y, 40);
+        this.sfx(owner, 'tornado', 1.7, 0.9);
+        this.relay(owner, 'shred:1');
+        break;
+      }
+    }
+    bey.tilt += (Phaser.Math.Clamp(bey.vx / BEY_MAX_SPEED, -1, 1) - bey.tilt) * Math.min(1, dt * 8);
+    body.setVelocity(bey.vx, bey.vy);
   }
 
   // ── Frame ────────────────────────────────────────────────────────────────
 
   handleInput(time: number, pointer: Phaser.Input.Pointer, mouseX: number, mouseY: number): void {
-    this.lastMouseX = mouseX;
-    this.lastMouseY = mouseY;
+    const wasDown = this.pointerWasDown;
+    this.pointerWasDown = pointer.isDown;
     if (!this.arena.isPlayerAir || this.arena.nukeChanneling) return;
     const s = this.sides.player;
     const p = this.arena.player;
     if (!this.alive(p)) return;
-
-    // Wind Breaker locks her into the funnel. Eye of the Storm is the whole upgrade: it hands
-    // the keys back, and is the only thing that does.
-    if (time < s.tornadoUntil && !this.arena.hasUpgrade('q')) return;
+    // The Blade is steered with the cursor and nothing else.
+    if (s.bey || s.lunge) return;
 
     const ctx = this.arena.buildPlayerContext(mouseX, mouseY);
+    const down = Phaser.Input.Keyboard.JustDown;
 
-    // Weather Cycle, wherever the player bound it. It is read *first*, and every base branch
-    // below asks `slotFree` before it asks `JustDown`: `JustDown` consumes the key's
-    // just-pressed flag, so a base branch that tested the key first would swallow the press on
-    // the bound slot and then refuse the cast — leaving the mastery unpressable.
-    const weatherSlot = this.weatherSlot();
-    if (weatherSlot) {
-      const key = weatherSlot === 'e' ? this.arena.eKey
-        : weatherSlot === 'r' ? this.arena.rKey
-          : weatherSlot === 'q' ? this.arena.qKey
-            : this.arena.fKey;
-      if (Phaser.Input.Keyboard.JustDown(key)) this.tryWeatherCycle(time);
+    // F is three presses: the cast, then an answer to each ring.
+    if (down(this.arena.fKey)) {
+      if (s.combo) this.pressCombo('player');
+      else if (time >= s.levUntil) p.castAbility(COMBO_ID, ctx);
     }
+    // Up in the air there is nothing to do but wait for the ring.
+    if (time < s.levUntil) return;
 
-    if (pointer.isDown) p.castAbility('wind-splice', ctx);
-    // Spin Dance runs on kit-owned charges, so it never goes through `castAbility` — the
-    // ability's own cooldown would refuse the second charge the upgrade exists to grant.
-    if (this.slotFree('e') && Phaser.Input.Keyboard.JustDown(this.arena.eKey)) {
-      this.trySpin(mouseX, mouseY);
-    }
-    if (this.slotFree('r') && Phaser.Input.Keyboard.JustDown(this.arena.rKey)) {
-      // Gust: while the thrown glaive is still out, R is the recall — the cast would only be
-      // refused by its own cooldown anyway.
-      if (this.gustGlaive('player')) {
-        // Stamped for the sound and the online relay; the peer replays it through `doGustRecall`.
-        if (this.doGustRecall('player')) p.triggerCooldown(GUST_RECALL_ID);
-      } else {
-        p.castAbility('gale-glaive', ctx);
+    if (pointer.isDown) {
+      if (!wasDown) {
+        s.holdSince = time;
+        p.castAbility(PIERCE_ID, ctx);
+      } else if (time - s.holdSince >= JAB_HOLD_MS && time - s.lastJabAt >= JAB_EVERY_MS && !this.gagged(p)) {
+        this.jab('player', this.playerAim());
       }
     }
-    if (this.slotFree('f') && Phaser.Input.Keyboard.JustDown(this.arena.fKey)) {
-      p.castAbility('sky-grapple', ctx);
-    }
-    if (this.slotFree('q') && Phaser.Input.Keyboard.JustDown(this.arena.qKey)) {
-      p.castAbility('wind-breaker', ctx);
-    }
-  }
-
-  /** False when a mastery bindable has taken this slot over for the match. */
-  private slotFree(slot: string): boolean {
-    return this.arena.masteryBindFor(slot) !== WEATHER_ID;
-  }
-
-  private weatherSlot(): string | null {
-    if (!this.arena.masteryActive) return null;
-    for (const slot of ['e', 'r', 'f', 'q']) {
-      if (this.arena.masteryBindFor(slot) === WEATHER_ID) return slot;
-    }
-    return null;
-  }
-
-  /** The slot the bot's Weather Cycle is bound over, so the AI leaves that base ability alone. */
-  npcWeatherSlot(): 'r' | 'f' | 'q' | undefined {
-    if (!this.arena.npcMasteryActive) return undefined;
-    for (const sl of ['r', 'f', 'q'] as const) {
-      if (this.arena.npcMasteryBindFor(sl) === WEATHER_ID) return sl;
-    }
-    return undefined;
+    if (down(this.arena.eKey)) p.castAbility(KNOCK_ID, ctx);
+    if (down(this.arena.rKey)) p.castAbility(COVER_ID, ctx);
+    if (down(this.arena.qKey)) p.castAbility(BEY_ID, ctx);
   }
 
   /**
-   * Runs after NPC AI and husk movement have written their velocities for the frame — the
-   * tornado holds its captives by position, so anything short of the last word on where a body
-   * is loses the tug of war.
+   * Runs after NPC AI and husk movement have written their velocities for the frame — the lunge,
+   * the shove and the Blade all drive bodies, and have to have the last word on where they go.
    */
   update(time: number, delta: number): void {
+    void time;
     const dt = delta / 1000;
     this.vizT += dt;
     this.installAbsorbers();
 
-    this.trackDamage(time);
-    this.tickCharges(delta);
-    this.tickMomentum(delta);
-    this.updateShears(time, dt);
-    this.updateGlaives(time, dt);
-    this.updateTornado(time, dt);
-    this.updateLaunches(time, dt);
-    this.updateHawks(time, delta);
-    this.tickWeather(time);
-    this.updateNpcWeather(time);
-    this.updateVacuum();
-    this.updatePerkMults();
+    for (const owner of BOTH) {
+      this.updateClouds(owner, dt);
+      this.tickStealth(owner, dt);
+      this.updateCover(owner);
+      this.updateCombo(owner);
+      this.updateLunge(owner, dt);
+      this.updateBey(owner, dt);
+      this.updateBot(owner);
+      this.updateHidden(owner);
+    }
+    this.slowShots(dt);
+    this.updateShoves();
+    this.updateFacing(dt);
+    this.updateWinded(dt);
+    this.updateKnives(dt, delta);
+    this.updateFields();
+    for (let i = this.scars.length - 1; i >= 0; i--) if (this.now >= this.scars[i].until) this.scars.splice(i, 1);
 
-    // Mirror both pools onto the fighters so the status tray (and anything else generic) can
-    // read them without knowing air exists.
-    for (const owner of ['player', 'npc'] as Owner[]) {
+    // WASD stands down for exactly as long as the kit is the one moving her.
+    const ps = this.sides.player;
+    const driving = this.arena.isPlayerAir && (!!ps.lunge || !!ps.bey);
+    if (driving) { this.arena.isDodging = true; this.drivingPlayer = true; }
+    else if (this.drivingPlayer) { this.arena.isDodging = false; this.drivingPlayer = false; }
+
+    // Mirrored onto the fighters so the status tray can read the dodge without knowing air exists.
+    for (const owner of BOTH) {
       const f = this.fighter(owner);
-      if (f) f.windDodge = this.isAir(owner) ? this.sides[owner].dodge : 0;
+      if (f) f.windDodge = this.dodgeChance(owner);
     }
 
-    this.updateAvatars(time, delta);
-    this.updateDrafts(delta);
+    this.relaySky();
+    this.updateDrama(delta);
+    this.updateAvatars(delta);
     this.paint();
   }
 
-  private isAir(owner: Owner): boolean {
-    return owner === 'player' ? this.arena.isPlayerAir : this.arena.isNpcAir;
-  }
-
-  // ── Damage ledger + momentum ─────────────────────────────────────────────
-
-  /**
-   * F+ needs "damage you dealt in the last 10 seconds" and the mastery passive needs "you just
-   * got hit". Both are read off `rawDamageTaken` deltas rather than events: the field is
-   * already the honest running total on every fighter, and polling it cannot be forgotten by an
-   * ability that damages someone through a path the kit does not own.
-   */
-  private trackDamage(time: number): void {
-    for (const owner of ['player', 'npc'] as Owner[]) {
-      if (!this.isAir(owner)) continue;
-      const s = this.sides[owner];
-
-      // What we dealt: every enemy's raw intake since last frame.
-      let dealt = 0;
-      for (const t of this.targetsOf(owner)) {
-        const prev = this.ledgerSeen.get(t) ?? t.rawDamageTaken;
-        if (t.rawDamageTaken > prev) dealt += t.rawDamageTaken - prev;
-        this.ledgerSeen.set(t, t.rawDamageTaken);
-      }
-      if (dealt > 0) s.ledger.push({ at: time, amount: dealt });
-      while (s.ledger.length > 0 && time - s.ledger[0].at > FINAL_FLIGHT_WINDOW_MS) s.ledger.shift();
-
-      // What we took: momentum is knocked back by any hit that got through.
-      const f = this.fighter(owner);
-      if (!f) continue;
-      if (f.rawDamageTaken > s.lastRawTaken) {
-        if (s.momentum > 0) {
-          s.momentum = Math.max(0, s.momentum - MOMENTUM_HIT_LOSS);
-          if (owner === 'player' && this.arena.masteryActive) {
-            this.arena.showFloatingText(f.x, f.y - 30, '💨 STUMBLE', '#8899aa');
-          }
-        }
-      }
-      s.lastRawTaken = f.rawDamageTaken;
-    }
-  }
-
-  /** Per-fighter watermark for the ledger poll above. */
-  private ledgerSeen = new Map<Fighter, number>();
-
-  private ledgerTotal(owner: Owner, time: number): number {
-    let sum = 0;
-    for (const e of this.sides[owner].ledger) {
-      if (time - e.at <= FINAL_FLIGHT_WINDOW_MS) sum += e.amount;
-    }
-    return sum;
-  }
-
-  /** Dancer's Momentum: she winds up the longer she is left alone. */
-  private tickMomentum(delta: number): void {
-    const s = this.sides.player;
-    if (!this.arena.masteryActive) { s.momentum = 0; return; }
-    if (!this.alive(this.arena.player)) return;
-    // Memory's Rebirth: no momentum builds while the passive is sealed.
-    if (this.arena.player.passivesSealed()) return;
-    s.momentum = Math.min(MOMENTUM_MAX,
-      s.momentum + meterGain(this.arena.player, MOMENTUM_PER_SEC * (delta / 1000)));
-  }
-
-  private tickCharges(delta: number): void {
-    for (const owner of ['player', 'npc'] as Owner[]) {
-      if (!this.isAir(owner)) continue;
-      const s = this.sides[owner];
-      const max = this.maxSpinCharges(owner);
-      if (s.spinCharges >= max) { s.spinCharges = max; continue; }
-      s.spinCharges = Math.min(max, s.spinCharges + delta / (SPIN_COOLDOWN_MS * this.quickMult(owner)));
-    }
-  }
-
-  private maxSpinCharges(owner: Owner): number {
-    return owner === 'player' && this.arena.hasUpgrade('e') ? 2 : 1;
-  }
-
-  // ── Damage plumbing ──────────────────────────────────────────────────────
-
-  /**
-   * Q+ (Eye of the Storm): every attack hits for a fifth of the banked wind dodge on top of its
-   * own number, so the dodge pool stops being purely defensive. Unlike the upgrade's dodge
-   * payout this is not gated on the funnel being up — the tornado is five seconds in every
-   * twenty-four, and an upgrade that only paid out inside it would barely exist.
-   */
-  private eyeBonus(owner: Owner): number {
-    if (owner !== 'player' || !this.arena.hasUpgrade('q')) return 0;
-    return Math.round(this.sides.player.dodge * 100 / 5);
-  }
-
-  /** One target taking one hit from this side, with the Eye bonus folded in. */
-  // `color` is typed wide on purpose: `AIR` is an `as const` table, so an inferred default
-  // would pin the parameter to that one literal and refuse every other palette key.
-  private strike(owner: Owner, t: Fighter, base: number, color: number = AIR.frost): void {
-    t.takeDamage(base + this.eyeBonus(owner));
-    this.arena.spawnHitFlash(t.x, t.y, this.col(owner)(color));
-    this.fx(owner).featherPuff(t.x, t.y, 4);
-  }
-
-  /**
-   * Called once per attack that connected with at least one target — the hook Eye of the Storm
-   * pays out on, and the one place "an attack landed" is defined.
-   */
-  private onAttackLanded(owner: Owner): void {
-    if (owner !== 'player') return;
-    if (!this.arena.hasUpgrade('q')) return;
-    if (this.now >= this.sides.player.tornadoUntil) return;
-    this.addDodge('player', EYE_DODGE, 'EYE');
-  }
-
-  // ── Click: Wind Splice ───────────────────────────────────────────────────
-
-  /**
-   * One motion, two ranges: the fan opens across the enemy in front of her, and the air it
-   * displaces keeps going as a sheet. Close range is where the damage is; the shear is what
-   * makes the click worth pressing from across the arena.
-   */
-  doSplice(owner: Owner, tx: number, ty: number): void {
-    const f = this.fighter(owner);
-    if (!this.alive(f)) return;
-    this.noteCast(owner, 'wind-splice', tx, ty);
-    const s = this.sides[owner];
-    const ang = this.aimOf(owner, tx, ty);
-    const fx = this.fx(owner);
-
-    this.avatar(owner)?.play('sweep', ang);
-    this.setFanSpread(owner, 1);
-    fx.fanCut(f.x, f.y, ang, SPLICE_CUT_RANGE, SPLICE_CUT_HALF);
-    fx.muzzleGust(f.x + Math.cos(ang) * 20, f.y + Math.sin(ang) * 20, ang, 0.9);
-
-    // Near cut: a wedge, so standing behind her is safe and standing in front is not.
-    let landed = false;
-    for (const t of this.targetsOf(owner)) {
-      const d = Phaser.Math.Distance.Between(f.x, f.y, t.x, t.y);
-      if (d > SPLICE_CUT_RANGE + 14) continue;
-      const off = Math.abs(Phaser.Math.Angle.Wrap(Math.atan2(t.y - f.y, t.x - f.x) - ang));
-      if (off > SPLICE_CUT_HALF) continue;
-      this.strike(owner, t, SPLICE_CUT_DAMAGE, AIR.mist);
-      landed = true;
-    }
-    if (landed) this.onAttackLanded(owner);
-
-    // Far half: the sheet sheared off the cut, thrown along the same line.
-    this.shears.push({
-      owner,
-      x: f.x + Math.cos(ang) * 26,
-      y: f.y + Math.sin(ang) * 26,
-      vx: Math.cos(ang) * SHEAR_SPEED,
-      vy: Math.sin(ang) * SHEAR_SPEED,
-      travelled: 0,
-      t: 0,
-      damage: SHEAR_DAMAGE,
-      hit: new Set(),
-    });
-
-    // Click+ (Whirlwind): every third splice carries a free turn with it.
-    s.spliceCount++;
-    if (owner === 'player' && this.arena.hasUpgrade('click') && s.spliceCount % WHIRLWIND_EVERY === 0) {
-      this.arena.showFloatingText(f.x, f.y - 46, '🌀 WHIRLWIND!', '#aaddff');
-      this.resolveSpin(owner, tx, ty, false);
-    }
-  }
-
-  private updateShears(_time: number, dt: number): void {
-    for (let i = this.shears.length - 1; i >= 0; i--) {
-      const sh = this.shears[i];
-      sh.x += sh.vx * dt;
-      sh.y += sh.vy * dt;
-      sh.travelled += Math.hypot(sh.vx, sh.vy) * dt;
-      sh.t += dt;
-
-      let done = sh.travelled >= SHEAR_RANGE;
-      if (sh.x < -40 || sh.x > this.arena.width + 40 || sh.y < -40 || sh.y > this.arena.height + 40) done = true;
-
-      for (const t of this.targetsOf(sh.owner)) {
-        if (sh.hit.has(t)) continue;
-        if (Phaser.Math.Distance.Between(sh.x, sh.y, t.x, t.y) > SHEAR_HIT_RADIUS + t.displayWidth * 0.25) continue;
-        sh.hit.add(t);
-        this.strike(sh.owner, t, sh.damage, AIR.sky);
-        this.onAttackLanded(sh.owner);
-        done = true;
-        break;
-      }
-
-      if (done) {
-        this.fx(sh.owner).motes(sh.x, sh.y, 5, { speed: 150, size: 2.4, life: 340, swirl: 1.8, depth: 6 });
-        this.shears.splice(i, 1);
-      }
-    }
-  }
-
-  // ── E: Spin Dance ────────────────────────────────────────────────────────
-
-  /** Player press: spends a charge, decides spin-or-flip, then resolves it. */
-  private trySpin(mouseX: number, mouseY: number): void {
-    const s = this.sides.player;
-    if (s.spinCharges < 1) return;
-    // Kit-owned charges skip `castAbility`, so the gates it would have applied are applied
-    // here instead — otherwise Spin Dance would be the one ability a disarm could not stop.
-    const p = this.arena.player;
-    const wall = Date.now();
-    if (wall < p.disarmedUntil || wall < p.silencedUntil || wall < p.chickenUntil) return;
-    s.spinCharges -= 1;
-    // Kit-owned charges still have to stamp the cast, or the sound, the online relay and the
-    // Wrenched backfire all silently skip Spin Dance.
-    p.triggerCooldown('spin-dance');
-    this.resolveSpin('player', mouseX, mouseY, true);
-  }
-
-  /** NPC / online replay entry point. */
-  doSpinDance(owner: Owner, tx: number, ty: number): void {
-    if (owner === 'player') { this.resolveSpin('player', tx, ty, true); return; }
-    this.sides.npc.spinCharges = Math.max(0, this.sides.npc.spinCharges - 1);
-    this.resolveSpin('npc', tx, ty, true);
-  }
-
-  /**
-   * The turn itself. `chargeCast` is false for the free Whirlwind copy, which must not arm the
-   * E+ pair or the upgrade would pay out on clicks rather than on dancing.
-   */
-  private resolveSpin(owner: Owner, tx: number, ty: number, chargeCast: boolean): void {
-    const f = this.fighter(owner);
-    if (!this.alive(f)) return;
-    // Only a real press is recorded: the free Whirlwind spin comes back with its splice anyway.
-    if (chargeCast) this.noteCast(owner, 'spin-dance', tx, ty);
-    const s = this.sides[owner];
-    const fx = this.fx(owner);
-    const ang = this.aimOf(owner, tx, ty);
-    const time = this.now;
-
-    // E+ (Expert Dancer): a second cast inside the window is a flip along the aim instead of
-    // another circle — different shape, same payoff, so the pair reads as choreography.
-    const isFlip = chargeCast
-      && owner === 'player'
-      && this.arena.hasUpgrade('e')
-      && s.spinPairArmed
-      && time - s.lastSpinAt <= FLIP_WINDOW_MS;
-
-    this.setFanSpread(owner, 1);
-    let landed = false;
-
-    if (isFlip) {
-      this.avatar(owner)?.play('dash', ang, 380);
-      fx.flipCut(f.x, f.y, ang, FLIP_HALF_LEN, FLIP_HALF_WID);
-      this.arena.showFloatingText(f.x, f.y - 46, '🤸 FLIP!', '#e4f2ff');
-      // Rectangle centred on her, long side along the aim.
-      const cos = Math.cos(ang), sin = Math.sin(ang);
-      for (const t of this.targetsOf(owner)) {
-        const dx = t.x - f.x, dy = t.y - f.y;
-        const along = dx * cos + dy * sin;
-        const across = -dx * sin + dy * cos;
-        if (Math.abs(along) > FLIP_HALF_LEN || Math.abs(across) > FLIP_HALF_WID) continue;
-        this.strike(owner, t, SPIN_DAMAGE, AIR.mist);
-        landed = true;
-      }
-    } else {
-      this.avatar(owner)?.play('sweep', ang, 420);
-      fx.spinFlourish(f.x, f.y, SPIN_RADIUS);
-      for (const t of this.targetsOf(owner)) {
-        if (Phaser.Math.Distance.Between(f.x, f.y, t.x, t.y) > SPIN_RADIUS + t.displayWidth * 0.25) continue;
-        this.strike(owner, t, SPIN_DAMAGE, AIR.frost);
-        landed = true;
-      }
-    }
-
-    if (landed) {
-      this.onAttackLanded(owner);
-      // Contact is what buys tempo: a spin that hits hands the rest of the kit two seconds.
-      const removed = f.reduceCooldowns(SPIN_CD_REFUND_MS, 'spin-dance');
-      if (removed > 0) {
-        this.arena.showFloatingText(f.x, f.y - 58, `⏩ -${(removed / 1000).toFixed(1)}s CD`, '#aaddff');
-        if (owner === 'player') this.arena.recordMasteryStat('spinRefundSeconds', removed / 1000);
-      }
-      fx.ring(f.x, f.y, 10, SPIN_RADIUS * 0.8, AIR.cyan, 380, 4, 6);
-    }
-
-    if (chargeCast && owner === 'player' && this.arena.hasUpgrade('e')) {
-      if (isFlip) {
-        // Both halves clean — that is the upgrade's actual reward.
-        if (s.spinPairHit && landed) this.addDodge('player', EXPERT_PAIR_DODGE, 'EXPERT');
-        s.spinPairArmed = false;
-        s.spinPairHit = false;
-      } else {
-        s.spinPairArmed = true;
-        s.spinPairHit = landed;
-      }
-    }
-    s.lastSpinAt = time;
-  }
-
-  // ── R: Gale Glaive ───────────────────────────────────────────────────────
-
-  /** Both fans lock together and leave her hands. */
-  doGaleGlaive(owner: Owner, tx: number, ty: number): void {
-    const f = this.fighter(owner);
-    if (!this.alive(f)) return;
-    this.noteCast(owner, 'gale-glaive', tx, ty);
-    const ang = this.aimOf(owner, tx, ty);
-    const gust = this.arena.hasPerk(owner, 'air-gust');
-
-    // Gust: the throw is a turn — a free Spin Dance goes off as the fans leave her hands.
-    if (gust) {
-      this.arena.showFloatingText(f.x, f.y - 46, '🌬️ GUST!', '#bbe8ff');
-      this.resolveSpin(owner, tx, ty, false);
-    }
-
-    this.avatar(owner)?.play('punch', ang);
-    // Her hands are empty until it comes home.
-    this.setFanSpread(owner, 0.1);
-    this.fx(owner).muzzleGust(f.x, f.y, ang, 1.2);
-
-    this.glaives.push({
-      owner,
-      x: f.x, y: f.y,
-      parkX: tx, parkY: ty,
-      phase: 'out',
-      until: 0,
-      spin: 0,
-      lastTickAt: 0,
-      hit: new Set(),
-      gust,
-    });
-  }
-
-  private updateGlaives(time: number, dt: number): void {
-    for (let i = this.glaives.length - 1; i >= 0; i--) {
-      const g = this.glaives[i];
-      g.spin += dt * 22;
-      const owner = g.owner;
-      const caster = this.fighter(owner);
-
-      if (g.phase === 'out') {
-        const dx = g.parkX - g.x, dy = g.parkY - g.y;
-        const d = Math.hypot(dx, dy);
-        const step = GLAIVE_SPEED * dt;
-        if (d <= step) {
-          g.x = g.parkX; g.y = g.parkY;
-          g.phase = 'park';
-          g.until = time + GLAIVE_PARK_MS;
-          g.lastTickAt = time;
-          this.fx(owner).ring(g.x, g.y, 8, GLAIVE_RADIUS * 2.2, AIR.mist, 360, 4, 6);
-        } else {
-          g.x += (dx / d) * step;
-          g.y += (dy / d) * step;
-        }
-        this.glaiveSweep(g, GLAIVE_OUT_DAMAGE, false);
-
-      } else if (g.phase === 'park' || g.phase === 'phantom') {
-        const tickDmg = g.phase === 'phantom' ? AFTERIMAGE_TICK_DAMAGE : GLAIVE_TICK_DAMAGE;
-        if (time - g.lastTickAt >= GLAIVE_TICK_MS) {
-          g.lastTickAt = time;
-          let landed = false;
-          for (const t of this.targetsOf(owner)) {
-            if (Phaser.Math.Distance.Between(g.x, g.y, t.x, t.y) > GLAIVE_RADIUS + t.displayWidth * 0.3) continue;
-            this.strike(owner, t, tickDmg, AIR.cyan);
-            landed = true;
-          }
-          if (landed) this.onAttackLanded(owner);
-        }
-        if (time >= g.until) {
-          if (g.phase === 'phantom') {
-            this.fx(owner).motes(g.x, g.y, 8, { speed: 110, size: 2.6, life: 520, swirl: 2, depth: 6 });
-            this.glaives.splice(i, 1);
-            continue;
-          }
-          // R+ (Gale Afterimage): the fans go home, but the memory of them stays parked.
-          if (owner === 'player' && this.arena.hasUpgrade('r')) {
-            this.glaives.push({
-              owner,
-              x: g.x, y: g.y, parkX: g.x, parkY: g.y,
-              phase: 'phantom',
-              until: time + AFTERIMAGE_MS,
-              spin: g.spin,
-              lastTickAt: time,
-              hit: new Set(),
-              gust: false,
-            });
-            this.arena.showFloatingText(g.x, g.y - 32, '🌳 AFTERIMAGE', '#b4854a');
-          }
-          g.phase = 'back';
-          g.hit.clear();
-        }
-
-      } else { // 'back'
-        if (!this.alive(caster)) { this.glaives.splice(i, 1); continue; }
-        const dx = caster.x - g.x, dy = caster.y - g.y;
-        const d = Math.hypot(dx, dy);
-        const step = GLAIVE_SPEED * dt;
-        if (d <= step) {
-          this.fx(owner).bloom(caster.x, caster.y, 46, 8, 6);
-          this.setFanSpread(owner, 1);
-          this.glaives.splice(i, 1);
-          continue;
-        }
-        g.x += (dx / d) * step;
-        g.y += (dy / d) * step;
-        this.glaiveSweep(g, GLAIVE_BACK_DAMAGE, true);
-      }
-    }
-  }
-
-  /** Contact damage along a travelling leg; the homeward leg is the one that pays dodge. */
-  private glaiveSweep(g: Glaive, damage: number, returning: boolean): void {
-    for (const t of this.targetsOf(g.owner)) {
-      if (g.hit.has(t)) continue;
-      if (Phaser.Math.Distance.Between(g.x, g.y, t.x, t.y) > GLAIVE_RADIUS + t.displayWidth * 0.3) continue;
-      g.hit.add(t);
-      this.strike(g.owner, t, damage, returning ? AIR.white : AIR.frost);
-      this.onAttackLanded(g.owner);
-      if (returning) {
-        this.arena.showFloatingText(t.x, t.y - 34, '🌀 CAUGHT!', '#e4f2ff');
-        this.addDodge(g.owner, GLAIVE_DODGE, 'GALE');
-        if (g.owner === 'player') this.arena.recordMasteryStat('glaiveReturns', 1);
-      }
-    }
-  }
-
-  /** Gust perk: the thrown glaive this side can still teleport to, or null. */
-  private gustGlaive(owner: Owner): Glaive | null {
-    return this.glaives.find((g) => g.owner === owner && g.gust && g.phase !== 'phantom') ?? null;
-  }
-
-  /**
-   * Gust's second R: she is where the glaive is, the fans are back in her hands, and the
-   * arrival is another Spin Dance. Player press, bot pick and online replay all land here.
-   */
-  doGustRecall(owner: Owner): boolean {
-    const f = this.fighter(owner);
-    if (!this.alive(f)) return false;
-    const g = this.gustGlaive(owner);
-    if (!g) return false;
-    const b = this.arena.worldBounds;
-    const x = Phaser.Math.Clamp(g.x, b.x + 20, b.right - 20);
-    const y = Phaser.Math.Clamp(g.y, b.y + 20, b.bottom - 20);
-    const fx = this.fx(owner);
-    fx.featherPuff(f.x, f.y, 6);
-    fx.slipstream(f.x, f.y, x, y);
-    this.body(f).reset(x, y);
-    this.glaives.splice(this.glaives.indexOf(g), 1);
-    this.setFanSpread(owner, 1);
-    fx.bloom(x, y, 46, 8, 6);
-    fx.ring(x, y, 10, 70, AIR.mist, 320, 3, 6);
-    this.arena.showFloatingText(x, y - 46, '🌬️ GUST RECALL!', '#bbe8ff');
-    const ang = this.aimOf(owner);
-    this.resolveSpin(owner, x + Math.cos(ang) * 100, y + Math.sin(ang) * 100, false);
-    return true;
-  }
-
-  /**
-   * Bot synergy for Gust: recall the moment the glaive is on top of the target, so the arrival
-   * spin connects. Read by the AI (side-effect free); the AI answers with GUST_RECALL_ID.
-   */
-  npcGustRecallReady(): boolean {
-    if (!this.arena.npcAutonomous || !this.arena.isNpcAir) return false;
-    const g = this.gustGlaive('npc');
-    const { npc, player } = this.arena;
-    if (!g || !this.alive(npc) || !this.alive(player)) return false;
-    if (Phaser.Math.Distance.Between(g.x, g.y, player.x, player.y) > NPC_GUST_RECALL_RANGE) return false;
-    // Already standing on it: the jump would be a spin in place, which E does on its own.
-    return Phaser.Math.Distance.Between(g.x, g.y, npc.x, npc.y) > SPIN_RADIUS;
-  }
-
-  // ── F: Sky Grapple ───────────────────────────────────────────────────────
-
-  /**
-   * Hook, then haul. The flight itself is untouchable — the dancer is not there to be hit — and
-   * landing pays out dodge whether or not the line caught anybody.
-   */
-  doSkyGrapple(owner: Owner, tx: number, ty: number): void {
-    const f = this.fighter(owner);
-    if (!this.alive(f)) return;
-    this.noteCast(owner, 'sky-grapple', tx, ty);
-
-    // Hawk perk: F stops being a hook and becomes a bird that hauls *them* instead of her.
-    if (owner === 'player' && this.arena.hasPerk('player', 'hawk')) {
-      this.spawnHawk(tx, ty);
-      return;
-    }
-
-    const s = this.sides[owner];
-    const dx = tx - f.x, dy = ty - f.y;
-    const len = Math.hypot(dx, dy) || 1;
-    const flight = Math.min(GRAPPLE_MAX_MS, (len / GRAPPLE_SPEED) * 1000);
-    const ang = Math.atan2(dy, dx);
-
-    this.body(f).setVelocity((dx / len) * GRAPPLE_SPEED, (dy / len) * GRAPPLE_SPEED);
-    s.invulnUntil = this.now + flight + 60;
-    if (owner === 'player') this.arena.isDodging = true;
-
-    const fx = this.fx(owner);
-    fx.hookLine(f.x, f.y, tx, ty, Math.max(160, flight));
-    fx.slipstream(f.x, f.y, tx, ty);
-    this.avatar(owner)?.play('dash', ang);
-    this.setFanSpread(owner, 0.3);
-
-    // F+ (Final Flight): anything the line runs through is rammed on the way past, and paid
-    // for out of the last ten seconds of your own work.
-    if (owner === 'player' && this.arena.hasUpgrade('f')) this.finalFlight(f, dx, dy, len);
-
-    this.arena.scene.time.delayedCall(flight, () => {
-      if (!this.alive(f)) { if (owner === 'player') this.arena.isDodging = false; return; }
-      this.body(f).setVelocity(0, 0);
-      if (owner === 'player') this.arena.isDodging = false;
-      fx.bloom(f.x, f.y, 64, 11, 5);
-      fx.dustMark(f.x, f.y, 44);
-      fx.featherPuff(f.x, f.y, 7);
-      this.setFanSpread(owner, 1);
-      this.addDodge(owner, GRAPPLE_DODGE, 'SKY');
-    });
-  }
-
-  /** The ram half of F+: knockback, a share of your recent damage, and dodge equal to it. */
-  private finalFlight(f: Fighter, dx: number, dy: number, len: number): void {
-    const time = this.now;
-    const banked = this.ledgerTotal('player', time);
-    if (banked <= 0) return;
-
-    for (const t of this.targetsOf('player')) {
-      // Perpendicular distance from the target to the hook line.
-      const proj = Phaser.Math.Clamp(((t.x - f.x) * dx + (t.y - f.y) * dy) / (len * len), 0, 1);
-      const px = f.x + dx * proj, py = f.y + dy * proj;
-      if (Phaser.Math.Distance.Between(t.x, t.y, px, py) > RAM_RADIUS) continue;
-
-      const dmg = Math.round(banked * FINAL_FLIGHT_SHARE);
-      if (dmg <= 0) continue;
-      t.takeDamage(dmg);
-      // A ram never banks itself. The ledger is polled from `rawDamageTaken` deltas, so
-      // without moving the watermark past this hit the next frame would read the ram as
-      // fresh damage dealt and refill the ledger it just spent — every grapple paying for
-      // the next one, compounding as long as they keep landing.
-      this.ledgerSeen.set(t, t.rawDamageTaken);
-      this.arena.spawnHitFlash(t.x, t.y, this.pcol(AIR.white));
-      this.fx('player').gustBurst(t.x, t.y, 72, { duration: 420, dust: false });
-      this.fx('player').featherPuff(t.x, t.y, 8);
-      this.arena.showFloatingText(t.x, t.y - 44, '🕊️ FINAL FLIGHT!', '#ffffff');
-
-      if (!t.knockbackImmune) {
-        const ka = Math.atan2(dy, dx);
-        this.body(t).setVelocity(Math.cos(ka) * FINAL_FLIGHT_KNOCKBACK, Math.sin(ka) * FINAL_FLIGHT_KNOCKBACK);
-      }
-      // Dodge equal to the damage it did, read as a percentage — a 60-damage ram is +60%.
-      this.addDodge('player', dmg / 100, 'FLIGHT');
-      this.onAttackLanded('player');
-      // The ledger is cashed in, not merely read: it cannot be spent twice on one dive.
-      this.sides.player.ledger = [];
-      break;
-    }
-  }
-
-  // ── Q: Wind Breaker ──────────────────────────────────────────────────────
-
-  /**
-   * She stops being a dancer and becomes the weather: everything in reach is dragged into orbit
-   * around her, ground down for five seconds, then thrown along the cursor until it finds a wall.
-   */
-  doWindBreaker(owner: Owner, tx: number, ty: number): void {
-    const f = this.fighter(owner);
-    if (!this.alive(f)) return;
-    this.noteCast(owner, 'wind-breaker', tx, ty);
-    const s = this.sides[owner];
-    const fx = this.fx(owner);
-
-    s.tornadoUntil = this.now + TORNADO_MS;
-    s.tornadoLastTickAt = this.now;
-    s.tornadoCaptives.clear();
-    this.tornadoAim[owner] = { x: tx, y: ty };
-
-    this.avatar(owner)?.play('raise');
-    this.setFanSpread(owner, 1);
-    fx.updraft(f.x, f.y, 36, 130, 5);
-    fx.ring(f.x, f.y, 14, TORNADO_RADIUS * 1.2, AIR.mist, 520, 5, 5);
-    fx.dustMark(f.x, f.y, TORNADO_RADIUS * 0.8);
-    this.arena.showFloatingText(f.x, f.y - 52, '🌪️ WIND BREAKER!', '#c0c8d0');
-    this.arena.scene.cameras.main.shake(240, 0.004);
-  }
-
-  /** Where each side's funnel will throw its catch — refreshed from the cursor while it runs. */
-  private tornadoAim: Record<Owner, { x: number; y: number }> = {
-    player: { x: 0, y: 0 },
-    npc: { x: 0, y: 0 },
-  };
-
-  private updateTornado(time: number, dt: number): void {
-    for (const owner of ['player', 'npc'] as Owner[]) {
-      const s = this.sides[owner];
-      if (s.tornadoUntil === 0) continue;
-      const f = this.fighter(owner);
-
-      if (time >= s.tornadoUntil || !this.alive(f)) {
-        if (s.tornadoUntil !== 0) this.burstTornado(owner);
-        continue;
-      }
-      // The player keeps steering the throw right up to the moment it happens.
-      if (owner === 'player') this.tornadoAim.player = { x: this.lastMouseX, y: this.lastMouseY };
-
-      // Capture: anything that touches the funnel is taken for the rest of it.
-      for (const t of this.targetsOf(owner)) {
-        if (s.tornadoCaptives.has(t)) continue;
-        const d = Phaser.Math.Distance.Between(f.x, f.y, t.x, t.y);
-        if (d > TORNADO_RADIUS) continue;
-        s.tornadoCaptives.set(t, {
-          angle: Math.atan2(t.y - f.y, t.x - f.x),
-          dist: Phaser.Math.Clamp(d, TORNADO_ORBIT_MIN, TORNADO_ORBIT_MAX),
-        });
-        this.arena.showFloatingText(t.x, t.y - 38, '🌪️ SWEPT UP!', '#c0c8d0');
-        this.fx(owner).bloom(t.x, t.y, 54, 9, 5);
-      }
-
-      // Orbit: captives are placed, not pushed. Enemy AI rewrites its own velocity every frame,
-      // so anything short of a position write loses the tug of war.
-      const wb = this.arena.worldBounds;
-      for (const [t, hold] of s.tornadoCaptives) {
-        if (!this.alive(t)) { s.tornadoCaptives.delete(t); continue; }
-        hold.angle += TORNADO_ORBIT_SPEED * dt;
-        // Reeled slowly inward, so the ride visibly tightens rather than sitting at one radius.
-        hold.dist = Math.max(TORNADO_ORBIT_MIN, hold.dist - 22 * dt);
-        const b = this.body(t);
-        b.setVelocity(0, 0);
-        b.reset(
-          Phaser.Math.Clamp(f.x + Math.cos(hold.angle) * hold.dist, wb.x + b.halfWidth, wb.right - b.halfWidth),
-          Phaser.Math.Clamp(f.y + Math.sin(hold.angle) * hold.dist, wb.y + b.halfHeight, wb.bottom - b.halfHeight),
-        );
-      }
-
-      // Grind. Storm (divine) turns the funnel into a thunderhead: every grind is a strike.
-      if (time - s.tornadoLastTickAt >= TORNADO_TICK_MS) {
-        s.tornadoLastTickAt = time;
-        const storm = this.arena.hasPerk(owner, 'storm');
-        for (const t of s.tornadoCaptives.keys()) {
-          if (!this.alive(t)) continue;
-          const before = t.hp;
-          if (storm) this.fx(owner).staticSnap(t.x, t.y, 26);
-          this.strike(owner, t, TORNADO_TICK_DAMAGE + (storm ? STORM_BOLT_DAMAGE : 0), storm ? AIR.charge : AIR.steel);
-          if (owner === 'player' && before > 0 && t.hp <= 0) {
-            this.arena.recordMasteryStat('tornadoKills', 1);
-            this.arena.showFloatingText(t.x, t.y - 44, '🌪️ TORN APART!', '#ccddff');
-          }
-        }
-      }
-    }
-  }
-
-  /** The funnel opens: everything it was holding is thrown along the aim until a wall stops it. */
-  private burstTornado(owner: Owner): void {
+  /** Hidden bodies: cloaked, lifted off the floor, or turned into the Blade. Latched. */
+  private updateHidden(owner: Owner): void {
     const s = this.sides[owner];
     const f = this.fighter(owner);
-    const fx = this.fx(owner);
-    const aim = this.tornadoAim[owner];
-    const origin = this.alive(f) ? { x: f.x, y: f.y } : { x: aim.x, y: aim.y };
-    const ang = Math.atan2(aim.y - origin.y, aim.x - origin.x);
-
-    for (const t of s.tornadoCaptives.keys()) {
-      if (!this.alive(t)) continue;
-      this.launches.push({
-        owner,
-        target: t,
-        vx: Math.cos(ang) * LAUNCH_SPEED,
-        vy: Math.sin(ang) * LAUNCH_SPEED,
-        // Safety net only — the wall is what actually ends the flight.
-        expireAt: this.now + 2500,
-      });
-      this.arena.showFloatingText(t.x, t.y - 38, '💨 THROWN!', '#e4f2ff');
-      fx.slipstream(t.x, t.y, t.x + Math.cos(ang) * 200, t.y + Math.sin(ang) * 200);
-    }
-
-    s.tornadoCaptives.clear();
-    s.tornadoUntil = 0;
-    if (this.alive(f)) {
-      fx.gustBurst(f.x, f.y, TORNADO_RADIUS * 0.9, { curls: 24, haze: 5, duration: 560 });
-      fx.updraft(f.x, f.y, 42, 160, 6);
-      this.setFanSpread(owner, 1);
-    }
-    this.arena.scene.cameras.main.shake(220, 0.006);
+    if (!f) return;
+    const want = this.isAir(owner) && this.alive(f) && (s.coverHp > 0 || this.now < s.levUntil || !!s.bey);
+    if (want === s.hidden) return;
+    s.hidden = want;
+    // `forceInvisible` exists for exactly this: without it `takeDamage`'s alpha flash would paint
+    // the sprite back onto the floor under a body the kit is drawing somewhere else.
+    f.forceInvisible = want;
   }
 
-  private updateLaunches(time: number, dt: number): void {
-    const wb = this.arena.worldBounds;
-    for (let i = this.launches.length - 1; i >= 0; i--) {
-      const l = this.launches[i];
-      const t = l.target;
-      if (!this.alive(t)) { this.launches.splice(i, 1); continue; }
-
-      const b = this.body(t);
-      b.setVelocity(l.vx, l.vy);
-      const nx = t.x + l.vx * dt, ny = t.y + l.vy * dt;
-
-      const hitWall = nx <= wb.x + b.halfWidth + 2 || nx >= wb.right - b.halfWidth - 2
-        || ny <= wb.y + b.halfHeight + 2 || ny >= wb.bottom - b.halfHeight - 2;
-
-      if (hitWall || time >= l.expireAt) {
-        b.setVelocity(0, 0);
-        if (hitWall) {
-          this.strike(l.owner, t, LAUNCH_WALL_DAMAGE, AIR.white);
-          this.arena.showFloatingText(t.x, t.y - 40, '🚧 SLAMMED!', '#ffffff');
-          this.fx(l.owner).gustBurst(t.x, t.y, 70, { duration: 400 });
-          this.arena.scene.cameras.main.shake(160, 0.005);
-          if (l.owner === 'player') this.onAttackLanded('player');
-        }
-        this.launches.splice(i, 1);
-      }
-    }
+  /** How high off the floor the rig is drawn right now. */
+  private liftOf(owner: Owner): number {
+    const s = this.sides[owner];
+    if (this.now >= s.levUntil) return 0;
+    const up = Phaser.Math.Clamp((this.now - s.levFrom) / 320, 0, 1);
+    const down = Phaser.Math.Clamp((s.levUntil - this.now) / 180, 0, 1);
+    return LEVITATE_LIFT * Math.min(1 - (1 - up) * (1 - up), down) + Math.sin(this.vizT * 3) * 4 * up * down;
   }
 
-  // ── Mastery: Weather Cycle ───────────────────────────────────────────────
-
-  private tryWeatherCycle(time: number): void {
-    const s = this.sides.player;
-    if (time - s.weatherLastCastAt < WEATHER_COOLDOWN_MS * this.quickMult('player')) return;
-    s.weatherLastCastAt = time;
-    // Stamped on the fighter for the sound and the online relay; the peer's sim opens the same
-    // window on its replica through `doWeatherCycle('npc')`.
-    this.arena.player.triggerCooldown(WEATHER_ID);
-    this.doWeatherCycle('player');
-  }
+  // ── Bot ──────────────────────────────────────────────────────────────────
 
   /**
-   * The winds close in and listen. For five seconds every press is written down; when the
-   * window shuts, the whole sequence is danced again on the same beats, cooldowns be damned.
+   * What the kit does for a bot that the AI's cast list cannot: the held barrage, and walking
+   * into a cloud to bank stealth when there is nothing better to do. (The Combo's presses are
+   * scheduled in `openRing`, and the Blade steers itself in `beyGoal`.)
    */
-  doWeatherCycle(owner: Owner): void {
-    const f = this.fighter(owner);
-    if (!this.alive(f)) return;
-    const s = this.sides[owner];
-    s.weatherUntil = this.now + WEATHER_RECORD_MS;
-    s.weatherLog = [];
-    s.weatherReplay = null;
-    const fx = this.fx(owner);
-    this.avatar(owner)?.play('raise', this.aimOf(owner), 520);
-    fx.ring(f.x, f.y, 20, 150, AIR.cyan, 520, 5, 6);
-    fx.motes(f.x, f.y, 22, { speed: 200, life: 700, swirl: 2.2 });
-    fx.haze(f.x, f.y, 5, 60, 4);
-    this.arena.showFloatingText(f.x, f.y - 56, '🌀 WEATHER CYCLE', '#bbe8ff');
-  }
-
-  /** A press inside the window goes into the log, stamped with its beat and its aim. */
-  private noteCast(owner: Owner, id: WeatherCastId, tx: number, ty: number): void {
-    const s = this.sides[owner];
-    if (s.weatherReplaying || s.weatherUntil === 0 || this.now >= s.weatherUntil) return;
-    s.weatherLog.push({ id, at: this.now - (s.weatherUntil - WEATHER_RECORD_MS), tx, ty });
-    const f = this.fighter(owner);
-    if (owner === 'player' && this.alive(f)) {
-      this.arena.showFloatingText(f.x, f.y - 48, `🌀 ${s.weatherLog.length}`, '#bbe8ff');
-    }
-  }
-
-  /** Closes a finished window into a replay, and plays each recorded cast back on its beat. */
-  private tickWeather(time: number): void {
-    for (const owner of ['player', 'npc'] as Owner[]) {
-      const s = this.sides[owner];
-      const f = this.fighter(owner);
-      if (s.weatherUntil > 0 && time >= s.weatherUntil) {
-        s.weatherUntil = 0;
-        if (s.weatherLog.length > 0 && this.alive(f)) {
-          s.weatherReplay = s.weatherLog;
-          s.weatherReplayAt = time;
-          // The winds let go: everything they held is thrown back out.
-          this.avatar(owner)?.play('flex');
-          this.fx(owner).ring(f.x, f.y, 24, 190, AIR.white, 560, 5, 6);
-          this.fx(owner).motes(f.x, f.y, 26, { speed: 240, life: 800, swirl: -2.2 });
-          this.arena.showFloatingText(f.x, f.y - 56, `🌀 CYCLE ×${s.weatherLog.length}`, '#ffffff');
-        } else if (this.alive(f)) {
-          this.arena.showFloatingText(f.x, f.y - 56, '🌀 NOTHING TO REPEAT', '#8899aa');
-        }
-        s.weatherLog = [];
-      }
-      if (!s.weatherReplay) continue;
-      if (!this.alive(f)) { s.weatherReplay = null; continue; }
-      const elapsed = time - s.weatherReplayAt;
-      while (s.weatherReplay && s.weatherReplay.length > 0 && s.weatherReplay[0].at <= elapsed) {
-        const c = s.weatherReplay.shift()!;
-        this.replayCast(owner, c);
-      }
-      if (s.weatherReplay && s.weatherReplay.length === 0) s.weatherReplay = null;
-    }
-  }
-
-  /**
-   * One cast danced again. It goes straight to the kit's entry points, so no cooldown is asked
-   * or paid. The player re-aims each repeat at the live cursor and a bot at its target; an
-   * online peer's replay keeps its recorded aims, since their cursor never crosses the wire.
-   */
-  private replayCast(owner: Owner, c: WeatherCast): void {
-    const f = this.fighter(owner);
-    if (!this.alive(f)) return;
-    const s = this.sides[owner];
-    let tx = c.tx, ty = c.ty;
-    if (owner === 'player') {
-      tx = this.arena.pointerX; ty = this.arena.pointerY;
-    } else if (this.arena.npcAutonomous) {
-      const p = this.arena.player;
-      if (this.alive(p)) { tx = p.x; ty = p.y; }
-    }
-    s.weatherReplaying = true;
-    switch (c.id) {
-      case 'wind-splice': this.doSplice(owner, tx, ty); break;
-      case 'spin-dance': this.resolveSpin(owner, tx, ty, true); break;
-      case 'gale-glaive': this.doGaleGlaive(owner, tx, ty); break;
-      case 'sky-grapple': this.doSkyGrapple(owner, tx, ty); break;
-      case 'wind-breaker': this.doWindBreaker(owner, tx, ty); break;
-    }
-    s.weatherReplaying = false;
-    // Off the ability table entirely, so the cast's sound has to be asked for by hand.
-    Sfx.ability(c.id, 'air', WEATHER_KEYS[c.id], { isPlayer: owner === 'player', x: f.x });
-    this.fx(owner).motes(f.x, f.y, 6, { speed: 160, life: 420 });
-  }
-
-  /** True while the winds are listening to, or dancing back, this side's presses. */
-  isWeatherCycling(owner: Owner): boolean {
-    const s = this.sides[owner];
-    return (s.weatherUntil > 0 && this.now < s.weatherUntil) || s.weatherReplay !== null;
-  }
-
-  /** Nightmare bot: opens the cycle at close range, where the next five seconds will be busy. */
-  private updateNpcWeather(time: number): void {
-    if (!this.arena.npcAutonomous || !this.arena.isNpcAir || !this.npcWeatherSlot()) return;
+  private updateBot(owner: Owner): void {
+    if (owner !== 'npc' || !this.isAir(owner) || !this.simulates(owner)) return;
     const s = this.sides.npc;
-    if (time - s.weatherLastCastAt < WEATHER_COOLDOWN_MS * this.quickMult('npc') || this.isWeatherCycling('npc')) return;
-    const { npc, player } = this.arena;
-    if (!this.alive(npc) || !this.alive(player)) return;
-    if (Phaser.Math.Distance.Between(npc.x, npc.y, player.x, player.y) > NPC_WEATHER_RANGE) return;
-    s.weatherLastCastAt = time;
-    // Stamped so the cast sounds like one; the bot has no peer to relay it to.
-    npc.triggerCooldown(WEATHER_ID);
-    this.doWeatherCycle('npc');
-  }
+    const f = this.arena.npc;
+    if (!this.alive(f) || s.bey || s.lunge) return;
+    const t = this.mainTarget('npc');
 
-  /** 0–1 cooldown fill for the Weather Cycle HUD card. */
-  getWeatherCooldownRatio(time: number): number {
-    return Math.min(1, (time - this.sides.player.weatherLastCastAt) / (WEATHER_COOLDOWN_MS * this.quickMult('player')));
-  }
-
-  // ── Element perks: Quick, Vacuum ─────────────────────────────────────────
-
-  /** Quick's factor on the kit's own clocks; the ability table gets it through `perkCooldownMult`. */
-  private quickMult(owner: Owner): number {
-    return this.arena.hasPerk(owner, 'air-quick') ? QUICK_COOLDOWN_MULT : 1;
-  }
-
-  /**
-   * Quick and Vacuum land on the fighter as `perkCooldownMult` / `perkIncomingMult`. Single
-   * writer per fighter: written every frame while that side is air, handed back the frame it
-   * stops being air, and never touched for a fighter this kit did not write.
-   */
-  private updatePerkMults(): void {
-    for (const owner of ['player', 'npc'] as Owner[]) {
-      const f = this.fighter(owner);
-      if (!f) continue;
-      if (!this.isAir(owner)) {
-        if (this.perkMultsWritten.has(f)) {
-          f.perkCooldownMult = 1;
-          f.perkIncomingMult = 1;
-          this.perkMultsWritten.delete(f);
-        }
-        continue;
-      }
-      this.perkMultsWritten.add(f);
-      f.perkCooldownMult = this.quickMult(owner);
-      // A hit carries no word of who threw it, so "foes in the vacuum hit 15% softer" is kept
-      // on her side: while anyone is caught in it, what reaches her is cut by that much.
-      f.perkIncomingMult = this.vacuumed[owner].size > 0 ? VACUUM_INCOMING_MULT : 1;
+    if (this.now < s.jabUntil && this.now - s.lastJabAt >= JAB_EVERY_MS && t && !this.gagged(f)
+        && Phaser.Math.Distance.Between(f.x, f.y, t.x, t.y) <= JAB_REACH + this.bodyR(t)) {
+      this.jab('npc', Math.atan2(t.y - f.y, t.x - f.x));
     }
-  }
 
-  /**
-   * Vacuum: a standing draw toward the dancer. Added to velocity after movement has written
-   * it — a set would be a capture, and a reset would pin them.
-   */
-  private updateVacuum(): void {
-    for (const owner of ['player', 'npc'] as Owner[]) {
-      const held = this.vacuumed[owner];
-      const f = this.fighter(owner);
-      if (!this.isAir(owner) || !this.arena.hasPerk(owner, 'air-vacuum') || !this.alive(f)) {
-        held.clear();
-        continue;
-      }
-      const s = this.sides[owner];
-      const inside = new Set<Fighter>();
-      for (const t of this.targetsOf(owner)) {
-        const d = Phaser.Math.Distance.Between(f.x, f.y, t.x, t.y);
-        if (d > VACUUM_RADIUS) continue;
-        inside.add(t);
-        if (!held.has(t)) {
-          this.arena.showFloatingText(t.x, t.y - 40, '🌀 VACUUM −15% DMG', '#bbe8ff');
-          this.fx(owner).motes(t.x, t.y, 5, { speed: 90, size: 2.2, life: 360, swirl: 2, depth: 6 });
-        }
-        if (d < 4 || t.unstoppable) continue;
-        // A net ghost's own machine owns its position, and the funnel already holds its own.
-        if (t.netGhost || s.tornadoCaptives.has(t) || this.launches.some((l) => l.target === t)) continue;
-        const body = t.body as Phaser.Physics.Arcade.Body | null;
-        if (!body) continue;
-        body.velocity.x += ((f.x - t.x) / d) * VACUUM_PULL_PER_S;
-        body.velocity.y += ((f.y - t.y) / d) * VACUUM_PULL_PER_S;
-      }
-      this.vacuumed[owner] = inside;
+    // Stealth is the whole kit's fuel, so a bot with none and nobody on top of it goes and gets
+    // some: it keeps the speed the AI chose and is turned toward the nearest cloud.
+    if (s.stealth >= 60 || s.inCloud || f.frozenUntil > this.now) return;
+    if (t && Phaser.Math.Distance.Between(f.x, f.y, t.x, t.y) < 230) return;
+    let best: Cloud | null = null;
+    let bestD = 360;
+    for (const c of s.clouds) {
+      if (c.fleeing) continue;
+      const d = Phaser.Math.Distance.Between(f.x, f.y, c.x, c.y);
+      if (d < bestD) { bestD = d; best = c; }
     }
+    if (!best) return;
+    const v = this.body(f).velocity;
+    const sp = Math.hypot(v.x, v.y);
+    if (sp < 30) return;
+    const a = Math.atan2(best.y - f.y, best.x - f.x);
+    this.body(f).setVelocity(Math.cos(a) * sp, Math.sin(a) * sp);
   }
 
-  // ── Public accessors read by ArenaScene ──────────────────────────────────
+  /** Mirrors the opponent's casts onto their rig. */
+  handleNpcCastId(id: string | null): void {
+    if (!id) return;
+    const gesture = GESTURES[id];
+    if (!gesture || id === PIERCE_ID) return;
+    this.npcAvatar?.play(gesture, this.aimOf('npc'));
+  }
 
-  /** Dancer's Momentum, plus the stride the tornado costs her. */
+  // ── What ArenaScene and the AI are allowed to ask ────────────────────────
+
+  /** The barrage is thrown standing nearly still. */
   getPlayerSpeedMult(): number {
     const s = this.sides.player;
-    let mult = this.arena.masteryActive ? 1 + s.momentum : 1;
-    if (this.now < s.tornadoUntil) mult *= TORNADO_SPEED_MULT;
-    return mult;
+    return this.pointerWasDown && this.now - s.lastJabAt < JAB_EVERY_MS * 2 ? JAB_SPEED_MULT : 1;
   }
-
   getNpcSpeedMult(): number {
+    return this.now < this.sides.npc.jabUntil ? JAB_SPEED_MULT : 1;
+  }
+
+  /** True while the bot's body is the kit's to move: shoved by a Knock, lunging, or spinning. */
+  locksNpc(): boolean {
     const s = this.sides.npc;
-    return this.now < s.tornadoUntil ? TORNADO_SPEED_MULT : 1;
+    return !!s.bey || !!s.lunge || this.shoves.some((sh) => sh.target === this.arena.npc);
   }
 
-  /** Wind Breaker is up on that side — ArenaScene reads it for the ability card. */
-  isTornadoActive(owner: Owner): boolean {
-    return this.now < this.sides[owner].tornadoUntil;
+  /** Wrapped in Cloud Cover. ArenaScene folds the player's answer into `NpcAiState.targetInvisible`. */
+  isCloaked(owner: Owner): boolean { return this.isAir(owner) && this.sides[owner].coverHp > 0; }
+  isBladeActive(owner: Owner): boolean { return !!this.sides[owner].bey; }
+  /** 0–1 for the ability cards: the cloak's health, and the Blade's stamina. */
+  getCoverRatio(): number { return Phaser.Math.Clamp(this.sides.player.coverHp / COVER_HP, 0, 1); }
+  getBladeRatio(): number {
+    const bey = this.sides.player.bey;
+    return bey ? Phaser.Math.Clamp(bey.stamina / bey.max, 0, 1) : 0;
+  }
+  getStealth(owner: Owner): number { return this.sides[owner].stealth; }
+
+  /** Lunging, spinning, or up in the air: nothing else can be cast. */
+  npcAirBusy(): boolean {
+    const s = this.sides.npc;
+    return !!s.bey || !!s.lunge || this.now < s.levUntil;
+  }
+  /** How far a stab thrown now would reach: the lunge its stealth buys, plus the knife. */
+  npcAirPierceReach(): number {
+    return PIERCE_LUNGE + this.sides.npc.stealth * PIERCE_LUNGE_PER_STEALTH + PIERCE_REACH;
+  }
+  /** Synergy: more than half the bar is banked, so the next stab is the big one. */
+  npcAirBigStab(): boolean { return this.sides.npc.stealth > BIG_STEALTH; }
+  /** Synergy: the bot is in its target's blind spot — a stab now is doubled. */
+  npcAirBackstab(): boolean {
+    const t = this.mainTarget('npc');
+    return !!t && this.alive(this.arena.npc) && this.behind(this.arena.npc, t);
+  }
+  /** Synergy: the target is winded and cannot turn to face a stab. */
+  npcAirTargetWinded(): boolean {
+    const t = this.mainTarget('npc');
+    return !!t && Date.now() < t.airWindedUntil;
+  }
+  /** Synergy: standing in its own cloud without the cloak on — Cloud Cover would double the stealth. */
+  npcAirCoverPays(): boolean {
+    const s = this.sides.npc;
+    return s.inCloud && s.coverHp <= 0 && s.stealth < 60;
+  }
+  /** Synergy: its knives are standing in the floor near enough for the Blade to collect. */
+  npcAirFieldLive(): boolean {
+    const f = this.arena.npc;
+    return this.alive(f) && this.fields.some((o) => o.owner === 'npc' && o.struck
+      && Phaser.Math.Distance.Between(f.x, f.y, o.x, o.y) < 260);
+  }
+  /** A Combo is mid-ring: the F key belongs to the kit until it resolves. */
+  npcAirComboLive(): boolean { return !!this.sides.npc.combo; }
+
+  // ── Net ──────────────────────────────────────────────────────────────────
+
+  /** Our sky, for the machine that only draws it: `sky:stealth:x,y,r,vx,seed,fleeing;…`. */
+  private relaySky(): void {
+    if (!this.arena.isOnline || !this.arena.isPlayerAir || this.now - this.lastSkyAt < NET_SKY_MS) return;
+    this.lastSkyAt = this.now;
+    const s = this.sides.player;
+    const rows = s.clouds.map((c) =>
+      [Math.round(c.x), Math.round(c.y), c.r, c.vx, c.seed, c.fleeing ? 1 : 0].join(','));
+    this.relay('player', `sky:${Math.round(s.stealth)}:${rows.join(';')}`);
+  }
+
+  /** Something the other machine's assassin did. Its coordinates are mirrored, like its body. */
+  replayNet(id: string): void {
+    if (!this.arena.isNpcAir) return;
+    const parts = id.slice(NET.length).split(':');
+    const n = (i: number): number => { const v = Number(parts[i]); return Number.isFinite(v) ? v : 0; };
+    const s = this.sides.npc;
+    const f = this.arena.npc;
+    const b = this.arena.worldBounds;
+    // The other machine's arena is ours seen from the far side.
+    const mx = (x: number): number => b.x + b.right - x;
+    const ma = (a: number): number => Math.atan2(Math.sin(a), -Math.cos(a));
+    switch (parts[0]) {
+      case 'sky':
+        s.stealth = n(1);
+        s.clouds = (parts[2] ?? '').split(';').filter(Boolean).map((row) => {
+          const v = row.split(',').map(Number);
+          // Mirrored, so their wind blows the other way across our screen.
+          return { x: mx(v[0]), y: v[1], r: v[2], vx: -v[3], seed: v[4], fleeing: v[5] === 1 };
+        });
+        break;
+      case 'p':
+        this.pierceShow('npc', mx(n(1)), n(2), ma(n(3)), n(4), n(5), n(6) === 1);
+        break;
+      case 'j':
+        if (this.alive(f)) this.jabShow('npc', ma(n(1)));
+        break;
+      case 'cov':
+        if (n(1) > 0) s.coverHp = n(1);
+        else if (s.coverHp > 0) { s.coverHp = 0; if (this.alive(f)) coverBurst(this.fx('npc'), this.ncol, f.x, f.y, true); }
+        break;
+      case 'flip':
+        if (this.alive(f)) {
+          ringVerdict(this.fx('npc'), this.ncol, f.x, f.y, RING_MARK_R, true);
+          this.flip('npc');
+        }
+        break;
+      case 'miss':
+        if (s.combo && this.alive(f)) ringVerdict(this.fx('npc'), this.ncol, f.x, f.y, RING_MARK_R, false);
+        s.combo = null;
+        break;
+      case 'rain':
+        this.rain('npc', mx(n(1)), n(2), n(3));
+        break;
+      case 'take': {
+        const i = this.fields.findIndex((o) => o.owner === 'npc' && o.id === n(1));
+        if (i >= 0) this.fields.splice(i, 1);
+        if (s.bey) s.bey.orbit = n(2);
+        break;
+      }
+      case 'orb':
+        if (s.bey) s.bey.orbit = n(1);
+        break;
+      case 'shred':
+        if (s.bey) {
+          s.bey.shred = n(1) === 1 && this.alive(this.arena.player)
+            ? { target: this.arena.player, until: Infinity, lastTick: 0, inAng: 0 } : null;
+        }
+        break;
+      case 'bey':
+        if (n(1) === 0) this.endBey('npc');
+        break;
+    }
+  }
+
+  // ── The close-up ─────────────────────────────────────────────────────────
+
+  /** Who the camera should be on, if the local player is in a grind — as the Blade or under it. */
+  private dramaFocus(): { x: number; y: number } | null {
+    const p = this.arena.player;
+    const mine = this.sides.player.bey?.shred;
+    if (mine && this.alive(mine.target)) return { x: (p.x + mine.target.x) / 2, y: (p.y + mine.target.y) / 2 };
+    const theirs = this.sides.npc.bey?.shred;
+    if (theirs && theirs.target === p && this.alive(this.arena.npc)) {
+      return { x: (p.x + this.arena.npc.x) / 2, y: (p.y + this.arena.npc.y) / 2 };
+    }
+    return null;
   }
 
   /**
-   * 0–1 fill for the Spin Dance card. Charges, not a cooldown: the card is full the moment one
-   * charge is banked and drains toward the next, so a second stored charge is invisible on the
-   * bar — that is what `getSpinCharges` is for.
+   * While the Blade is grinding inside somebody the camera pushes in on the pair and — offline,
+   * where there is only one clock to keep — bodies and effects run slow. Both ease in and out as
+   * a ratio on whatever else has the camera, and both are handed back exactly.
    */
-  getSpinChargeRatio(): number {
-    return Math.min(1, this.sides.player.spinCharges);
+  private updateDrama(delta: number): void {
+    const scene = this.arena.scene;
+    const cam = scene.cameras.main;
+    if (!cam) return;
+    if (this.camRef !== cam) { this.camRef = cam; this.camZoomF = 1; this.camDX = 0; this.camDY = 0; }
+    const focus = this.dramaFocus();
+    const goal = focus ? 1 : 0;
+    if (this.drama === goal && !focus) return;
+    const k = 1 - Math.exp(-(delta / 1000) * 9);
+    this.drama += (goal - this.drama) * k;
+    if (Math.abs(goal - this.drama) < 0.004) this.drama = goal;
+
+    const zf = 1 + DRAMA_ZOOM * this.drama;
+    cam.setZoom((cam.zoom / this.camZoomF) * zf);
+    this.camZoomF = zf;
+    // Lean the view toward the pair, by as much as the zoom has room for.
+    cam.scrollX -= this.camDX;
+    cam.scrollY -= this.camDY;
+    if (focus) {
+      const mid = cam.midPoint;
+      this.camDX = (focus.x - mid.x) * (1 - 1 / zf) * 2;
+      this.camDY = (focus.y - mid.y) * (1 - 1 / zf) * 2;
+    } else {
+      this.camDX *= this.drama;
+      this.camDY *= this.drama;
+    }
+    cam.scrollX += this.camDX;
+    cam.scrollY += this.camDY;
+    // The pointer only re-projects on a mouse move; the Blade steers by it regardless.
+    scene.input.activePointer.updateWorldPoint(cam);
+
+    if (this.arena.isOnline) return;
+    const slow = 1 - DRAMA_SLOW * this.drama;
+    if (this.drama > 0) {
+      this.slowed = true;
+      scene.physics.world.timeScale = 1 / slow;
+      scene.tweens.timeScale = slow;
+    } else if (this.slowed) {
+      this.slowed = false;
+      scene.physics.world.timeScale = 1;
+      scene.tweens.timeScale = 1;
+    }
   }
 
-  /** Whole charges banked, for the count drawn on the Spin Dance card. */
-  getSpinCharges(): number {
-    return Math.floor(this.sides.player.spinCharges);
+  private restoreDrama(): void {
+    const scene = this.arena.scene;
+    const cam = scene.cameras?.main;
+    if (cam && cam === this.camRef) {
+      if (this.camZoomF !== 1) cam.setZoom(cam.zoom / this.camZoomF);
+      cam.scrollX -= this.camDX;
+      cam.scrollY -= this.camDY;
+    }
+    if (this.slowed) {
+      if (scene.physics?.world) scene.physics.world.timeScale = 1;
+      if (scene.tweens) scene.tweens.timeScale = 1;
+    }
+    this.slowed = false;
+    this.drama = 0;
+    this.camZoomF = 1;
+    this.camDX = 0;
+    this.camDY = 0;
+    this.camRef = null;
   }
 
-  /** Current wind dodge as a fraction — read by the NPC AI and the ability bar. */
-  getWindDodge(owner: Owner = 'player'): number {
-    return this.sides[owner].dodge;
-  }
-
-  /** The Hawk has a catch in the air — ArenaScene counts that as the NPC being locked. */
-  isNpcHawkDragged(): boolean {
-    return this.hawkDragUntil > 0;
-  }
-
-  /** Captives cannot act — ArenaScene counts an NPC in the funnel as locked. */
-  isNpcSwept(): boolean {
-    const npc = this.arena.npc;
-    if (!npc) return false;
-    return this.sides.player.tornadoCaptives.has(npc)
-      || this.launches.some((l) => l.target === npc);
-  }
-
-  // ── Character rig ────────────────────────────────────────────────────────
-
-  /** One-shot arm gesture on the player's rig, aimed at the cursor unless told otherwise. */
-  playPlayerGesture(gesture: ArmGesture, angle?: number, duration?: number): void {
-    this.playerAvatar?.play(gesture, angle ?? this.playerAim(), duration);
-  }
-
-  /** Sustained pose for the length of a channel. Lapses on its own so nothing can strand it. */
-  setPlayerHold(hold: ArmHold, durationMs = 0, angle?: number): void {
-    this.playerHold = hold;
-    this.playerHoldAngle = angle ?? this.playerAim();
-    this.playerHoldUntil = hold ? this.arena.scene.time.now + durationMs : 0;
-  }
-
-  /** Fans open or shut. A skin's rig has no fans, so this is a no-op there rather than a crash. */
-  private setFanSpread(owner: Owner, open: number): void {
-    const av = this.avatar(owner);
-    if (av instanceof AirAvatar) av.setFanSpread(open);
-  }
-
-  /**
-   * The palette a side's funnel is painted in. With Storm equipped it darkens into a
-   * thunderhead; everyone else gets air's own blues.
-   */
-  private weatherCol(owner: Owner): AirColorFn {
-    const col = this.col(owner);
-    if (!this.arena.hasPerk(owner, 'storm')) return col;
-    return (base) => thunderhead(col(base));
-  }
+  // ── Rig ──────────────────────────────────────────────────────────────────
 
   private makeAvatar(owner: Owner): BaseAvatar {
     const { scene } = this.arena;
     return makeSkinAvatar(this.arena.skinId(owner), scene) ?? new AirAvatar(scene, this.col(owner));
   }
 
-  private updateAvatars(time: number, delta: number): void {
-    const { player, npc, isPlayerAir, isNpcAir } = this.arena;
-
-    if (isPlayerAir && player?.active) {
-      if (!this.playerAvatar) this.playerAvatar = this.makeAvatar('player');
-      this.playerAvatar.setFacing(this.playerAim());
-      // Wind dodge swells the rig, so how untouchable she is reads off the character itself.
-      const bank = Math.min(1, this.sides.player.dodge);
-      this.playerAvatar.setIntensity(1 + bank * 0.4);
-      this.playerAvatar.setMastered(this.arena.masteryActive);
-      // Arms thrown out wide for the whole of Wind Breaker — she is the funnel, and a rig
-      // still jabbing at the cursor would not read as one.
-      if (this.now < this.sides.player.tornadoUntil) this.setPlayerHold('ride', 400);
-      if (this.playerHold && time >= this.playerHoldUntil) this.playerHold = null;
-      this.playerAvatar.setHold(this.playerHold, this.playerHoldAngle);
-      this.playerAvatar.update(delta, player.x, player.y, player.forceInvisible ? 0 : player.alpha);
-    } else if (this.playerAvatar) {
-      this.playerAvatar.destroy();
-      this.playerAvatar = null;
-    }
-
-    if (isNpcAir && npc?.active) {
-      if (!this.npcAvatar) this.npcAvatar = this.makeAvatar('npc');
-      this.npcAvatar.setFacing(Math.atan2(player.y - npc.y, player.x - npc.x));
-      this.npcAvatar.setIntensity(1 + Math.min(1, this.sides.npc.dodge) * 0.4);
-      this.npcAvatar.update(delta, npc.x, npc.y, npc.forceInvisible ? 0 : npc.alpha);
-    } else if (this.npcAvatar) {
-      this.npcAvatar.destroy();
-      this.npcAvatar = null;
-    }
+  /** How much of this side's rig this screen shows. */
+  private rigAlpha(owner: Owner): number {
+    const s = this.sides[owner];
+    const f = this.fighter(owner);
+    if (s.bey) return 0;
+    if (this.now < s.levUntil) return 1;
+    if (s.coverHp > 0) return this.hidesFromViewer(owner) ? 0 : COVER_SELF_ALPHA;
+    return f.forceInvisible ? 0 : f.alpha;
   }
 
-  /** Mirrors the opponent's casts onto their rig. */
-  handleNpcCastId(id: string | null): void {
-    if (!id) return;
-    if (id === GUST_RECALL_ID) { this.doGustRecall('npc'); return; }
-    const gesture = NPC_GESTURES[id];
-    if (!gesture) return;
-    const { npc, player } = this.arena;
-    this.npcAvatar?.play(gesture, Math.atan2(player.y - npc.y, player.x - npc.x));
-  }
-
-  /**
-   * The drafts that ride on a dancer: one per side scaled by banked wind dodge, and the mastery
-   * momentum draft under the player's.
-   */
-  private updateDrafts(delta: number): void {
-    const { scene } = this.arena;
-
-    const wire = (
-      owner: Owner,
-      cur: AirDraft | null,
-      on: boolean,
-      make: () => AirDraft,
-      intensity: number,
-    ): AirDraft | null => {
+  private updateAvatars(delta: number): void {
+    for (const owner of BOTH) {
       const f = this.fighter(owner);
-      if (!on || !this.alive(f)) {
-        if (cur) cur.destroy();
-        return null;
+      let av = this.avatar(owner);
+      if (!this.isAir(owner) || !f?.active) {
+        if (av) {
+          av.destroy();
+          if (owner === 'player') this.playerAvatar = null; else this.npcAvatar = null;
+        }
+        continue;
       }
-      const draft = cur ?? make();
-      draft.setIntensity(intensity);
-      draft.update(delta, f.x, f.y, f.forceInvisible ? 0 : f.alpha);
-      return draft;
-    };
-
-    this.dodgeDraft = wire(
-      'player', this.dodgeDraft,
-      this.arena.isPlayerAir && this.sides.player.dodge > 0,
-      () => new (this.sakura('player') ? SakuraDraft : AirDraft)(scene, this.pcol, 26, 1.1, 3, 7, AIR.frost),
-      0.5 + Math.min(1.5, this.sides.player.dodge) * 0.8,
-    );
-    this.npcDodgeDraft = wire(
-      'npc', this.npcDodgeDraft,
-      this.arena.isNpcAir && this.sides.npc.dodge > 0,
-      () => new (this.sakura('npc') ? SakuraDraft : AirDraft)(scene, this.ncol, 26, 1.1, 3, 7, AIR.frost),
-      0.5 + Math.min(1.5, this.sides.npc.dodge) * 0.8,
-    );
-    this.momentumDraft = wire(
-      'player', this.momentumDraft,
-      this.arena.isPlayerAir && this.arena.masteryActive && this.sides.player.momentum > 0,
-      () => new (this.sakura('player') ? SakuraDraft : AirDraft)(scene, this.pcol, 32, 1, 2, 9, AIR.sky),
-      0.55 + (this.sides.player.momentum / MOMENTUM_MAX) * 0.95,
-    );
+      if (!av) {
+        av = this.makeAvatar(owner);
+        if (owner === 'player') this.playerAvatar = av; else this.npcAvatar = av;
+      }
+      const s = this.sides[owner];
+      av.setFacing(owner === 'player' ? this.playerAim() : this.aimOf('npc'));
+      // Stealth swells the rig a little, so how hidden she is reads off the character itself.
+      av.setIntensity(1 + (s.stealth / STEALTH_MAX) * 0.3);
+      if (av instanceof AirAvatar) {
+        av.setKnife(this.now < s.knifeUntil ? 1 : 0);
+        av.setSolidBody(s.hidden);
+      }
+      av.setHold(this.now < s.levUntil ? 'ride' : null);
+      av.update(delta, f.x, f.y - this.liftOf(owner), this.rigAlpha(owner));
+    }
   }
 
   // ── Painting ─────────────────────────────────────────────────────────────
 
   private paint(): void {
-    if (!this.airGfx || !this.airGfx.active) this.airGfx = this.arena.scene.add.graphics().setDepth(8);
-    if (!this.groundGfx || !this.groundGfx.active) this.groundGfx = this.arena.scene.add.graphics().setDepth(4);
-    const air = this.airGfx;
-    const ground = this.groundGfx;
-    air.clear();
+    const scene = this.arena.scene;
+    if (!this.groundGfx || !this.groundGfx.active) this.groundGfx = scene.add.graphics().setDepth(2);
+    if (!this.airGfx || !this.airGfx.active) this.airGfx = scene.add.graphics().setDepth(8.5);
+    if (!this.skyGfx || !this.skyGfx.active) this.skyGfx = scene.add.graphics().setDepth(9.5);
+    const ground = this.groundGfx, air = this.airGfx, sky = this.skyGfx;
     ground.clear();
+    air.clear();
+    sky.clear();
+    const t = this.vizT;
 
-    for (const sh of this.shears) {
-      (this.sakura(sh.owner) ? SakuraFx : AirFx).drawShear(air, this.col(sh.owner), sh.x, sh.y, Math.atan2(sh.vy, sh.vx), sh.t);
+    for (const sc of this.scars) {
+      drawScar(ground, this.col(sc.owner), sc.x0, sc.y0, sc.x1, sc.y1, (sc.until - this.now) / SCAR_MS);
     }
-    for (const g of this.glaives) {
-      (this.sakura(g.owner) ? SakuraFx : AirFx).drawGlaive(air, this.col(g.owner), g.x, g.y, 26, g.spin, 1, g.phase === 'phantom');
+    for (const fd of this.fields) {
+      const left = fd.until - this.now;
+      drawDaggerField(ground, this.col(fd.owner), fd.x, fd.y, FIELD_HALF_W, FIELD_HALF_H, fd.knives,
+        this.now - fd.bornAt, Math.min(1, left / 500), t);
     }
-
-    // Vacuum: the standing draw, under the fighters so whoever it holds stands inside it.
-    for (const owner of ['player', 'npc'] as Owner[]) {
-      if (!this.isAir(owner) || !this.arena.hasPerk(owner, 'air-vacuum')) continue;
-      const f = this.fighter(owner);
-      if (!this.alive(f) || f.alpha < 0.05) continue;
-      (this.sakura(owner) ? SakuraFx : AirFx).drawVacuum(ground, this.col(owner), f.x, f.y, VACUUM_RADIUS, this.vizT,
-        this.vacuumed[owner].size > 0);
-    }
-
-    // The funnel itself, under the fighters so a captive is visible turning inside it.
-    for (const owner of ['player', 'npc'] as Owner[]) {
-      const s = this.sides[owner];
-      if (this.now >= s.tornadoUntil) continue;
-      const f = this.fighter(owner);
-      if (!this.alive(f)) continue;
-      const left = s.tornadoUntil - this.now;
-      const alpha = left < 400 ? Math.max(0, left / 400) : 1;
-      (this.sakura(owner) ? SakuraFx : AirFx).drawTornado(ground, this.weatherCol(owner), f.x, f.y, TORNADO_RADIUS * 0.72, this.vizT, alpha);
+    for (const k of this.knives) {
+      if (k.delay > 0) continue;
+      drawAirKnife(air, this.col(k.owner), k.x, k.y, Math.atan2(k.vy, k.vx), 26, 1, k.t * 6);
     }
 
-    for (const h of this.hawks) {
-      if (h.g.active) {
-        h.g.clear();
-        (this.sakura('player') ? SakuraFx : AirFx).drawHawk(h.g, this.pcol, h.x, h.y, Math.atan2(h.vy, h.vx), h.t);
-      }
-    }
-
-    // Weather Cycle: the ring of wind listening round a dancer, then unwinding as it plays back.
-    for (const owner of ['player', 'npc'] as Owner[]) {
+    for (const owner of BOTH) {
+      if (!this.isAir(owner)) continue;
       const s = this.sides[owner];
       const f = this.fighter(owner);
+      const col = this.col(owner);
+      // An enemy's bank is solid; your own — and an ally's — is something you look through.
+      const solid = this.hidesFromViewer(owner);
+      for (const c of s.clouds) drawCloud(sky, col, c.x, c.y, c.r, t, c.seed, solid, 1, c.fleeing ? 1 : 0);
       if (!this.alive(f)) continue;
-      if (s.weatherUntil > 0 && this.now < s.weatherUntil) {
-        const progress = 1 - (s.weatherUntil - this.now) / WEATHER_RECORD_MS;
-        (this.sakura(owner) ? SakuraFx : AirFx).drawWeatherRing(air, this.col(owner), f.x, f.y, 52, this.vizT, progress, false, 1);
-      } else if (s.weatherReplay) {
-        (this.sakura(owner) ? SakuraFx : AirFx).drawWeatherRing(air, this.col(owner), f.x, f.y, 58, this.vizT, 1, true, 0.9);
+
+      // Whether this screen is allowed to know where she is at all.
+      const seen = !(s.coverHp > 0 && this.hidesFromViewer(owner));
+      const lift = this.liftOf(owner);
+
+      if (s.bey) {
+        drawSparkTrail(ground, col, s.bey.trail, this.now, BEY_TRAIL_MS);
+        drawBey(air, col, f.x, f.y, s.bey.spin, t, s.bey.stamina / s.bey.max, s.bey.shred ? 1 : 0, s.bey.tilt, 1);
+        for (let i = 0; i < s.bey.orbit; i++) {
+          const a = s.bey.spin * 0.35 + (i / s.bey.orbit) * Math.PI * 2;
+          drawAirKnife(air, col, f.x + Math.cos(a) * BEY_ORBIT_R, f.y + Math.sin(a) * BEY_ORBIT_R, a + Math.PI / 2, 22, 1, t);
+        }
       }
-    }
-  }
-
-  // ── Hawk perk ────────────────────────────────────────────────────────────
-
-  /** F becomes a bird: it flies at the cursor and hauls whatever it hits back to the mark. */
-  private spawnHawk(targetX: number, targetY: number): void {
-    const { player } = this.arena;
-    const dx = targetX - player.x;
-    const dy = targetY - player.y;
-    const len = Math.hypot(dx, dy) || 1;
-    this.hawks.push({
-      g: this.arena.scene.add.graphics().setDepth(8),
-      x: player.x, y: player.y,
-      vx: (dx / len) * 1200,
-      vy: (dy / len) * 1200,
-      expireAt: this.arena.scene.time.now + 1500,
-      t: 0,
-    });
-    this.fx('player').muzzleGust(player.x, player.y, Math.atan2(dy, dx), 1.3);
-    this.playPlayerGesture('punch', Math.atan2(dy, dx));
-    this.arena.showFloatingText(player.x, player.y - 30, '🦅 HAWK!', '#ffcc44');
-  }
-
-  private updateHawks(time: number, delta: number): void {
-    const dt = delta / 1000;
-    const target = this.arena.npc;
-
-    for (let i = this.hawks.length - 1; i >= 0; i--) {
-      const h = this.hawks[i];
-      h.x += h.vx * dt;
-      h.y += h.vy * dt;
-      h.t += dt;
-
-      if (this.alive(target) && Phaser.Math.Distance.Between(h.x, h.y, target.x, target.y) < 36) {
-        const wb = this.arena.worldBounds;
-        const eb = this.body(target);
-        this.hawkDragX = Phaser.Math.Clamp(this.arena.pointerX, wb.x + eb.halfWidth, wb.right - eb.halfWidth);
-        this.hawkDragY = Phaser.Math.Clamp(this.arena.pointerY, wb.y + eb.halfHeight, wb.bottom - eb.halfHeight);
-        const elen = Phaser.Math.Distance.Between(target.x, target.y, this.hawkDragX, this.hawkDragY);
-        this.hawkDragUntil = time + (elen / 1200) * 1000 + 250;
-        this.arena.showFloatingText(target.x, target.y - 30, '🦅 SNATCHED!', '#ffcc44');
-        this.arena.spawnHitFlash(h.x, h.y, this.pcol(AIR.charge));
-        this.fx('player').gustBurst(h.x, h.y, 64, { duration: 340, dust: false });
-        h.g.destroy();
-        this.hawks.splice(i, 1);
-        continue;
+      if (lift > 0) drawLevitation(ground, col, f.x, f.y, lift, t, 1);
+      // A skin's rig has no body of its own to paint, so while the sprite is hidden the kit
+      // stands a plain orb in for it.
+      const rigA = this.rigAlpha(owner);
+      if (s.hidden && rigA > 0.02 && !(this.avatar(owner) instanceof AirAvatar)) {
+        ground.fillStyle(col(AIR.storm), rigA);
+        ground.fillCircle(f.x, f.y - lift, 22);
+        ground.fillStyle(col(AIR.sky), rigA);
+        ground.fillCircle(f.x - 1, f.y - lift - 1, 19.5);
       }
+      if (s.coverHp > 0 && seen) drawCover(air, col, f.x, f.y, t, s.coverHp / COVER_HP, 1);
+      if (seen && !s.bey && s.stealth > 0) drawStealthWisps(air, col, f.x, f.y - lift, s.stealth / STEALTH_MAX, t, 1);
+      // The gauge is hers alone: the other side reads stealth off the wisps, or not at all.
+      if (owner === 'player' && !s.bey) drawStealthGauge(air, col, f.x, f.y, s.stealth / STEALTH_MAX, s.inCloud, t, 1);
 
-      if (time >= h.expireAt) {
-        this.fx('player').motes(h.x, h.y, 6, { speed: 90, size: 2.6, life: 420, swirl: 2, depth: 6 });
-        h.g.destroy();
-        this.hawks.splice(i, 1);
+      const cmb = s.combo;
+      if (cmb && seen && this.now >= cmb.ringFrom) {
+        const p = Phaser.Math.Clamp((this.now - cmb.ringFrom) / RING_MS, 0, 1.2);
+        const r = RING_R0 + (RING_MARK_R - RING_R0) * p;
+        const off = this.now - cmb.ringAt;
+        drawTimingRing(air, col, f.x, f.y - lift, r, RING_MARK_R, off >= -RING_EARLY_MS && off <= RING_LATE_MS, 1);
       }
     }
 
-    this.updateHawkDrag(time, delta);
-  }
-
-  private updateHawkDrag(time: number, delta: number): void {
-    if (this.hawkDragUntil <= 0) return;
-    const target = this.arena.npc;
-    if (!this.alive(target)) { this.hawkDragUntil = 0; return; }
-    const eb = this.body(target);
-
-    const dx = this.hawkDragX - target.x;
-    const dy = this.hawkDragY - target.y;
-    const dist = Math.hypot(dx, dy);
-    const step = 1200 * (delta / 1000);
-
-    if (dist <= step || time >= this.hawkDragUntil) {
-      target.setPosition(this.hawkDragX, this.hawkDragY);
-      eb.reset(this.hawkDragX, this.hawkDragY);
-      this.hawkDragUntil = 0;
-      this.fx('player').bloom(this.hawkDragX, this.hawkDragY, 58, 10, 5);
-      this.fx('player').dustMark(this.hawkDragX, this.hawkDragY, 42);
-      return;
-    }
-    eb.setVelocity((dx / dist) * 1200, (dy / dist) * 1200);
-    if (Math.random() < 0.35) {
-      this.fx('player').motes(target.x, target.y, 1, {
-        angle: Math.atan2(-dy, -dx), spread: 0.5, speed: 70, size: 2.4, life: 340, depth: 5,
-      });
+    // Winded: the gauge over everybody who has one, whoever put it there.
+    const wall = Date.now();
+    const seenF = new Set<Fighter>();
+    for (const f of [this.arena.player, this.arena.npc, ...this.arena.enemies]) {
+      if (!f || seenF.has(f)) continue;
+      seenF.add(f);
+      if (!this.alive(f) || wall >= f.airWindedUntil || f.forceInvisible) continue;
+      drawWinded(air, f === this.arena.player ? this.ncol : this.pcol, f.x, f.y, f.airStamina, f.airExhausted, t, f.x);
     }
   }
-}
-
-/**
- * Storm perk shading: drags a colour down into thunderhead territory — much darker, and what
- * light is left pushed blue, so a charged funnel reads as weather rather than as a dimmed one.
- */
-function thunderhead(c: number): number {
-  const r = (c >> 16) & 0xff, g = (c >> 8) & 0xff, b = c & 0xff;
-  return (Math.round(r * 0.40) << 16) | (Math.round(g * 0.46) << 8) | Math.round(b * 0.58 + 26);
 }

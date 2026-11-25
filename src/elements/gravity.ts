@@ -20,7 +20,7 @@ const spaceSlash: Ability = {
 const meteorRain: Ability = {
   id: 'meteor-rain',
   name: 'Meteor Rain',
-  description: 'Hold E + click to place up to 5 meteor shadows (released on key-up). Tap E to replay last pattern. 5s CD on replay.',
+  description: 'Hold E + click to place up to 5 meteor shadows (released on key-up). Tap E to replay the last pattern centred on the cursor. 5s CD on replay.',
   displayKey: 'E',
   cooldown: 5000,
   cast(ctx: CastContext) {

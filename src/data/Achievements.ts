@@ -24,9 +24,9 @@ export const ACHIEVEMENTS: AchievementDef[] = [
   },
   {
     id: 'sharpshooter',
-    name: 'Featherweight',
-    emoji: '🍃',
-    description: 'Bank 100% wind dodge in a single fight (Air).',
+    name: 'Unseen',
+    emoji: '🌫️',
+    description: 'Fill the stealth bar in a single fight (Air).',
     skinReward: 'sand',
   },
   {

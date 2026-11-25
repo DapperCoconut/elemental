@@ -19,10 +19,10 @@ const ULT_MIN_TIMER_MS = 5000;
 const ULT_BASE_COST = 60;
 const ULT_COST_PER_SEC = 6;
 /**
- * Ultimates charged by a resource of their own kit, which keep it: Magma's pendant, Conquest's
- * Authority, Metal's blood bar — and Myth's rocket, a Final Destiny gun that only wears a Q.
+ * Ultimates charged by a resource of their own kit, which keep it: Magma's pendant, Metal's
+ * blood bar — and Myth's rocket, a Final Destiny gun that only wears a Q.
  */
-const SELF_CHARGED_ULTIMATES = new Set(['magma-mutiny', 'conquest-expansion', 'metal-clot-armor', 'myth-rocket']);
+const SELF_CHARGED_ULTIMATES = new Set(['magma-mutiny', 'metal-clot-armor', 'myth-rocket']);
 
 const stationaryTrackers = new WeakMap<object, { x: number; y: number; lastMovedAt: number }>();
 
@@ -213,11 +213,31 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   /** Clay Mastery — Bedrock: 0.8 while the fighter stands within 175px of its own golem. Rewritten every frame by ClayKit. */
   public clayIncomingMult = 1;
   /**
-   * Conquest: 0.5 while this fighter is standing on a square it owns. Rewritten from scratch
-   * by ConquestKit every frame for the same reason Justice and Magma have their own fields —
-   * sharing `incomingDamageMultiplier` would stomp whatever else wrote armour that tick.
+   * Emotion (element id `conquest`): below 1 while this fighter holds the grand standard, above 1
+   * while it is Depressed and its tormentor is the healthier of the two. Rewritten from scratch by
+   * EmotionKit every frame for the same reason Justice and Magma have their own fields — sharing
+   * `incomingDamageMultiplier` would stomp whatever else wrote armour that tick.
    */
   public conquestIncomingMult = 1;
+  /**
+   * Emotion R (Depress): crying until this `Date.now()` timestamp. Slower (`emotionSlowMult()`,
+   * read by every mover), its shots fizzle early and it takes more from a healthier Emotion —
+   * the last two are EmotionKit's, which reads this field.
+   */
+  public emotionDepressedUntil = 0;
+  /**
+   * Air E (Knock): winded until this `Date.now()` timestamp. Slow to turn (AirKit eases
+   * `facingAngle`, and `ArenaScene.scatterAim` makes every cast go where it points) and on a
+   * stamina gauge: `airStamina` (0–1) drains while walking and refills standing still; run dry,
+   * `airExhausted` holds a crawl (`airWindedSpeedMult()`) until it is full again. AirKit ticks both.
+   */
+  public airWindedUntil = 0;
+  public airStamina = 1;
+  public airExhausted = false;
+  /** Air Q (Tornado Blade): being ground on until this `Date.now()` timestamp — cooldowns run double. */
+  public airShredUntil = 0;
+  /** A summoned body (Emotion's troops): dying is not the end of a bout, so it makes no death cry. */
+  public quietDeath = false;
   /**
    * Passion's rose: 0.95^stacks while this fighter is holding one, one stack per hit taken.
    * Its own field for the same reason Justice, Magma and Conquest have theirs — PassionKit
@@ -440,8 +460,9 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
    */
   public devotionFaith = 0;
   /**
-   * Wood: Sap HP, an amber layer spent after weak HP and before clotted HP. Whatever it soaks is
-   * reported to {@link onSapAbsorb} so the kit can gum up whoever did the soaking.
+   * Wood: Sap HP, amber health of its own — spent after weak HP and before clotted HP, but a hit
+   * it takes is damage taken, not a block. Whatever it loses is reported to {@link onSapAbsorb}
+   * so the kit can gum up whoever cut it.
    */
   public sapHp = 0;
   public onSapAbsorb: ((spent: number, opts?: DamageOpts) => void) | null = null;
@@ -826,11 +847,9 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   public savorCooldownMult = 1;
   public savorNoDodgeUntil = 0;
   /**
-   * Air's wind dodge: a second, independent evasion pool the dancer builds up over a match.
-   * Deliberately separate from `dodgeChance` because it obeys different rules — it never decays
-   * with time, only ever spends 0.1 on a dodge that actually saved you, and is allowed past
-   * 1.0 (where it simply cannot fail until it has been spent back down). Written only by
-   * AirKit; kept here so the status tray and any future reader can see it.
+   * Air's stealth dodge: the chance (0–0.33) its banked stealth gives it to slip a hit. Separate
+   * from `dodgeChance` because AirKit rolls it itself, in its damage absorber, and rewrites this
+   * every frame; kept here so the status tray and any future reader can see it.
    */
   public windDodge = 0;
   /** Timestamp after which the fighter can cast abilities again (Disarm effect). */
@@ -1289,6 +1308,21 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   /** Pressure: slowed by a punch, a steam vent or Depressurize. */
   pressureSlowMult(): number {
     return Date.now() < this.pressureSlowUntil ? Math.min(1, Math.max(0.1, this.pressureSlowFactor)) : 1;
+  }
+
+  /** Air: winded and out of stamina — a crawl until the gauge refills. */
+  airWindedSpeedMult(): number {
+    return this.airExhausted && Date.now() < this.airWindedUntil ? 0.3 : 1;
+  }
+
+  /** Air: under the Tornado Blade — attacks come half as often. */
+  airShredCooldownMult(): number {
+    return Date.now() < this.airShredUntil ? 2 : 1;
+  }
+
+  /** Emotion: Depressed — a quarter slower. */
+  emotionSlowMult(): number {
+    return Date.now() < this.emotionDepressedUntil ? 0.75 : 1;
   }
 
   /** Astra: struck by Celestial Smite — a heavy slow. */
@@ -1820,28 +1854,20 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       }
     }
 
-    // Wood: Sap HP soaks like weak HP, and tells the kit who it was soaking.
+    // Wood: Sap HP is health of its own, not a shield — it is spent first, but what it loses is
+    // damage taken (number, hit sound, ult charge), reported with the rest of the hit below. It
+    // also tells the kit who it was losing it to.
+    let sapSpent = 0;
     if (!pierce && this.sapHp > 0) {
-      const absorbed = Math.min(this.sapHp, amount);
-      this.sapHp -= absorbed;
-      amount -= absorbed;
-      if (absorbed > 0) {
-        Sfx.playAt('shield-absorb', this.x, { rate: 0.7, volume: 0.8 });
-        this.onSapAbsorb?.(absorbed, opts);
-      }
-      if (amount === 0) {
-        this.emit('damaged', 0);
-        if (!this.forceInvisible) {
-          this.setAlpha(0.7);
-          this.scene.time.delayedCall(200, () => { if (this.active) this.setAlpha(this.forceInvisible ? 0 : 1); });
-        }
-        return;
-      }
+      sapSpent = Math.min(this.sapHp, amount);
+      this.sapHp -= sapSpent;
+      amount -= sapSpent;
+      if (sapSpent > 0) this.onSapAbsorb?.(sapSpent, opts);
     }
 
     // Metal R+ (Blood Clottage): clotted HP is spent before normal HP and soaks
     // damage at half rate — 50 incoming removes 25 clotted and deals 25 through.
-    if (!pierce && this.clottedHp > 0) {
+    if (!pierce && this.clottedHp > 0 && amount > 0) {
       const clotAbsorb = Math.min(this.clottedHp, amount / 2);
       this.clottedHp = Math.max(0, this.clottedHp - clotAbsorb);
       amount = Math.max(0, amount - clotAbsorb * 2);
@@ -1860,7 +1886,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     // damage it soaks — 10 through the pins costs 12.5 of them at the default 1.25 rate. That is
     // the whole trade: the pool is worse health, bought back by the share of it thrown at the
     // attacker in `onPinnedAbsorb`.
-    if (!pierce && this.pinnedHp > 0) {
+    if (!pierce && this.pinnedHp > 0 && amount > 0) {
       const rate = Math.max(1, this.pinnedVulnMult);
       const spent = Math.min(this.pinnedHp, amount * rate);
       this.pinnedHp -= spent;
@@ -1883,6 +1909,8 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     // `minHpFloor` is clamped to the current health first so it can only ever stop a fall,
     // never raise one — a floor applied to somebody already under it must not revive them.
     if (!this.immortal) this.hp = Math.max(Math.min(this.minHpFloor, this.hp), this.hp - amount);
+    // From here on the hit is everything health lost to it, sap included.
+    amount += sapSpent;
     this.emit('damaged', amount);
     if (amount > 0 && !opts?.selfInflicted) Fighter.creditUltDamage?.(this, amount);
     if (amount > 0 && this.guiltMarked && !opts?.selfInflicted) this.guiltStacks++;
@@ -1904,7 +1932,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
 
     if (this.hp <= 0) {
       this.emit('defeated');
-      Sfx.playAt(this.isPlayerFighter ? 'death-player' : 'death-npc', this.x);
+      if (!this.quietDeath) Sfx.playAt(this.isPlayerFighter ? 'death-player' : 'death-npc', this.x);
     }
   }
 
@@ -2108,7 +2136,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     const ultimateExtra = ability.isUltimate ? this.ultimateCooldownMult : 1;
     return ability.cooldown * (this.cooldownMult || 1) * this.netCooldownMult
       * this.amputationCooldownMult * this.deathDelayCooldownMult * this.dreamCooldownMult
-      * this.justiceCooldownMult * this.perkCooldownMult * this.psychicCooldownMult * this.clothCooldownMult * this.goldCooldownMult * this.bindCooldownMult * this.savorCooldownMult * this.fearCooldownMult * ultimateExtra;
+      * this.justiceCooldownMult * this.perkCooldownMult * this.psychicCooldownMult * this.clothCooldownMult * this.goldCooldownMult * this.bindCooldownMult * this.savorCooldownMult * this.fearCooldownMult * this.airShredCooldownMult() * ultimateExtra;
   }
 
   /** As {@link effectiveCooldown}, including whatever split was banked when this id was stamped. */

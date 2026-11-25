@@ -526,6 +526,24 @@ export const STATUS_DESCRIPTORS: StatusDescriptor[] = [
     write: (f, t) => { f.astraSlowUntil = t; },
   },
   {
+    id: 'emotion-depressed', name: 'Depressed', emoji: '😢', color: 0x5b8fd8, priority: 46.852, kind: 'timer',
+    description: 'Caught in Emotion\'s cold cape. You move 25% slower, your shots fizzle out early, and you take more damage the healthier they are than you.',
+    read: (f) => f.emotionDepressedUntil,
+    write: (f, t) => { f.emotionDepressedUntil = t; },
+  },
+  {
+    id: 'air-winded', name: 'Winded', emoji: '😮‍💨', color: 0xccddff, priority: 46.853, kind: 'timer',
+    description: 'Knocked breathless. You turn at a third of your speed, and walking drains a stamina gauge: stand still to refill it, or run it dry and crawl until it is full.',
+    read: (f) => f.airWindedUntil,
+    write: (f, t) => { f.airWindedUntil = t; },
+  },
+  {
+    id: 'air-shredded', name: 'Shredded', emoji: '🌪️', color: 0xffee44, priority: 46.854, kind: 'timer',
+    description: 'A Tornado Blade is grinding on you. Your abilities recharge at half speed until it is thrown off.',
+    read: (f) => f.airShredUntil,
+    write: (f, t) => { f.airShredUntil = t; },
+  },
+  {
     id: 'memory-sealed', name: 'Reborn', emoji: '⚪', color: 0xf4f2ff, priority: 46.855, kind: 'timer',
     description: 'Struck by Rebirth. Your passive does nothing until this wears off.',
     read: (f) => f.passivesSealedUntil,
@@ -701,7 +719,7 @@ export const STATUS_DESCRIPTORS: StatusDescriptor[] = [
   },
   {
     id: 'sap-hp', name: 'Sap HP', emoji: '🪵', color: 0xd98a1c, priority: 104.5, kind: 'amount',
-    description: 'Amber bonus health. Spent before your real health — and whoever chews through it is gummed up and slowed.',
+    description: 'Amber health of its own, shown on your health bar. Spent before your real health — and whoever cuts through it is gummed up and slowed.',
     read: (f) => Math.round(f.sapHp),
   },
   {
@@ -761,10 +779,8 @@ export const STATUS_DESCRIPTORS: StatusDescriptor[] = [
     suffix: '%',
   },
   {
-    id: 'wind-dodge', name: 'Wind Dodge', emoji: '🍃', color: 0xccddff, priority: 114, kind: 'amount',
-    description: 'Chance to ride an incoming hit out on the wind. Never decays with time — each dodge spends 10%, and nothing else takes it off you.',
-    // Not clamped to 1: wind dodge is allowed past 100%, and hiding the overflow would make
-    // the whole point of stacking it invisible.
+    id: 'wind-dodge', name: 'Stealth', emoji: '🌫️', color: 0xccddff, priority: 114, kind: 'amount',
+    description: 'Chance to slip an incoming hit, from stealth banked in your clouds: up to 33% at full. Pierce the Skies spends all of it.',
     read: (f) => Math.round(f.windDodge * 100),
     suffix: '%',
   },

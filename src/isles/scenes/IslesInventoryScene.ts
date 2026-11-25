@@ -1,3 +1,4 @@
+import { baseIdOf, darkIdOf } from '../content/unrest/darkMarket';
 import Phaser from 'phaser';
 import { Sfx } from '../../audio';
 import { allSelectableElements } from '../../data/ElementRoster';
@@ -70,7 +71,12 @@ export class IslesInventoryScene extends Phaser.Scene {
         detail: itemDetail(it), verb: on ? 'TAKE OFF' : s.charms.length >= MAX_CHARMS ? null : 'WEAR',
         act: () => {
           if (on) s.charms = s.charms.filter((c) => c !== it.id);
-          else if (s.charms.length < MAX_CHARMS) s.charms.push(it.id);
+          else if (s.charms.length < MAX_CHARMS) {
+            // A charm and its dark-market twin are the same thing twice: wearing one takes the other off.
+            const twin = baseIdOf(it.id) ?? darkIdOf(it.id);
+            s.charms = s.charms.filter((c) => c !== twin);
+            s.charms.push(it.id);
+          }
           Save.persist(); Sfx.play('ui-equip');
           return on ? `${it.name} put away.` : `${it.name} worn (${s.charms.length}/${MAX_CHARMS}).`;
         },

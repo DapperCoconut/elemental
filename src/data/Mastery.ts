@@ -131,52 +131,6 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
       },
     ],
   },
-  air: {
-    elementId: 'air',
-    name: 'Air Mastery',
-    enhancedEmoji: '🍃',
-    enhancedColor: 0xccddff,
-    requirements: [
-      {
-        key: 'spinRefundSeconds',
-        label: 'Perfect Tempo',
-        howTo: 'Take cooldown off your other abilities by landing Spin Dance (E) — counts the seconds actually refunded',
-        target: 200,
-      },
-      {
-        key: 'windDodges',
-        label: 'Untouchable',
-        howTo: 'Ride attacks out on your wind dodge',
-        target: 50,
-      },
-      {
-        key: 'glaiveReturns',
-        label: 'Coming Home',
-        howTo: 'Catch enemies with the Gale Glaive (R) on its way back to you',
-        target: 25,
-      },
-      {
-        key: 'tornadoKills',
-        label: 'Eye of the Storm',
-        howTo: 'Finish enemies off while they are circling inside your Wind Breaker (Q)',
-        target: 5,
-      },
-    ],
-    enhancements: [
-      {
-        id: 'dancers-momentum',
-        name: "Dancer's Momentum",
-        description: 'Passive: every second on your feet is +5% move speed, stacking to +100%. Every hit that gets through knocks 10% back off it — the dance is only fast while nothing is touching you.',
-      },
-      {
-        id: 'weather-cycle',
-        name: 'Weather Cycle',
-        bindable: true,
-        hudDescription: 'Winds record your next 5s of abilities, then play them all back',
-        description: 'Winds close in around you for 5 seconds and listen: every ability you use inside that window is written down. When the winds let go, you dance the whole sequence again — the same abilities, on the same beats, each one re-aimed at your cursor — and none of it asks or pays a cooldown. 30 second cooldown.',
-      },
-    ],
-  },
   oil: {
     elementId: 'oil',
     name: 'Oil Mastery',
@@ -1624,52 +1578,6 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
         bindable: true,
         hudDescription: 'Call a key: the next one you press. If they press it in the next 1.5s — 25 damage, a stun, and a slow or a longer cooldown',
         description: 'Make your move before they make theirs. Press Pre-move and a chess clock appears beside your head; **the next key you press is your prediction** — Click, E, R, F, Q, Space or any of W/A/S/D. Your press still does whatever it normally does.\n\nFrom that moment, if the enemy presses **that same key** within **1.5 seconds**, they are punished:\n\n• **25 damage** in a burst, and a **light stun** (0.6s).\n• If it was an **ability key**, that ability\'s cooldown runs **50% longer** — the cast they just made and every cast of it for the next 8 seconds.\n• If it was a **movement key** (Space included), they move **30% slower** for 3 seconds.\n\nOnly you can see which key you called; they only see that the clock is running. Bots get read too — their keys are the way they move, the abilities they reach for and (for Space) their dodges. 14 second cooldown; if you do not choose within 4 seconds it lapses.',
-      },
-    ],
-  },
-  conquest: {
-    elementId: 'conquest',
-    name: 'Conquest Mastery',
-    enhancedEmoji: '👑',
-    enhancedColor: 0xe8c23a,
-    requirements: [
-      {
-        key: 'buildingsMaxed',
-        label: 'Nothing Left To Buy',
-        howTo: 'Take a building as far as its tree goes — one path at tier 4 and the others pinned. Town centres count, and so does a two-column tree with no shop upgrade behind it',
-        target: 20,
-      },
-      {
-        key: 'expansions',
-        label: 'Second Capital',
-        howTo: 'Plant an Expansion (Q) — a whole second economy, 150 Authority a time',
-        target: 5,
-      },
-      {
-        key: 'troopsTrained',
-        label: 'The Levy',
-        howTo: 'Train soldiers out of your barracks — every man a barracks puts on the board counts one',
-        target: 100,
-      },
-      {
-        key: 'turretDamage',
-        label: 'Field Of Fire',
-        howTo: 'Damage dealt by your own turrets — bullets, hitscan rounds, Boom Bullet bursts, blasts and revenge bombs all count',
-        target: 150,
-      },
-    ],
-    enhancements: [
-      {
-        id: 'dictatorship',
-        name: 'Dictatorship',
-        description: 'Passive: the pike answers to the treasury. Banner Bash gains +1 damage for every 10 Authority sitting in your bank, up to +30 — so a commander who has been left alone to bank for a minute swings for over twice what the ability says on the card.\n\nIt is added to the base exactly as Enchantment is, which means the home-ground quarter still cuts all of it. Standing on your own land is still not where you are strong, however rich you are. And it is Authority *banked*, not earned: the moment you spend two hundred points on an Expansion the pike goes back to being a poke, which is the whole tension — the economy is either an army or a weapon, never both at once.',
-      },
-      {
-        id: 'market',
-        name: 'Market',
-        bindable: true,
-        hudDescription: '30 Authority. A 50 HP stall that pays 1 Authority a second, with its own three-path tree',
-        description: 'A fifth building, placed on the square you are standing on like the other three. 50 HP — the flimsiest thing on the board — and it pays 1 Authority a second for as long as it is standing.\n\nWhat it really is is a fourth upgrade tree, and the only one that spends money on money.\n\n**ECONOMY** stacks its own income (+1, then +1 more), then Market Revolution pays every *other* market you own +1 a second, and Money Mania doubles what every town centre pays.\n\n**WAR** turns the bank into a weapon: Cash out pays every 0.8s instead of every second, Warmongering hands you 3 Authority for every 50 damage you deal, Blood money gives turrets and soldiers standing near the stall up to +50% damage depending on how much is in the bank, and Loan Shark adds a LOAN button that takes 25 of your own health and gives you 5 Authority.\n\n**BANKING** is the shop-gated third column, and it opens only if you own the corrupt-shard upgrade for whichever slot you dropped the Market on. Banking pays up to +2 a second depending on how much is lying around, Investing grows the whole bank 10% every 5 seconds, Securities replaces that with a vault inside the stall itself — deposit up to 200, watch it grow 25% every 5 seconds, and lose every point of it if the market is knocked down — and Propaganda Central adds a PROPAGANDA button: 8 seconds during which damage aimed at you is paid out of Authority instead of health, at 0.6 Authority a point. Run the bank dry inside those 8 seconds and you take double damage for the rest of them.',
       },
     ],
   },

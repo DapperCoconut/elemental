@@ -2,7 +2,6 @@ import { Fighter, DamageOpts } from '../entities/Fighter';
 import { CastContext } from '../elements/Ability';
 import { Net, NetIllusionMsg, NetMsg, NetPaintMsg, NetPsychicMsg, NetSilenceMsg, NetTechMsg } from './NetworkManager';
 import { applyNetStatuses, collectNetStatuses } from './NetStatusSync';
-import type { NetConquestSnap } from '../elements/kits/ConquestKit';
 
 /** Narrow surface the online sync kit needs from ArenaScene. */
 export interface OnlineArenaApi {
@@ -28,10 +27,6 @@ export interface OnlineArenaApi {
   /** Psychic: either half of the foreknowledge relay — their queue, or their hands on ours. */
   onPsychicMsg(msg: NetPsychicMsg): void;
   onPaintMsg(msg: NetPaintMsg): void;
-  /** Conquest: our own board to broadcast, or null when neither side is playing it. */
-  conquestSnapshot(): NetConquestSnap | null;
-  /** Conquest: the opponent's board, to be applied to the npc side (columns not yet mirrored). */
-  onConquestSnapshot(snap: NetConquestSnap): void;
   /** Mastery: replay a bindable mastery ability the opponent cast (id not in element.abilities). */
   replayNpcMastery(enhId: string, tx: number, ty: number): void;
   /**
@@ -59,8 +54,6 @@ const FX_SEND_INTERVAL_MS = 100;     // 10 Hz status mirror
 /** Below this the residual on the replica's velocity is interpolation noise, not a shove. */
 const PUSH_THRESHOLD = 150;
 const PUSH_SEND_INTERVAL_MS = 60;
-/** Conquest board snapshot rate. Slower than everything else — a board changes in seconds. */
-const CONQUEST_SEND_INTERVAL_MS = 250;
 /** How long a relayed shove owns the victim's body before WASD takes it back. */
 const PUSH_APPLY_MS = 90;
 
@@ -101,7 +94,6 @@ export class OnlineKit {
   private lastStateSentAt = 0;
   private lastFxSentAt = 0;
   private lastPushSentAt = 0;
-  private lastConquestSentAt = 0;
   /** Velocity `interpolateReplica` last wrote, so a kit's shove can be told apart from it. */
   private lastInterpVx = 0;
   private lastInterpVy = 0;
@@ -201,22 +193,8 @@ export class OnlineKit {
     if (this.matchEnded) return;
     this.sendState(false);
     this.sendEffects();
-    this.sendConquest();
     this.relayReplicaShove();
     this.interpolateReplica();
-  }
-
-  /**
-   * Conquest's board, at 4 Hz. `conquestSnapshot` returns null for every other element, so
-   * this costs one function call a frame in a match that has no Conquest in it.
-   */
-  private sendConquest(): void {
-    const now = Date.now();
-    if (now - this.lastConquestSentAt < CONQUEST_SEND_INTERVAL_MS) return;
-    const snap = this.api.conquestSnapshot();
-    if (!snap) return;
-    this.lastConquestSentAt = now;
-    Net.send({ t: 'cnq', s: snap });
   }
 
   /**
@@ -471,10 +449,6 @@ export class OnlineKit {
       case 'death':
         this.matchEnded = true;
         this.api.endOnlineMatch(true);
-        break;
-      case 'cnq':
-        // Columns mirror inside the kit, which is the only thing that knows the grid.
-        this.api.onConquestSnapshot(msg.s);
         break;
       case 'tech':
         // Positions are mirrored horizontally, so remote left/right steering flips.

@@ -40,8 +40,13 @@ export interface GravMeteorShadow {
   visualRadius: number;
   directHitRadius: number;
   directBonus: number;
+  /** Moon Rider's aimed rock — bigger numbers and a heavier landing. */
+  colossal: boolean;
   frozen: boolean;
 }
+
+/** How long a Space Slash owns its victim's velocity — long enough that movement can't cancel the throw. */
+const SLASH_KNOCKBACK_MS = 350;
 
 export interface GravFirePuddle {
   /** Repainted every frame — a crusted magma pool with plates floating on it. */
@@ -217,6 +222,8 @@ export class GravityKit {
   private gravLunarFireAt = 0;
   private gravLunarOwner: 'player' | 'npc' = 'player';
   private gravSlashes: GravSlash[] = [];
+  /** Space Slash throws in flight: the victim's velocity is held (easing out) until `until`. */
+  private gravSlashKnocks = new Map<Fighter, { vx: number; vy: number; startAt: number; until: number }>();
   private gravMeteorShadows: GravMeteorShadow[] = [];
   private gravFirePuddles: GravFirePuddle[] = [];
   // NPC gravity state
@@ -375,6 +382,7 @@ export class GravityKit {
     if (this.gravLunarShadow) { this.gravLunarShadow.destroy(); this.gravLunarShadow = null; }
     this.gravLunarFireAt = 0; this.gravLunarRadius = 0;
     this.gravSlashes = [];
+    this.gravSlashKnocks.clear();
     for (const s of this.gravMeteorShadows) { s.sprite.destroy(); }
     this.gravMeteorShadows = [];
     for (const p of this.gravFirePuddles) { p.sprite.destroy(); }
@@ -428,7 +436,7 @@ export class GravityKit {
   doGravitySlash(x1: number, y1: number, x2: number, y2: number, owner: 'player' | 'npc'): void {
     const scene = this.arena.scene;
     let damage = 18;
-    let knockback = 400;
+    let knockback = 1000;
     // Riding the moon, a slash isn't a swipe any more — the seam is torn clean across the arena.
     if (owner === 'player' && this.gravMoonActive) {
       const W = this.arena.width, H = this.arena.height;
@@ -438,7 +446,7 @@ export class GravityKit {
       x1 = mx - Math.cos(ang) * reach; y1 = my - Math.sin(ang) * reach;
       x2 = mx + Math.cos(ang) * reach; y2 = my + Math.sin(ang) * reach;
       damage = 36;
-      knockback = 620;
+      knockback = 1500;
     }
     // A seam opening in space that stays open for the half-second before it snaps shut on them.
     this.avatar(owner)?.play('sweep', Math.atan2(y2 - y1, x2 - x1));
@@ -473,12 +481,12 @@ export class GravityKit {
       sprite: spr, fireAt: frozen ? Infinity : scene.time.now + 1500,
       spawnAt: scene.time.now, t: Math.random() * 6,
       x, y, owner,
-      damage: colossal ? 30 : 14,
-      radius: colossal ? 130 : 70,
-      visualRadius: colossal ? 44 : 22,
-      directHitRadius: colossal ? 54 : 28,
-      directBonus: colossal ? 28 : 16,
-      frozen,
+      damage: colossal ? 15 : 7,
+      radius: colossal ? 260 : 140,
+      visualRadius: colossal ? 88 : 44,
+      directHitRadius: colossal ? 108 : 56,
+      directBonus: colossal ? 14 : 8,
+      colossal, frozen,
     });
   }
 
@@ -1444,9 +1452,11 @@ export class GravityKit {
 
         if (this.gravMeteorRainLiveCount > 0) {
           // Recording session with shadows placed: save pattern + convert frozen to live
-          this.gravMeteorRainRecorded = this.gravMeteorShadows
-            .filter(s => s.frozen && s.owner === 'player')
-            .map(s => ({ x: s.x, y: s.y }));
+          // Stored as offsets from the pattern's centre, so a replay lands around the cursor.
+          const placed = this.gravMeteorShadows.filter(s => s.frozen && s.owner === 'player');
+          const cx = placed.reduce((a, s) => a + s.x, 0) / placed.length;
+          const cy = placed.reduce((a, s) => a + s.y, 0) / placed.length;
+          this.gravMeteorRainRecorded = placed.map(s => ({ x: s.x - cx, y: s.y - cy }));
           for (const s of this.gravMeteorShadows) {
             if (s.frozen && s.owner === 'player') {
               s.frozen = false;
@@ -1457,7 +1467,7 @@ export class GravityKit {
           // Quick tap with no shadows placed: replay saved pattern
           if (player.getCooldownRatio('meteor-rain') >= 1 && this.gravMeteorRainRecorded.length > 0) {
             for (const pos of this.gravMeteorRainRecorded) {
-              this.doMeteorShadow(pos.x, pos.y, 'player', false);
+              this.doMeteorShadow(mouseX + pos.x, mouseY + pos.y, 'player', false);
             }
             player.triggerCooldown('meteor-rain');
           }
@@ -1627,10 +1637,21 @@ export class GravityKit {
             const kx = sl.x2 - sl.x1;
             const ky = sl.y2 - sl.y1;
             const klen = Math.hypot(kx, ky) || 1;
-            (target.body as Phaser.Physics.Arcade.Body).setVelocity((kx / klen) * sl.knockback, (ky / klen) * sl.knockback);
+            if (!target.knockbackImmune) {
+              this.gravSlashKnocks.set(target, {
+                vx: (kx / klen) * sl.knockback, vy: (ky / klen) * sl.knockback,
+                startAt: time, until: time + SLASH_KNOCKBACK_MS,
+              });
+            }
           }
         }
       }
+    }
+    // Slash throws: hold the velocity for the whole window, easing out, so the victim really travels.
+    for (const [target, k] of this.gravSlashKnocks) {
+      if (time >= k.until || !target.active || target.hp <= 0) { this.gravSlashKnocks.delete(target); continue; }
+      const f = 1 - ((time - k.startAt) / (k.until - k.startAt)) ** 2;
+      (target.body as Phaser.Physics.Arcade.Body).setVelocity(k.vx * f, k.vy * f);
     }
 
     // Meteor shadows: resolve when fireAt reached (skip frozen ones)
@@ -1645,7 +1666,7 @@ export class GravityKit {
       );
       if (ms.frozen) continue;
       if (time >= ms.fireAt) {
-        const colossal = ms.visualRadius > 30;
+        const colossal = ms.colossal;
         ms.sprite.destroy();
         this.gravMeteorShadows.splice(i, 1);
         this.fx(ms.owner).impact(ms.x, ms.y, ms.radius, {

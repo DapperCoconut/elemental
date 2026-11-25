@@ -30,7 +30,6 @@ export interface NpcLoadout {
 const NPC_MASTERY_BINDS: Record<string, { enhId: string; slot: MasterySlot }> = {
   fire: { enhId: 'heatwave', slot: 'f' },
   water: { enhId: 'siphon', slot: 'f' },
-  air: { enhId: 'weather-cycle', slot: 'f' },
   oil: { enhId: 'turret', slot: 'f' },
   life: { enhId: 'reap', slot: 'f' },
   earth: { enhId: 'dust-screen', slot: 'f' },
@@ -85,12 +84,6 @@ const NPC_MASTERY_BINDS: Record<string, { enhId: string; slot: MasterySlot }> = 
   // other ability the bot actually plays well is left alone. F is refused by `excludeSlots`:
   // the Angler is the fish, and the fish are what grow the kraken's arms back.
   depths: { enhId: 'release-the-kraken', slot: 'r' },
-  // Conquest gives up the barricade. It is the one placement whose whole value is standing next
-  // to something else — a resistance aura and a regen tick the bot has no reason to route its
-  // army through — while the market is a building that pays for itself with no positioning
-  // decision at all, which is exactly the kind of trade a state machine plays well. The
-  // barracks, the turret and the Expansion, the three the bot actually wins with, all survive.
-  conquest: { enhId: 'market', slot: 'f' },
   // Clay gives up Slink. The wall run is the one ability a movement state machine plays worst —
   // its whole value is choosing when to drop off, which a bot does on a timer — while the
   // creature Give Life wakes is a summon the bot plays perfectly by standing still. The golem,

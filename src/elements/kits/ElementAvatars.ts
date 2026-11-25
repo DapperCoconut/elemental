@@ -7,7 +7,7 @@ import { BindAvatar } from './BindVisuals';
 import { PaintAvatar } from './PaintVisuals';
 import { WaxAvatar } from './WaxVisuals';
 import { ClayAvatar } from './ClayVisuals';
-import { ConquestAvatar } from './ConquestVisuals';
+import { EmotionAvatar } from './EmotionVisuals';
 import { CreationAvatar } from './CreationVisuals';
 import { CrystalAvatar } from './CrystalVisuals';
 import { DeathAvatar } from './DeathVisuals';
@@ -135,7 +135,7 @@ const ELEMENT_AVATARS: Record<string, ElementAvatarFactory> = {
   dune: (s, t) => new SandAvatar(s, t),
 
   illusion: (s, t) => new IllusionAvatar(s, t),
-  conquest: (s, t) => new ConquestAvatar(s, t),
+  conquest: (s, t) => new EmotionAvatar(s, t),
   passion: (s, t) => new PassionAvatar(s, t),
   death: (s, t) => new DeathAvatar(s, t),
   fortune: (s, t) => new FortuneAvatar(s, t),
@@ -207,7 +207,7 @@ const AVATAR_CLASSES: Record<string, abstract new (...args: never[]) => BaseAvat
   bind: BindAvatar,
   dune: SandAvatar,
   illusion: IllusionAvatar,
-  conquest: ConquestAvatar,
+  conquest: EmotionAvatar,
   passion: PassionAvatar,
   death: DeathAvatar,
   fortune: FortuneAvatar,

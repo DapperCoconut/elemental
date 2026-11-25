@@ -266,7 +266,7 @@ export const ELEMENT_FORM_TABS: Record<string,
  */
 export const VAULT_ELEMENTS: ElementDef[] = [
   { id: 'illusion', name: 'Illusion', emoji: '🎭', color: 0xb45cff, available: true },
-  { id: 'conquest', name: 'Conquest', emoji: '🏰', color: 0xc23a2e, available: true },
+  { id: 'conquest', name: 'Emotion', emoji: '🚩', color: 0xc23a2e, available: true },
   { id: 'passion', name: 'Devotion', emoji: '🙏', color: 0xf5e08a, available: true },
   { id: 'death', name: 'Death', emoji: '⚰️', color: 0x4a4468, available: true },
   { id: 'fortune', name: 'Gold', emoji: '🪙', color: 0xd8a531, available: true },

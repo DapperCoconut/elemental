@@ -46,9 +46,9 @@ export const ELEMENT_PROFILES: Record<string, ElementProfile> = {
     complexity: 2,
   },
   air: {
-    archetype: 'Skirmisher',
-    blurb: 'Fans, spins and a grapple hook. Never stands still, and banks a dodge off every hit that lands.',
-    complexity: 2,
+    archetype: 'Assassin',
+    blurb: 'Hide in your own clouds to bank stealth, then spend it all on one stab. A timed combo and a spinning-top ultimate.',
+    complexity: 3,
   },
   earth: {
     archetype: 'Worldshaper',
@@ -293,9 +293,9 @@ export const ELEMENT_PROFILES: Record<string, ElementProfile> = {
     complexity: 3,
   },
   conquest: {
-    archetype: 'Warlord',
-    blurb: 'A real-time strategy board bolted to a duel — income, buildings, soldiers and territory.',
-    complexity: 5,
+    archetype: 'Standard-Bearer',
+    blurb: 'Rile knights out of the floor and drag them where you want them, make the enemy cry, and charge past your own army to send it ecstatic.',
+    complexity: 3,
   },
   passion: {
     archetype: 'Priest',

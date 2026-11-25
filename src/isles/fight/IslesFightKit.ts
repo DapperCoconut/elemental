@@ -17,6 +17,9 @@ import { makeStrikeTarget } from '../../boss/framework/StrikeTargets';
 import type { ProjectileRegistry } from '../../combat/ProjectileRegistry';
 import { shotsNear, type ShotHandle } from '../../combat/ShotHandles';
 import { SeaVoyageKit } from '../sea/SeaVoyageKit';
+// The unrest's fights are written from the save: loading it registers them with the registry.
+import '../systems/Unrest';
+import { CoopFight } from './CoopFight';
 
 /**
  * The Ten Isles' half of a fight: the encounter's gimmick, the charm / artifact / meal scripts,
@@ -45,6 +48,8 @@ export interface IslesArenaApi {
   showFloatingText(x: number, y: number, text: string, color: string): void;
   spawnHitFlash(x: number, y: number, color: number): void;
   victory(): void;
+  /** Lose the fight outright (a co-op party wiped while this player was down). */
+  defeat(): void;
 }
 
 const FIELD_PAD = 40;
@@ -70,6 +75,8 @@ export class IslesFightKit {
   private bannerText: Phaser.GameObjects.Text | null = null;
   private slotMap = new Map<string, string>();
   private rng: () => number = Math.random;
+  /** How much harder this foe hits than its element does (`EncounterDef.power`) — folded into what the player takes. */
+  private foePower = 1;
   /** Airborne fighters: scene-clock end, and whether the kit set their `projectilePhase`. */
   private aloft = new Map<Fighter, { until: number; ownPhase: boolean }>();
   /** Last heading of each fighter as it walked, and where it was last frame. */
@@ -79,7 +86,10 @@ export class IslesFightKit {
   /** The sea, when this fight is a voyage: built on first use, reset every match like the kit itself. */
   private voyage: SeaVoyageKit | null = null;
 
-  constructor(private api: IslesArenaApi) {}
+  /** The rest of the party, when this fight is shared (see `CoopFight`). */
+  private coop: CoopFight;
+
+  constructor(private api: IslesArenaApi) { this.coop = new CoopFight(api); }
 
   get active(): boolean { return this.payload !== null; }
 
@@ -112,10 +122,12 @@ export class IslesFightKit {
       });
     }
     this.voyage?.reset(sea);
+    this.coop.reset(payload);
     if (!payload) return;
 
     const { scene, player, npc } = this.api;
-    this.rng = mulberry(hashStr(`${payload.id}:${Date.now()}`));
+    // A party's rules all roll from the one number the host called the fight with.
+    this.rng = mulberry(payload.coop ? payload.coop.seed : hashStr(`${payload.id}:${Date.now()}`));
     this.gGround = scene.add.graphics().setDepth(2);
     this.gAir = scene.add.graphics().setDepth(30);
     this.gHud = scene.add.graphics().setDepth(40).setScrollFactor(0);
@@ -135,9 +147,11 @@ export class IslesFightKit {
       }
     }
 
-    if (payload.kind === 'encounter' || payload.kind === 'warden' || payload.kind === 'councilor') {
+    this.foePower = 1;
+    if (payload.kind === 'encounter' || payload.kind === 'warden' || payload.kind === 'councilor' || payload.kind === 'unrest') {
       const enc = getEncounter(payload.id);
       if (enc) {
+        this.foePower = enc.power ?? 1;
         if (enc.hpMult && enc.hpMult !== 1) {
           npc.setMaxHp(Math.max(10, Math.round(npc.maxHp * enc.hpMult)));
           npc.hp = npc.maxHp;
@@ -230,7 +244,7 @@ export class IslesFightKit {
       for (const sc of this.scripts) sc.onHitDealt?.(amount);
     };
 
-    if (this.gimmick || payload.kind === 'encounter') {
+    if (this.gimmick || payload.kind === 'encounter' || payload.kind === 'unrest') {
       const enc = getEncounter(payload.id);
       const g = enc ? getGimmick(enc.gimmick) : undefined;
       if (enc) this.banner(enc.mastered ? `DECREE: ${enc.name.toUpperCase()}` : enc.name.toUpperCase(), enc.mastered ? '#c9b0ff' : '#ffd27a', g?.rules);
@@ -495,11 +509,13 @@ export class IslesFightKit {
     this.spdWindows = this.spdWindows.filter((w) => w.until > time);
     let foeTaken = this.gimmick?.npcTakenMult?.() ?? 1;
     for (const w of this.dmgWindows) foeTaken *= w.mult;
-    npc.islesIncomingMult = Phaser.Math.Clamp(foeTaken, 0.2, 4);
-    player.islesIncomingMult = Phaser.Math.Clamp(this.gimmick?.playerTakenMult?.() ?? 1, 0.2, 4);
+    // A party's foe has more in it: every blow lands for less, on every screen.
+    this.coop.update(time, (f, ms) => this.hold(f, ms));
+    npc.islesIncomingMult = Phaser.Math.Clamp(foeTaken, 0.2, 4) * this.coop.foeTaken;
+    player.islesIncomingMult = Phaser.Math.Clamp((this.gimmick?.playerTakenMult?.() ?? 1) * this.foePower, 0.2, 4);
     // Nothing reaches a fighter in the air.
     if (this.isAirborne(npc)) npc.islesIncomingMult = 0;
-    if (this.isAirborne(player)) player.islesIncomingMult = 0;
+    if (this.isAirborne(player) || this.coop.down) player.islesIncomingMult = 0;
 
     const gG = this.gGround, gA = this.gAir, gH = this.gHud;
     if (gG && gA && gH) {
@@ -558,7 +574,7 @@ const mixDark = (c: number): number => {
 export function paintIslesFloor(scene: Phaser.Scene, payload: IslesFightPayload, W: number, H: number): void {
   // A voyage has no floor: SeaVoyageKit paints the sea and the ship every frame.
   if (payload.kind === 'voyage') return;
-  const key = payload.court ?? (payload.kind === 'warden' || payload.kind === 'councilor' ? getEncounter(payload.id)?.court : undefined) ?? 'kiln';
+  const key = payload.court ?? (payload.kind === 'warden' || payload.kind === 'councilor' || payload.kind === 'unrest' ? getEncounter(payload.id)?.court : undefined) ?? 'kiln';
   const floor = getFloor(key) ?? getFloor('kiln');
   const g = scene.add.graphics().setDepth(-100);
   if (floor) {

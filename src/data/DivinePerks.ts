@@ -59,7 +59,7 @@ export const DIVINE_PERKS: PerkDef[] = [
     name: 'Storm',
     emoji: '⛈️',
     color: 0x556688,
-    description: "Wind Breaker's funnel darkens into a thunderhead. Everything circling inside it is struck by lightning on every grind, taking 10 extra damage a tick, and the strikes light up the whole storm.",
+    description: 'The Tornado Blade carries a thunderhead. Every tick it grinds on somebody is also a lightning strike for 2 extra damage.',
     ingredients: ['air', 'electricity'],
     tier: 'divine',
     elementId: 'air',

@@ -35,9 +35,16 @@ export class HealthBar {
     this.graphics.fillStyle(0x111111, 0.85);
     this.graphics.fillRect(bx - 1, by - 1, this.barW + 2, this.barH + 2);
 
-    // HP fill
-    const ratio = Math.max(0, hp / this.maxHp);
-    const color = ratio > 0.5 ? 0x22dd55 : ratio > 0.25 ? 0xffcc00 : 0xff3300;
+    // Sap HP (Wood) is health of its own, so it gets its own stretch of the bar rather than
+    // lying over the top of it: when health + sap runs past max health the whole bar rescales
+    // to hold both, and nothing is ever hidden.
+    const safeHp = Math.max(0, hp);
+    const span = Math.max(this.maxHp, safeHp + clottedHp + sapHp);
+
+    // HP fill — coloured by real health against max health, whatever the bar's scale.
+    const hpFrac = safeHp / this.maxHp;
+    const ratio = safeHp / span;
+    const color = hpFrac > 0.5 ? 0x22dd55 : hpFrac > 0.25 ? 0xffcc00 : 0xff3300;
     this.graphics.fillStyle(color, 1);
     this.graphics.fillRect(bx, by, this.barW * ratio, this.barH);
 
@@ -46,15 +53,31 @@ export class HealthBar {
     // Clotted HP (dark red — Metal R+ Blood Clottage). Part of your health, not
     // a bonus: drawn right after normal HP, turning that slice of the bar dark red.
     if (clottedHp > 0) {
-      const clottedRatio = Math.min(clottedHp / this.maxHp, 1 - fillEnd);
+      const clottedRatio = Math.min(clottedHp / span, 1 - fillEnd);
       this.graphics.fillStyle(0x770011, 1);
       this.graphics.fillRect(bx + this.barW * fillEnd, by, this.barW * clottedRatio, this.barH);
       fillEnd += clottedRatio;
     }
 
+    // Sap HP (amber): solid like health, with a lit top edge and a notch where it begins.
+    if (sapHp > 0) {
+      const sapRatio = Math.min(sapHp / span, 1 - fillEnd);
+      const sx = bx + this.barW * fillEnd;
+      const sw = this.barW * sapRatio;
+      this.graphics.fillStyle(0xd98a1c, 1);
+      this.graphics.fillRect(sx, by, sw, this.barH);
+      this.graphics.fillStyle(0xffe08a, 0.85);
+      this.graphics.fillRect(sx, by, sw, 2);
+      if (fillEnd > 0) {
+        this.graphics.fillStyle(0x5a3206, 1);
+        this.graphics.fillRect(sx, by, 1, this.barH);
+      }
+      fillEnd += sapRatio;
+    }
+
     // Shield fill (blue) — bonus HP beyond your health total.
     if (shieldHp > 0) {
-      const shieldRatio = Math.min(shieldHp / this.maxHp, 1 - fillEnd);
+      const shieldRatio = Math.min(shieldHp / span, 1 - fillEnd);
       this.graphics.fillStyle(0x4488ff, 0.85);
       this.graphics.fillRect(bx + this.barW * fillEnd, by, this.barW * shieldRatio, this.barH);
       fillEnd += shieldRatio;
@@ -62,22 +85,10 @@ export class HealthBar {
 
     // Weak HP fill (gray) — bonus HP like shield, but decays over time.
     if (weakHp > 0) {
-      const weakRatio = Math.min(weakHp / this.maxHp, 1 - fillEnd);
+      const weakRatio = Math.min(weakHp / span, 1 - fillEnd);
       this.graphics.fillStyle(0x999999, 0.85);
       this.graphics.fillRect(bx + this.barW * fillEnd, by, this.barW * weakRatio, this.barH);
       fillEnd += weakRatio;
-    }
-
-    // Sap HP (amber — Wood). Bonus health, so it sits past the end like a shield — and when the
-    // bar is already full it flows back over the top of it from the right, because the ent stacks
-    // most of it while healthy and an invisible pool would be no pool at all.
-    if (sapHp > 0) {
-      const sapRatio = Math.min(sapHp / this.maxHp, 1);
-      const start = Math.max(0, Math.min(fillEnd, 1 - sapRatio));
-      this.graphics.fillStyle(0xd98a1c, 0.95);
-      this.graphics.fillRect(bx + this.barW * start, by, this.barW * sapRatio, this.barH);
-      this.graphics.fillStyle(0xffe08a, 0.8);
-      this.graphics.fillRect(bx + this.barW * start, by, this.barW * sapRatio, 2);
     }
   }
 

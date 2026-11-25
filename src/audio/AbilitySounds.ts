@@ -38,12 +38,7 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   'pain-rain': 'rain',
   'bubble-barrage': ['bubble', 0.8, 1],
 
-  // ── Air (the wind dancer) ──
-  'wind-splice': ['air-snipe', 1.25, 0.75],
-  'spin-dance': ['gust', 1.1, 1.1],
-  'gale-glaive': ['slash', 0.9, 1.1],
-  'sky-grapple': 'grapple',
-  'wind-breaker': 'tornado',
+  // ── Air (the assassin) — AirKit plays each sound itself, at the moment it lands ──
 
   // ── Earth ──
   'bash': ['stone-slam', 1.35, 0.9],
@@ -515,12 +510,7 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   'passion-crucifix': ['holy-chord', 1.1, 0.8],
   'passion-ascendance': ['judgement', 0.85, 1.0],
 
-  // ── Conquest ──
-  'conquest-banner': ['stab', 0.9, 1.1],
-  'conquest-barracks': ['stone-rise', 1.1, 0.9],
-  'conquest-turret': ['craft-complete', 1.2, 0.8],
-  'conquest-barricade': ['stone-slam', 1.3, 0.7],
-  'conquest-expansion': ['holy-chord', 0.85, 1.2],
+  // ── Emotion (element id `conquest`) — the kit plays its own sounds at the moment each lands ──
 
   // ── Justice — sword stance ──
   'justice-stab': 'stab',
@@ -538,7 +528,6 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   // ── Mastery bindables ──
   'burning-body': ['inferno', 1.1, 0.7],
   'slipstream': 'gust',
-  'dancers-momentum': 'status-haste',
   'drone-array': 'drone-buzz',
   'thorn-thrash': ['thorn', 0.85, 1.15],
   'unbreakable': 'shield-up',
@@ -570,7 +559,6 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   // is later made bindable arrives with a sound already chosen for it.
   'heatwave': 'flame-burst',
   'siphon': 'status-drain',
-  'weather-cycle': ['gust', 1.2, 0.85],
   'turret': 'drone-buzz',
   'reap': ['slash', 0.85, 1.1],
   'dust-screen': 'sand',

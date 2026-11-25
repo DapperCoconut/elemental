@@ -2,7 +2,7 @@ import type { SkinDef } from '../Skins';
 
 /**
  * WW2: Conquest's whole palette moved off heraldic crimson and gold and into olive drab, khaki,
- * gunmetal and brass. Keys are the exact values of `CNQ` in ConquestVisuals.ts, in the same
+ * gunmetal and brass. Keys are the exact values of `CNQ` in EmotionVisuals.ts (`EMO`, which kept Conquest's values), in the same
  * order, with luminance ordering kept (dark stays dark, the hot muzzle/ember colours stay hot).
  *
  * The town colours are mapped to *themselves*: colour is the only thing that says whose a
@@ -35,7 +35,7 @@ const WW2_PALETTE: Record<number, number> = {
   0x2a2438: 0x272b1f, // shroud     → camo shadow
   0x6ee87a: 0x8fd879, // mend       → field-medic green
 };
-// Town colours (PLAYER_TOWN_COLORS / NPC_TOWN_COLORS in ConquestVisuals.ts): identity, so the
+// Town colours (PLAYER_TOWN_COLORS / NPC_TOWN_COLORS in EmotionVisuals.ts (`EMO`, which kept Conquest's values)): identity, so the
 // side read survives the skin. Literal rather than imported, to keep Skins.ts free of a
 // dependency on the element's visuals module.
 for (const c of [0xd83a3a, 0xe8862c, 0xd8c23a, 0xe05fa0, 0x3a7fd8, 0x8f5ad8, 0x2ec4b6, 0x5ad8a0]) WW2_PALETTE[c] = c;

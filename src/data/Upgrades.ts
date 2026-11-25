@@ -137,46 +137,6 @@ export const ALL_UPGRADES: ElementUpgrades[] = [
     ],
   },
   {
-    elementId: 'air',
-    upgrades: [
-      {
-        slot: 'click',
-        displayKey: 'Click',
-        name: 'Whirlwind',
-        description: 'Every third Wind Splice throws a free Spin Dance with it — full damage, and it still refunds cooldown on contact',
-        price: 10,
-      },
-      {
-        slot: 'e',
-        displayKey: 'E',
-        name: 'Expert Dancer',
-        description: 'Spin Dance banks up to 2 charges. Used back to back, the second is a flip instead — a long rectangle along your cursor with you in the middle of it. Land both cleanly for +15% wind dodge',
-        price: 20,
-      },
-      {
-        slot: 'r',
-        displayKey: 'R',
-        name: 'Gale Afterimage',
-        description: 'When the glaive returns, a pair of wooden phantoms stays parked on the spot for 5s, still cutting anything that stands in them',
-        price: 35,
-      },
-      {
-        slot: 'f',
-        displayKey: 'F',
-        name: 'Final Flight',
-        description: 'Ramming an enemy with the grapple knocks them back and deals 50% of all damage you have dealt in the last 10s — and grants wind dodge equal to that damage as a percentage',
-        price: 50,
-      },
-      {
-        slot: 'q',
-        displayKey: 'Q',
-        name: 'Eye of the Storm',
-        description: 'You can use every ability while in tornado form. Each attack that lands during it grants +10% wind dodge, and all your attacks deal bonus damage equal to a fifth of your wind dodge',
-        price: 75,
-      },
-    ],
-  },
-  {
     elementId: 'earth',
     upgrades: [
       {
@@ -1229,51 +1189,6 @@ export const ALL_UPGRADES: ElementUpgrades[] = [
         displayKey: 'Q',
         name: 'Paint Chips',
         description: 'Your Masterpiece sheds paint chips — little paint bugs that live 5s. Red chips rush in and nip fast, blue chips hang back and shoot, green chips latch onto you and heal.',
-        price: 750,
-        currency: 'corrupt',
-      },
-    ],
-  },
-  {
-    elementId: 'conquest',
-    upgrades: [
-      {
-        slot: 'click',
-        displayKey: 'Click',
-        name: 'Banner Bearer',
-        description: 'Right-click to change your standard. Offensive is the pike you already had, and adds 3 damage to every soldier standing near you. Defensive thrusts twice as fast for 10, and buildings near you take a fifth less. Healing thrusts half as often for 25, and mends nearby soldiers.',
-        price: 100,
-        currency: 'corrupt',
-      },
-      {
-        slot: 'e',
-        displayKey: 'E',
-        name: 'Barracks Enhanced',
-        description: 'Opens a third upgrade path on every barracks — SHADOW. Two-square marches, a +10 opening swing on ground they have just taken, soldiers that dodge what is aimed at them, and an Assassin Guild that cuts whatever it walks through.',
-        price: 200,
-        currency: 'corrupt',
-      },
-      {
-        slot: 'r',
-        displayKey: 'R',
-        name: 'Turret Enhanced',
-        description: 'Opens a third upgrade path on every turret — ORDNANCE. Bullets that burst where they land, bombs lobbed back at whoever hit the tower, a close-range blast worth double a bullet, and an atomic tier that widens all of it.',
-        price: 350,
-        currency: 'corrupt',
-      },
-      {
-        slot: 'f',
-        displayKey: 'F',
-        name: 'Barricade Enhanced',
-        description: 'Opens a third upgrade path on every barricade — BULWARK. Walls that hurry you along as you pass, walls you can march like a garrison, and a wall you link yourself to so that it takes your hits — and then pays you 25% speed and 20% damage for standing behind it.',
-        price: 500,
-        currency: 'corrupt',
-      },
-      {
-        slot: 'q',
-        displayKey: 'Q',
-        name: 'Expansion Enhanced',
-        description: 'Expansion costs 100 Authority instead of 150, and every town center opens a third path — ARCANE. A sharper banner, a fireball you drag off the dome and hurl, soldiers promoted to wizards who strike from three squares away, and an Academy of Ash that sets all of it alight.',
         price: 750,
         currency: 'corrupt',
       },

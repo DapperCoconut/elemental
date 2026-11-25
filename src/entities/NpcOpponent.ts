@@ -77,7 +77,7 @@ const MOVEMENT_PROFILES: Record<string, MovementProfile> = {
   magma:       { archetype: 'summoner',   range: [220, 380], retreatHp: 0.30 },
   illusion:    { archetype: 'zoner',      range: [220, 380], retreatHp: 0.30 },
   depths:      { archetype: 'skirmisher', range: [160, 300], retreatHp: 0.28 },
-  conquest:    { archetype: 'summoner',   range: [260, 420], retreatHp: 0.32 },
+  conquest:    { archetype: 'summoner',   range: [150, 250], retreatHp: 0.30 },
   passion:     { archetype: 'skirmisher', range: [150, 290], retreatHp: 0.28 },
   ruin:        { archetype: 'zoner',      range: [220, 380], retreatHp: 0.30 },
   dune:        { archetype: 'skirmisher', range: [160, 300], retreatHp: 0.28 },
@@ -180,10 +180,6 @@ export interface NpcAiState {
   npcLifeShieldAt?: { x: number; y: number };
   /** Life: a ripe Lotus orb of its own close enough to go and eat. */
   lifeSeekPoint?: { x: number; y: number };
-  /** Air: the NPC's own Wind Breaker is up, so it should be holding the player, not chasing. */
-  airTornadoActive: boolean;
-  /** Air: wind dodge the NPC has banked — high enough and it can afford to dance in close. */
-  airWindDodge: number;
   earthShieldHp: number;
   /** Biome Builder quarters the bot currently has standing. */
   npcEarthBiomes?: number;
@@ -229,10 +225,6 @@ export interface NpcAiState {
    * player — where to aim that spike (IceKit-owned; null without a bomb on the line).
    */
   npcIceBombAim?: { x: number; y: number } | null;
-  /** Air: the slot Weather Cycle is bound over, so the bot leaves that base ability alone. */
-  npcAirWeatherSlot?: 'r' | 'f' | 'q';
-  /** Air (Gust perk): the glaive is on the target — recalling now lands the arrival spin. */
-  npcAirGustRecall?: boolean;
   /** Crystal: the slot Crystal Shredder is bound over, so the bot leaves that base ability alone. */
   npcCrystalShredderSlot?: 'r' | 'f' | 'q';
   npcGrowthDna?: number;
@@ -296,6 +288,23 @@ export interface NpcAiState {
   targetInvisible?: boolean;
   /** Somewhere to walk to and hit instead of fighting: Fear's rune, or a Claustrophobia statue. */
   fearObjective?: { x: number; y: number };
+  // ── Air (the assassin) — every one is AirKit's answer; the AI derives none of them ──
+  /** Lunging, spinning as the Blade, or levitating: nothing can be cast. */
+  npcAirBusy?: boolean;
+  /** How far a stab thrown now reaches (the lunge its stealth buys, plus the knife). */
+  npcAirPierceReach?: number;
+  /** Synergy: more than half the stealth bar is banked — the next stab is the big one. */
+  npcAirBigStab?: boolean;
+  /** Synergy: standing in the target's blind spot — a stab now is doubled. */
+  npcAirBackstab?: boolean;
+  /** Synergy: the target is winded by Knock and cannot turn to face a stab. */
+  npcAirTargetWinded?: boolean;
+  /** Synergy: in its own cloud with the cloak off — Cloud Cover doubles the stealth it is earning. */
+  npcAirCoverPays?: boolean;
+  /** Synergy: its dagger field is standing nearby — the Tornado Blade will collect the knives. */
+  npcAirFieldLive?: boolean;
+  /** A Combo ring is up: the kit presses F for the bot. */
+  npcAirComboLive?: boolean;
   /** Mid-move (the maze, a frenzy, Signature Move): press nothing. */
   npcFearBusy?: boolean;
   /** Transformed: the keys are Massacre / Haunt / Signature Move / Shadowy Descent / They Will Fall. */
@@ -1011,13 +1020,21 @@ export interface NpcAiState {
   npcSoundDoubleStack?: boolean;
 
   /**
-   * Conquest: the square the bot is walking to in order to place its next building. Every
-   * placement is "stand here, then cast", so the destination has to come before the decision.
+   * Emotion (element id `conquest`). EmotionKit plays the army itself (orders, the standard's
+   * slam); these are the opportunities the bot's own casts hang on.
    */
-  conquestSeekPoint?: { x: number; y: number };
-  /** Set once it is standing on that square and can afford what it went there for. */
-  npcConquestReady?: 'barracks' | 'turret' | 'barricade' | 'expansion';
-  npcConquestAuthority?: number;
+  /** Winding up, charging or holding the standard: every cast would be refused. */
+  npcEmotionBusy?: boolean;
+  /** Holding the grand standard: walk it at them, the kit slams it when they are inside the blast. */
+  npcEmotionStance?: boolean;
+  /** Soldiers standing. */
+  npcEmotionTroops?: number;
+  /** Troops → Euphoria: how many would turn ecstatic if it charged now. */
+  npcEmotionEcstasyCount?: number;
+  /** Troops → Maximum Nationalism: how many would fight under the standard. */
+  npcEmotionRallyCount?: number;
+  /** Health lead → Depress: the bot is the healthier one and they are inside the cone. */
+  npcEmotionDepressEdge?: boolean;
 
   // ── World Shift arenas ─────────────────────────────────────────────
   // Filled by SecretMapKit. Same shape as the seek/avoid overrides above, and
@@ -1517,20 +1534,6 @@ export class NpcOpponent extends Fighter {
       }
     }
 
-    // ── Conquest: walking to a build site ────────────────────────
-    // Same shape as the Depths seek above, and for the same reason: a bot that has decided
-    // where its next barracks goes has nothing to gain from strafing on the way there.
-    if (aiState.conquestSeekPoint) {
-      const seek = aiState.conquestSeekPoint;
-      const d = Phaser.Math.Distance.Between(this.x, this.y, seek.x, seek.y);
-      if (d > 6) {
-        const a = Phaser.Math.Angle.Between(this.x, this.y, seek.x, seek.y);
-        body.setVelocity(Math.cos(a) * this.speed, Math.sin(a) * this.speed);
-      } else {
-        body.setVelocity(0, 0);
-      }
-    }
-
     // ── Life: a ripe Lotus orb ───────────────────────────────────
     // Soft, like Gold's below: a heal and a petal are worth a short detour, never the fight.
     if (aiState.lifeSeekPoint) {
@@ -1806,7 +1809,7 @@ export class NpcOpponent extends Fighter {
       return this.doDepthsAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
     }
     if (this.element.id === 'conquest') {
-      return this.doConquestAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
+      return this.doEmotionAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
     }
     if (this.element.id === 'passion') {
       return this.doPassionAbilities(target, buildContext, time, dist, hpRatio, aimX, aimY, aiState);
@@ -3233,42 +3236,54 @@ export class NpcOpponent extends Fighter {
   }
 
   /**
-   * Conquest. Almost none of the element's decision-making is here — ConquestKit runs the whole
-   * economy, chooses what to build and where, buys its own upgrade paths and marches its own
-   * soldiers, because all of that is board state the AI routine has no view of.
+   * Emotion (element id `conquest`). The army is the kit's to play — it sends every idle soldier
+   * at whoever is nearest and drives the standard into the floor when somebody is under it — so
+   * what is left here is when to cast, and each cast is worth more for something already on the
+   * field:
    *
-   * What is left is the two things only `castAbility` can do: convert an arrived-at build site
-   * into an actual placement, and throw the pike the rest of the time. `npcConquestReady` is
-   * already the kit's answer to "is this legal right now", so nothing here re-checks cost or
-   * ownership — a refusal at this point would burn the cooldown for nothing.
+   *   troops → Euphoria             a charge past the army turns it ecstatic
+   *   troops → Maximum Nationalism  the standard is a buff for soldiers before it is a blast
+   *   health lead → Depress         the amp only exists while the bot is the healthier one
+   *   Rile → all three              so the knights come first
    */
-  private doConquestAbilities(
+  private doEmotionAbilities(
     target: Fighter,
     buildContext: (tX: number, tY: number) => CastContext,
-    time: number,
+    _time: number,
     dist: number,
     hpRatio: number,
     aimX: number,
     aimY: number,
     aiState: NpcAiState,
   ): string | null {
-    void target;
-    void time;
-    void hpRatio;
-
-    // The build it walked across the board for outranks everything: the square is only free
-    // for as long as nobody else stands on it.
-    const ready = aiState.npcConquestReady;
-    if (ready) {
-      const id = ready === 'expansion' ? 'conquest-expansion' : `conquest-${ready}`;
-      if (this.castAbility(id, buildContext(aimX, aimY))) return id;
+    // Holding the standard: no attacking — walk it into them.
+    if (aiState.npcEmotionStance) {
+      if (!this.stationary && dist > 60) {
+        const a = Math.atan2(target.y - this.y, target.x - this.x);
+        (this.body as Phaser.Physics.Arcade.Body).setVelocity(Math.cos(a) * this.speed, Math.sin(a) * this.speed);
+      }
+      return null;
     }
+    if (aiState.npcEmotionBusy) return null;
+    const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+    const cast = (id: string, x = aimX, y = aimY): boolean => this.castAbility(id, buildContext(x, y));
+    const troops = aiState.npcEmotionTroops ?? 0;
 
-    // The pike is the only thing left, and it is a poke — there is no reason to hold it, but
-    // also no reason to swing it at nothing.
-    if (dist < 300) {
-      if (this.castAbility('conquest-banner', buildContext(aimX, aimY))) return 'conquest-banner';
+    if (!skipSpecials) {
+      // Troops → Maximum Nationalism: two or more to fight under it, or them close enough to slam.
+      if (((aiState.npcEmotionRallyCount ?? 0) >= 2 || dist < 200) && cast('emotion-nationalism')) return 'emotion-nationalism';
+      // Troops → Euphoria: the charge is aimed at them, but it is cast for the army.
+      if ((aiState.npcEmotionEcstasyCount ?? 0) >= 2 && dist < 460 && cast('emotion-euphoria')) return 'emotion-euphoria';
+      // Health lead → Depress.
+      if (aiState.npcEmotionDepressEdge && cast('emotion-depress')) return 'emotion-depress';
+      // Rile: everything above is worth more with knights out.
+      if (troops < 6 && cast('emotion-rile')) return 'emotion-rile';
+      // No army to feel it: Euphoria is still the kit's hardest single hit, down a lane they are in.
+      if (dist < 300 && dist > 90 && cast('emotion-euphoria')) return 'emotion-euphoria';
+      // Losing the health race: Depress still slows them and kills their shots.
+      if (dist < 230 && hpRatio < 0.5 && cast('emotion-depress')) return 'emotion-depress';
     }
+    if (dist < 215 && cast('emotion-stab')) return 'emotion-stab';
     return null;
   }
 
@@ -4240,67 +4255,69 @@ export class NpcOpponent extends Fighter {
   }
 
   /**
-   * The wind dancer's opponent brain. Air is now a dancer rather than a sniper, so the AI plays
-   * it as one: close the gap, spin on contact (which pays its own cooldowns back), throw the
-   * glaive at range, and save Wind Breaker for someone standing near enough to be swept up.
+   * The assassin's opponent brain. AirKit publishes every opportunity (`npcAir*`): a blind spot
+   * or a winded target to stab, a big stab banked, a cloud to cloak in, knives for the Blade to
+   * collect. Those are played first; the rotation below is what is left. The kit itself walks
+   * the bot into clouds, answers the Combo's rings and steers the Blade.
    */
   private doAirAbilities(
     target: Fighter,
     buildContext: (tX: number, tY: number) => CastContext,
-    time: number,
+    _time: number,
     dist: number,
     hpRatio: number,
-    aimX: number,
-    aimY: number,
+    _aimX: number,
+    _aimY: number,
     aiState: NpcAiState,
   ): string | null {
-    void time; void aimX; void aimY;
-    // Already the weather — nothing else can be cast until the funnel opens.
-    if (aiState.airTornadoActive) return null;
+    // Lunging, spinning or up in the air — and while a ring is closing, F is the kit's to press.
+    if (aiState.npcAirBusy) return null;
+    const at = () => buildContext(target.x, target.y);
+    const reach = aiState.npcAirPierceReach ?? 110;
+    const stab = () => (this.castAbility('pierce-the-skies', at()) ? 'pierce-the-skies' : null);
 
-    // Gust synergy first: the kit says the parked glaive is on the target, so the teleport's
-    // arrival spin connects. No cooldown of its own — AirKit resolves it from the returned id.
-    if (aiState.npcAirGustRecall) return 'air-gust-recall';
+    // ── Synergies first: each is only worth pressing because of what the kit already set up ──
+    // Behind them (or they are winded and cannot turn to stop it): the stab is doubled.
+    if ((aiState.npcAirBackstab || aiState.npcAirTargetWinded) && dist < reach) {
+      const id = stab();
+      if (id) return id;
+    }
+    // Its own knives are standing in the floor: the Blade picks them up on the way in.
+    if (aiState.npcAirFieldLive && dist < 420) {
+      if (this.castAbility('tornado-blade', at())) return 'tornado-blade';
+    }
+    // More than half the bar banked and the lunge it buys reaches: the big stab.
+    if (aiState.npcAirBigStab && dist < reach) {
+      const id = stab();
+      if (id) return id;
+    }
+    // In a cloud with the cloak off: Cloud Cover doubles what the cloud is paying.
+    if (aiState.npcAirCoverPays) {
+      if (this.castAbility('cloud-cover', at())) return 'cloud-cover';
+    }
 
     const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
-    // Mastery: the key Weather Cycle was bound over is the kit's now (it fires from AirKit).
-    const weather = aiState.npcAirWeatherSlot;
-
     if (!skipSpecials) {
-      // 1. Wind Breaker — only worth it with the target already inside the funnel's reach.
-      if (weather !== 'q' && dist < 140) {
-        if (this.castAbility('wind-breaker', buildContext(target.x, target.y))) return 'wind-breaker';
+      // Knock — point blank. It is what opens the back for the stab above.
+      if (dist < 95) {
+        if (this.castAbility('air-knock', at())) return 'air-knock';
       }
-
-      // 2. Spin Dance — the tempo engine. Thrown the moment the target is in the circle, since
-      //    a connecting spin hands every other ability two seconds back.
-      if (dist < 120) {
-        if (this.castAbility('spin-dance', buildContext(target.x, target.y))) return 'spin-dance';
+      // Combo — the volley at mid range; the kit answers the rings.
+      if (!aiState.npcAirComboLive && dist > 110 && dist < 520) {
+        if (this.castAbility('air-combo', at())) return 'air-combo';
       }
-
-      // 3. Gale Glaive — parked on the target at mid range, where it has time to grind.
-      if (weather !== 'r' && dist > 90 && dist < 520) {
-        if (this.castAbility('gale-glaive', buildContext(target.x, target.y))) return 'gale-glaive';
+      // Tornado Blade — with the target close enough to reach before the stamina is gone.
+      if (dist < 280) {
+        if (this.castAbility('tornado-blade', at())) return 'tornado-blade';
       }
-
-      // 4. Sky Grapple — closing tool when far, escape when hurt. Either way it banks dodge,
-      //    which is the only defence air has.
-      if (weather === 'f') {
-        // Bound over: no hook this match.
-      } else if (dist > 260) {
-        if (this.castAbility('sky-grapple', buildContext(target.x, target.y))) return 'sky-grapple';
-      } else if (hpRatio < 0.35 && aiState.airWindDodge < 0.3) {
-        const away = Phaser.Math.Angle.Between(target.x, target.y, this.x, this.y);
-        if (this.castAbility('sky-grapple', buildContext(
-          this.x + Math.cos(away) * 260, this.y + Math.sin(away) * 260,
-        ))) return 'sky-grapple';
+      // Cloud Cover — otherwise a place to hide when hurt.
+      if (hpRatio < 0.5) {
+        if (this.castAbility('cloud-cover', at())) return 'cloud-cover';
       }
     }
 
-    // 5. Wind Splice — the click. Always aimed true: the shear half misses on its own if the
-    //    target is moving, so no artificial miss chance is needed on top.
-    if (this.castAbility('wind-splice', buildContext(target.x, target.y))) return 'wind-splice';
-
+    // The plain stab, once the target is inside what it can reach.
+    if (dist < reach) return stab();
     return null;
   }
 

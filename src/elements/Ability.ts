@@ -57,15 +57,12 @@ export interface CastContext {
   startThornDrag: () => void;
   // ── Air (the wind dancer) — every one of these lands in AirKit ──
   /** Click: the near fan cut plus the shear of wind thrown off it. */
-  airSplice: (x: number, y: number) => void;
-  /** E: the 360° turn, or E+'s flip along the aim. */
-  airSpinDance: (x: number, y: number) => void;
-  /** R: both fans thrown as one glaive, parked on the point, then recalled. */
-  airGaleGlaive: (x: number, y: number) => void;
-  /** F: hook to the point, untouchable in flight. */
-  airSkyGrapple: (x: number, y: number) => void;
-  /** Q: five seconds of being the weather, then the throw along this aim. */
-  airWindBreaker: (x: number, y: number) => void;
+  // Air (the assassin) — everything resolves in AirKit
+  airPierce(x: number, y: number): void;
+  airKnock(x: number, y: number): void;
+  airCloudCover(): void;
+  airCombo(x: number, y: number): void;
+  airTornadoBlade(): void;
   addShieldHp: (amount: number) => void;
   getShieldHp: () => number;
   setShieldHp: (amount: number) => void;
@@ -314,10 +311,12 @@ export interface CastContext {
   passionGrenade: (tx: number, ty: number) => void;
   passionCrucifix: (tx: number, ty: number) => void;
   passionAscendance: (tx: number, ty: number) => void;
-  // Conquest (test element: cheat mode only for now)
-  conquestBanner: () => void;
-  conquestBuild: (kind: 'barracks' | 'turret' | 'barricade') => void;
-  conquestExpansion: () => void;
+  // Emotion (element id `conquest`)
+  emotionStab: () => void;
+  emotionRile: () => void;
+  emotionDepress: () => void;
+  emotionEuphoria: () => void;
+  emotionNationalism: () => void;
   // Paper (test element: cheat mode only for now)
   paperStorybook: (tx: number, ty: number) => void;
   paperPlane: (tx: number, ty: number) => void;

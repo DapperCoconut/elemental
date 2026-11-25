@@ -1,271 +1,131 @@
 import { ElementCodex } from '../AbilityCodex';
 
 /**
- * Air — the wind dancer. Verified against `src/elements/air.ts`, `kits/AirKit.ts` (whose
- * tuning constants are all named and at the top of the file) and the air block of
- * `data/Upgrades.ts`.
+ * Air — the hooded assassin (the rework of 2026-11-25; the wind dancer is gone).
+ *
+ * Verified against `src/elements/air.ts` and `kits/AirKit.ts`. Every number below is a constant
+ * at the top of the kit. No upgrades, element perks or mastery yet.
  */
 const air: ElementCodex = {
   identity:
-    'Not a caster — a dancer with two war fans, who treats the air she displaces as the weapon and '
-    + 'the momentum she keeps as the defence. Air is the only element whose survivability is something '
-    + 'you build during the fight rather than something you spend.',
+    'A hooded assassin with chimes on her cloak and no steel: her knives are made of air the '
+    + 'moment before they land. She hides in her own clouds to bank stealth, then spends all of '
+    + 'it on a single stab — or keeps it, and lets it turn hits aside.',
 
   passives: [
     {
-      emoji: '🍃',
-      name: 'Wind Dodge',
+      emoji: '🌫️',
+      name: 'Clouds',
       basics:
-        'A banked chance to void an incoming hit outright, earned by landing abilities rather than '
-        + 'ticking up on a timer: +10% per successful dodge, +25% from a grapple ram, +15% from a '
-        + 'returning glaive and +20% from Hundred Winds.',
+        'Four clouds crawl across the arena. Standing in one banks stealth, up to 100. Stealth is '
+        + 'a chance to dodge any hit — 33% at full — and it powers Pierce the Skies and Tornado '
+        + 'Blade. You see through your clouds; your enemy cannot.',
       effects: [
-        { tag: 'shield', label: 'Dodge pool', detail: 'A percentage chance to void an incoming hit outright. Banked by landing abilities rather than granted on a timer.' },
-        { tag: 'buff', label: 'Base earn rate', detail: '+10% per successful dodge, +25% from a grapple ram, +15% from a returning glaive, +20% from Hundred Winds.' },
+        { tag: 'buff', label: 'Stealth', detail: '+12 a second while you stand in one of your own clouds. It does not drain on its own.' },
+        { tag: 'shield', label: 'Dodge', detail: 'Up to 33% at 100 stealth, scaling straight down to 0% at none. A dodge costs no stealth.' },
+        { tag: 'control', label: 'Thick air', detail: 'Enemy projectiles inside a cloud move 75% slower.' },
+        { tag: 'utility', label: 'Cover', detail: 'Your clouds are a see-through veil on your screen and a solid bank on your enemy\'s.' },
+        { tag: 'area', label: 'The sky', detail: '4 clouds, each 95–130px across its half-width, drifting at 14–24px a second.' },
       ],
-    },
-    {
-      emoji: '🌀',
-      name: 'Momentum',
-      basics:
-        'A speed meter that fills 5% per second for as long as the dance goes unbroken, capped at 100%, '
-        + 'and drops 10% every time you are hit. Nothing else reduces it.',
-      effects: [
-        { tag: 'buff', label: 'Build', detail: '+5% per second while the dance is unbroken, capped at 100%.' },
-        { tag: 'cost', label: 'Break', detail: '−10% every time you are hit. Nothing else reduces it.' },
+      notes: [
+        'A cloud does not make you invisible: bots still attack, and a player can still guess. Cloud Cover is what hides you.',
+        'The slow reaches ordinary projectiles. Beams, melee and things an ability places are not slowed.',
+        'A small gauge under your feet shows the bar; the yellow tick is the halfway mark.',
       ],
     },
   ],
 
   abilities: {
-    'wind-splice': {
+    'pierce-the-skies': {
       basics:
-        'One press, two attacks. A 20-damage fan cut inside 100px across roughly 109° of sweep, and a '
-        + '12-damage shear thrown down the aim line at 640 px/s for up to 760px with a 28px hit radius. '
-        + 'You do not choose between them. 0.7s cooldown.',
-      cast: 'Click, aimed at the cursor. Instant, no lock.',
+        'Form a knife out of air and stab. The more stealth you have, the further the stab throws '
+        + 'you and the harder it lands — and it takes all of it. From behind it deals double. '
+        + 'Hold the button for a barrage of small stabs.',
+      cast: 'Click, aimed with the cursor. 0.65s cooldown. Keep holding for 0.26s and small stabs follow, one every 0.11s.',
       effects: [
-        { tag: 'damage', label: 'Fan cut', detail: '20 damage inside 100px, across a 0.95 radian half-arc (~109° of total sweep) on the aim line.' },
-        { tag: 'damage', label: 'Wind shear', detail: '12 damage from the shear thrown off the cut — 640 px/s, up to 760px of travel, 28px hit radius.' },
-        { tag: 'utility', label: 'Rate', detail: '0.7s cooldown. Both halves fire from the same press; you do not choose between them.' },
-      ],
-      upgrade: {
-        basics:
-          'Every third Wind Splice throws a full-damage Spin Dance alongside it, off cooldown — and the '
-          + 'free spin refunds cooldown on contact exactly as a manual one does, 2 seconds off every other '
-          + 'ability.',
-        effects: [
-          { tag: 'damage', label: 'Free Spin Dance', detail: 'Every 3rd Wind Splice throws a full-damage Spin Dance alongside it, off cooldown.', requiresUpgrade: 'click' },
-          { tag: 'buff', label: 'Still refunds', detail: 'The free spin refunds cooldown on contact exactly as a manual one does — 2s off every other ability.', requiresUpgrade: 'click' },
-        ],
-      },
-    },
-
-    'spin-dance': {
-      basics:
-        'A 20-damage sweep of everything within 115px, with no aim of its own. The real purpose is the '
-        + 'refund: on contact every other ability comes back 2 seconds sooner. 6s cooldown.',
-      cast: 'E. Instant, centred on the caster — it has no aim.',
-      effects: [
-        { tag: 'damage', label: 'Sweep', detail: '20 damage to everything within 115px of the caster.' },
-        { tag: 'buff', label: 'Tempo refund', detail: 'On contact, every other ability comes back 2s sooner. This is the ability\'s real purpose.' },
-        { tag: 'utility', label: 'Availability', detail: '6s cooldown, and it refunds itself through the free spins Whirlwind grants.' },
-      ],
-      upgrade: {
-        basics:
-          'Banks 2 charges instead of one, and a second cast inside 1.8s becomes a flip along the cursor '
-          + '— a rectangle 135px by 46px half-extents with you in the middle of it. Land both halves '
-          + 'cleanly for +15% wind dodge.',
-        effects: [
-          { tag: 'resource', label: 'Two charges', detail: 'Spin Dance banks up to 2 charges instead of one.', requiresUpgrade: 'e' },
-          { tag: 'damage', label: 'The flip', detail: 'The second consecutive cast is a flip along the cursor: a rectangle 135px half-length by 46px half-width with the caster in the middle of it, inside a 1.8s window.', requiresUpgrade: 'e' },
-          { tag: 'buff', label: 'Clean pair', detail: 'Land both halves cleanly for +15% wind dodge.', requiresUpgrade: 'e' },
-        ],
-      },
-    },
-
-    'gale-glaive': {
-      basics:
-        'Thrown at the cursor for 15 damage at 940 px/s, it parks for 2 seconds ticking 10 damage every '
-        + '0.4s — up to 50 to somebody who will not move — then returns for 20, more than the throw, and '
-        + 'banks +15% wind dodge as it reaches your hand. The dancer is unarmed until it does.',
-      cast: 'R, thrown at the cursor. The dancer is unarmed until it returns.',
-      effects: [
-        { tag: 'damage', label: 'Outbound', detail: '15 damage on the way out, at 940 px/s with a 30px hit radius.' },
-        { tag: 'area', label: 'Parked', detail: 'Holds position for 2s, ticking 10 damage every 0.4s to anything standing in it — up to 50 damage to someone who does not move.' },
-        { tag: 'damage', label: 'Return', detail: '20 damage on the way back, more than the throw.' },
-        { tag: 'buff', label: 'Dodge bank', detail: '+15% wind dodge when the glaive returns to hand.' },
-      ],
-      upgrade: {
-        basics:
-          'A pair of wooden phantoms stays on the park spot for 5 seconds after the glaive comes home, '
-          + 'ticking 7 damage into anything standing in them.',
-        effects: [
-          { tag: 'summon', label: 'Phantom fans', detail: 'A pair of wooden phantoms remains on the park spot for 5s after the return.', requiresUpgrade: 'r' },
-          { tag: 'dot', label: 'Phantom ticks', detail: '7 damage per tick to anything standing in them.', requiresUpgrade: 'r' },
-        ],
-      },
-    },
-
-    'sky-grapple': {
-      basics:
-        '1400 px/s toward the cursor for up to 420ms — the fastest movement available to any element — '
-        + 'and nothing can touch you while you are in flight. Flying into a fighter inside 44px rams them '
-        + 'and banks +25% wind dodge, the largest single grant in the kit.',
-      cast: 'F, aimed at the cursor. Untouchable for the duration of the flight.',
-      effects: [
-        { tag: 'movement', label: 'Grapple flight', detail: '1400 px/s for up to 420ms — the fastest movement available to any element.' },
-        { tag: 'shield', label: 'Untouchable', detail: 'Nothing connects with the dancer while she is in flight.' },
-        { tag: 'damage', label: 'Ram', detail: 'Flying into a fighter inside a 44px radius rams them.' },
-        { tag: 'buff', label: 'Dodge bank', detail: '+25% wind dodge on a ram — the largest single grant in the kit.' },
-      ],
-      upgrade: {
-        basics:
-          'The ram now also deals half of all the damage you have dealt in the previous 10 seconds, '
-          + 'knocks the target back 620 units, and hands you wind dodge equal to that damage figure as a '
-          + 'percentage.',
-        effects: [
-          { tag: 'damage', label: 'Accumulated damage', detail: 'The ram deals 50% of all damage you have dealt in the previous 10s, on top of the ram itself.', requiresUpgrade: 'f' },
-          { tag: 'control', label: 'Knockback', detail: '620 units of knockback on the rammed target.', requiresUpgrade: 'f' },
-          { tag: 'buff', label: 'Dodge conversion', detail: 'Grants wind dodge equal to that damage figure as a percentage.', requiresUpgrade: 'f' },
-        ],
-      },
-    },
-
-    'wind-breaker': {
-      basics:
-        'Five seconds as a 155px tornado with debris orbiting between 62 and 140px, dealing 12 damage '
-        + 'every 0.5s to anything inside — 120 to a target that stays for all of it. You move at 0.6× and '
-        + 'cannot cast while it is up. The collapse throws you along your aim at 1150 speed, deals 25 on '
-        + 'a wall impact, and banks +20% wind dodge. 25s cooldown.',
-      cast: 'Q. 5s of tornado form, then the throw along wherever you are aiming at the end.',
-      effects: [
-        { tag: 'area', label: 'Tornado form', detail: '5s, 155px radius, with debris orbiting between 62px and 140px at 3.4 rad/s.' },
-        { tag: 'dot', label: 'Storm ticks', detail: '12 damage every 0.5s to anything inside — 120 damage to a target that stays in it for the whole duration.' },
-        { tag: 'cost', label: 'Slowed', detail: 'You move at 0.6× speed while the tornado is up, and cannot cast.' },
-        { tag: 'damage', label: 'The launch', detail: 'The collapse throws along the aim at 1150 speed; 25 damage on a wall impact.' },
-        { tag: 'buff', label: 'Dodge bank', detail: '+20% wind dodge from Hundred Winds.' },
-        { tag: 'utility', label: 'Availability', detail: '25s cooldown.' },
-      ],
-      upgrade: {
-        basics:
-          'Every ability stays usable inside the funnel, every attack that lands during the storm banks '
-          + '+10% wind dodge, and every attack you land — at all times, not only in the tornado — deals '
-          + 'bonus damage equal to a fifth of your wind dodge percentage. A 60% pool is +12 on every hit.',
-        effects: [
-          { tag: 'utility', label: 'Free casting', detail: 'Every ability is usable while in tornado form.', requiresUpgrade: 'q' },
-          { tag: 'buff', label: 'Dodge per hit', detail: '+10% wind dodge for each attack that lands during the storm.', requiresUpgrade: 'q' },
-          { tag: 'damage', label: 'Dodge as damage', detail: 'Every attack you land deals bonus damage equal to your wind dodge percentage divided by 5 — a 60% pool is +12 on every hit. It applies at all times, not only inside the funnel.', requiresUpgrade: 'q' },
-        ],
-      },
-      notes: [
-        'Storm bolts thrown during tornado form deal 10 damage each.',
-      ],
-    },
-  },
-
-  perks: {
-    'air-quick': {
-      basics:
-        'Every ability recharges 20% faster. That covers the ability table and the kit\'s own clocks '
-        + 'alike — Spin Dance charges refill in 4.8s instead of 6s, and Weather Cycle comes back in 24s.',
-      cast: 'Passive.',
-      effects: [
-        { tag: 'buff', label: 'Cooldowns', detail: 'Wind Splice, Gale Glaive, Sky Grapple and Wind Breaker recharge in 80% of the time.' },
-        { tag: 'buff', label: 'Spin charges', detail: 'Each Spin Dance charge refills in 4.8s instead of 6s.' },
-        { tag: 'buff', label: 'Weather Cycle', detail: '24s instead of 30s.', requiresMastery: true },
-      ],
-    },
-    'air-gust': {
-      basics:
-        'Throwing Gale Glaive is a turn: a free Spin Dance goes off as the fans leave your hands. While '
-        + 'the glaive is still out — flying, parked or coming home — press R again to teleport to it, '
-        + 'catch it, and Spin Dance again where you land.',
-      cast: 'R throws as normal. R again while the glaive is out recalls you to it.',
-      effects: [
-        { tag: 'damage', label: 'Throw spin', detail: 'A free 20-damage Spin Dance (115px) on every throw. On contact it refunds 2s like any spin.' },
-        { tag: 'control', label: 'Recall', detail: 'Second R teleports you onto the glaive and ends it — the fans come home in your hands.' },
-        { tag: 'damage', label: 'Arrival spin', detail: 'Another free 20-damage Spin Dance where you land.' },
-        { tag: 'cost', label: 'No return pass', detail: 'A recalled glaive skips its 20-damage return leg and the +15% wind dodge a catch on the way home pays.' },
-      ],
-    },
-    'air-vacuum': {
-      basics:
-        'A windy aura 170px across your feet draws every enemy inside it toward you, and while anyone '
-        + 'is caught in it the hits that reach you are 15% softer.',
-      cast: 'Passive.',
-      effects: [
-        { tag: 'control', label: 'Draw', detail: 'Enemies within 170px are pulled toward you at 55 px/s on top of their own movement.' },
-        { tag: 'buff', label: 'Weakened', detail: 'While a foe is in the aura, incoming damage is cut by 15%.' },
+        { tag: 'damage', label: 'Stab', detail: '14 damage, +0.36 per point of stealth: 50 at a full bar. Hits everything on the line, once each.' },
+        { tag: 'movement', label: 'Lunge', detail: '50px, +2.3px per point of stealth: 280px at a full bar. The knife reaches 62px past where you stop.' },
+        { tag: 'damage', label: 'Backstab', detail: 'Double damage from within 60° of directly behind the target — up to 100.' },
+        { tag: 'cost', label: 'Stealth', detail: 'Spends all of it, hit or miss.' },
+        { tag: 'utility', label: 'Over 50 stealth', detail: 'The stab scars the floor and every cloud is blown away. New clouds crawl in 5s later.' },
+        { tag: 'damage', label: 'Barrage', detail: '3 damage a stab at 82px, doubled from behind. Costs no stealth and does not lunge; you move at 60% speed while stabbing.' },
       ],
       notes: [
-        'Hits carry no record of who threw them, so the cut applies to every hit while a foe is inside — in a duel that is the same thing.',
-        'Tornado captives and thrown foes are left to Wind Breaker; unstoppable foes are not pulled.',
+        'A fighter faces their cursor; a bot faces the way it is walking.',
+        'The first press of a hold is always the real stab, so holding with stealth banked spends it.',
       ],
     },
-    'air-blowback': {
+
+    'air-knock': {
       basics:
-        'The air a dodge displaces keeps going. Every hit your wind dodge saves throws 20% of its '
-        + 'damage at the nearest enemy — but each wind dodge now spends 15% of the pool instead of 10%.',
-      cast: 'Passive.',
+        'A short, hard blast of wind right in front of you. Enemies it hits have the wind knocked '
+        + 'out of them for 6 seconds: they turn slowly, and they are on a stamina gauge that '
+        + 'drains while they walk.',
+      cast: 'E, aimed with the cursor. 9s cooldown.',
       effects: [
-        { tag: 'damage', label: 'Reflect', detail: '20% of the dodged hit, to the nearest enemy. Sky Grapple\'s untouchable flight reflects too.' },
-        { tag: 'cost', label: 'Thinner pool', detail: 'Each wind dodge costs 15% wind dodge instead of 10%.' },
+        { tag: 'damage', label: 'Blast', detail: '10 damage to every enemy in a 100px cone about 70° wide.' },
+        { tag: 'debuff', label: 'Winded', detail: '6s. A second Knock restarts it with a full gauge.' },
+        { tag: 'control', label: 'Slow to turn', detail: 'They turn 200% slower — about 90° a second — and everything they cast goes the way they are facing.' },
+        { tag: 'control', label: 'Stamina', detail: 'Empties in 2.2s of walking, refills in 1.6s of standing still.' },
+        { tag: 'control', label: 'Exhausted', detail: 'Run the gauge dry and they move at 30% speed until it has refilled completely.' },
+        { tag: 'movement', label: 'Shove', detail: 'Bots and husks are thrown back at 380px a second for 0.17s.' },
       ],
+      notes: ['Somebody who cannot turn cannot protect their back: Knock is what sets up the doubled stab.'],
     },
-    hawk: {
+
+    'cloud-cover': {
       basics:
-        'F fires an eagle at the cursor instead of a grapple, and on a hit it drags the enemy to your '
-        + 'cursor rather than dragging you to them. The price is the whole escape: no more 1400 px/s '
-        + 'untouchable flight, which was the kit\'s only disengage.',
-      cast: 'Passive. Replaces what F does.',
+        'Wrap yourself in a sparkling cloak of rain. You are invisible, you bank stealth twice as '
+        + 'fast in a cloud, and hits land on the cloak instead of you. The cloak has 25 health and '
+        + 'loses 5 by itself every 3 seconds.',
+      cast: 'R. 22s cooldown.',
       effects: [
-        { tag: 'control', label: 'Reversed grapple', detail: 'F fires an eagle at the cursor. On hit it drags the enemy to your cursor instead of dragging you.' },
-        { tag: 'cost', label: 'No longer an escape', detail: 'You give up the 1400 px/s untouchable flight — the kit\'s only disengage — in exchange for the pull.' },
+        { tag: 'utility', label: 'Invisible', detail: 'Enemies cannot see you at all; you see yourself at 42%. Bots stop aiming at you.' },
+        { tag: 'shield', label: 'Cloak', detail: '25 HP. A hit that reaches you is taken by the cloak in full, even one larger than what the cloak has left.' },
+        { tag: 'cost', label: 'Wears off', detail: '−5 HP every 3s: 15s at most if nothing touches it.' },
+        { tag: 'buff', label: 'In a cloud', detail: 'Stealth builds at 24 a second instead of 12.' },
       ],
+      notes: ['Attacking does not take the cloak off.'],
     },
-  },
-  mastery: {
-    /**
-     * The Momentum passive above only exists once mastery is on — `AirKit.updateMomentum` zeroes
-     * the meter outright when `masteryActive` is false. It is listed in both places on purpose:
-     * as a passive because that is how it plays, and here because that is what you are buying.
-     */
-    'dancers-momentum': {
+
+    'air-combo': {
       basics:
-        'Switched off entirely unless Air Mastery is on. +5% move speed for every second you go '
-        + 'untouched, to a ceiling of +100% at twenty clean seconds, less 10% for every hit that actually '
-        + 'gets through — a dodged hit costs nothing. A second draft ring under you brightens from 0.55 '
-        + 'to 1.5 intensity as the meter fills.',
-      cast: 'Passive. It is switched off entirely until Air Mastery is active.',
+        'Three presses. The first throws 6 air knives. A white ring then closes on you: press '
+        + 'again as it lands to flip into the air and hang there, untouchable, for 3 seconds. A '
+        + 'second ring closes while you are still in the air: press again to rain knives into the floor at the '
+        + 'cursor. Miss a ring and the combo ends.',
+      cast: 'F, then F on each ring. 14s cooldown from the first press.',
       effects: [
-        { tag: 'buff', label: 'The climb', detail: '+5% move speed every second untouched — twenty clean seconds is the cap.' },
-        { tag: 'buff', label: 'The ceiling', detail: '+100%. At full momentum the dancer moves at double speed.' },
-        { tag: 'cost', label: 'The setback', detail: '−10% for every hit that actually gets through. A dodged hit costs nothing.' },
-        { tag: 'utility', label: 'The tell', detail: 'A second draft ring builds under you, brightening from 0.55 to 1.5 intensity as the meter fills — distinct from the wind-dodge ring so the two read apart.' },
+        { tag: 'damage', label: 'Volley', detail: '6 knives in a fan, 6 damage each, 640px range.' },
+        { tag: 'utility', label: 'The ring', detail: 'Appears 0.28s after the volley and closes in 0.56s. A press from 0.15s before it lands to 0.11s after counts.' },
+        { tag: 'movement', label: 'Levitate', detail: '3s above the fight. Nothing can hit you; you can move but not attack, and you bank no stealth.' },
+        { tag: 'damage', label: 'Rain', detail: '12 knives in a 160×108px block at the cursor. 16 damage to everyone in it as they land.' },
+        { tag: 'area', label: 'Dagger field', detail: 'Stays for 7s. An enemy moving inside it takes 5 damage every 0.35s. Standing still on it is safe.' },
       ],
       notes: [
-        'Only damage taken reduces it. Standing still, casting, being slowed and being grabbed all leave the meter alone.',
-        'Because the wind dodge voids a hit outright rather than reducing it, a dodged blow does not break the dance — the two mastery-era systems are built to compound.',
+        'Pressing too early or too late breaks the combo; so does letting a ring close unanswered.',
+        'The second ring lands 2.2s into the levitation, 0.8s before you would come down. Answer it and you drop with the rain; miss it and you float down empty-handed.',
       ],
     },
-    'weather-cycle': {
+
+    'tornado-blade': {
       basics:
-        'A bindable recording. For 5 seconds the winds close in and every press you make — Wind '
-        + 'Splice, Spin Dance, Gale Glaive, Sky Grapple, Wind Breaker — is written down with its beat. '
-        + 'When the window shuts, the whole sequence is danced again in order, on the same beats, each '
-        + 'cast re-aimed at where your cursor is then. The replay goes straight to the abilities: it '
-        + 'ignores every cooldown and charge, and pays none. 30s cooldown.',
-      cast: 'Bindable to R, F or Q. Opens the 5s window; the playback starts the moment it closes.',
+        'Pull out your fans and become a spinning top of wind. It skates after your cursor, grinds '
+        + 'inside the first enemy it touches, then is thrown back off them. It runs on stamina, '
+        + 'which drains over time and when you are hit. More stealth means more stamina.',
+      cast: 'Q (ultimate: paid for with charge). Steered with the cursor; nothing else can be cast until it ends.',
       effects: [
-        { tag: 'buff', label: 'The window', detail: '5 seconds of listening. Only real presses are recorded — the free Whirlwind spin is not, since it comes back with its splice.' },
-        { tag: 'buff', label: 'The playback', detail: 'Every recorded cast again, in order and on its original beat, aimed at your live cursor.' },
-        { tag: 'utility', label: 'Cooldown independent', detail: 'The replay never checks or spends a cooldown or a Spin Dance charge — your real ones keep ticking underneath.' },
-        { tag: 'utility', label: 'Availability', detail: '30s cooldown. An empty window plays nothing back.' },
+        { tag: 'buff', label: 'Stamina', detail: '6s, +0.04s per point of stealth: 10s at a full bar. Stealth is not spent.' },
+        { tag: 'cost', label: 'Being hit', detail: 'Each point of damage you take also costs 0.04s of stamina.' },
+        { tag: 'movement', label: 'Skating', detail: 'Pulled toward the cursor with very little grip, up to 640px a second. Walls bounce it back at 80% speed.' },
+        { tag: 'damage', label: 'Grind', detail: '4 damage every 0.1s for 0.9s while inside an enemy — 36 a bite. You move at 12% speed while grinding.' },
+        { tag: 'debuff', label: 'Shredded', detail: 'The enemy being ground on recharges abilities 50% slower.' },
+        { tag: 'movement', label: 'Thrown off', detail: 'Launched away at 720px a second. It cannot bite the same enemy again for 0.6s.' },
+        { tag: 'utility', label: 'Daggers', detail: 'Rolling over your own dagger field takes all 12 knives into orbit. Each deals 6 damage to an enemy it touches, then is gone.' },
       ],
       notes: [
-        'A Wind Breaker in the window means a second Wind Breaker on the replay, funnel and all.',
-        'Online, the opponent\'s replay runs on the aims they recorded; your own re-aims at your cursor.',
+        'While it grinds, the view pushes in on the two of you; offline, the fight also runs slower for that moment.',
+        'Storm (divine perk): each grinding tick also strikes for 2 lightning damage.',
       ],
     },
   },

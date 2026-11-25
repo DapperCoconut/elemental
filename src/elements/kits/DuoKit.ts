@@ -143,8 +143,6 @@ export class DuoKit {
       plantCount: 0,
       thornDragActive: false,
       enemyNearPlant: false,
-      airTornadoActive: false,
-      airWindDodge: 0,
       earthShieldHp: 0,
       mapSeekPoint: map,
     };
