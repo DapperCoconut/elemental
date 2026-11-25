@@ -7,7 +7,7 @@ import { BRASS, BRASS_DARK, BRASS_LIT, CARD_RED, GOLD_LIT, IRON_DARK, LAMP_GLOW,
 import { alive, clamp, dist, segDist, stepDt } from '../util';
 
 /**
- * The Cash Railway — Head Cashier Euphrasia Trundle, in the King's telling the woman who ran
+ * The Cash Railway — Head Cashier Melisande Trundle, in the King's telling the woman who ran
  * Counting-House Row's overhead wires and knew, by the twang of a cup, whose wages were short.
  *
  * Six tellers' desks stand round the yard, each under a brass standard, and from each standard

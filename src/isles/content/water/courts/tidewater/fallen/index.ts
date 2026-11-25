@@ -48,7 +48,7 @@ export const FALLEN: FallenBundle = {
       id: fallenId('tidewater', 'weighed-under'),
       court: 'tidewater',
       name: 'Weighed Under',
-      foeName: 'Ballast-Master Coyle',
+      foeName: 'Ballast-Master Durn',
       foeElement: 'gravity',
       difficulty: 4,
       hpMult: 1.15,

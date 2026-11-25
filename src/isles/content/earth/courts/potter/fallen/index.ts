@@ -91,7 +91,7 @@ export const FALLEN: FallenBundle = {
       id: fallenId('potter', 'wedge'),
       court: 'potter',
       name: 'Folded Over',
-      foeName: 'Wedgewife Hulda Brack',
+      foeName: 'Wedgewife Hulda Clegg',
       foeElement: 'gravity',
       difficulty: 5,
       hpMult: 1.2,

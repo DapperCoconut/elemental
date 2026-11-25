@@ -1233,8 +1233,9 @@ export function drawAcidFloor(
   }
 
   // Body: interior strips as rects, rim cells as blobs. Spent acid first, fresh over it.
-  for (const state of [CellState.Cool, CellState.Hot] as const) {
-    g.fillStyle(tint(state === CellState.Hot ? tones.live : tones.body), 1);
+  for (const state of [CellState.Cool, CellState.Hot, CellState.Red] as const) {
+    // Red acid is a Melting bomb's: untinted, so it reads as a warning whatever the skin.
+    g.fillStyle(state === CellState.Red ? 0xd42a1c : tint(state === CellState.Hot ? tones.live : tones.body), 1);
     for (let r = 0; r < rows; r++) {
       let run = -1;
       for (let c = 0; c <= cols; c++) {
@@ -1248,8 +1249,10 @@ export function drawAcidFloor(
       }
     }
     for (let i = 0; i < cells.length; i++) {
-      if (cells[i] !== state || !grid.isEdge(i)) continue;
-      g.fillCircle(grid.centerX(i) + (cellHash(i, 2) - 0.5) * 3, grid.centerY(i) + (cellHash(i, 3) - 0.5) * 3, S * 0.74);
+      // A red patch is usually cut out of the middle of a pool, so every red cell is a blob —
+      // otherwise it would have the grid's square outline.
+      if (cells[i] !== state || (state !== CellState.Red && !grid.isEdge(i))) continue;
+      g.fillCircle(grid.centerX(i) + (cellHash(i, 2) - 0.5) * 3, grid.centerY(i) + (cellHash(i, 3) - 0.5) * 3, S * (state === CellState.Red ? 0.82 : 0.74));
     }
   }
 
@@ -1261,7 +1264,12 @@ export function drawAcidFloor(
     if (h > 0.22) continue;
     const px = grid.centerX(i) + (cellHash(i, 5) - 0.5) * S * 0.6;
     const py = grid.centerY(i) + (cellHash(i, 6) - 0.5) * S * 0.6;
-    if (st === CellState.Hot) {
+    if (st === CellState.Red) {
+      g.fillStyle(0xff6a3d, 0.8);
+      g.fillCircle(px, py, 2.4 + h * 9);
+      g.fillStyle(0xffd0a0, 0.7);
+      g.fillCircle(px - 1, py - 1, 0.9 + h * 3);
+    } else if (st === CellState.Hot) {
       g.fillStyle(tint(tones.hot), 0.7);
       g.fillCircle(px, py, 2 + h * 8);
       g.fillStyle(tint(tones.wet), 0.6);
@@ -1687,5 +1695,140 @@ export function drawAfflictions(
       g.fillStyle(POISONS[3].color, 0.9);
       g.fillCircle(dx, top + 6 + p * 14, 2 + p * 1.2);
     }
+  }
+}
+
+/**
+ * The poison a filled Acid Reflux bomb carries (R+): a core of it turning inside the flask, with
+ * three beads orbiting the shell so the colour reads at a glance in the hand and in the air.
+ */
+export function drawBombFill(
+  g: Phaser.GameObjects.Graphics, x: number, y: number, r: number, kind: PoisonKind, t: number, alpha = 1,
+): void {
+  const p = POISONS[kind];
+  g.fillStyle(p.dark, 0.85 * alpha);
+  acidBlob(g, x, y + r * 0.15, r * 0.62, t * 5, 2.3, 8);
+  g.fillStyle(p.color, 0.95 * alpha);
+  acidBlob(g, x, y + r * 0.2, r * 0.42, -t * 6, 4.1, 7);
+  g.fillStyle(ACID.white, 0.7 * alpha);
+  g.fillCircle(x - r * 0.14, y + r * 0.06, Math.max(1, r * 0.1));
+  for (let i = 0; i < 3; i++) {
+    const a = t * 3.2 + (i / 3) * TAU;
+    g.fillStyle(p.color, 0.9 * alpha);
+    g.fillCircle(x + Math.cos(a) * (r + 4), y + Math.sin(a) * (r + 4) * 0.7, 1.8);
+  }
+  g.lineStyle(1.4, p.color, (0.55 + Math.sin(t * 7) * 0.2) * alpha);
+  g.strokeCircle(x, y, r + 2.5);
+}
+
+/**
+ * Consume's bottle of blood (F+): a corked phial hanging at the venom's side, the blood in it
+ * sloshing with the clock. `flecks` are the colours of the poisons that were in the bitten body —
+ * each rides in the blood as a bright bead. `full` (0–1) is how much is in it.
+ */
+export function drawBloodBottle(
+  g: Phaser.GameObjects.Graphics, x: number, y: number, t: number, flecks: readonly number[], full = 1, alpha = 1,
+): void {
+  const w = 11, h = 16;
+  const sway = Math.sin(t * 3.1) * 0.18;
+  const ca = Math.cos(sway), sa = Math.sin(sway);
+  // A point in the bottle's own frame (a across, b down from the neck).
+  const px = (a: number, b: number): number => x + ca * a - sa * b;
+  const py = (a: number, b: number): number => y + sa * a + ca * b;
+  // The cord it hangs from.
+  g.lineStyle(1.2, 0x3a2a1a, 0.9 * alpha);
+  g.lineBetween(px(0, -9), py(0, -9), px(0, -3), py(0, -3));
+  // Glass: a round belly under a short neck.
+  g.fillStyle(0x1a0507, 0.55 * alpha);
+  g.fillCircle(px(0, h * 0.5), py(0, h * 0.5), w * 0.62);
+  g.fillRect(px(0, 0) - 2.6, py(0, 0) - 1, 5.2, 6);
+  // The blood, with a slosh line that tips against the sway.
+  const level = h * 0.5 + w * 0.5 - w * 1.05 * Phaser.Math.Clamp(full, 0, 1);
+  const tip = Math.sin(t * 4.3) * 1.6;
+  g.fillStyle(0x7a0a12, alpha);
+  g.beginPath();
+  g.moveTo(px(-w * 0.5, level + tip), py(-w * 0.5, level + tip));
+  g.lineTo(px(w * 0.5, level - tip), py(w * 0.5, level - tip));
+  g.lineTo(px(w * 0.46, h * 0.72), py(w * 0.46, h * 0.72));
+  g.lineTo(px(0, h * 0.5 + w * 0.56), py(0, h * 0.5 + w * 0.56));
+  g.lineTo(px(-w * 0.46, h * 0.72), py(-w * 0.46, h * 0.72));
+  g.closePath();
+  g.fillPath();
+  g.fillStyle(0xd81c2c, 0.9 * alpha);
+  g.fillEllipse(px(0, level + 1.5), py(0, level + 1.5), w * 0.8, 2.6);
+  flecks.forEach((c, i) => {
+    const a = t * 2.4 + i * 1.9;
+    g.fillStyle(c, 0.95 * alpha);
+    g.fillCircle(px(Math.cos(a) * w * 0.24, h * 0.56 + Math.sin(a * 1.3) * 2.6), py(Math.cos(a) * w * 0.24, h * 0.56 + Math.sin(a * 1.3) * 2.6), 1.5);
+  });
+  // Rim light, the neck's lip, the cork.
+  g.lineStyle(1.3, 0xffc9c9, 0.75 * alpha);
+  g.strokeCircle(px(0, h * 0.5), py(0, h * 0.5), w * 0.62);
+  g.fillStyle(ACID.white, 0.55 * alpha);
+  g.fillEllipse(px(-w * 0.26, h * 0.34), py(-w * 0.26, h * 0.34), 2.4, 4.6);
+  g.fillStyle(0xe8d8c0, alpha);
+  g.fillRect(px(0, -1) - 3.4, py(0, -1) - 1, 6.8, 1.8);
+  g.fillStyle(0x9a6b3c, alpha);
+  g.fillRect(px(0, -3.6) - 2.4, py(0, -3.6) - 1.6, 4.8, 3.4);
+}
+
+/**
+ * The venom's own boons (Self-Inject, a drunk bottle): one vein of each running poison's colour
+ * climbing the body from the floor. Bright and fast while the venom stands on its acid — which is
+ * the only place a boon does anything — and a dim ember off it.
+ */
+export function drawBoons(
+  g: Phaser.GameObjects.Graphics, x: number, y: number, t: number, active: readonly boolean[], onAcid: boolean, alpha = 1,
+): void {
+  const lit = onAcid ? 1 : 0.35;
+  active.forEach((on, k) => {
+    if (!on) return;
+    const p = POISONS[k];
+    const base = (k / 4) * TAU + t * (onAcid ? 1.6 : 0.5);
+    g.lineStyle(2, p.color, 0.8 * lit * alpha);
+    g.beginPath();
+    for (let i = 0; i <= 8; i++) {
+      const u = i / 8;
+      const a = base + u * 1.5;
+      const rr = 22 - u * 7;
+      const vx = x + Math.cos(a) * rr, vy = y + 16 - u * 30 + Math.sin(a) * rr * 0.32;
+      if (i === 0) g.moveTo(vx, vy); else g.lineTo(vx, vy);
+    }
+    g.strokePath();
+    const head = base + 1.5;
+    g.fillStyle(p.color, lit * alpha);
+    g.fillCircle(x + Math.cos(head) * 15, y - 14 + Math.sin(head) * 4.8, onAcid ? 2.6 : 1.8);
+    if (onAcid) {
+      const q = (t * 1.4 + k * 0.25) % 1;
+      g.fillStyle(p.color, (1 - q) * 0.8 * alpha);
+      g.fillCircle(x + Math.cos(base * 0.7) * 12, y + 14 - q * 26, 1.6);
+    }
+  });
+}
+
+/**
+ * Poison Synergy (E+): two poisons reacting on one body. A braid of the pair's colours wound
+ * round the victim's waist, with a bright knot wherever the strands cross.
+ */
+export function drawSynergy(
+  g: Phaser.GameObjects.Graphics, x: number, y: number, t: number, a: PoisonKind, b: PoisonKind, slot: number,
+): void {
+  const ry = y - 2 + slot * 7;
+  const R = 24 + slot * 3;
+  [POISONS[a].color, POISONS[b].color].forEach((color, s) => {
+    g.lineStyle(1.8, color, 0.9);
+    g.beginPath();
+    for (let i = 0; i <= 28; i++) {
+      const u = (i / 28) * TAU;
+      const wob = Math.sin(u * 3 + t * 5 + s * Math.PI) * 3.2;
+      const vx = x + Math.cos(u) * R, vy = ry + Math.sin(u) * R * 0.3 + wob;
+      if (i === 0) g.moveTo(vx, vy); else g.lineTo(vx, vy);
+    }
+    g.strokePath();
+  });
+  for (let i = 0; i < 3; i++) {
+    const u = (i / 3) * TAU + (Math.PI / 6) - t * (5 / 3);
+    g.fillStyle(ACID.white, 0.85);
+    g.fillCircle(x + Math.cos(u) * R, ry + Math.sin(u) * R * 0.3, 1.7);
   }
 }

@@ -6,9 +6,9 @@ import { fallenId } from '../../../../meteor/spec';
 import { Clock, P, PCOL, dist, drawPuff } from '../util';
 
 /**
- * PLUNGING FIRE — Master-Gunner Ambrose Vane, the Prince's old tutor.
+ * PLUNGING FIRE — Master-Gunner Ambrose Kettering, the Prince's old tutor.
  *
- * Vane taught a small boy called Fuse that a shell is only arithmetic: charge, elevation, range. In
+ * Kettering taught a small boy called Fuse that a shell is only arithmetic: charge, elevation, range. In
  * the King's telling he taught him gladly. His fight has a squat siege mortar at the head of the room
  * and, beside it, the brass gunner's quadrant that lays it. The mortar lobs shells at whoever the
  * quadrant is laid on — each one a high slow arc with its landing ring marked on the floor — and a

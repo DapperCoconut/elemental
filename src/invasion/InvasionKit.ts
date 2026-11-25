@@ -1233,7 +1233,8 @@ export class InvasionKit implements HuskWorld, EffectWorld {
       if (plants.length > 0) return cityTargets.length > 0 ? [...plants, ...cityTargets] : plants;
     }
     const out: Fighter[] = [];
-    if (playerHere && !this.arena.isSilencePlayerHidden()) out.push(this.arena.player);
+    // The player, and any extra body that is part of them (String's abdomen) — husks bite those too.
+    if (playerHere && !this.arena.isSilencePlayerHidden()) out.push(...this.arena.player.bodies());
     if (this.coopHooks) out.push(...this.coopHooks.extraTargets(room));
     out.push(...cityTargets);
     return out;
@@ -1255,7 +1256,8 @@ export class InvasionKit implements HuskWorld, EffectWorld {
     if (this.city?.owns(target)) { this.city.damage(target, amount); return; }
     // A Guise clone stands in for the player in the husks' eyes; what lands on it is banked.
     if (this.arena.absorbDecoyHit?.(target, amount)) return;
-    const isLocal = target === this.arena.player || this.arena.plantTargets().includes(target);
+    const isLocal = target === this.arena.player || this.arena.player.bodySections.includes(target)
+      || this.arena.plantTargets().includes(target);
     if (isLocal) {
       // Husks are the one thing that may hit a co-op player through their
       // friendly-fire block.

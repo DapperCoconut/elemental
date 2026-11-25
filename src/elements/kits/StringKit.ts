@@ -6,11 +6,12 @@ import { Ability, CastContext } from '../Ability';
 import type { CustomStatus } from './StatusHudKit';
 import { Sfx } from '../../audio';
 import {
-  Pt, STRING, StringAvatar, StringColorFn, StringFx, bewitchedHalo, cocoon, corpseWrap, hitKnot, controlBar, hexRope,
+  ABDOMEN, AbdomenChain, Pt, STRING, StringAvatar, StringColorFn, StringFx, bewitchedHalo, cocoon, corpseWrap, hitKnot, controlBar, hexRope,
   hookTip, metalLine, pointAlong, polyLength, puppetRig, ropeLine, silkLine, spiderBody, spoolCharge, tombBar, wallTack,
   webBar, webCover, webWad,
 } from './StringVisuals';
 import { BaseAvatar } from './ElementVisuals';
+import { BodySection } from '../../entities/BodySection';
 import { makeSkinAvatar } from './skins/SkinAvatars';
 
 type Owner = 'player' | 'npc';
@@ -384,7 +385,13 @@ export interface StringArenaApi {
   setStatusIndicator(id: string, status: CustomStatus | null): void;
   /** Online: relay something only one sim decides as a pseudo-cast. */
   broadcast(id: string): void;
+  /** The abdomen: put a hit body where that side's attackers look for targets, and take it back. */
+  addBodySection(owner: Owner, f: Fighter): void;
+  removeBodySection(owner: Owner, f: Fighter): void;
 }
+
+/** A spider's abdomen: the chain it drags and the hit body riding each node. */
+interface Tail { of: Fighter; chain: AbdomenChain; parts: BodySection[] }
 
 // ── StringKit ────────────────────────────────────────────────────────────────
 
@@ -454,6 +461,7 @@ export class StringKit {
   private puppets = new Map<Fighter, Puppet>();
   /** Q+ the hosts this sim breeds spiders out of, and whose they are. */
   private infest = new Map<Fighter, { owner: Owner; next: number }>();
+  private tails: Record<Owner, Tail | null> = { player: null, npc: null };
   /** Everything this kit has written a status onto, so `reset` can hand it back clean. */
   private touched = new Set<Fighter>();
   /** F+ inside a puppet's cast: a String puppet's strings must not pull a puppet of their own. */
@@ -511,7 +519,8 @@ export class StringKit {
   private targetsOf(owner: Owner): Fighter[] {
     if (owner === 'npc' && this.api.isInvasion) return [];
     const list = owner === 'player' ? this.api.enemies : [this.api.player];
-    return list.filter((f) => this.alive(f) && this.api.isTargetable(f));
+    // A string ties a body, not a lobe of one: another spider's abdomen is not a target here.
+    return list.filter((f) => this.alive(f) && !(f instanceof BodySection) && this.api.isTargetable(f));
   }
 
   /**
@@ -779,6 +788,12 @@ export class StringKit {
     this.wads = [];
     this.puppets.clear();
     this.infest.clear();
+    // The sections went with the old scene; only the plain field on a surviving fighter is ours to clear.
+    for (const owner of BOTH) {
+      const tail = this.tails[owner];
+      if (tail?.of) tail.of.bodySections = [];
+      this.tails[owner] = null;
+    }
     this.vizT = 0;
     this.playerAvatar?.destroy(); this.playerAvatar = null;
     this.npcAvatar?.destroy(); this.npcAvatar = null;
@@ -803,6 +818,51 @@ export class StringKit {
     if (this.isString('player') && !this.playerAvatar) this.playerAvatar = this.makeAvatar('player');
     if (!this.isString('player') && this.playerAvatar) { this.playerAvatar.destroy(); this.playerAvatar = null; }
     if (this.isString('npc') && !this.npcAvatar) this.npcAvatar = this.makeAvatar('npc');
+  }
+
+  // ── The abdomen ────────────────────────────────────────────────────────────
+
+  /**
+   * A spider drags its abdomen behind it, and every lobe is a body that can be hit (`BodySection`):
+   * what lands on one lands on the spider, the red bulb at three times over. A side that stops
+   * being String (Quantum swapping its live element) loses them again. In an Invasion the npc
+   * slot is an ally or a placeholder, so it grows none.
+   */
+  private updateTails(): void {
+    for (const owner of BOTH) {
+      const f = this.fighter(owner);
+      const wanted = this.isString(owner) && !!f && f.active && !(owner === 'npc' && this.api.isInvasion);
+      let tail = this.tails[owner];
+      if (tail && (!wanted || tail.of !== f)) {
+        for (const part of tail.parts) {
+          this.api.removeBodySection(owner, part);
+          if (part.active) part.destroy();
+        }
+        if (tail.of) tail.of.bodySections = [];
+        this.rig(owner)?.setTail(null);
+        tail = this.tails[owner] = null;
+      }
+      if (!wanted) continue;
+      if (!tail) {
+        const chain = new AbdomenChain();
+        const parts = ABDOMEN.map((def) => {
+          const part = new BodySection(this.api.scene, f, def.mult, def.r);
+          part.onStruck = () => {
+            this.fx(owner).abdomenHit(part.x, part.y, def.r, def.mult > 1);
+            if (def.mult > 1) this.rig(owner)?.stung();
+          };
+          this.api.addBodySection(owner, part);
+          return part;
+        });
+        f.bodySections = parts;
+        tail = this.tails[owner] = { of: f, chain, parts };
+      }
+      // Laid out away from the middle of the arena to begin with; after that it only follows.
+      const b = this.api.bounds;
+      tail.chain.step(f.x, f.y, f.x < b.centerX ? Math.PI : 0);
+      for (let i = 0; i < tail.parts.length; i++) tail.parts[i].place(tail.chain.nodes[i].x, tail.chain.nodes[i].y);
+      this.rig(owner)?.setTail(tail.chain.nodes);
+    }
   }
 
   // ── Input ──────────────────────────────────────────────────────────────────
@@ -2081,10 +2141,11 @@ export class StringKit {
     const anyState = this.strands.length || this.hooks.length || this.bars.length || this.spiders.length
       || this.puppets.size || this.sides.player.tomb || this.sides.npc.tomb || this.playerAvatar
       || this.wads.length || this.infest.size || this.sides.player.web || this.sides.npc.web
-      || this.sides.player.swing || this.sides.npc.swing;
+      || this.sides.player.swing || this.sides.npc.swing || this.tails.player || this.tails.npc;
     if (!playerIs && !npcIs && !anyState) return;
     this.ensureLayers();
     this.ensureAvatars();
+    this.updateTails();
     const dt = Math.min(0.05, delta / 1000);
     this.vizT += dt;
 

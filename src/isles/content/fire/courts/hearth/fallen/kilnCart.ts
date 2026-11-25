@@ -6,7 +6,7 @@ import { alive, clamp, dist, frameClock } from '../gimmicks/util';
 import { fallenId } from '../../../../meteor/spec';
 
 /**
- * The Kiln Cart — Dorrit Vane, in the King's telling the carter who drove the iron cart that took
+ * The Kiln Cart — Dorrit Mapp, in the King's telling the carter who drove the iron cart that took
  * cold-hearth families up the hill to the Kiln, and never once looked behind him.
  *
  * Rails cross the room from a cart-shed in the west to the Kiln's mouth in the east, splitting at

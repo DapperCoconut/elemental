@@ -1,4 +1,4 @@
-import { saveKey } from '../data/Cheats';
+import { saveKey, isCheatMode } from '../data/Cheats';
 import type { Cond, Pt } from './IslesTypes';
 
 /**
@@ -350,6 +350,14 @@ export function courtReady(court: string): boolean {
   const ids = courtEncounters(court);
   const won = S().encounters;
   return ids.length > 0 && ids.every((id) => won.includes(id));
+}
+
+/**
+ * Whether a lock is open: an exit, door, gate, chest, sealed floor. On a cheat save every lock is —
+ * the story `Cond`s (dialogue, who is present, what has been freed) still read the real progress through `test`.
+ */
+export function unlocked(c: Cond | undefined): boolean {
+  return isCheatMode() || test(c);
 }
 
 export function test(c: Cond | undefined): boolean {

@@ -5,7 +5,7 @@ import { fallenId } from '../../../../meteor/spec';
 import { ABY, alive, dist, drawEsca } from '../palette';
 
 /**
- * The Dark Door List — Listkeeper Nell's fight (the lamplighter who, in this telling, kept the list).
+ * The Dark Door List — Listkeeper Sunniva's fight (the lamplighter who, in this telling, kept the list).
  *
  * Six hull-house doors stand round the arena, each with its angler-lamp in a jar on a bone hook.
  * A lamp eats glow-roe; its jar empties as the fight goes on, and a starved lamp goes out. A
@@ -15,8 +15,8 @@ import { ABY, alive, dist, drawEsca } from '../palette';
  * street down the middle, between the rows of doors, belongs to nobody.
  *
  * Strike a lamp and what happens depends on who you are: the player **feeds** it (a full jar,
- * the door lit again); Nell **snuffs** it. She walks the rows putting out the lamps nearest
- * you. The exploit: the list does not care whose name is on it — a dark doorstep takes Nell as
+ * the door lit again); Sunniva **snuffs** it. She walks the rows putting out the lamps nearest
+ * you. The exploit: the list does not care whose name is on it — a dark doorstep takes Sunniva as
  * readily as anyone. Keep your side lit and let her own snuffing catch her when the list is read.
  *
  * Halfway, **the list is long**: lamps starve faster, the list is read more often, and every
@@ -39,7 +39,7 @@ interface Lamp { x: number; y: number; fed: number; lockUntil: number; flickAt: 
 
 export const DARK_DOORS: GimmickDef = {
   id: ID,
-  rules: 'Starved lamps go dark; when the list is read, dark doorsteps take whoever stands on them. Strike a lamp to feed it — Nell strikes to snuff.',
+  rules: 'Starved lamps go dark; when the list is read, dark doorsteps take whoever stands on them. Strike a lamp to feed it — Sunniva strikes to snuff.',
   make(ctx: GimmickCtx): EncounterGimmick {
     const { W, H, top } = ctx;
     const ph = H - top;
@@ -190,7 +190,7 @@ function drawDoor(g: G, l: Lamp, t: number): void {
   g.lineStyle(1.5, ABY.brass, 1); g.strokeCircle(x + 7, y - 22, 3);
   g.fillStyle(ABY.coralTeal, 0.6); g.fillCircle(x - 16, y - 10, 2.5); g.fillCircle(x + 15, y - 34, 2);
   if (l.fed <= 0) {
-    // Nell's chalk: an X on the door and a tally under it.
+    // Sunniva's chalk: an X on the door and a tally under it.
     g.lineStyle(3, 0xe8e0c8, 0.85);
     g.lineBetween(x - 10, y - 40, x + 10, y - 12); g.lineBetween(x + 10, y - 40, x - 10, y - 12);
     g.lineStyle(1.5, 0xe8e0c8, 0.6);

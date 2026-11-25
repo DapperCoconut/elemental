@@ -9,7 +9,7 @@ import {
 } from '../util';
 
 /**
- * The Queen's Lamps — Hesper Gill is the Lamplighter of the Long Quay. In the star's telling she is
+ * The Queen's Lamps — Winifred Gill is the Lamplighter of the Long Quay. In the star's telling she is
  * proud of it: the Queen's lamps burn on Slickharbor's tithe oil, and not one has gone out on her
  * round in thirty years. Four of them stand at the corners of her stretch of quay.
  *
@@ -142,7 +142,7 @@ function makeLamps(ctx: GimmickCtx): EncounterGimmick {
           }
         }
       }
-      // Hesper's lighting pole: a long brass-hooked staff with a taper burning at its tip.
+      // Winifred's lighting pole: a long brass-hooked staff with a taper burning at its tip.
       const N = ctx.npc;
       if (alive(N)) {
         const bx = N.x + 12, by = N.y - 10, tx = N.x + 30, ty = N.y - 76;

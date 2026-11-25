@@ -8,12 +8,12 @@ import {
 } from '../art';
 
 /**
- * Shrouds and Stays — Topman Jory Lanyard, the rigging yard's best.
+ * Shrouds and Stays — Topman Ruan Halse, the rigging yard's best.
  *
  * Three training masts stand in the rigging yard, each held up by two stays run down to iron
  * deck-plates. Stand at a mast's foot a moment and you go up the ratlines: aloft for a few
  * seconds, where nothing on the floor can touch you, though you can still fight. In the star's
- * telling Lanyard was the rigger the Queen bought with a captain's coat, and he fights from the
+ * telling Halse was the rigger the Queen bought with a captain's coat, and he fights from the
  * crosstrees: while he is aloft he lays a musket on the stranger — a red sight-line, then the shot.
  *
  * Every stay plate is a thing to strike. Cut one and the mast leans; cut both and it comes down
@@ -103,7 +103,7 @@ function make(ctx: GimmickCtx): EncounterGimmick {
       if (f === ctx.player) { tk.hitPlayer(rode ? 22 : 26, f.x, f.y); ctx.stun(f, rode ? 900 : 700); }
       else { ctx.hit(f, Math.max(30, f.maxHp * (rode ? 0.12 : 0.1)), f.x, f.y); ctx.stun(f, rode ? 1400 : 1100); }
       m.struck.add(f);
-      if (rode) ctx.banner(f === ctx.player ? 'YOU RODE IT DOWN' : 'LANYARD RIDES IT DOWN', f === ctx.player ? '#ff9a7a' : '#9df5c8');
+      if (rode) ctx.banner(f === ctx.player ? 'YOU RODE IT DOWN' : 'HALSE RIDES IT DOWN', f === ctx.player ? '#ff9a7a' : '#9df5c8');
     }
     m.occupant = null;
   };
@@ -143,7 +143,7 @@ function make(ctx: GimmickCtx): EncounterGimmick {
         else if (time - s.since >= CLIMB_MS) { standAt.delete(f); climb(f, m, time); }
       }
 
-      // Lanyard at the crosstrees lays his musket on the stranger.
+      // Halse at the crosstrees lays his musket on the stranger.
       const up = masts.find((m) => m.occupant === ctx.npc);
       if (up && time >= nextShotAt && alive(ctx.player)) {
         nextShotAt = time + SHOT_GAP_MS;

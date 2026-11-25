@@ -5,7 +5,7 @@ this brief (every `<isle>`/`air` path, the tables below); write `content/<isle>/
 placeholder `index.ts` (`content/placeholder.ts`: placeholderCourt / placeholderPort / placeholderDungeon, genes
 `[]`) into every builder folder; add the isle to `BUNDLES`; confirm `node .check-isles.mjs` runs. Engine per isle: new
 WeatherKind/gate/hat/fishery members in IslesTypes + their drawing (IsleWorldScene drawWeather / gates, NpcArt drawHat,
-Fishing WATER_TINT + rod message), BEASTS entry + uber in SeaVoyageScene, ISLE_LAYOUT + landmark in IslesMapScene,
+Fishing WATER_TINT + rod message), BEASTS entry + uber in SeaVoyageKit, ISLE_LAYOUT + landmark in IslesMapScene,
 DUNGEON_CATCH in IsleWorldScene. All builders on Opus (`model: "opus"` — the user's preset) (the genes builder's engine findings — refused casts
 firing gene rules — are worth the cost). If the engine changed since the last isle, update `docs/isles-api.md`
 first. Update the reference reading lists if the reference isle changes. -->

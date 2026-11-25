@@ -486,7 +486,7 @@ export class TempestKit {
 
   /** Everyone this owner's wind is aimed at. */
   private foes(owner: Owner): Fighter[] {
-    const list = owner === 'player' ? this.api.enemies : [this.api.player];
+    const list = owner === 'player' ? this.api.enemies : this.api.player.bodies();
     return list.filter((f) => this.alive(f));
   }
 

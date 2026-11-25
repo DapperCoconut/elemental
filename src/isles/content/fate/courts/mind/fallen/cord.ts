@@ -5,7 +5,7 @@ import { CANDLE, GILT, GILT_DARK, GILT_LIT, MIND, MIND_LIT, VELVET, VELVET_DARK,
 import { alive, clamp, dist } from '../util';
 
 /**
- * Out of Body — Trance-Medium Perdita Kellaway of Séance Row, who sat in a wing-chair with her
+ * Out of Body — Trance-Medium Zenobia Kellaway of Séance Row, who sat in a wing-chair with her
  * eyes rolled up and walked abroad without her body. In the King's telling she walked into
  * gamblers' houses at night and came back knowing where the stake was hidden.
  *

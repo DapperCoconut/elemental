@@ -6,15 +6,15 @@ import { fallenId } from '../../../../meteor/spec';
 import { Clock, O, OCOL, alive, clamp, dist, drawBone, drawSkull, jit } from '../util';
 
 /**
- * THE BONE-MEAL ROUND — Jory Fenn, Bone-Miller of the Long Beds.
+ * THE BONE-MEAL ROUND — Caddoc Fenn, Bone-Miller of the Long Beds.
  *
  * Nothing is wasted in the Ossuary: what is too broken to plant is milled into meal for the
- * Empress's roses. In the King's telling Jory ran the edge-runner — a great millstone stood on its
+ * Empress's roses. In the King's telling Caddoc ran the edge-runner — a great millstone stood on its
  * rim, rolling round and round a bone-strewn floor on a timber yoke from a centre post — and never
  * asked whose bones were in the trough.
  *
  * The stone rolls round the pivot without stopping and crushes whatever it rolls over, either
- * fighter. Every few seconds Jory knocks the yoke's pin along the beam: a new track is chalked on
+ * fighter. Every few seconds Caddoc knocks the yoke's pin along the beam: a new track is chalked on
  * the floor — the one nearest wherever YOU are — and after a breath the stone slides out onto it.
  * Fresh meal lies behind the stone and drags at the feet. Strike the centre post and the yoke
  * jerks into reverse: roll the stone back into him. Halfway down a second stone goes on the far end.
@@ -63,7 +63,7 @@ function make(ctx: GimmickCtx): EncounterGimmick {
       reversedAt = now;
       dir = -dir;
       ctx.sfx('gear-turn');
-      ctx.float(C.x, C.y - 56, by === 'player' ? 'YOKE REVERSED' : 'JORY REVERSES THE YOKE', by === 'player' ? OCOL.green : OCOL.bone);
+      ctx.float(C.x, C.y - 56, by === 'player' ? 'YOKE REVERSED' : 'CADDOC REVERSES THE YOKE', by === 'player' ? OCOL.green : OCOL.bone);
     },
   });
 

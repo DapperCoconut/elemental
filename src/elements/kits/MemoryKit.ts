@@ -381,7 +381,7 @@ export class MemoryKit {
 
   private targetsOf(owner: Owner): Fighter[] {
     if (owner === 'npc' && this.api.isInvasion) return [];
-    const list = owner === 'player' ? this.api.enemies : [this.api.player];
+    const list = owner === 'player' ? this.api.enemies : this.api.player.bodies();
     return list.filter((f) => this.alive(f) && this.api.isTargetable(f));
   }
 

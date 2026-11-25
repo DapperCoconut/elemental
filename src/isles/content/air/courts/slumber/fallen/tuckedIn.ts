@@ -112,7 +112,7 @@ function make(ctx: GimmickCtx): EncounterGimmick {
     slack.push({ pts: laidPts(s, progress(s, time)), at: time });
     for (const p of s.pins) p.remove();
     seams = seams.filter((o) => o !== s);
-    ctx.sfx('snap');
+    ctx.sfx('trap-snap');
     const c = { x: s.rect.x + s.rect.w / 2, y: s.rect.y + s.rect.h / 2 };
     ctx.flash(c.x, c.y, EMBER);
     if (!seams.length) nextAt = time + REST_MS;
@@ -190,7 +190,7 @@ function make(ctx: GimmickCtx): EncounterGimmick {
             s.snagged.add(f);
             ctx.root(f, SNAG_MS);
             ctx.nudge(f, prev.x - f.x, prev.y - f.y);
-            ctx.sfx('snap');
+            ctx.sfx('trap-snap');
             s.prev.set(f, { x: prev.x, y: prev.y });
             continue;
           }

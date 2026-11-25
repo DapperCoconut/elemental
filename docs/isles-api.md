@@ -82,7 +82,7 @@ Poi =
   | { kind:'chest'; id; at; coins?; item?; orbs?; open?: Cond }
   | { kind:'door'; at; to: areaId; arrive: Pt; label; open?: Cond; lockedText? }   // non-edge link
   | { kind:'water'; id; shape: Rect; fishery: fisheryId }                         // cast within reach
-  | { kind:'mooring'; at; isle }                                                  // SeaVoyageScene start
+  | { kind:'mooring'; at; isle }                                                  // a voyage (SeaVoyageKit, in ArenaScene) starts here
   | { kind:'lever'; at; flag; label }                                             // one-way, sets flag
 WorldHazard =   // no HP in the world: a hit = back to last checkpoint
   | { kind:'jet'; rect; periodMs; onMs; offsetMs?; color? }

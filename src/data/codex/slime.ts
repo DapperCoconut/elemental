@@ -77,7 +77,7 @@ const slime: ElementCodex = {
         + 'a 16px-wide line of acid behind it as it flies and leaves a 34px puddle under whoever it hits. The '
         + 'barrel holds 3 shots; the third starts a 1-second reload in which you stab yourself with the '
         + 'needle and draw it full again. 0.42s between shots.',
-      cast: 'Click, aimed at the cursor. Hold to keep firing.',
+      cast: 'Click, aimed at the cursor. Hold to keep firing. With the upgrade, right click injects yourself.',
       effects: [
         { tag: 'damage', label: 'The shot', detail: '12 damage per blob, 720 px/s.' },
         { tag: 'debuff', label: 'Toxin', detail: '2 toxin on every hit.' },
@@ -87,10 +87,18 @@ const slime: ElementCodex = {
       ],
       upgrade: {
         basics:
-          'Every shot that connects also eats 12 points of the target\'s maximum HP — the damage it dealt, '
-          + 'gone for the rest of the match.',
+          'Right click turns a shot on yourself. It spends one shot from the barrel, leaves a 40px puddle of '
+          + 'fresh acid under you and gives you 5 self-toxin: each stack makes every new positive effect on '
+          + 'you last 2% longer, up to three times as long at 100. If a poison was loaded it goes into you as '
+          + 'a boon instead — 8 seconds of that poison working for you, but only while you stand on your own acid.',
         effects: [
-          { tag: 'debuff', label: 'Max HP eaten', detail: 'Every Inject hit reduces the target\'s maximum HP by the 12 damage it dealt.', requiresUpgrade: 'click' },
+          { tag: 'cost', label: 'One shot', detail: 'Uses 1 of the 3 shots in the barrel (the last one starts the 1s reload) and any loaded poison. 0.42s between stabs.', requiresUpgrade: 'click' },
+          { tag: 'summon', label: 'Puddle', detail: 'A 40px puddle of fresh acid at your feet.', requiresUpgrade: 'click' },
+          { tag: 'buff', label: 'Self-toxin', detail: '+5 a stab, capped at 100, never fading. +2% duration per stack on every timed positive effect that lands on you, from any source.', requiresUpgrade: 'click' },
+          { tag: 'shield', label: 'Disintegrating boon', detail: '8s: 30% less damage taken while you stand on your acid.', requiresUpgrade: 'click' },
+          { tag: 'buff', label: 'Paralyzing boon', detail: '8s: ×1.3 move speed while you stand on your acid.', requiresUpgrade: 'click' },
+          { tag: 'buff', label: 'Purging boon', detail: '8s: ×1.25 damage from everything in the kit while you stand on your acid.', requiresUpgrade: 'click' },
+          { tag: 'heal', label: 'Melting boon', detail: '8s: 2 HP every 0.5s while you stand on your acid.', requiresUpgrade: 'click' },
         ],
       },
       notes: [
@@ -116,9 +124,17 @@ const slime: ElementCodex = {
       ],
       upgrade: {
         basics:
-          'The vial fills two shots instead of one: the next 2 Inject shots both carry the poison.',
+          'Two of your poisons running on the same enemy react, and each of the six pairs does something '
+          + 'of its own for as long as both last: more damage the faster they move, damage for every buff '
+          + 'stripped, vulnerability that builds on your acid, a lock on every ability that moves them, a '
+          + 'wider trail of acid, or negative effects that grow each time they are hit.',
         effects: [
-          { tag: 'buff', label: 'Double Dose', detail: '2 loaded shots per pick instead of 1.', requiresUpgrade: 'e' },
+          { tag: 'debuff', label: 'Disintegrating + Paralyzing', detail: 'Up to +30% damage taken, scaling with their speed: nothing at a standstill, all of it at 260 px/s.', requiresUpgrade: 'e' },
+          { tag: 'damage', label: 'Disintegrating + Purging', detail: '12 damage for each buff Purging strips off them, counting at most 3 per strip (36). Purging strips every 0.3s.', requiresUpgrade: 'e' },
+          { tag: 'debuff', label: 'Disintegrating + Melting', detail: '+3% damage taken for every second they stand on your acid, up to +30%. It holds while both poisons run and is lost when either ends.', requiresUpgrade: 'e' },
+          { tag: 'control', label: 'Paralyzing + Purging', detail: 'Every ability of theirs that moves them refuses to cast at all — not just the movement in it — until one of the two runs out.', requiresUpgrade: 'e' },
+          { tag: 'summon', label: 'Paralyzing + Melting', detail: 'Their Melting drip becomes a 24px puddle every 0.3s instead of 13px every 0.45s.', requiresUpgrade: 'e' },
+          { tag: 'debuff', label: 'Purging + Melting', detail: 'Each time they take damage, every timed negative effect running on them gains 0.25s.', requiresUpgrade: 'e' },
         ],
       },
       notes: [
@@ -145,17 +161,23 @@ const slime: ElementCodex = {
       ],
       upgrade: {
         basics:
-          'The acid a bomb leaves spreads on its own: every 2 seconds each crater and cluster pool rolls a '
-          + '20% chance to bud a smaller pool 20–50px away, at 55% of the parent\'s radius with a floor of 18px.',
+          'Use Pick Your Poison while the bomb is in your hand and the vial goes into the bomb instead of '
+          + 'the gun. Everyone the blast catches gets that poison, and the bomb itself changes: Disintegrating '
+          + 'hits half as hard again and leaves them fully vulnerable, Paralyzing stuns, Purging is true '
+          + 'damage and makes a third of all your damage true for 8 seconds, and Melting splashes wider and '
+          + 'boils the acid already on the floor red.',
         effects: [
-          { tag: 'summon', label: 'Budding', detail: 'Every 2s each bomb pool rolls a 20% chance to spawn a child 20–50px away.', requiresUpgrade: 'r' },
-          { tag: 'area', label: 'Child size', detail: '55% of the parent\'s radius, floored at 18px. Children bud too.', requiresUpgrade: 'r' },
-          { tag: 'utility', label: 'Capped', detail: 'Budding stops at 60 remembered pools.', requiresUpgrade: 'r' },
+          { tag: 'utility', label: 'Filling it', detail: 'E with the bomb held fills the bomb and spends Pick Your Poison\'s 7s cooldown; the gun is not loaded. The blast applies the poison to everyone it hits.', requiresUpgrade: 'r' },
+          { tag: 'damage', label: 'Disintegrating bomb', detail: '×1.5 blast damage (37 / 57 / 78), and the full 15% damage-taken vulnerability for 8s at once.', requiresUpgrade: 'r' },
+          { tag: 'control', label: 'Paralyzing bomb', detail: 'A 1.5s stun on everyone caught: no moving, no casting.', requiresUpgrade: 'r' },
+          { tag: 'damage', label: 'Purging bomb', detail: 'The blast is true damage. For 8s after it bursts, one third of every hit the kit deals is true damage.', requiresUpgrade: 'r' },
+          { tag: 'area', label: 'Melting bomb', detail: '×1.3 blast radius (104 / 137 / 169px). Acid already inside it turns red: 1.5 damage per cell to the first enemy to touch it — five times fresh acid — and then it is ordinary acid again.', requiresUpgrade: 'r' },
         ],
       },
       notes: [
         'The bomb\'s size is read when it is thrown, and the one in your hand already shows it.',
         'The clustered bomb keeps flying and still bursts where it lands.',
+        'A filled bomb that is shot into clusters by a plain shot hands its own poison to the 5 cluster bombs.',
       ],
     },
 
@@ -166,7 +188,7 @@ const slime: ElementCodex = {
         + 'up biting everything within 95px: 30 damage, every negative effect on them restored to the '
         + 'length it was applied at, and their toxin raised by 25%. 5s cooldown, and 1.5s after surfacing '
         + 'before you can go under again.',
-      cast: 'F to submerge, F again to surface and bite.',
+      cast: 'F to submerge, F again to surface and bite. With the upgrade, F while holding a bottle drinks it first.',
       effects: [
         { tag: 'shield', label: 'Invincible', detail: '100% immune while burrowed — a flat immunity, not a reduction.' },
         { tag: 'movement', label: 'Faster underground', detail: '×1.35 move speed while under.' },
@@ -177,12 +199,16 @@ const slime: ElementCodex = {
       ],
       upgrade: {
         basics:
-          'Coming up is also a blast: 20 damage in a 90px radius, everyone caught drips a 22px splash of '
-          + 'your acid every second for 5 seconds, and the bite multiplies toxin by 1.5 instead of 1.25.',
+          'Burrow no longer needs acid: dive anywhere and tunnel under clean floor, trailing acid, for up to '
+          + 'half a second before you are forced up. Biting someone fills a bottle with their blood, and '
+          + 'pressing F again drinks it: every timed positive effect they had lands on you for twice the time '
+          + 'it had left, and each of your poisons that was running in them becomes that poison\'s boon on you.',
         effects: [
-          { tag: 'damage', label: 'Surfacing blast', detail: '20 damage in a 90px radius whenever you surface, by choice or forced out.', requiresUpgrade: 'f' },
-          { tag: 'debuff', label: 'Toxin ×1.5', detail: 'The bite multiplies toxin by 1.5 instead of 1.25 — 40 becomes 60.', requiresUpgrade: 'f' },
-          { tag: 'summon', label: 'Dripping', detail: 'They drop a 22px splash of your acid every 1s for 5s.', requiresUpgrade: 'f' },
+          { tag: 'movement', label: 'Tunnelling', detail: 'Burrow can be entered off acid. Off your acid you surface (with the bite) after 0.5s; back on it the clock resets.', requiresUpgrade: 'f' },
+          { tag: 'summon', label: 'The trail', detail: 'A 13px line of fresh acid along the tunnel, appearing 0.65s behind you or all at once when you surface.', requiresUpgrade: 'f' },
+          { tag: 'resource', label: 'The bottle', detail: 'A bite on anyone carrying a timed buff or one of your poisons fills it. One bottle at a time; several bodies bitten at once share it.', requiresUpgrade: 'f' },
+          { tag: 'buff', label: 'Drinking it', detail: 'F with a bottle in hand: each stolen buff runs on you for 2× what it had left on them. Shields and other pools are not timed and are not copied.', requiresUpgrade: 'f' },
+          { tag: 'buff', label: 'Boons', detail: 'Each of your four poisons that was in them gives you its 8s boon — see Inject\'s upgrade for what each does. Self-Inject is not needed.', requiresUpgrade: 'f' },
         ],
       },
       notes: [

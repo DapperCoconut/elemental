@@ -319,7 +319,7 @@ export class PressureKit {
     // In an Invasion the npc slot is on the player's side; a co-op ally's attacks resolve on its
     // own machine. Here they must touch nobody.
     if (owner === 'npc' && this.api.isInvasion) return [];
-    const list = owner === 'player' ? this.api.enemies : [this.api.player];
+    const list = owner === 'player' ? this.api.enemies : this.api.player.bodies();
     return list.filter((f) => this.alive(f) && this.api.isTargetable(f));
   }
 

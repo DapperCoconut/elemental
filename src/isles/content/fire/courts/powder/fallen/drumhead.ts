@@ -6,9 +6,9 @@ import { fallenId } from '../../../../meteor/spec';
 import { Clock, P, PCOL, dist } from '../util';
 
 /**
- * DRUMHEAD COURT — Drum-Major Rennet Coyle.
+ * DRUMHEAD COURT — Drum-Major Rennet Skaife.
  *
- * In the King's telling, Coyle beat the drum at every flogging on the drill square, and the fort
+ * In the King's telling, Skaife beat the drum at every flogging on the drill square, and the fort
  * moved to his sticks. Here the whole room is on parade. A drum roll gives the order — HALT or
  * QUICK MARCH — and then the order is *enforced*: under HALT anyone who shifts more than a boot's
  * width (a dash counts) is lashed; under QUICK MARCH anyone who does not cover ground is lashed.

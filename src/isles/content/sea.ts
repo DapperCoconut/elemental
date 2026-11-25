@@ -12,9 +12,9 @@ export const BOATS: BoatDef[] = [
 
 export const DOCK_UPGRADES: DockUpgradeDef[] = [
   { id: 'hull', name: 'Iron-Banded Hull', text: '+2 hull per level', prices: [140, 320, 640] },
-  { id: 'sails', name: 'Oiled Sails', text: '+12% speed per level', prices: [120, 280, 560] },
-  { id: 'rudder', name: 'Long Rudder', text: '+15% handling per level', prices: [100, 240, 480] },
-  { id: 'cannon', name: 'Bow Cannon', text: 'Fires faster and harder per level', prices: [160, 360, 720] },
+  { id: 'sails', name: 'Oiled Sails', text: '+12% speed per level: shorter crossings', prices: [120, 280, 560] },
+  { id: 'rudder', name: 'Long Rudder', text: 'Steers wide: fewer rocks find the hull per level', prices: [100, 240, 480] },
+  { id: 'cannon', name: 'Bow Cannon', text: 'A bow gun that picks its own marks; faster and harder per level', prices: [160, 360, 720] },
   { id: 'pump', name: 'Bilge Pump', text: 'Slowly repairs hull at sea', prices: [220, 520] },
-  { id: 'net', name: 'Trawl Net', text: 'Scoops floating loot from further away', prices: [90, 210] },
+  { id: 'net', name: 'Trawl Net', text: 'Hauls passing loot aboard from further off the rail', prices: [90, 210] },
 ];

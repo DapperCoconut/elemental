@@ -1,6 +1,7 @@
 import type { CourtBundle } from '../../../../IslesTypes';
 import { LIBRETTO_AREA } from './area';
 import { LIBRETTO_ENCOUNTERS, LIBRETTO_GIMMICKS } from './encounters';
+import { FALLEN } from './fallen';
 import { LIBRETTO_FLOOR } from './floor';
 import { ART_FOLIO, LIBRETTO_FISH, LIBRETTO_FISHERIES, LIBRETTO_ITEMS, LIBRETTO_SCRIPTS, LIBRETTO_SHOPS } from './items';
 import { LIBRETTO_COLOR } from './palette';
@@ -37,4 +38,5 @@ export const LIBRETTO_COURT: CourtBundle = {
   shops: LIBRETTO_SHOPS,
   fish: LIBRETTO_FISH,
   fisheries: LIBRETTO_FISHERIES,
+  fallen: FALLEN,
 };

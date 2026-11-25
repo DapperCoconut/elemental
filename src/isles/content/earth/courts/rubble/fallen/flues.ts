@@ -6,13 +6,13 @@ import { BLAST, DUST_DARK, FUSE, IRON, IRON_LIT, LIME_DARK, SCREE_DARK, SCREE_DE
 import { alive, clamp, dist, stepDt } from '../util';
 
 /**
- * Smoked Out — Sweep Odile Marchbank. The Sunken Street is a market buried to its roofs; the pickers
+ * Smoked Out — Sweep Avice Marchbank. The Sunken Street is a market buried to its roofs; the pickers
  * live in the houses underneath, and their chimneys still stand out of the spoil. In the King's
- * telling Odile swept those chimneys, knew which ones smoked, and smoked the families out for the
+ * telling Avice swept those chimneys, knew which ones smoked, and smoked the families out for the
  * Regent's men — one fire down one flue and every hearth on the street coughed.
  *
  * Five chimney stacks stand in the yard, joined under the floor by the old flues (you can see their
- * soot-lines through the broken paving). Odile kneels at the chimney nearest her and lights it — she
+ * soot-lines through the broken paving). Avice kneels at the chimney nearest her and lights it — she
  * is held a moment — and the smoke runs out along every flue, a dark pulse you can watch, and bursts
  * out of every *open* chimney it reaches: a choking cloud that hurts and silences. Strike a chimney
  * to cap it (strike again to open it): smoke passes a capped stack by. The fewer chimneys open, the
@@ -108,7 +108,7 @@ function make(ctx: GimmickCtx): EncounterGimmick {
       }
       if (!twin && npc.hp < npc.maxHp * 0.5) { twin = true; ctx.banner('TWO FIRES DOWN THE FLUES', '#ffb070'); ctx.sfx('flame-burst'); }
 
-      // Odile kneels and lights the stack nearest her (two, later).
+      // Avice kneels and lights the stack nearest her (two, later).
       if (!run && !lightAt && time >= nextFire && alive(npc)) {
         const a = nearest(npc.x, npc.y, () => true);
         lightSrc = [a];

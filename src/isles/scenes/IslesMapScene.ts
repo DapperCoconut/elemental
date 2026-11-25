@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { isCheatMode } from '../../data/Cheats';
 import { FONT_DISPLAY, FONT_UI } from '../../ui';
 import { Sfx } from '../../audio';
 import * as Save from '../IslesSave';
@@ -208,7 +209,7 @@ export class IslesMapScene extends Phaser.Scene {
     const a = getArea(id);
     if (!a) return;
     if (id === this.from) { this.close(); return; }
-    if (!Save.S().waystones.includes(id)) { Sfx.play('ui-denied'); this.note = `Walk to ${a.name} and touch its waystone first.`; this.render(); return; }
+    if (!Save.S().waystones.includes(id) && !isCheatMode()) { Sfx.play('ui-denied'); this.note = `Walk to ${a.name} and touch its waystone first.`; this.render(); return; }
     const ws = a.pois.find((p) => p.kind === 'waystone');
     const pos = ws && 'at' in ws ? { x: ws.at.x, y: ws.at.y + 46 } : a.spawn;
     Sfx.play('teleport');
@@ -674,7 +675,7 @@ export class IslesMapScene extends Phaser.Scene {
         void t;
       }
       const a = getArea(this.sel);
-      const attuned = Save.S().waystones.includes(this.sel);
+      const attuned = Save.S().waystones.includes(this.sel) || isCheatMode();
       txt(56, 560, a ? `${a.name} — ${a.subtitle}` : '', { fontFamily: FONT_DISPLAY, fontSize: '15px', color: '#3a2412' });
       txt(56, 584, this.sel === this.from ? 'You are here.' : attuned ? '[E] Fast travel — waystone attuned' : 'Not attuned: walk there and touch its waystone.', { fontFamily: FONT_UI, fontSize: '13px', color: attuned ? '#1a5a8a' : '#6a4a2a' });
     } else {

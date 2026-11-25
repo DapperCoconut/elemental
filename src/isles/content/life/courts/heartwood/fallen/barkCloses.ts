@@ -59,7 +59,7 @@ function make(ctx: GimmickCtx): EncounterGimmick {
         if (now - kn.struckAt < 450 || now < kn.shutUntil) return;
         kn.struckAt = now;
         if (kn.who) { kn.k = Math.min(1, kn.k + 0.4); ctx.sfx('stone-rise'); ctx.float(kn.x, kn.y - 50, 'GROWING', '#f6f3ea'); }
-        else if (kn.k > 0) { kn.k = 0; ctx.sfx('snap'); ctx.float(kn.x, kn.y - 50, 'SPLIT', '#f6f3ea'); }
+        else if (kn.k > 0) { kn.k = 0; ctx.sfx('trap-snap'); ctx.float(kn.x, kn.y - 50, 'SPLIT', '#f6f3ea'); }
       },
     });
   }

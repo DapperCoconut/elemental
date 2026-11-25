@@ -624,7 +624,7 @@ export class DreamKit {
   /** Everything this side is allowed to hurt. */
   private targetsOf(owner: Owner): Fighter[] {
     if (owner === 'player') return this.api.enemies.filter((f) => this.alive(f) && this.api.isTargetable(f));
-    return this.api.isInvasion ? [] : [this.api.player].filter((f) => this.alive(f));
+    return this.api.isInvasion ? [] : this.api.player.bodies().filter((f) => this.alive(f));
   }
 
   /** Every body the kit has to look after this frame. */

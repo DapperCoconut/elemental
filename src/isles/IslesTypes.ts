@@ -256,7 +256,7 @@ export type Poi =
   | { kind: 'door'; at: Pt; to: string; arrive: Pt; label: string; open?: Cond; lockedText?: string }
   /** Fishing water. Cast from anywhere within `reach` of the shape. */
   | { kind: 'water'; id: string; shape: Rect; fishery: string }
-  /** The dock's mooring — where `SeaVoyageScene` starts from. */
+  /** The dock's mooring — where a voyage (`SeaVoyageKit`) starts from. */
   | { kind: 'mooring'; at: Pt; isle: string }
   /** Pull it to set `flag` (opens the gates that wait on it). One-way. */
   | { kind: 'lever'; at: Pt; flag: string; label: string }
@@ -839,9 +839,11 @@ export interface IsleDef {
 /** What rides ArenaScene's `isles` payload. */
 export interface IslesFightPayload {
   slot: number;
-  kind: 'encounter' | 'prince' | 'monarch' | 'warden' | 'councilor';
-  /** Encounter id, prince id or monarch id. */
+  kind: 'encounter' | 'prince' | 'monarch' | 'warden' | 'councilor' | 'voyage';
+  /** Encounter id, prince id or monarch id (a voyage: its destination). */
   id: string;
+  /** `kind: 'voyage'` — where the boat is bound: an isle id, `'pinnacle'` or `'wastes'`. Fought from the deck (SeaVoyageKit). */
+  voyage?: { dest: string };
   court?: string;
   /** Where to put the player back. */
   area: string;

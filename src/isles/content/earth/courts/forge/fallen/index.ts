@@ -114,7 +114,7 @@ export const FALLEN: FallenBundle = {
       id: fallenId('forge', 'glare'),
       court: 'forge',
       name: 'The Glare of Number Two',
-      foeName: 'Bryony Hale, Keeper of Number Two',
+      foeName: 'Bryony Stithy, Keeper of Number Two',
       foeElement: 'light',
       difficulty: 5,
       hpMult: 1.2,

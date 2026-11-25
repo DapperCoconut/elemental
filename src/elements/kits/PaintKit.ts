@@ -620,7 +620,7 @@ export class PaintKit implements SummonPurgeTarget {
   private get bottom(): number { return this.api.height - ARENA_PAD; }
 
   private targetsOf(owner: Owner): Fighter[] {
-    const list = owner === 'player' ? this.api.enemies : [this.api.player];
+    const list = owner === 'player' ? this.api.enemies : this.api.player.bodies();
     return list.filter((f) => this.alive(f) && this.api.isTargetable(f));
   }
 

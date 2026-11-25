@@ -6,9 +6,9 @@ import { fallenId } from '../../../../meteor/spec';
 import { Clock, O, OCOL, alive, clamp, dist, drawBone, drawLily, drawSkull, jit } from '../util';
 
 /**
- * WEEP WITHOUT A SOUND — Dorcas Vell, Mourning-Warden of the Ossuary.
+ * WEEP WITHOUT A SOUND — Thomasin Scobie, Mourning-Warden of the Ossuary.
  *
- * "Mourners not admitted." In the King's telling Dorcas walked the Long Beds at night with a
+ * "Mourners not admitted." In the King's telling Thomasin walked the Long Beds at night with a
  * hand-bell muffled in felt, and wrote down anyone who wept aloud over a grave. She says the dead
  * sleep light down here, and that noise is how you wake them.
  *
@@ -18,7 +18,7 @@ import { Clock, O, OCOL, alive, clamp, dist, drawBone, drawLily, drawSkull, jit 
  * they stand and, a breath later, a buried hand closes there — it roots and crushes everyone inside.
  * Walk out of the ring and it closes on nothing.
  *
- * Dorcas makes noise too: her casts fill her own meter and the dead rise under her just the same.
+ * Thomasin makes noise too: her casts fill her own meter and the dead rise under her just the same.
  * The exploit is to stay quiet while she spends, and to fight beside her ring when it opens — or to
  * let your own ring open, and hold her in it. Halfway down she is weeping herself: the dead reach
  * twice — a second hand follows whoever woke them, wherever they ran.
@@ -66,7 +66,7 @@ function make(ctx: GimmickCtx): EncounterGimmick {
     const f = fighter(s);
     grasps.push({ x: f.x, y: f.y + 10, at: now, closeAt: now + tk.warn(delay), owner: s, closed: false, follows, seed: ++seq * 2.3 });
     ctx.sfx('curse-cast');
-    ctx.float(f.x, f.y - 56, s === 'player' ? 'THE BED WAKES UNDER YOU' : 'THE BED WAKES UNDER DORCAS', s === 'player' ? OCOL.red : OCOL.green);
+    ctx.float(f.x, f.y - 56, s === 'player' ? 'THE BED WAKES UNDER YOU' : 'THE BED WAKES UNDER THOMASIN', s === 'player' ? OCOL.red : OCOL.green);
   };
 
   const addNoise = (s: Side, amount: number): void => {
@@ -100,7 +100,7 @@ function make(ctx: GimmickCtx): EncounterGimmick {
       if (dt === 0) return;
       if (!weeping && ctx.npc.hp < ctx.npc.maxHp * 0.5) {
         weeping = true;
-        ctx.banner('DORCAS WEEPS — THE DEAD REACH TWICE', OCOL.holy);
+        ctx.banner('THOMASIN WEEPS — THE DEAD REACH TWICE', OCOL.holy);
         ctx.sfx('screech');
       }
       for (const s of ['player', 'npc'] as Side[]) noise[s] = Math.max(0, noise[s] - DECAY * dt);
@@ -157,7 +157,7 @@ function make(ctx: GimmickCtx): EncounterGimmick {
           g.beginPath(); g.arc(r.x, r.y - 6, 20 + kk * (r.big ? 110 : 70), -Math.PI * 0.9, -Math.PI * 0.1); g.strokePath();
         }
       }
-      // A little bell-meter over Dorcas: how near she is to waking her own bed.
+      // A little bell-meter over Thomasin: how near she is to waking her own bed.
       const n = ctx.npc;
       if (alive(n)) drawMeter(g, n.x, n.y - 62, noise.npc / FULL, time);
     },
@@ -238,7 +238,7 @@ function drawHand(g: Phaser.GameObjects.Graphics, gr: Grasp, k: number): void {
   g.fillStyle(O.bone, a); g.fillRoundedRect(x + 18, y - h * 0.8, 12, 9, 4);
 }
 
-/** Dorcas's muffled hand-bell over her head: felt-wrapped, filling with her own noise. */
+/** Thomasin's muffled hand-bell over her head: felt-wrapped, filling with her own noise. */
 function drawMeter(g: Phaser.GameObjects.Graphics, x: number, y: number, k: number, time: number): void {
   const swing = k > 0.7 ? Math.sin(time / 70) * 0.25 : 0;
   const bx = x + Math.sin(swing) * 6;

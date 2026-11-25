@@ -5,7 +5,7 @@ import { fallenId } from '../../../../meteor/spec';
 import { Clock, S, alive, clamp, dist, jit } from '../util';
 
 /**
- * LOOSE FROM THE PEN — Ebba Galloway, Penkeeper (plasma).
+ * LOOSE FROM THE PEN — Oda Galloway, Penkeeper (plasma).
  *
  * Behind the lightning gate north-east of the Rod Field is the Charging Pen, where Stormeye keeps
  * the ball lightning the rods catch. In the star's telling its keeper lets the balls out on whoever
@@ -16,7 +16,7 @@ import { Clock, S, alive, clamp, dist, jit } from '../util';
  * So the rule is about stillness. Stand still and a ball loses interest in you and wanders to the
  * other fighter; run and you call every ball in the yard. Balls are slower than a walk, so you can
  * always lead one away. And they can be STRUCK: a blow bats a ball away from the striker at speed,
- * and a batted ball bursts on the first fighter it reaches — bat it into Ebba.
+ * and a batted ball bursts on the first fighter it reaches — bat it into Oda.
  *
  * Past half she throws the pen open: balls come two at a time, and two that touch fuse into a
  * great ball that stuns instead of silences.

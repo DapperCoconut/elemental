@@ -6,7 +6,7 @@ import { fallenId } from '../../../../meteor/spec';
 import { Clock, R, RCOL, alive, dist, drawCrack, jit } from '../util';
 
 /**
- * SKIP SHOT — Gunner Merriwether Coyle (gunpowder).
+ * SKIP SHOT — Gunner Merriwether Slade (gunpowder).
  *
  * The revenue cutter's swivel gunner fired the warning shots that kept Rimefast's fleet in its
  * ice. In the star's telling he aimed lower. A swivel gun on a post at the edge of the ice swings

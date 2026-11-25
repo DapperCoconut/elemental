@@ -6,7 +6,7 @@ import { fallenId } from '../../../../meteor/spec';
 import { CAL, dist, makeClock } from '../palette';
 
 /**
- * Black Mirror — Glasscutter Obsa Vane (Gunpowder).
+ * Black Mirror — Glasscutter Obsa Veck (Gunpowder).
  *
  * Obsa cut the Kiln's window-glass, the polished black panes the King looked out of; in the
  * telling she cut them for him gladly. She fights among three of her best sheets, stood on

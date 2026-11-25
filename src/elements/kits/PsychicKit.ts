@@ -497,7 +497,7 @@ export class PsychicKit implements SummonPurgeTarget, FormRevertTarget {
     // In an Invasion the npc slot is on the player's side. A co-op ally's pieces are resolved
     // on its own machine and forwarded; here they must touch nobody, least of all us.
     if (owner === 'npc' && this.api.isInvasion) return [];
-    const list = owner === 'player' ? this.api.enemies : [this.api.player];
+    const list = owner === 'player' ? this.api.enemies : this.api.player.bodies();
     return list.filter((f) => this.alive(f) && this.api.isTargetable(f));
   }
 

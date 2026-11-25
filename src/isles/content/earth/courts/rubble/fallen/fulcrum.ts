@@ -7,14 +7,14 @@ import { CHALK, DUST, DUST_LIT, LIME, LIME_DARK, LIME_DEEP, LIME_LIT, SCREE, SCR
 import { alive, clamp, dist, stepDt } from '../util';
 
 /**
- * Lever and Lintel — Prise-Man Wystan Garrow, who in the King's telling levered the old capital's
+ * Lever and Lintel — Prise-Man Leofric Stannage, who in the King's telling levered the old capital's
  * walls over for the Regent, one lintel at a time, and was paid by the course.
  *
  * Fallen lintels lie across broken column drums like see-saws, one end down in the dust, the other
  * cocked up in the air. Strike a raised end and it slams down — and whoever stands on the low end is
  * thrown up and *over the drum*, out past the end that was struck, landing hard where a ring is
  * chalked. Nothing touches a thrown fighter in the air; whoever is under the ring when they land is
- * flattened. Every few seconds Wystan drops a capstone on the raised end of the slab whose low end
+ * flattened. Every few seconds Leofric drops a capstone on the raised end of the slab whose low end
  * is nearest you (its shadow swells first).
  *
  * Use it both ways: strike a lintel while he stands on its low end and you land him where you like;
@@ -118,7 +118,7 @@ function make(ctx: GimmickCtx): EncounterGimmick {
         ctx.banner('THE DRUMS CRACK — THE LINTELS ROCK', '#e6d2a8');
         ctx.sfx('quake');
       }
-      // Wystan's capstone: onto the raised end of the lintel whose low end is nearest you.
+      // Leofric's capstone: onto the raised end of the lintel whose low end is nearest you.
       if (time >= nextCap && alive(player)) {
         nextCap = time + CAP_EVERY;
         let best: Slab | null = null, bd = Infinity;
@@ -277,7 +277,7 @@ function drawLintel(g: G, s: Slab, time: number, wobble: boolean): void {
   if (wobble) crack(g, s.c.x, s.c.y - 6, 18, Math.PI / 2, STRATA_GREY, 0.9, 1.6);
 }
 
-/** A capstone dropping out of the sky on Wystan's rope: a squared block with a lifting ring. */
+/** A capstone dropping out of the sky on Leofric's rope: a squared block with a lifting ring. */
 function drawCapstone(g: G, x: number, y: number, a: number): void {
   g.lineStyle(2, 0x6a5a40, a); g.lineBetween(x, y - 30, x, y - 300);
   ashlar(g, x, y + 10, 30, 24, SCREE, false);

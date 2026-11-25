@@ -6,7 +6,7 @@ import { fallenId } from '../../../../meteor/spec';
 import { Clock, R, RCOL, alive, dist, drawGlint, jit, segDist } from '../util';
 
 /**
- * THE TITHE WINCH — Winchman Abel Sounding (string).
+ * THE TITHE WINCH — Winchman Jethro Sounding (string).
  *
  * In the star's telling the man who works the winch over the Tithe Hole was never made to: he
  * asked for the job. The hole sits in the middle of the floor under an iron grate and a timber

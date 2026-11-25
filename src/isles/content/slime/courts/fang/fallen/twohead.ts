@@ -70,7 +70,7 @@ function make(ctx: GimmickCtx): EncounterGimmick {
     const w: Well = { x: b.x, y: b.y, at: time, spurtAt: time + WELL_MS, hit: new Set(), target: null, a: rng() * Math.PI, head: b.head };
     w.target = ctx.target({ x: b.x, y: b.y - 6, r: 22, passThrough: true, onStruck: () => spurtNow(w) });
     wells.push(w);
-    ctx.sfx('snap');
+    ctx.sfx('trap-snap');
   }
 
   return {

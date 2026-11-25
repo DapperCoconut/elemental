@@ -311,7 +311,7 @@ export const thePruning = (tk: BossToolkit): SignatureMove => {
       for (const h of hedges) {
         if (h.fired || time < h.readyAt) continue;
         h.fired = true;
-        tk.sfx(h.shears ? 'snap' : 'spore');
+        tk.sfx(h.shears ? 'trap-snap' : 'spore');
         if (time - lastHit > 250 && segDist(p.x, p.y, h.o.x, h.o.y, h.o.x + Math.cos(h.a) * h.len, h.o.y + Math.sin(h.a) * h.len) < HALF + PLAYER_R - 2) {
           lastHit = time; strike(tk, h.shears ? 13 : 10);
         }

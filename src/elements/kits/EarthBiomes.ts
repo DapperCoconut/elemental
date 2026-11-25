@@ -830,7 +830,7 @@ export class BiomeWorld {
   private fighter(owner: Owner): Fighter { return owner === 'player' ? this.api.player : this.api.npc; }
 
   private targetsOf(owner: Owner): Fighter[] {
-    const list = owner === 'player' ? this.api.enemies : [this.api.player];
+    const list = owner === 'player' ? this.api.enemies : this.api.player.bodies();
     return list.filter((f) => f && f.active && f.hp > 0);
   }
 

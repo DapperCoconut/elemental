@@ -5,7 +5,7 @@ import { fallenId } from '../../../../meteor/spec';
 import { ABY, alive, bubbleStream, clamp, dist } from '../palette';
 
 /**
- * Valves in Arrears — Breathclerk Tallow Wheeze's fight (the man who turned the valves down).
+ * Valves in Arrears — Breathclerk Ingram Wheeze's fight (the man who turned the valves down).
  *
  * The Breathworks sells the city its air by the household, and Wheeze keeps the book. The
  * arena is laced with the Breathworks main: six brass **taps**, each a valve wheel over a

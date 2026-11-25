@@ -379,6 +379,11 @@ export const STATUS_DESCRIPTORS: StatusDescriptor[] = [
     write: (f, t) => { f.venomMeltingUntil = t; },
   },
   {
+    id: 'venom-locked', name: 'Locked Down', emoji: '⛓️', color: 0xf2e89a, priority: 42.5, kind: 'timer',
+    description: 'Paralyzing and Purging together. Every ability of yours that moves you cannot be used at all until one of the two poisons runs out.',
+    read: (f) => f.venomLockUntil,
+  },
+  {
     id: 'heal-block', name: 'Heal Block', emoji: '💔', color: 0x992233, priority: 43, kind: 'timer',
     description: 'All healing on you is ignored until this expires.',
     read: (f) => f.healStopUntil,
@@ -639,6 +644,35 @@ export const STATUS_DESCRIPTORS: StatusDescriptor[] = [
     id: 'in-menu', name: 'In Menu', emoji: '📋', color: 0xddcc88, priority: 99, kind: 'flag',
     description: 'Browsing an in-match menu — incoming damage is cut to 5% while it is open.',
     read: (f) => (f.inMenuUi ? 1 : 0),
+  },
+  {
+    id: 'venom-self-toxin', name: 'Self-Toxin', emoji: '💉', color: 0x99ee44, priority: 100.5, kind: 'stack',
+    description: 'Your own venom. Every stack makes each new positive effect on you last 2% longer — at the cap of 100, three times as long.',
+    read: (f) => Math.floor(f.venomSelfToxin),
+  },
+  {
+    id: 'venom-boon-rot', name: 'Corroded Hide', emoji: '🧪', color: 0xff5533, priority: 100.6, kind: 'timer',
+    description: 'Disintegrating, turned on yourself. 30% less damage taken while you stand on your own acid.',
+    read: (f) => f.venomBoonUntil[0],
+    write: (f, t) => { f.venomBoonUntil[0] = t; },
+  },
+  {
+    id: 'venom-boon-para', name: 'Quickened', emoji: '⚡', color: 0xffdd33, priority: 100.7, kind: 'timer',
+    description: 'Paralyzing, turned on yourself. 30% faster while you stand on your own acid.',
+    read: (f) => f.venomBoonUntil[1],
+    write: (f, t) => { f.venomBoonUntil[1] = t; },
+  },
+  {
+    id: 'venom-boon-purge', name: 'Purified', emoji: '☠️', color: 0xe8f4ff, priority: 100.8, kind: 'timer',
+    description: 'Purging, turned on yourself. 25% more damage dealt while you stand on your own acid.',
+    read: (f) => f.venomBoonUntil[2],
+    write: (f, t) => { f.venomBoonUntil[2] = t; },
+  },
+  {
+    id: 'venom-boon-melt', name: 'Rendered', emoji: '🫠', color: 0xcc55ff, priority: 100.9, kind: 'timer',
+    description: 'Melting, turned on yourself. Heals 4 a second while you stand on your own acid.',
+    read: (f) => f.venomBoonUntil[3],
+    write: (f, t) => { f.venomBoonUntil[3] = t; },
   },
   {
     id: 'shield-charge', name: 'Shield', emoji: '🛡️', color: 0x66aaff, priority: 101, kind: 'stack',

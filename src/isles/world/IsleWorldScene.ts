@@ -24,6 +24,7 @@ import { drawNpc } from './NpcArt';
 import { WorldDialogue, DialogueOpts } from './WorldDialogue';
 import { LedgerPanel, openShop, openBakery, openDock } from './Counters';
 import { Fishing } from './Fishing';
+import { CheatTravel } from './CheatTravel';
 import * as Quests from '../systems/Quests';
 import { prepareLoadout } from '../systems/Genome';
 
@@ -169,6 +170,8 @@ export class IsleWorldScene extends Phaser.Scene {
   private toasts: { t: Phaser.GameObjects.Text; until: number }[] = [];
   private labels: Phaser.GameObjects.Text[] = [];
 
+  private cheatTravel: CheatTravel | null = null;
+
   constructor() { super({ key: 'IsleWorldScene' }); }
 
   init(data: { area?: string; pos?: Pt; arriveFrom?: string; after?: IslesFightPayload }): void {
@@ -187,6 +190,7 @@ export class IsleWorldScene extends Phaser.Scene {
     this.lastCheckpoint = null;
     this.gloomRt = null;
     this.gloomBrush = null;
+    this.cheatTravel = null;
   }
 
   create(): void {
@@ -226,12 +230,14 @@ export class IsleWorldScene extends Phaser.Scene {
 
     this.updateCamera(true);
 
-    this.keys = this.input.keyboard!.addKeys('W,A,S,D,UP,DOWN,LEFT,RIGHT,SHIFT,E,SPACE,ENTER,TAB,G,M,ESC,Q,I') as Record<string, Phaser.Input.Keyboard.Key>;
+    this.keys = this.input.keyboard!.addKeys('W,A,S,D,UP,DOWN,LEFT,RIGHT,SHIFT,E,SPACE,ENTER,TAB,G,M,ESC,Q,I,T') as Record<string, Phaser.Input.Keyboard.Key>;
     this.input.keyboard!.addCapture('TAB,SPACE');
     this.dialogue = new WorldDialogue(this);
     this.ledger = new LedgerPanel(this);
     this.fishing = new Fishing(this);
     this.buildHud();
+    // A cheat save carries a fast-travel menu to every area of every isle.
+    this.cheatTravel = isCheatMode() ? new CheatTravel(this, def.id, HUD_Z + 10, (id) => this.cheatTravelTo(id)) : null;
     this.input.on('pointerdown', () => {
       if (this.dialogue.isOpen) this.dialogue.advance();
     });
@@ -333,7 +339,7 @@ export class IsleWorldScene extends Phaser.Scene {
 
   private buildExits(): void {
     for (const ex of this.def.exits) {
-      const open = Save.test(ex.open) && !!getArea(ex.to);
+      const open = Save.unlocked(ex.open) && !!getArea(ex.to);
       this.exitRects.push({ exit: ex, rect: this.exitRect(ex), open });
       const inside = this.exitInside(ex);
       const lx = ex.side === 'w' ? 70 : ex.side === 'e' ? this.def.w - 70 : inside.x;
@@ -516,12 +522,12 @@ export class IsleWorldScene extends Phaser.Scene {
         case 'chest':
           list.push({
             x: p.at.x, y: p.at.y, r: REACH - 10, prio: 3,
-            label: () => (Save.S().chests.includes(p.id) ? 'Empty chest' : Save.test(p.open) ? 'Open chest' : 'Locked chest'),
+            label: () => (Save.S().chests.includes(p.id) ? 'Empty chest' : Save.unlocked(p.open) ? 'Open chest' : 'Locked chest'),
             use: () => this.openChest(p),
           });
           break;
         case 'door':
-          list.push({ x: p.at.x, y: p.at.y, r: REACH + 10, prio: 2, label: () => (Save.test(p.open) ? p.label : `${p.label} (sealed)`), use: () => this.useDoor(p) });
+          list.push({ x: p.at.x, y: p.at.y, r: REACH + 10, prio: 2, label: () => (Save.unlocked(p.open) ? p.label : `${p.label} (sealed)`), use: () => this.useDoor(p) });
           break;
         case 'lever':
           list.push({ x: p.at.x, y: p.at.y, r: REACH - 10, prio: 2, label: () => (Save.hasFlag(p.flag) ? `${p.label} (pulled)` : `Pull: ${p.label}`), use: () => this.pullLever(p) });
@@ -670,10 +676,24 @@ export class IsleWorldScene extends Phaser.Scene {
     if (dest === FALLPOINT) { this.travel(FALLPOINT, { pos: { ...FALLPOINT_LANDING } }); return; }
     if (!Save.S().boat.owned) { this.toast('You need a boat.'); return; }
     Save.setPlace(this.def.id, { x: this.px, y: this.py });
+    // A voyage is fought from the deck with your whole element: it runs in the arena (SeaVoyageKit), no opponent aboard.
+    const s = Save.S();
+    const payload: IslesFightPayload = {
+      slot: Save.activeIndex(), kind: 'voyage', id: dest, voyage: { dest }, area: this.def.id,
+      pos: { x: Math.round(this.px), y: Math.round(this.py) }, hard: s.hard,
+    };
+    const meal = prepareLoadout();
+    if (meal) { Save.take(meal, 1); s.meal = Save.count(meal) > 0 ? meal : null; Save.persist(); }
     this.leaving = true;
     this.cameras.main.fadeOut(400, 0, 0, 0);
     this.cameras.main.once('camerafadeoutcomplete', () => {
-      this.scene.start('SeaVoyageScene', { dest, from: this.def.id, pos: { x: this.px, y: this.py } });
+      this.scene.start('ArenaScene', {
+        elementId: s.element,
+        enemyElementId: 'water',
+        difficulty: 1,
+        isles: payload,
+        playerPerk: PlayerData.getEquippedPerk(s.element),
+      });
     });
   }
 
@@ -702,7 +722,7 @@ export class IsleWorldScene extends Phaser.Scene {
     const portrait = (g: Phaser.GameObjects.Graphics, x: number, y: number, t: number) => this.drawBossAt(g, b, x, y - 40, t, 1.4);
     if (b.kind === 'prince') {
       const court = courtOfArea(this.def.id) ?? [...allAreas()].map((a) => courtOfArea(a.id)).find((c) => c?.prince.id === b.id);
-      const ready = court ? Save.courtReady(court.id) : true;
+      const ready = court ? Save.courtReady(court.id) || isCheatMode() : true;
       if (!ready && court) {
         const all = courtChampions(court);
         const n = all.filter((e) => Save.S().encounters.includes(e.id)).length;
@@ -778,7 +798,7 @@ export class IsleWorldScene extends Phaser.Scene {
   private openChest(p: Extract<Poi, { kind: 'chest' }>): void {
     const s = Save.S();
     if (s.chests.includes(p.id)) { this.toast('Empty.'); return; }
-    if (!Save.test(p.open)) { this.toast('Locked tight.'); Sfx.play('ui-denied'); return; }
+    if (!Save.unlocked(p.open)) { this.toast('Locked tight.'); Sfx.play('ui-denied'); return; }
     s.chests.push(p.id);
     const got: string[] = [];
     if (p.coins) { Save.addCoins(p.coins); got.push(`+${p.coins} 🪙`); }
@@ -791,7 +811,7 @@ export class IsleWorldScene extends Phaser.Scene {
   }
 
   private useDoor(p: Extract<Poi, { kind: 'door' }>): void {
-    if (!Save.test(p.open)) {
+    if (!Save.unlocked(p.open)) {
       this.dialogue.open({ name: p.label, lines: [p.lockedText ?? 'Sealed.'], accent: 0x8a5a3a, portrait: signPortrait });
       return;
     }
@@ -901,6 +921,13 @@ export class IsleWorldScene extends Phaser.Scene {
     this.scene.pause();
   }
 
+  private cheatTravelTo(id: string): void {
+    const a = getArea(id);
+    if (!a || this.dialogue.isOpen || this.ledger.isOpen || this.fishing.busy) return;
+    const ws = a.pois.find((p) => p.kind === 'waystone');
+    this.travel(id, { pos: ws && 'at' in ws ? { x: ws.at.x, y: ws.at.y + 46 } : { ...a.spawn } });
+  }
+
   /** Go to another area. */
   travel(to: string, o: { arriveFrom?: string; pos?: Pt }): void {
     if (this.leaving) return;
@@ -956,6 +983,10 @@ export class IsleWorldScene extends Phaser.Scene {
     }
     if (now < this.graceUntil) { this.animateWorld(now, dt, false); return; }
 
+    if (this.cheatTravel) {
+      if (JD(k.T)) this.cheatTravel.toggle();
+      else if (back && this.cheatTravel.isOpen) { this.cheatTravel.close(); return; }
+    }
     if (JD(k.TAB) || JD(k.I)) { this.openOverlay('IslesInventoryScene'); return; }
     if (JD(k.G)) { this.openOverlay('IslesGeneScene'); return; }
     if (JD(k.M)) { this.openMap(); return; }
@@ -2309,7 +2340,7 @@ export class IsleWorldScene extends Phaser.Scene {
           break;
         }
         case 'door': {
-          const open = Save.test(p.open);
+          const open = Save.unlocked(p.open);
           g.fillStyle(open ? 0xffa040 : 0x5a2a1a, open ? 0.2 + Math.sin(t * 2) * 0.1 : 0.15);
           g.fillCircle(at!.x, at!.y - 30, 48);
           break;
@@ -2343,7 +2374,7 @@ export class IsleWorldScene extends Phaser.Scene {
     }
     // Gates
     for (const gt of this.def.gates ?? []) {
-      if (Save.test(gt.open)) continue;
+      if (Save.unlocked(gt.open)) continue;
       const r = gt.rect;
       if (!inView(view, r.x + r.w / 2, r.y + r.h / 2) && !inView(view, r.x, r.y)) continue;
       const col = gt.look === 'wax' ? 0xe8d8a8 : gt.look === 'rubble' ? 0x5a4a40 : gt.look === 'barrier' ? 0xff7a2f
@@ -3684,7 +3715,7 @@ export class IsleWorldScene extends Phaser.Scene {
       } else if (h.kind === 'floor') {
         const r = h.rect;
         if (!inView(view, r.x + r.w / 2, r.y + r.h / 2)) continue;
-        const safe = Save.test(h.safeWhen);
+        const safe = Save.unlocked(h.safeWhen);
         const c = h.color ?? 0xff5a1a;
         g.fillStyle(safe ? 0x3a3a40 : c, safe ? 0.5 : 0.55 + Math.sin(t * 3) * 0.1); g.fillRect(r.x, r.y, r.w, r.h);
       }
@@ -3707,7 +3738,7 @@ export class IsleWorldScene extends Phaser.Scene {
 
   private solidRects(): Rect[] {
     const out: Rect[] = [];
-    for (const gt of this.def.gates ?? []) if (!Save.test(gt.open)) out.push(gt.rect);
+    for (const gt of this.def.gates ?? []) if (!Save.unlocked(gt.open)) out.push(gt.rect);
     return out;
   }
 
@@ -3795,7 +3826,7 @@ export class IsleWorldScene extends Phaser.Scene {
         const a = (h.phase ?? 0) + (now / 1000) * h.radPerSec;
         const ex = h.x + Math.cos(a) * h.length, ey = h.y + Math.sin(a) * h.length;
         hit = distToSeg(this.px, this.py, h.x, h.y, ex, ey) < R_PLAYER + 5;
-      } else if (h.kind === 'floor') hit = !Save.test(h.safeWhen) && rectHit(h.rect, this.px, this.py, -4);
+      } else if (h.kind === 'floor') hit = !Save.unlocked(h.safeWhen) && rectHit(h.rect, this.px, this.py, -4);
       if (hit) break;
     }
     if (!hit) return;
@@ -3869,6 +3900,7 @@ export class IsleWorldScene extends Phaser.Scene {
     // Toasts
     this.toasts = this.toasts.filter((t) => { if (now > t.until) { t.t.destroy(); return false; } return true; });
     this.toasts.forEach((t, i) => { t.t.setY(H - 110 - i * 26); t.t.setAlpha(Math.min(1, (t.until - now) / 400)); });
+    this.cheatTravel?.layout(W - this.hudCoins.width - 36, busy);
     this.drawMinimap(busy);
   }
 

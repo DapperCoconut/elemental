@@ -7,7 +7,7 @@ import { alive, clamp, dist, stepDt } from '../util';
 import { fallenId } from '../../../../meteor/spec';
 
 /**
- * Eye-Clean — Ottoline Sabe, the Loupe Table's reader, who in the King's telling held the glass
+ * Eye-Clean — Briseis Sabe, the Loupe Table's reader, who in the King's telling held the glass
  * over every household's stone and never once called one clean.
  *
  * Each fighter carries a stone, and its grade is how long they have gone untouched: every 2.2 s
@@ -16,7 +16,7 @@ import { fallenId } from '../../../../meteor/spec';
  * cooldowns too. One blow taken and the flaw shows: the grade falls to nothing. So the fight is
  * a streak — dodge to grow it, break his.
  *
- * Over the yard hangs Ottoline's great loupe on its cord. It drifts after whoever holds the
+ * Over the yard hangs Briseis's great loupe on its cord. It drifts after whoever holds the
  * better stone (you, on a tie), then stops and focuses — the ring of light narrows for a second.
  * Whoever is under it when it reads: a graded stone loses two steps; an ungraded one is burned
  * by the gathered sun. Out-grade her and the loupe goes to read *her*. Halfway down she brings a
@@ -96,7 +96,7 @@ function make(ctx: GimmickCtx): EncounterGimmick {
         halved = true;
         loupes[0].owner = 'player';
         loupes.push({ x: npc.x, y: Math.max(top + 60, npc.y - 160), phase: 'drift', until: time + DRIFT_MS, owner: 'npc', sway: 1.7 });
-        ctx.banner('OTTOLINE BRINGS A SECOND GLASS', '#fff4d8');
+        ctx.banner('BRISEIS BRINGS A SECOND GLASS', '#fff4d8');
         ctx.sfx('prism');
       }
       for (const l of loupes) {

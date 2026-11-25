@@ -8,19 +8,19 @@ import { queenSeal, splashRing } from '../inkArt';
 import { fallenId } from '../../../../meteor/spec';
 
 /**
- * Return to Sender — Process-Server Nell's fight (echo).
+ * Return to Sender — Process-Server Marit's fight (echo).
  *
  * Every eviction in the Reach is a sealed writ, and the process-server's job is to put it into
- * your hand. Nell folds her writs into paper darts and throws them: each one hunts its addressee,
+ * your hand. Marit folds her writs into paper darts and throws them: each one hunts its addressee,
  * a little slower than a walk at first. When a writ reaches whoever it is addressed to, they are
  * SERVED — stamped, stunned for a moment, and hurt by every address the writ has carried.
  *
  * But a writ is only paper. Strike one that is addressed to you and it is RETURNED TO SENDER:
  * it turns round, re-addressed to the other fighter, a little faster, carrying one more stamp.
- * Nell returns them too (she strikes whatever is in reach when she casts). A long rally builds a
+ * Marit returns them too (she strikes whatever is in reach when she casts). A long rally builds a
  * writ that hurts — be the one who returns it last.
  *
- * At half health Nell serves in pairs.
+ * At half health Marit serves in pairs.
  */
 
 const ID = fallenId('inkwell', 'return-to-sender');
@@ -43,7 +43,7 @@ interface Writ {
 
 export const RETURN_TO_SENDER: GimmickDef = {
   id: ID,
-  rules: 'Nell throws homing writs. One that reaches you serves you (stun + damage). Strike one aimed at you to send it back, faster and heavier.',
+  rules: 'Marit throws homing writs. One that reaches you serves you (stun + damage). Strike one aimed at you to send it back, faster and heavier.',
   make(ctx: GimmickCtx): EncounterGimmick {
     const writs: Writ[] = [];
     let nextAt = ctx.scene.time.now + 2400;
@@ -110,7 +110,7 @@ export const RETURN_TO_SENDER: GimmickDef = {
       update(time, dt) {
         if (!pairs && ctx.npc.hp <= ctx.npc.maxHp * 0.5) {
           pairs = true;
-          ctx.banner('Nell serves in pairs now. Return them both.', CSS_BLUE);
+          ctx.banner('Marit serves in pairs now. Return them both.', CSS_BLUE);
         }
         if (time >= nextAt && live(ctx.npc) && writs.filter((w) => !w.dead).length < 5) {
           nextAt = time + (pairs ? 2900 : 3300);
@@ -135,7 +135,7 @@ export const RETURN_TO_SENDER: GimmickDef = {
             ctx.hit(o, SERVE_BASE + SERVE_PER_STAMP * (w.stamps - 1), o.x, o.y);
             ctx.stun(o, STUN_MS);
             ctx.sfx('judgement');
-            ctx.float(o.x, o.y - 52, w.to === 'npc' ? 'NELL IS SERVED' : 'SERVED', w.to === 'npc' ? CSS_BLUE : CSS_PAPER);
+            ctx.float(o.x, o.y - 52, w.to === 'npc' ? 'MARIT IS SERVED' : 'SERVED', w.to === 'npc' ? CSS_BLUE : CSS_PAPER);
             served[w.to === 'npc' ? 'n' : 'p']++;
             sparks.push({ x: o.x, y: o.y, at: time });
             retire(w);

@@ -2,6 +2,7 @@ import type { CourtBundle } from '../../../../IslesTypes';
 import { MASQUE_AREA } from './area';
 import { MASQUE_ENCOUNTERS, MASQUE_GIMMICKS } from './encounters';
 import { MASQUE_FLOOR } from './floor';
+import { FALLEN } from './fallen';
 import { ART_FACADE, MASQUE_FISH, MASQUE_FISHERIES, MASQUE_ITEMS, MASQUE_SCRIPTS, MASQUE_SHOPS } from './items';
 import { MASQUE_COLOR } from './palette';
 import { FACADE_BOSS } from './prince';
@@ -38,4 +39,5 @@ export const MASQUE_COURT: CourtBundle = {
   shops: MASQUE_SHOPS,
   fish: MASQUE_FISH,
   fisheries: MASQUE_FISHERIES,
+  fallen: FALLEN,
 };

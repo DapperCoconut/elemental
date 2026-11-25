@@ -6,18 +6,18 @@ import { fallenId } from '../../../../meteor/spec';
 import { Clock, O, OCOL, alive, clamp, dist, drawLily, jit } from '../util';
 
 /**
- * STRUCK FROM THE WALL — Abel Quarrender, Wall-Scraper.
+ * STRUCK FROM THE WALL — Enoch Quarrender, Wall-Scraper.
  *
  * The Pruned's Wall is where the court's families cut the names of the ones taken up the hill.
- * "Flowers on the Wall are UNTIDY and will be removed." In the King's telling Abel went further:
+ * "Flowers on the Wall are UNTIDY and will be removed." In the King's telling Enoch went further:
  * he went along the slabs at night with a claw-chisel and took the names off, letter by letter,
  * until nobody could say who had been there.
  *
- * Four name-slabs stand in the yard, each with up to five letters cut in it. Abel scrapes: stood at
+ * Four name-slabs stand in the yard, each with up to five letters cut in it. Enoch scrapes: stood at
  * a slab he chips a letter off every second. A slab with no name left breathes out a grey fog of
  * forgetting — anyone standing in it is silenced. Strike a slab and you RECUT a letter (a shot from
  * across the yard will do). Strike a slab whose name is whole and it is read aloud: the letters
- * burst out in a ring that stuns and hurts Abel if he is near — and the name is half-spent again.
+ * burst out in a ring that stuns and hurts Enoch if he is near — and the name is half-spent again.
  * So keep the names whole by his side, and he wants them blank by yours. Halfway down he takes up
  * the ink-pot: he flings black ink at the fullest slab near you, blotting two letters and splashing
  * whoever stands by it.
@@ -97,7 +97,7 @@ function make(ctx: GimmickCtx): EncounterGimmick {
       if (!inkPot && ctx.npc.hp < ctx.npc.maxHp * 0.5) {
         inkPot = true;
         nextSplash = time + 1500;
-        ctx.banner('ABEL TAKES UP THE INK-POT', OCOL.dusk);
+        ctx.banner('ENOCH TAKES UP THE INK-POT', OCOL.dusk);
         ctx.sfx('splash');
       }
       // Scraping: a letter a second off whichever slab he stands at.
@@ -191,7 +191,7 @@ function make(ctx: GimmickCtx): EncounterGimmick {
 
     drawAir(g: Phaser.GameObjects.Graphics, time: number) {
       for (const s of slabs) drawSlab(g, s, time, now);
-      // A chisel glint at Abel's hand while he scrapes.
+      // A chisel glint at Enoch's hand while he scrapes.
       const n = ctx.npc;
       if (alive(n)) {
         for (const s of slabs) {
@@ -300,6 +300,6 @@ function drawSplash(g: Phaser.GameObjects.Graphics, sp: Splash, time: number): v
 
 export const FALLEN_WALL: GimmickDef = {
   id: ID,
-  rules: 'Abel scrapes names off the slabs; a blank one fogs and silences. Strike a slab to recut a letter, a whole name to read it and stun him. At half, ink.',
+  rules: 'Enoch scrapes names off the slabs; a blank one fogs and silences. Strike a slab to recut a letter, a whole name to read it and stun him. At half, ink.',
   make,
 };

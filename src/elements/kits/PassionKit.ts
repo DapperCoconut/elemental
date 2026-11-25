@@ -541,7 +541,7 @@ export class PassionKit implements SummonPurgeTarget {
 
   /** Everything this side is allowed to convert. In Invasion the npc slot is never an enemy. */
   private targetsOf(owner: Owner): Fighter[] {
-    if (owner === 'npc') return this.api.isInvasion ? [] : [this.api.player].filter((f) => this.alive(f));
+    if (owner === 'npc') return this.api.isInvasion ? [] : this.api.player.bodies().filter((f) => this.alive(f));
     return this.api.enemies.filter((f) => this.alive(f) && this.api.isTargetable(f));
   }
 

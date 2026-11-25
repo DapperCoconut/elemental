@@ -9,7 +9,7 @@ import {
 import { inPlay } from './geom';
 
 /**
- * Footprints in the Glass — Runner Ottoline's fight (the rebel who never ran).
+ * Footprints in the Glass — Runner Annis's fight (the rebel who never ran).
  *
  * The plateau is sand fused into glass, and today it is hot enough to fuse again: every step
  * either fighter takes leaves a ribbon of **molten glass** behind them. Walking on the
@@ -17,7 +17,7 @@ import { inPlay } from './geom';
  * ribbon cools and is gone in a few seconds. A **dash** leaves no ribbon and crosses any —
  * that is the way out of a ring.
  *
- * So the floor is a drawing both of you are making. Ottoline runs rings round you to pen you
+ * So the floor is a drawing both of you are making. Annis runs rings round you to pen you
  * in; you can lay your own walls across her line of approach and make her wade through them.
  *
  * Halfway the glass runs hot: ribbons last longer, and your **own** older glass burns you too
@@ -149,7 +149,7 @@ export const FOOTPRINTS: GimmickDef = {
       npcSpeedMult() { return hers.burning ? 0.72 : 1; },
 
       npcSeek() {
-        // Ottoline runs a ring round you; if your glass lies across the way, she circles the other way.
+        // Annis runs a ring round you; if your glass lies across the way, she circles the other way.
         const time = ctx.scene.time.now;
         const me: Pt = { x: ctx.npc.x, y: ctx.npc.y };
         const P = ctx.player;

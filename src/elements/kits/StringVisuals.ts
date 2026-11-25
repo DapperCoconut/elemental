@@ -634,6 +634,47 @@ export function sagPoints(x0: number, y0: number, x1: number, y1: number, sag: n
   return out;
 }
 
+// ── The abdomen ──────────────────────────────────────────────────────────────
+
+/**
+ * The spider's abdomen, front lobe to tail: how far each lobe hangs behind the one before it, its
+ * hit radius, and what a hit on it is multiplied by. Each lobe is a body of its own (see
+ * `BodySection`), so a blast or a piercing shot bills the spider once per lobe it catches; the red
+ * bulb on the end is the soft part.
+ */
+export const ABDOMEN: readonly { gap: number; r: number; mult: number }[] = [
+  { gap: 46, r: 27, mult: 1 },
+  { gap: 46, r: 23, mult: 3 },
+];
+
+/**
+ * The abdomen as a dragged chain: each lobe stays a fixed length behind the one in front and
+ * otherwise lies where it was left, so it trails the way the spider came from rather than
+ * pointing away from the aim. The kit steps one per spider for the hitboxes and hands the rig the
+ * same nodes; a rig with no kit behind it (a preview, a portrait) steps its own.
+ */
+export class AbdomenChain {
+  readonly nodes: Pt[] = ABDOMEN.map(() => ({ x: Number.NaN, y: Number.NaN }));
+
+  /** `away` — the way the tail lies when it is first laid out (radians). */
+  step(x: number, y: number, away: number): void {
+    let px = x;
+    let py = y;
+    for (let i = 0; i < this.nodes.length; i++) {
+      const n = this.nodes[i];
+      const gap = ABDOMEN[i].gap;
+      let dx = n.x - px;
+      let dy = n.y - py;
+      let d = Math.hypot(dx, dy);
+      if (!(d > 0.001)) { dx = Math.cos(away); dy = Math.sin(away); d = 1; }
+      n.x = px + (dx / d) * gap;
+      n.y = py + (dy / d) * gap;
+      px = n.x;
+      py = n.y;
+    }
+  }
+}
+
 // ── Fx ───────────────────────────────────────────────────────────────────────
 
 export class StringFx extends FxBase {
@@ -720,6 +761,27 @@ export class StringFx extends FxBase {
       g.lineBetween(x, y - 120 * (1 - easeOut(t)), x, y);
       g.lineStyle(2, this.tint(STRING.spiderLit), 1 - t);
       g.strokeCircle(x, y, 18 + t * 30);
+    });
+  }
+
+  /** A hit on the abdomen: a dull thump on a black lobe, a wet burst on the red bulb. */
+  abdomenHit(x: number, y: number, r: number, soft: boolean): void {
+    this.anim(10, soft ? 380 : 220, (g, t) => {
+      if (!soft) {
+        g.lineStyle(2, this.tint(STRING.spiderHair), (1 - t) * 0.9);
+        g.strokeCircle(x, y, r * (0.7 + t * 0.6));
+        return;
+      }
+      g.fillStyle(this.tint(STRING.silkGlow), (1 - t) * (1 - t) * 0.8);
+      g.fillCircle(x, y, r * (1 - t * 0.3));
+      g.lineStyle(3, this.tint(STRING.spiderEye), 1 - t);
+      g.strokeCircle(x, y, r + easeOut(t) * 16);
+      g.fillStyle(this.tint(STRING.blood), 1 - t);
+      for (let i = 0; i < 7; i++) {
+        const a = i * 0.9 + 0.4;
+        const d = r * 0.6 + easeOut(t) * (16 + (i % 3) * 7);
+        g.fillCircle(x + Math.cos(a) * d, y + Math.sin(a) * d + t * t * 8, 2.6 - t * 1.8);
+      }
     });
   }
 
@@ -963,8 +1025,8 @@ const LEG_REACH = [1.12, 1, 0.98, 1.08];
 
 /**
  * The String rig: a big spider. The fighter sprite is its velvet head-and-thorax; under it, eight
- * jointed legs splay out and step in two alternating sets while it moves, and a swollen abdomen
- * trails behind it opposite the aim, marked with a cream hourglass and trailing a thread of silk.
+ * jointed legs splay out and step in two alternating sets while it moves, and a long abdomen drags
+ * behind it on a chain (`AbdomenChain`): a black lobe with a cream hourglass, then the red bulb.
  * Over it sit six more small eyes round the main pair and two fangs that flare on every throw.
  */
 export class StringAvatar extends BaseAvatar {
@@ -977,6 +1039,11 @@ export class StringAvatar extends BaseAvatar {
   private lastY = Number.NaN;
   private stride = 0;
   private moving = 0;
+  /** The abdomen: its own chain, unless the kit hands over the one the hitboxes ride. */
+  private readonly chain = new AbdomenChain();
+  private tail: readonly Pt[] | null = null;
+  /** 0..1 — the red bulb was just hit. */
+  private sting = 0;
 
   constructor(scene: Phaser.Scene, tint: ColorFn, depth = 6) {
     super(scene, tint, depth, STRING_AVATAR);
@@ -990,6 +1057,12 @@ export class StringAvatar extends BaseAvatar {
 
   setWeave(k: number): void { this.weave = Phaser.Math.Clamp(k, 0, 1); }
 
+  /** The kit's abdomen nodes (the ones the hitboxes sit on), or null to drag its own. */
+  setTail(nodes: readonly Pt[] | null): void { this.tail = nodes; }
+
+  /** The red bulb took a hit. */
+  stung(): void { this.sting = 1; }
+
   update(delta: number, x: number, y: number, alpha: number): void {
     if (!Number.isNaN(this.lastX)) {
       const d = Math.hypot(x - this.lastX, y - this.lastY);
@@ -999,6 +1072,8 @@ export class StringAvatar extends BaseAvatar {
     this.lastX = x;
     this.lastY = y;
     this.lunge = Math.max(0, this.lunge - delta / 260);
+    this.sting = Math.max(0, this.sting - delta / 320);
+    if (!this.tail) this.chain.step(x, y, this.facing + Math.PI);
     super.update(delta, x, y, alpha);
   }
 
@@ -1033,7 +1108,6 @@ export class StringAvatar extends BaseAvatar {
   /** The legs and the abdomen, under the sprite. */
   protected drawGlow(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
     const face = this.facing;
-    const back = face + Math.PI;
     g.fillStyle(this.tint(STRING.ink), a * 0.45);
     g.fillEllipse(x - Math.cos(face) * 8, y + 18, 70, 18);
     if (this.weave > 0) {
@@ -1042,24 +1116,7 @@ export class StringAvatar extends BaseAvatar {
       g.lineStyle(1, this.tint(STRING.silkShade), a * this.weave * 0.8);
       g.strokeCircle(x, y, 50 + Math.cos(this.t * 5) * 3);
     }
-    // Abdomen: trails behind the aim, a little low so it reads as hanging off the back.
-    const ax = x + Math.cos(back) * 22;
-    const ay = y + Math.sin(back) * 16 + 4;
-    const c = Math.cos(back);
-    const sn = Math.sin(back);
-    const P = (px: number, py: number): Pt => ({ x: ax + px * c - py * sn, y: ay + px * sn + py * c });
-    // The silk thread it pays out behind it.
-    const tail = P(15, 0);
-    g.lineStyle(1, this.tint(STRING.silk), alpha * 0.55);
-    g.lineBetween(tail.x, tail.y, tail.x + Math.cos(back) * 16, tail.y + Math.sin(back) * 16 + 6);
-    g.fillStyle(this.tint(STRING.spider), alpha);
-    g.fillEllipse(ax, ay, 34, 30);
-    g.fillStyle(this.tint(STRING.spiderLit), alpha * 0.85);
-    g.fillEllipse(ax - 5, ay - 6, 13, 9);
-    g.fillStyle(this.tint(STRING.spiderMark), alpha);
-    const h0 = P(-7, 0), h1 = P(7, 0), hm0 = P(0, -4.5), hm1 = P(0, 4.5);
-    g.fillTriangle(h0.x, h0.y, hm0.x, hm0.y, hm1.x, hm1.y);
-    g.fillTriangle(h1.x, h1.y, hm0.x, hm0.y, hm1.x, hm1.y);
+    this.drawAbdomen(g, x, y, a, alpha);
     // The legs: four a side, a raised knee and a shin down to the floor.
     for (const side of [-1, 1]) {
       for (let i = 0; i < 4; i++) {
@@ -1088,6 +1145,101 @@ export class StringAvatar extends BaseAvatar {
         g.fillCircle(knee.x, knee.y, 2.2);
         g.fillStyle(this.tint(STRING.spiderMark), alpha * 0.8);
         g.fillCircle(foot.x, foot.y, 1.1);
+      }
+    }
+  }
+
+  /**
+   * The abdomen, drawn on the chain's nodes so what you see is what can be hit: a waist, a black
+   * velvet lobe with the cream hourglass, and behind it the red bulb — glossy, pulsing, the soft
+   * part — paying out a thread of silk.
+   */
+  private drawAbdomen(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
+    const nodes = this.tail ?? this.chain.nodes;
+    if (!nodes.length || Number.isNaN(nodes[0].x)) return;
+    const front = (i: number): Pt => (i === 0 ? { x, y } : nodes[i - 1]);
+    // Floor shadows, then the waists, so every lobe sits over its joints.
+    for (let i = 0; i < nodes.length; i++) {
+      g.fillStyle(this.tint(STRING.ink), a * 0.4);
+      g.fillEllipse(nodes[i].x, nodes[i].y + ABDOMEN[i].r * 0.8, ABDOMEN[i].r * 2.1, ABDOMEN[i].r * 0.8);
+    }
+    for (let i = 0; i < nodes.length; i++) {
+      const f = front(i);
+      g.lineStyle(ABDOMEN[i].r * 0.9, this.tint(STRING.spider), alpha);
+      g.lineBetween(f.x, f.y, nodes[i].x, nodes[i].y);
+    }
+    // The silk thread it pays out behind it.
+    const tip = nodes[nodes.length - 1];
+    const tipR = ABDOMEN[nodes.length - 1].r;
+    const tf = front(nodes.length - 1);
+    const ta = Math.atan2(tip.y - tf.y, tip.x - tf.x);
+    const sx = tip.x + Math.cos(ta) * tipR;
+    const sy = tip.y + Math.sin(ta) * tipR;
+    g.lineStyle(1, this.tint(STRING.silk), alpha * 0.55);
+    g.lineBetween(sx, sy, sx + Math.cos(ta) * 18 + Math.sin(this.t * 3) * 2, sy + Math.sin(ta) * 18 + 6);
+    // Tail first, so each lobe overlaps the one behind it.
+    for (let i = nodes.length - 1; i >= 0; i--) {
+      const n = nodes[i];
+      const r = ABDOMEN[i].r;
+      const f = front(i);
+      const ang = Math.atan2(n.y - f.y, n.x - f.x);
+      const c = Math.cos(ang);
+      const sn = Math.sin(ang);
+      const P = (px: number, py: number): Pt => ({ x: n.x + px * c - py * sn, y: n.y + px * sn + py * c });
+      if (ABDOMEN[i].mult > 1) {
+        const pulse = 0.5 + 0.5 * Math.sin(this.t * 4.2);
+        // The glow that gives it away.
+        g.fillStyle(this.tint(STRING.spiderEye), alpha * (0.14 + pulse * 0.12 + this.sting * 0.3));
+        g.fillCircle(n.x, n.y, r + 4 + pulse * 2 + this.sting * 5);
+        // Spinnerets at the very tip.
+        g.fillStyle(this.tint(STRING.spider), alpha);
+        for (const side of [-1, 1]) { const sp = P(r + 1, side * 3); g.fillCircle(sp.x, sp.y, 2.4); }
+        g.fillStyle(this.tint(STRING.spider), alpha);
+        g.fillCircle(n.x, n.y, r + 1.2);
+        g.fillStyle(this.tint(STRING.blood), alpha);
+        g.fillCircle(n.x, n.y, r - 0.6);
+        // Lit from above: a brighter belly of red and a wet highlight.
+        g.fillStyle(this.tint(STRING.spiderEye), alpha * 0.85);
+        g.fillCircle(n.x - r * 0.12, n.y - r * 0.18, r * 0.72);
+        g.fillStyle(this.tint(STRING.backfireHot), alpha * 0.75);
+        g.fillEllipse(n.x - r * 0.34, n.y - r * 0.42, r * 0.62, r * 0.38);
+        g.fillStyle(this.tint(STRING.silkGlow), alpha * 0.8);
+        g.fillCircle(n.x - r * 0.42, n.y - r * 0.48, r * 0.12);
+        // Dark seams running back to the tip, so it reads as a bulb and not a ball.
+        g.lineStyle(1.2, this.tint(STRING.spider), alpha * 0.55);
+        for (const side of [-1, 1]) {
+          const s0 = P(-r * 0.7, side * r * 0.35);
+          const s1 = P(r * 0.2, side * r * 0.62);
+          const s2 = P(r * 0.85, side * r * 0.2);
+          g.beginPath();
+          g.moveTo(s0.x, s0.y);
+          g.lineTo(s1.x, s1.y);
+          g.lineTo(s2.x, s2.y);
+          g.strokePath();
+        }
+        if (this.sting > 0) {
+          g.fillStyle(this.tint(STRING.silkGlow), alpha * this.sting * 0.7);
+          g.fillCircle(n.x, n.y, r - 1);
+        }
+      } else {
+        g.fillStyle(this.tint(STRING.spider), alpha);
+        g.fillCircle(n.x, n.y, r);
+        g.fillStyle(this.tint(STRING.spiderLit), alpha * 0.85);
+        g.fillEllipse(n.x - r * 0.3, n.y - r * 0.38, r * 0.8, r * 0.52);
+        // Fine hair along the top edge.
+        g.lineStyle(1, this.tint(STRING.spiderHair), alpha * 0.6);
+        for (let h = -2; h <= 2; h++) {
+          const ha = -Math.PI / 2 + h * 0.38;
+          g.lineBetween(
+            n.x + Math.cos(ha) * (r - 1), n.y + Math.sin(ha) * (r - 1),
+            n.x + Math.cos(ha) * (r + 2.5), n.y + Math.sin(ha) * (r + 2.5),
+          );
+        }
+        // The cream hourglass, lying along the body.
+        g.fillStyle(this.tint(STRING.spiderMark), alpha);
+        const h0 = P(-r * 0.45, 0), h1 = P(r * 0.45, 0), hm0 = P(0, -r * 0.28), hm1 = P(0, r * 0.28);
+        g.fillTriangle(h0.x, h0.y, hm0.x, hm0.y, hm1.x, hm1.y);
+        g.fillTriangle(h1.x, h1.y, hm0.x, hm0.y, hm1.x, hm1.y);
       }
     }
   }

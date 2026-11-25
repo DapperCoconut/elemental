@@ -67,7 +67,7 @@ export const FALLEN: FallenBundle = {
       id: fallenId('confection', 'cloches'),
       court: 'confection',
       name: 'The Taster\'s Cloches',
-      foeName: 'Comfit Vane, Royal Taster',
+      foeName: 'Comfit Drage, Royal Taster',
       foeElement: 'illusion',
       difficulty: 4,
       hpMult: 1.05,

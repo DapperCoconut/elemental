@@ -7,7 +7,7 @@ import { BRASS, BRASS_DARK, BRASS_LIT, ROCK, ROCK_DARK, ROCK_LIT, SKY_LIT, TAR }
 import { alive, clamp, dist, stepDt, turnToward } from '../util';
 
 /**
- * Wherever the Pin Goes — Ottilie Brack, Vane-Smith of Weathercock Square.
+ * Wherever the Pin Goes — Ottilie Fairweather, Vane-Smith of Weathercock Square.
  *
  * In the waking world every vane in Galeward is pinned to point at the toll, and somebody had to
  * pin them. In the star's telling it was Ottilie: she forged the brass collars, drove the split

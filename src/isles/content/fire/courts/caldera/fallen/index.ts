@@ -85,7 +85,7 @@ export const FALLEN: FallenBundle = {
       id: fallenId('caldera', 'black-mirror'),
       court: 'caldera',
       name: 'Black Mirror',
-      foeName: 'Glasscutter Obsa Vane',
+      foeName: 'Glasscutter Obsa Veck',
       foeElement: 'gunpowder',
       difficulty: 5,
       hpMult: 1.2,

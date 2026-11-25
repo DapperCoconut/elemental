@@ -290,7 +290,7 @@ export class ClayKit implements SummonPurgeTarget, FormRevertTarget {
     return null;
   }
   private targets(owner: ClayOwner): Fighter[] {
-    return (owner === 'player' ? this.api.enemies : [this.api.player]).filter((f) => !!f && f.active && f.hp > 0);
+    return (owner === 'player' ? this.api.enemies : this.api.player.bodies()).filter((f) => !!f && f.active && f.hp > 0);
   }
   private nearestTarget(owner: ClayOwner, x: number, y: number): Fighter | null {
     let best: Fighter | null = null;

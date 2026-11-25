@@ -1152,7 +1152,7 @@ export class SubterfugeKit {
   private _hitscanBeam(owner: 'player' | 'npc', sx: number, sy: number, angle: number, dmg: number, color: number): void {
     const ex = sx + Math.cos(angle) * SPRAY_RANGE;
     const ey = sy + Math.sin(angle) * SPRAY_RANGE;
-    const targets: Fighter[] = owner === 'player' ? [this.api.npc] : [this.api.player];
+    const targets: Fighter[] = owner === 'player' ? [this.api.npc] : this.api.player.bodies();
     for (const t of targets) {
       if (!t.active || t.hp <= 0) continue;
       if (this._pointToSegmentDist(t.x, t.y, sx, sy, ex, ey) <= 24) {
@@ -2121,7 +2121,7 @@ export class SubterfugeKit {
     const time = this.api.scene.time.now;
     this.api.dealAoeDamage(owner, x, y, BOOM_RADIUS, BOOM_DAMAGE);
 
-    const foes: Fighter[] = owner === 'player' ? [this.api.npc] : [this.api.player];
+    const foes: Fighter[] = owner === 'player' ? [this.api.npc] : this.api.player.bodies();
     for (const f of foes) {
       if (!f || !f.active || f.hp <= 0) continue;
       const d = Phaser.Math.Distance.Between(x, y, f.x, f.y);
@@ -2216,7 +2216,7 @@ export class SubterfugeKit {
 
   private _updateDaggers(list: SubDagger[], owner: 'player' | 'npc', dt: number): void {
     const caster = owner === 'player' ? this.api.player : this.api.npc;
-    const enemies: Fighter[] = owner === 'player' ? [this.api.npc] : [this.api.player];
+    const enemies: Fighter[] = owner === 'player' ? [this.api.npc] : this.api.player.bodies();
     for (let i = list.length - 1; i >= 0; i--) {
       const d = list[i];
       if (d.state === 'flying') {

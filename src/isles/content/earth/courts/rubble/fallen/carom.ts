@@ -8,14 +8,14 @@ import { CHALK, DUST, DUST_DARK, DUST_LIT, IRON, IRON_LIT, LIME, LIME_DARK, LIME
 import { alive, dist, stepDt } from '../util';
 
 /**
- * Ashlar Carom — Shifter Benedek Rook, the gang-boss who moved the capital's dressed stone for the
+ * Ashlar Carom — Shifter Theodric Farrant, the gang-boss who moved the capital's dressed stone for the
  * Regent: every block of the old Exchange went down the hill on his rollers to be built into the
  * Sepulchre. In the King's telling he could move a ton of stone with a crowbar and one look.
  *
  * Great cut blocks stand on the mosaic. They are cover — shots stop on them — but strike one and it
  * skids away from whoever struck it, fast, until the dust stops it. A sliding block crushes whoever
  * it meets and knocks on any block it runs into: the struck block takes its speed, like a cue ball.
- * Every few seconds Benedek sets his bar to a block, chalks an arrow on it at you, and drives it.
+ * Every few seconds Theodric sets his bar to a block, chalks an arrow on it at you, and drives it.
  *
  * The rule is all geometry: a block between you and him is a shot you have lined up. Shoot it and it
  * goes at him; run one into another to bank it round. Halfway down the Regent's mortar sets: any block
@@ -38,7 +38,7 @@ interface Block {
   moved: boolean;
   target: StrikeTarget;
   struckAt: number;
-  /** Benedek's chalked aim, while it shows. */
+  /** Theodric's chalked aim, while it shows. */
   aim: { x: number; y: number; at: number } | null;
   hitAt: Map<Fighter, number>;
   seed: number;
@@ -101,7 +101,7 @@ function make(ctx: GimmickCtx): EncounterGimmick {
       }
       if (!setting && npc.hp < npc.maxHp * 0.5) { setting = true; ctx.banner('THE MORTAR SETS', '#c8564a'); ctx.sfx('curse-cast'); }
 
-      // Benedek drives a block at you: the loose one best lined up between you.
+      // Theodric drives a block at you: the loose one best lined up between you.
       if (time >= nextDrive && alive(npc) && alive(player)) {
         nextDrive = time + DRIVE_EVERY;
         let best: Block | null = null, bs = Infinity;
@@ -226,7 +226,7 @@ function make(ctx: GimmickCtx): EncounterGimmick {
   };
 }
 
-/** Benedek's chalk: an arrow scrawled on the floor from the block toward where you stood, and his bar. */
+/** Theodric's chalk: an arrow scrawled on the floor from the block toward where you stood, and his bar. */
 function drawChalkArrow(g: G, b: Block, time: number): void {
   if (!b.aim) return;
   const dx = b.aim.x - b.x, dy = b.aim.y - b.y, l = Math.hypot(dx, dy) || 1;

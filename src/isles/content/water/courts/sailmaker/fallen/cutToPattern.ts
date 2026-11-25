@@ -121,7 +121,7 @@ function make(ctx: GimmickCtx): EncounterGimmick {
   const close = (p: Pattern): void => {
     p.state = 'lift'; p.t0 = ctx.scene.time.now;
     p.shears?.remove(); p.shears = null;
-    ctx.sfx('snap');
+    ctx.sfx('trap-snap');
     for (const f of [ctx.player, ctx.npc]) {
       if (!f.active || f.hp <= 0 || !inside(p.pts, f.x, f.y + 10)) continue;
       cutOutAt.set(f, ctx.scene.time.now);

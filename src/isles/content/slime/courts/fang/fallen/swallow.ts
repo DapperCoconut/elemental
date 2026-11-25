@@ -169,7 +169,7 @@ function make(ctx: GimmickCtx): EncounterGimmick {
             if (alive(f) && !inMeal(f) && !ctx.isAirborne(f) && dist(f.x, f.y, gx, gy) < GULP_R) swallow(f, time);
           }
           mode = 'gulp'; modeAt = time;
-          ctx.sfx('snap');
+          ctx.sfx('trap-snap');
         }
       } else if (time - modeAt >= 320) mode = 'hunt';
 

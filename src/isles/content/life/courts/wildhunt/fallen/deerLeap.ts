@@ -8,7 +8,7 @@ import {
 import { EMBER, alive } from './kit';
 
 /**
- * The Deer-Leap — Osric Tallow, Park-Keeper of the deer park: in the King's telling the man who
+ * The Deer-Leap — Osric Thwaite, Park-Keeper of the deer park: in the King's telling the man who
  * built the park's paling so that what was driven in could never get out again, and who called the
  * pens for the Empress's crossbows when she came to cull.
  *

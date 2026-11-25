@@ -1,7 +1,9 @@
 import Phaser from 'phaser';
 import { FONT_DISPLAY, FONT_UI, FONT_MONO } from '../../ui';
 import { Music, Sfx } from '../../audio';
-import { findElementDef, ELEMENT_DATA_MAP } from '../../data/ElementRoster';
+import { findElementDef } from '../../data/ElementRoster';
+import type { Fighter } from '../../entities/Fighter';
+import { makeStrikeTarget, type StrikeTarget } from '../../boss/framework/StrikeTargets';
 import * as Save from '../IslesSave';
 import { boats, getUber, allUbers, getIsle, getArea, ISLES } from '../IslesRegistry';
 import { OBS, shard, seam, crackPath, drawPinnacle, starfield, mixC, lit, dim } from '../art/PinnacleArt';
@@ -9,9 +11,18 @@ import { mulberry } from '../art/IsleArt';
 import type { BoatDef, IsleDef, Pt } from '../IslesTypes';
 
 /**
- * Sailing. The boat never stops: the sea scrolls toward you and you steer through it, shooting
- * rocks apart with your element and scooping up what floats. Hull reaches zero and the boat is
- * lost — and the boat was what you paid for.
+ * Sailing — fought from the deck. The voyage is hosted inside ArenaScene (IslesFightKit owns this kit
+ * and starts it for an `isles` payload of kind `'voyage'`), so the player stands on the boat with
+ * their whole element: every ability, their own movement, their charms and genes. The boat sails
+ * herself; the sea slides past and throws things at her.
+ *
+ * Two rules carry all of it. **Solid things break on the hull unless the crew breaks them first** —
+ * rocks, reefs, drift, mines, bramble mats, whirlpools, obsidian shards: each is a strike target
+ * (`makeStrikeTarget`), so shots, AoE, melee and kit abilities all land on it. Hull at zero and the
+ * boat is lost — and the boat was what you paid for. **Everything else washes over the deck at the
+ * crew**, who steps out of its way: tentacles, breakers, arcs, venom, dice, sound-rings, burning
+ * spots, squall bolts, a beast's spit. That comes off the player's own health; at the last point
+ * they are swept overboard — the hold is lost, the boat is not.
  *
  * `dest: 'wastes'` is the Far Wastes: endless, banded by depth (the Shallows, the Grey Reach,
  * the Drowned Dark, the Abyssal Line), each band thicker with danger and richer in loot, with sea
@@ -20,13 +31,29 @@ import type { BoatDef, IsleDef, Pt } from '../IslesTypes';
  * Any other `dest` is an isle id: a *crossing* — the same sea, kept to the upper two bands, that
  * ends in landfall at that isle's port once `CROSSING_M` metres are behind you. A crossing to one
  * of the abstract isles (`IsleDef.outer`) runs the Outer Sea instead: longer, in black water, with a
- * swell that shoves the boat about, storm flashes, and breakers rolling in to thread.
+ * swell that heaves the deck, storm flashes, and breakers rolling over the ship with one dry trough.
  *
  * `dest: 'pinnacle'` is the Last Crossing, the final voyage of the game: the longest crossing of all,
  * over water gone still and black as glass, the spire growing on the horizon the whole way, the
  * Muster's ten boats sailing alongside, and hazards of its own — drifting obsidian shards that split
- * when shot, glass reefs that surface after a seam-flash warning, and the Shroud's last squalls.
+ * when broken, glass reefs that surface after a seam-flash warning, and the Shroud's last squalls.
  */
+
+/** The ship sits mid-screen, bow up; her stem is here. */
+const SHIP_X = 480;
+const BOW_Y = 128;
+/** How much of her length the bow takes to fill out to full beam. */
+const BOW_FRAC = 0.38;
+/** How far inside the hull's edge the crew's feet stop. */
+const RAIL = 16;
+/** Pixels a second the sea slides past the ship. Slow enough to fight what is coming. */
+const SEA_PX = 58;
+/** How much of a shove actually moves the crew (a walk is ~200 px/s; shoves were sized for a boat). */
+const SHOVE = 0.3;
+/** Real damage per point of a hazard's or a beast's health. */
+const HP_UNIT = 12;
+/** Health the crew loses per plank's worth of what washes over the deck. */
+const CREW_HIT = 40;
 
 /** How long a crossing between two isles is. */
 const CROSSING_M = 2600;
@@ -48,7 +75,7 @@ const SLICK_LIFE = 7.5;
 const PROW_REGROW = 8;
 const PROW_REACH = 120;
 /** Half the width of the trough a breaker leaves to slip through. */
-const BREAKER_GAP = 78;
+const BREAKER_GAP = 44;
 /** The Wheelback's dice: seconds a die tumbles before it lands, seconds per pip as it counts down, and its burst radius. */
 const DIE_ROLL = 0.9;
 /** The Cantor's sound-rings: how fast one spreads (px/s), the half-width of each rest (radians) and how far it carries. */
@@ -69,7 +96,7 @@ const GLASS_REACH = 470;
 /** The Cantor's half-width along its length, from the tip of its head (0) to the tail stock (1). */
 const CANTOR_PROFILE: [number, number][] = [[0, 16], [0.07, 36], [0.18, 52], [0.36, 60], [0.55, 54], [0.75, 36], [0.9, 19], [1, 11]];
 const DIE_TICK = 0.6;
-const DIE_RING = 84;
+const DIE_RING = 70;
 /** The Fortune Helm: seconds between spins, and how long the little wheel whirls before it lands. */
 const HELM_EVERY = 7;
 const HELM_WHIRL = 1;
@@ -115,7 +142,8 @@ type HazardKind = 'rock' | 'reef' | 'mine' | 'whirl' | 'drift' | 'tentacle' | 's
   | 'obshard' | 'glassreef' | 'squall';
 /** `held`: seconds the Foghorn Bow still holds this hazard (its own motion and timers stop; it still drifts with the sea). */
 /** `vx`: sideways drift (split shards, squalls); `spot`: a squall's marked strike (screen space, where the boat was); `flash`: seconds since its last bolt. */
-interface Hazard { kind: HazardKind; x: number; y: number; r: number; hp: number; maxHp: number; t: number; seed: number; dead: boolean; armed?: number; tick?: number; gaps?: number[]; held?: number; vx?: number; spot?: Pt; flash?: number }
+/** `dx`: px/s it drifts sideways on its way to (or past) the ship; `deck`: it rides the ship, not the sea; `dent`: damage banked toward a die's next pip. */
+interface Hazard { kind: HazardKind; x: number; y: number; r: number; hp: number; maxHp: number; t: number; seed: number; dead: boolean; armed?: number; tick?: number; gaps?: number[]; held?: number; vx?: number; spot?: Pt; flash?: number; dx?: number; deck?: boolean; dent?: number }
 interface Loot { kind: 'crate' | 'barrel' | 'orb' | 'bottle'; x: number; y: number; t: number; taken: boolean }
 interface Shot { x: number; y: number; vx: number; vy: number; dmg: number; life: number; big?: boolean; foe?: boolean }
 interface Beast {
@@ -147,41 +175,67 @@ const OUTER_BANDS = [
   { at: 2600, name: 'The Black Rollers', sea: 0x05112a, deep: 0x030918, foam: 0xe4f4ff },
 ];
 
-export class SeaVoyageScene extends Phaser.Scene {
+/** What the voyage needs from the arena it is hosted in (handed over by IslesFightKit). */
+export interface SeaVoyageArenaApi {
+  readonly scene: Phaser.Scene;
+  readonly player: Fighter;
+  readonly npc: Fighter;
+  addEnemy(f: Fighter): void;
+  removeEnemy(f: Fighter): void;
+}
+
+export class SeaVoyageKit {
+  /** A voyage is running in this match. */
+  private live = false;
+  /** The sea's own music is on (the arena starts its duel music after this kit resets, so it goes on a frame late). */
+  private tuned = false;
   private dest = 'wastes';
   private from = 'emberport';
   private fromPos: Pt = { x: -1, y: -1 };
   private boat!: BoatDef;
+  /** Where the crew (the player) stands on the deck — what the sea aims at. */
   private bx = 480;
-  private by = 500;
+  private by = 400;
+  /** Sideways shove on the crew from gusts, breakers and the like (px/s, bleeding off). */
   private bvx = 0;
-  private heading = 0;
+  /** The ship: its deck length, half-beam, and where the tip of the bow sits on screen. */
+  private shipLen = 360;
+  private shipHw = 96;
+  private bowY = BOW_Y;
+  /** Where the boat's own gear measures from: the foredeck. */
+  private kx = SHIP_X;
+  private ky = BOW_Y + 44;
   private speed = 150;
   private hull = 3;
   private maxHull = 3;
   private dist = 0;
+  /** Pixels of sea that have slid past (drives the water's scroll). */
+  private seaY = 0;
   private haul = 0;
   private orbs = 0;
   private hazards: Hazard[] = [];
   private loot: Loot[] = [];
   private shots: Shot[] = [];
   private beast: Beast | null = null;
+  /** The invisible bodies that let every ability in the game land on a hazard. */
+  private targets = new Map<Hazard, StrikeTarget>();
+  private beastTarget: StrikeTarget | null = null;
   private nextSpawn = 0;
   private nextLoot = 0;
   private fireCd = 0;
-  private burstCd = 0;
   private turretCd = 0;
   private invuln = 0;
+  /** Seconds the crew cannot be hurt again by the sea. */
+  private crewInvuln = 0;
   private over = false;
-  private wake: Pt[] = [];
   private beastChecks = 0;
   private g!: Phaser.GameObjects.Graphics;
+  private gFit!: Phaser.GameObjects.Graphics;
   private gHud!: Phaser.GameObjects.Graphics;
   private hudText!: Phaser.GameObjects.Text;
   private bandText!: Phaser.GameObjects.Text;
-  private keys!: Record<string, Phaser.Input.Keyboard.Key>;
+  private homeKey: Phaser.Input.Keyboard.Key | null = null;
   private elementColor = 0xff7a2f;
-  private shotName = 'Bolt';
   private lastBand = -1;
   private rng: () => number = Math.random;
   /** The isle a crossing makes for; null in the Far Wastes. */
@@ -192,7 +246,7 @@ export class SeaVoyageScene extends Phaser.Scene {
   private rough = false;
   /** Seconds of swell; drives the sideways heave. */
   private swellT = 0;
-  /** Pixels of sea until the next breaker rolls in. */
+  /** Seconds until the next breaker rolls in. */
   private nextBreaker = 0;
   /** Seconds until the next storm flash. */
   private nextFlash = 0;
@@ -201,55 +255,91 @@ export class SeaVoyageScene extends Phaser.Scene {
   private flashX = 480;
   /** True on the Last Crossing (`dest: 'pinnacle'`). */
   private last = false;
-  /** Pixels of sea until the Shroud's next squall. */
+  /** Seconds until the Shroud's next squall. */
   private nextSquall = 0;
 
-  constructor() { super({ key: 'SeaVoyageScene' }); }
+  constructor(private api: SeaVoyageArenaApi) {}
 
-  init(data: { dest: string; from: string; pos: Pt }): void {
-    this.dest = data?.dest ?? 'wastes';
-    this.from = data?.from ?? 'emberport';
-    this.fromPos = data?.pos ?? { x: -1, y: -1 };
+  private get scene(): Phaser.Scene { return this.api.scene; }
+  private get sternY(): number { return this.bowY + this.shipLen; }
+
+  get active(): boolean { return this.live; }
+
+  /** Called every match start: `null` when this match is not a voyage. Last match's objects died with the scene. */
+  reset(v: { dest: string; from: string; pos: Pt } | null): void {
+    this.live = !!v;
+    this.targets = new Map();
+    this.beastTarget = null;
+    this.homeKey = null;
+    if (!v) return;
+    this.dest = v.dest ?? 'wastes';
+    this.from = v.from ?? 'emberport';
+    this.fromPos = v.pos ?? { x: -1, y: -1 };
     this.crossing = this.dest === 'wastes' ? null : getIsle(this.dest) ?? null;
     if (!this.crossing) this.dest = 'wastes';
     this.last = !!this.crossing?.pinnacle;
     this.rough = !!this.crossing?.outer && !this.last;
-    this.nextSquall = 2200;
-    this.swellT = 0; this.nextBreaker = 1400; this.nextFlash = 4; this.flashT = 9;
+    this.nextSquall = 12;
+    this.swellT = 0; this.nextBreaker = 8; this.nextFlash = 4; this.flashT = 9;
     this.bowWaveT = 9; this.hornT = 9; this.glassT = 9; this.glassHits = [];
+    this.thornT = 9; this.sailT = 9; this.mastT = 9; this.mastBolts = [];
     this.slickDrag = 0; this.prowReady = [0, 0, 0];
     this.helmBoon = null; this.helmWard = false; this.helmT = 9; this.helmAngle = 0; this.helmPending = false;
+    this.plateReady = false; this.pumpT = 0;
     this.over = false;
-    this.hazards = []; this.loot = []; this.shots = []; this.wake = [];
+    this.hazards = []; this.loot = []; this.shots = [];
     this.beast = null;
-    this.dist = 0; this.haul = 0; this.orbs = 0; this.beastChecks = 0; this.lastBand = -1;
+    this.dist = 0; this.seaY = 0; this.haul = 0; this.orbs = 0; this.beastChecks = 0; this.lastBand = -1;
+    this.bvx = 0; this.invuln = 0; this.crewInvuln = 0; this.fireCd = 2; this.turretCd = 0;
+    this.create();
   }
 
   private up(id: string): number { return Save.S().boat.upgrades[id] ?? 0; }
 
-  create(): void {
-    Music.play('gauntlet');
+  private create(): void {
+    const scene = this.scene, { player, npc } = this.api;
+    this.tuned = false;
     const s = Save.S();
     this.boat = boats().find((b) => b.id === s.boat.owned) ?? boats()[0];
     this.maxHull = this.boat.hull + this.up('hull') * 2;
     this.hull = this.maxHull;
     this.speed = this.boat.speed * (1 + this.up('sails') * 0.12);
     this.elementColor = findElementDef(s.element)?.color ?? 0xff7a2f;
-    this.shotName = ELEMENT_DATA_MAP[s.element]?.abilities[0]?.name ?? 'Bolt';
-    this.bx = 480; this.by = 500;
-    this.g = this.add.graphics();
-    this.gHud = this.add.graphics().setDepth(10);
-    this.hudText = this.add.text(16, 12, '', { fontFamily: FONT_MONO, fontSize: '14px', color: '#e8f4ff', stroke: '#000', strokeThickness: 4 }).setDepth(11);
-    this.bandText = this.add.text(480, 120, '', { fontFamily: FONT_DISPLAY, fontSize: '26px', color: '#d8eeff', stroke: '#000', strokeThickness: 6 }).setOrigin(0.5).setDepth(11).setAlpha(0);
-    this.add.text(480, 626, `A/D steer · W/S trim · CLICK/SPACE ${this.shotName} · E Tidal Burst · H head home`, { fontFamily: FONT_UI, fontSize: '12px', color: '#b8d0e8', stroke: '#000', strokeThickness: 3 }).setOrigin(0.5, 1).setDepth(11);
-    this.keys = this.input.keyboard!.addKeys('A,D,W,S,LEFT,RIGHT,UP,DOWN,SPACE,E,H,ESC') as Record<string, Phaser.Input.Keyboard.Key>;
-    this.input.keyboard!.addCapture('SPACE');
+    // A bigger boat is more deck to stand on — and more hull for the sea to find.
+    this.shipLen = Math.round(190 + this.boat.len * 3.85);
+    this.shipHw = Math.round(this.shipLen * 0.27);
+    this.bowY = BOW_Y;
+    this.kx = SHIP_X; this.ky = this.bowY + 44;
+
+    // Nobody to duel out here: the opponent's body is shelved for the whole voyage.
+    this.api.removeEnemy(npc);
+    npc.setHealthBarVisible(false);
+    npc.setActive(false).setVisible(false);
+    npc.forceInvisible = true;
+    npc.immortal = true;
+    npc.setPosition(SHIP_X, -900);
+    const nb = npc.body as Phaser.Physics.Arcade.Body | null;
+    if (nb) { nb.reset(SHIP_X, -900); nb.enable = false; }
+
+    // The crew starts amidships.
+    const py = this.bowY + this.shipLen * 0.62;
+    player.setPosition(SHIP_X, py);
+    (player.body as Phaser.Physics.Arcade.Body | null)?.reset(SHIP_X, py);
+    this.bx = SHIP_X; this.by = py;
+
+    this.g = scene.add.graphics().setDepth(-100);
+    this.gFit = scene.add.graphics().setDepth(-99);
+    this.gHud = scene.add.graphics().setDepth(210).setScrollFactor(0);
+    this.hudText = scene.add.text(16, 12, '', { fontFamily: FONT_MONO, fontSize: '14px', color: '#e8f4ff', stroke: '#000', strokeThickness: 4 }).setDepth(211).setScrollFactor(0);
+    this.bandText = scene.add.text(480, 110, '', { fontFamily: FONT_DISPLAY, fontSize: '26px', color: '#d8eeff', stroke: '#000', strokeThickness: 6 }).setOrigin(0.5).setDepth(211).setScrollFactor(0).setAlpha(0);
+    const hint = scene.add.text(480, 84, 'Break what drifts at the ship before it reaches the hull  ·  H heads for home', { fontFamily: FONT_UI, fontSize: '13px', color: '#cfe4f4', stroke: '#000', strokeThickness: 3 }).setOrigin(0.5).setDepth(211).setScrollFactor(0);
+    scene.tweens.add({ targets: hint, alpha: 0, delay: 7000, duration: 900, onComplete: () => hint.destroy() });
+    this.homeKey = scene.input.keyboard?.addKey('H') ?? null;
     this.rng = Math.random;
-    this.nextSpawn = 600;
-    this.nextLoot = 400;
+    this.nextSpawn = 2.5;
+    this.nextLoot = 4;
     Save.S().stats.voyages += 1;
     Save.persist();
-    this.cameras.main.fadeIn(400, 0, 0, 0);
   }
 
   private bands(): typeof BANDS { return this.last ? LAST_BANDS : this.rough ? OUTER_BANDS : BANDS; }
@@ -264,58 +354,161 @@ export class SeaVoyageScene extends Phaser.Scene {
   /** Metres left to landfall on a crossing (Infinity in the Wastes). */
   private toLand(): number { return this.crossing ? (this.last ? LAST_CROSSING_M : this.rough ? OUTER_CROSSING_M : CROSSING_M) - this.dist : Infinity; }
 
+  // ── The ship ─────────────────────────────────────────────────────────
+
+  /** Half the hull's beam at screen height `y` (0 off either end): a pointed bow, straight sides, a slightly drawn-in stern. */
+  private hullHalf(y: number): number {
+    const v = (y - this.bowY) / this.shipLen;
+    if (v < 0 || v > 1) return 0;
+    if (v < BOW_FRAC) { const k = 1 - v / BOW_FRAC; return this.shipHw * (1 - k * k); }
+    const k = (v - BOW_FRAC) / (1 - BOW_FRAC);
+    return this.shipHw * (1 - 0.14 * k * k);
+  }
+
+  /** How far a point is from the hull (0 on or inside it). Rough, and good enough for rocks. */
+  private hullDist(x: number, y: number): number {
+    const cy = Phaser.Math.Clamp(y, this.bowY, this.sternY);
+    const dx = Math.max(0, Math.abs(x - SHIP_X) - this.hullHalf(cy));
+    return Math.hypot(dx, y - cy);
+  }
+
+  /** A solid thing of radius `r` has run onto the hull. */
+  private hullTouch(x: number, y: number, r: number): boolean {
+    // Looked up a little ahead of the centre, so a rock dead ahead meets the stem rather than sliding up the deck.
+    const cy = Phaser.Math.Clamp(y + r * 0.6, this.bowY, this.sternY);
+    return y + r > this.bowY && y - r < this.sternY && Math.abs(x - SHIP_X) < this.hullHalf(cy) + r * 0.85;
+  }
+
+  private onHull(x: number, y: number): boolean {
+    return y > this.bowY && y < this.sternY && Math.abs(x - SHIP_X) < this.hullHalf(y);
+  }
+
+  /** A random spot the crew can actually stand on. */
+  private deckSpot(): Pt {
+    const y = this.bowY + this.shipLen * (0.2 + this.rng() * 0.72);
+    return { x: SHIP_X + (this.rng() - 0.5) * 2 * Math.max(10, this.hullHalf(y) - RAIL), y };
+  }
+
+  /** The rail is the edge of the world: walking, dashing or being thrown, the crew stays aboard. */
+  private keepOnDeck(): void {
+    const p = this.api.player;
+    const y = Phaser.Math.Clamp(p.y, this.bowY + 46, this.sternY - RAIL);
+    const half = Math.max(8, this.hullHalf(y) - RAIL);
+    const x = Phaser.Math.Clamp(p.x, SHIP_X - half, SHIP_X + half);
+    if (x !== p.x || y !== p.y) { p.x = x; p.y = y; }
+  }
+
+  /** Slowed while wading through venom on the deck. Folded into the player's speed by IslesFightKit. */
+  getPlayerSpeedMult(): number { return this.live && this.slickDrag > 0 ? 0.55 : 1; }
+
+  /** Things an attack can break (and the bow gun will shoot at). */
+  private breakable(h: Hazard): boolean {
+    switch (h.kind) {
+      case 'rock': case 'reef': case 'mine': case 'whirl': case 'drift': case 'bramble': case 'obshard': case 'tentacle': return true;
+      case 'die': return true;
+      case 'glassreef': return h.t >= REEF_RISE;
+      default: return false;
+    }
+  }
+
+  /** Give every breakable thing on screen a body the crew's abilities can land on, and take back the ones that are gone. */
+  private syncTargets(): void {
+    const { scene } = this;
+    for (const [h, t] of this.targets) {
+      if (h.dead || this.over || !this.hazards.includes(h)) { t.remove(); this.targets.delete(h); }
+    }
+    if (this.over) { this.beastTarget?.remove(); this.beastTarget = null; return; }
+    for (const h of this.hazards) {
+      if (h.dead || !this.breakable(h)) continue;
+      const at = h.kind === 'die' ? this.dieAt(h) : h;
+      if (at.y < -10 || at.y > 650 || at.x < -10 || at.x > 970) continue;
+      let t = this.targets.get(h);
+      if (!t) {
+        t = makeStrikeTarget(scene, { x: at.x, y: at.y, r: h.r, onStruck: (_by, amount) => this.struck(h, amount) }, (f) => this.api.addEnemy(f), (f) => this.api.removeEnemy(f));
+        this.targets.set(h, t);
+      } else t.moveTo(at.x, at.y);
+    }
+    const b = this.beast;
+    if (b && b.phase === 'fight') {
+      if (!this.beastTarget) this.beastTarget = makeStrikeTarget(scene, { x: b.x, y: b.y, r: 58, onStruck: (_by, amount) => this.hitBeast(amount / HP_UNIT) }, (f) => this.api.addEnemy(f), (f) => this.api.removeEnemy(f));
+      else this.beastTarget.moveTo(b.x, b.y);
+    } else if (this.beastTarget) { this.beastTarget.remove(); this.beastTarget = null; }
+  }
+
+  /** One of the crew's blows landed on a hazard. Never removes the body here — it is mid-hit; `syncTargets` does that next frame. */
+  private struck(h: Hazard, amount: number): void {
+    if (h.dead || this.over || amount <= 0) return;
+    if (h.kind === 'die') {
+      h.dent = (h.dent ?? 0) + amount;
+      while (!h.dead && h.dent >= HP_UNIT) { h.dent -= HP_UNIT; this.knockDie(h, 1); }
+      return;
+    }
+    this.damageHazard(h, amount / HP_UNIT);
+  }
+
   update(time: number, deltaRaw: number): void {
+    if (!this.live) return;
     const dt = Math.min(deltaRaw, 40) / 1000;
-    if (this.over) { this.draw(time / 1000); return; }
-    const k = this.keys;
-    const steer = (k.A.isDown || k.LEFT.isDown ? -1 : 0) + (k.D.isDown || k.RIGHT.isDown ? 1 : 0);
-    const trim = (k.W.isDown || k.UP.isDown ? 1 : 0) - (k.S.isDown || k.DOWN.isDown ? 1 : 0);
-    const handling = this.boat.handling * (1 + this.up('rudder') * 0.15);
-    this.bvx += steer * handling * 260 * dt;
+    const p = this.api.player;
+    // The sea takes the boat, never the sailor: the last point of health stays, and the kit ends the voyage itself.
+    p.minHpFloor = Math.max(p.minHpFloor, 1);
+    if (!this.tuned) { this.tuned = true; Music.play('gauntlet'); }
+    if (this.over) { this.keepOnDeck(); this.syncTargets(); this.draw(time / 1000); return; }
+
+    // Shoves bleed off fast; the crew can lean against a gust but not ignore it.
     this.bvx *= Math.pow(0.12, dt);
-    this.bx = Phaser.Math.Clamp(this.bx + this.bvx * dt, 40, 920);
-    this.heading = Phaser.Math.Clamp(this.bvx / 400, -0.5, 0.5);
+    if (Math.abs(this.bvx) > 6) p.x += this.bvx * SHOVE * dt;
+    this.keepOnDeck();
+    this.bx = p.x; this.by = p.y;
     this.sailT += dt;
     this.slickDrag = Math.max(0, this.slickDrag - dt);
-    const fwd = this.speed * (1 + trim * 0.25) * (this.sailT < 1.1 ? 1.7 : 1) * (this.slickDrag > 0 ? 0.55 : 1);
-    this.by = Phaser.Math.Linear(this.by, 500 - trim * 40, 0.04);
-    this.dist += fwd * dt / 10;
+    this.crewInvuln -= dt;
+    // A filled sail is distance made good; the sea alongside comes on no faster for it.
+    this.dist += this.speed * (this.sailT < 1.1 ? 1.7 : 1) * dt / 10;
+    const scroll = SEA_PX * dt;
+    this.seaY += scroll;
 
     // Band change banner.
     const bi = this.band();
     if (bi !== this.lastBand) {
       this.lastBand = bi;
       this.bandText.setText(this.bands()[bi].name.toUpperCase()).setAlpha(1);
-      this.tweens.add({ targets: this.bandText, alpha: 0, delay: 1800, duration: 700 });
+      this.scene.tweens.add({ targets: this.bandText, alpha: 0, delay: 1800, duration: 700 });
       if (bi > 0) Sfx.play('boss-phase');
     }
 
-    // Scroll the world toward the boat.
-    const scroll = fwd * dt;
+    // The sea slides past; what rides the deck stays with the ship.
     for (const h of this.hazards) {
       if (h.kind === 'squall') h.y += scroll * 0.35;
-      else if (h.kind !== 'ring' && h.kind !== 'burn') h.y += scroll;
+      else if (h.kind !== 'ring' && h.kind !== 'burn' && !h.deck) { h.y += scroll; h.x += (h.dx ?? 0) * dt; }
       if ((h.held ?? 0) > 0) h.held = (h.held ?? 0) - dt; else h.t += dt;
     }
-    for (const l of this.loot) { l.y += scroll; l.t += dt; }
+    for (const l of this.loot) {
+      l.y += scroll; l.t += dt;
+      // The ship's bow wave turns flotsam down her sides, a little off the rail.
+      const side = l.x < SHIP_X ? -1 : 1;
+      const lane = SHIP_X + side * (this.hullHalf(Phaser.Math.Clamp(l.y, this.bowY, this.sternY)) + 26);
+      l.x += (lane - l.x) * Math.min(1, dt * (l.y > this.bowY - 120 ? 1.6 : 0.5));
+    }
     if (this.beast) { this.beast.t += dt; }
-    this.hazards = this.hazards.filter((h) => !h.dead && h.y < 720);
+    this.hazards = this.hazards.filter((h) => !h.dead && h.y < 720 && h.x > -160 && h.x < 1120);
     this.loot = this.loot.filter((l) => !l.taken && l.y < 700);
 
     // Spawning, thicker with depth.
-    this.nextSpawn -= scroll;
+    this.nextSpawn -= dt;
     if (this.nextSpawn <= 0 && !(this.beast && this.beast.phase !== 'sink') && this.toLand() > COAST_M) {
       this.spawnRow(bi);
-      this.nextSpawn = Math.max(90, 260 - bi * 45 - this.dist * 0.01) * (0.7 + this.rng() * 0.6) * (this.rough ? 0.8 : 1);
+      this.nextSpawn = Math.max(0.85, 2.2 - bi * 0.36 - this.dist * 0.00012) * (0.7 + this.rng() * 0.6) * (this.rough ? 0.85 : 1);
     }
-    if (this.rough) this.roughWater(dt, scroll, bi);
-    if (this.last) this.lastWater(dt, scroll, bi);
-    this.nextLoot -= scroll;
+    if (this.rough) this.roughWater(dt, bi);
+    if (this.last) this.lastWater(dt, bi);
+    this.nextLoot -= dt;
     if (this.nextLoot <= 0) {
       const r = this.rng();
       const kind: Loot['kind'] = r < 0.08 + bi * 0.04 ? 'orb' : r < 0.25 ? 'barrel' : r < 0.32 ? 'bottle' : 'crate';
-      this.loot.push({ kind, x: 60 + this.rng() * 840, y: -40, t: 0, taken: false });
-      this.nextLoot = 220 + this.rng() * 260;
+      const side = this.rng() < 0.5 ? -1 : 1;
+      this.loot.push({ kind, x: SHIP_X + side * (this.shipHw + 30 + this.rng() * 90), y: -40, t: 0, taken: false });
+      this.nextLoot = 3.6 + this.rng() * 4.2;
     }
 
     // Sea beasts in the deep.
@@ -324,40 +517,38 @@ export class SeaVoyageScene extends Phaser.Scene {
       if (this.rng() < 0.45 + bi * 0.1) this.summonBeast();
     }
 
-    // Weapons.
-    this.fireCd -= dt; this.burstCd -= dt; this.turretCd -= dt;
+    // The boat's own guns: the Bow Cannon picks its own marks, and the Uber-upgrade does its work.
+    this.fireCd -= dt; this.turretCd -= dt;
     const cannon = this.up('cannon');
-    if ((this.input.activePointer.isDown || k.SPACE.isDown) && this.fireCd <= 0) {
-      const p = this.input.activePointer;
-      const aim = this.input.activePointer.isDown ? Math.atan2(p.worldY - this.by, p.worldX - this.bx) : -Math.PI / 2;
-      this.shots.push({ x: this.bx, y: this.by - 26, vx: Math.cos(aim) * 520, vy: Math.sin(aim) * 520, dmg: 1 + cannon * 0.5, life: 1.2 });
-      this.fireCd = 0.34 - cannon * 0.06;
-      Sfx.play('fireball');
-    }
-    if (Phaser.Input.Keyboard.JustDown(k.E) && this.burstCd <= 0) {
-      this.burstCd = 7;
-      Sfx.play('explosion-large');
-      this.cameras.main.shake(200, 0.006);
-      const ring = this.add.circle(this.bx, this.by, 170, this.elementColor, 0.25).setScale(0.2);
-      this.tweens.add({ targets: ring, scale: 1, alpha: 0, duration: 380, onComplete: () => ring.destroy() });
-      for (const h of this.hazards) if (h.kind === 'die' && !h.dead && Math.hypot(h.x - this.bx, h.y - this.by) < 170) this.knockDie(h, 2);
-      for (const h of this.hazards) if (Math.hypot(h.x - this.bx, h.y - this.by) < 170 && h.kind !== 'die' && h.kind !== 'reef' && h.kind !== 'gust' && h.kind !== 'breaker' && h.kind !== 'arc' && h.kind !== 'slick' && h.kind !== 'ring' && h.kind !== 'burn' && h.kind !== 'glassreef' && h.kind !== 'squall') this.damageHazard(h, 4);
-      if (this.beast && Math.hypot(this.beast.x - this.bx, this.beast.y - this.by) < 230) this.hitBeast(6);
+    if (cannon > 0 && this.fireCd <= 0) {
+      let best: Pt | null = null, bd = 430;
+      for (const h of this.hazards) {
+        if (h.dead || !this.breakable(h) || h.y < 0 || h.y > this.ky + 80) continue;
+        const at = h.kind === 'die' ? this.dieAt(h) : h, d = Math.hypot(at.x - this.kx, at.y - this.ky);
+        if (d < bd) { bd = d; best = at; }
+      }
+      if (!best && this.beast?.phase === 'fight') best = this.beast;
+      if (best) {
+        const a = Math.atan2(best.y - (this.bowY + 26), best.x - this.kx);
+        this.shots.push({ x: this.kx, y: this.bowY + 26, vx: Math.cos(a) * 520, vy: Math.sin(a) * 520, dmg: 1 + cannon * 0.5, life: 1.2 });
+        this.fireCd = 2.4 - cannon * 0.45;
+        Sfx.play('fireball');
+      } else this.fireCd = 0.3;
     }
     this.bowWaveT += dt;
     this.helmT += dt;
     if (this.helmPending && this.helmT >= HELM_WHIRL) this.helmLand();
     if (Save.S().boat.uber && this.turretCd <= 0) this.uberTick();
 
-    // Shots.
+    // Shots: the boat's own at the sea, a beast's at the crew.
     for (const sh of this.shots) {
       sh.x += sh.vx * dt; sh.y += sh.vy * dt; sh.life -= dt;
       if (sh.foe) {
-        if (Math.hypot(sh.x - this.bx, sh.y - this.by) < 20) { sh.life = 0; this.damageBoat(1); }
+        if (Math.hypot(sh.x - this.bx, sh.y - this.by) < 22) { sh.life = 0; this.hurtCrew(1); }
         continue;
       }
       for (const h of this.hazards) {
-        if (h.dead || h.kind === 'whirl' || h.kind === 'reef' || h.kind === 'gust' || h.kind === 'boulder' || h.kind === 'breaker' || h.kind === 'arc' || h.kind === 'slick' || h.kind === 'ring' || h.kind === 'burn' || h.kind === 'glassreef' || h.kind === 'squall') continue;
+        if (h.dead || !this.breakable(h)) continue;
         if (h.kind === 'die') {
           const at = this.dieAt(h);
           if (Math.hypot(sh.x - at.x, sh.y - at.y) < h.r + 6) { this.knockDie(h, 1); sh.life = 0; break; }
@@ -369,15 +560,15 @@ export class SeaVoyageScene extends Phaser.Scene {
     }
     this.shots = this.shots.filter((s) => s.life > 0 && s.y > -40 && s.y < 700 && s.x > -40 && s.x < 1000);
 
-    // Collisions + hazard behaviour.
+    // Hazards: solid things break on the hull; everything else washes over the deck at the crew.
     this.invuln -= dt;
     for (const h of this.hazards) {
       if (h.dead) continue;
       const d = Math.hypot(h.x - this.bx, h.y - this.by);
       // Held by the Foghorn: only the solid things still bar the way; everything that moves or counts waits.
       const held = (h.held ?? 0) > 0;
-      if (held && h.kind !== 'rock' && h.kind !== 'reef' && h.kind !== 'drift' && h.kind !== 'bramble' && h.kind !== 'mine' && h.kind !== 'obshard' && h.kind !== 'glassreef') continue;
-      if (h.kind === 'glassreef') { this.reefTouch(h, d); continue; }
+      if (held && h.kind !== 'rock' && h.kind !== 'reef' && h.kind !== 'drift' && h.kind !== 'bramble' && h.kind !== 'mine' && h.kind !== 'obshard' && h.kind !== 'glassreef' && h.kind !== 'whirl') continue;
+      if (h.kind === 'glassreef') { this.reefTouch(h); continue; }
       if (h.kind === 'squall') { this.squallTouch(h, d, dt); continue; }
       if (h.kind === 'obshard' && h.vx && !held) {
         // A split shard skates off sideways, slowing, glancing off the edges of the sea.
@@ -386,48 +577,38 @@ export class SeaVoyageScene extends Phaser.Scene {
       }
       if (h.kind === 'ring') { this.ringTouch(h, d); continue; }
       if (h.kind === 'burn') { this.burnTouch(h, d); continue; }
-      if (h.kind === 'whirl') {
-        if (d < h.r * 2.6) { const pull = (1 - d / (h.r * 2.6)) * 220; this.bvx += Math.sign(h.x - this.bx) * pull * dt * 2; }
-        if (d < h.r * 0.5) this.damageBoat(1);
-        continue;
-      }
-      if (h.kind === 'spout') { if (d < h.r + 14) this.bvx += Math.sign(this.bx - h.x || 1) * 900 * dt; continue; }
+      if (h.kind === 'spout') { if (d < h.r + 20) this.bvx += Math.sign(this.bx - h.x || 1) * 900 * dt; continue; }
       if (h.kind === 'tentacle') {
-        if (h.t > 1.1 && h.t < 1.6 && d < h.r + 16) this.damageBoat(2);
+        // It rears up over the rail and comes down on the deck: cut it back first, or be elsewhere.
+        if (h.t > 1.1 && h.t < 1.6 && d < h.r + 18) this.hurtCrew(2);
         if (h.t > 2.2) h.dead = true;
-        continue;
-      }
-      if (h.kind === 'bramble') {
-        if (d < h.r + 14) { this.bvx *= 0.2; this.damageBoat(1); }
         continue;
       }
       if (h.kind === 'gust') {
         if (Math.abs(h.y - this.by) < h.r) this.bvx += h.seed * 1100 * dt;
-        if (h.t > 6) h.dead = true;
+        if (h.t > 16) h.dead = true;
         continue;
       }
       if (h.kind === 'arc') {
-        // Live for 1.1 s, guttering for 0.7 s: cross while it is dark.
+        // Live for 1.1 s, guttering for 0.7 s: step over it while it is dark.
         const live = (h.t + h.seed) % 1.8 < 1.1;
         h.armed = live ? 1 : 0;
-        if (live && Math.abs(h.y - this.by) < 14 && Math.abs(this.bx - h.x) < h.r) { this.damageBoat(1); Sfx.play('zap'); }
+        if (live && Math.abs(h.y - this.by) < 14 && Math.abs(this.bx - h.x) < h.r) { this.hurtCrew(1); Sfx.play('zap'); }
         continue;
       }
       if (h.kind === 'slick') {
         if (h.t < SLICK_FLIGHT) continue;
         if (!h.armed) {
-          // Splash down: a burst of venom, and the sheen starts to spread.
-          h.armed = 1; this.explode(h.x, h.y, h.r * 0.7); Sfx.play('splash');
+          // Splash down: a burst of venom, and the sheen starts to spread — across the planks, if it hit the deck.
+          h.armed = 1; h.deck = this.onHull(h.x, h.y); this.explode(h.x, h.y, h.r * 0.7); Sfx.play('splash');
         }
         if (h.t > SLICK_FLIGHT + SLICK_LIFE) { h.dead = true; continue; }
         const thin = this.slickStrength(h), rr = this.slickRadius(h);
         const ex = (this.bx - h.x) / rr, ey = (this.by - h.y) / (rr * 0.55);
         if (ex * ex + ey * ey < 1 && thin > 0.15) {
-          // In the venom: the boat wallows (sideways way bleeds off, forward speed drops), and the
-          // first touch of a fresh slick eats into the hull.
+          // In the venom: every step drags, and the first touch of a fresh slick burns.
           this.slickDrag = 0.25;
-          this.bvx *= Math.pow(0.2, dt);
-          if (h.armed === 1 && thin > 0.35) { h.armed = 2; this.damageBoat(1); this.float(this.bx, this.by - 36, 'the hull corrodes', '#9af05a'); Sfx.play('status-poison'); }
+          if (h.armed === 1 && thin > 0.35) { h.armed = 2; this.hurtCrew(1); Sfx.play('status-poison'); }
         }
         continue;
       }
@@ -435,130 +616,173 @@ export class SeaVoyageScene extends Phaser.Scene {
         if (h.t < DIE_ROLL) continue;
         if (h.tick === undefined) {
           // Down it comes: it lands showing its pips and starts to count.
-          h.tick = DIE_TICK; h.armed ??= h.maxHp; this.explode(h.x, h.y, h.r + 6); Sfx.play('dice');
+          h.tick = DIE_TICK; h.armed ??= h.maxHp; h.deck = this.onHull(h.x, h.y); this.explode(h.x, h.y, h.r + 6); Sfx.play('dice');
         }
         h.tick -= dt;
         if (h.tick <= 0) { h.tick += DIE_TICK; h.armed = (h.armed ?? 1) - 1; }
         if ((h.armed ?? 0) <= 0) { this.burstDie(h); continue; }
-        // Bumping a landed die shoves the boat off it; it is too heavy to ram.
-        if (d < h.r + 16) this.bvx = Math.sign(this.bx - h.x || 1) * 240;
+        // Walking into a landed die shoves you off it; it is too heavy to move.
+        if (d < h.r + 18) this.bvx = Math.sign(this.bx - h.x || 1) * 240;
         continue;
       }
       if (h.kind === 'breaker') {
-        // It rolls in faster than the sea; caught outside the trough, it breaks over the boat.
-        h.y += (90 + this.band() * 25) * dt;
+        // It rolls in faster than the sea and breaks clean over the deck; only the trough is dry.
+        h.y += (70 + this.band() * 18) * dt;
         if (!h.armed && Math.abs(h.y - this.by) < h.r + 12) {
           h.armed = 1;
           if (Math.abs(this.bx - h.seed) > BREAKER_GAP) {
-            this.damageBoat(1);
+            this.hurtCrew(1);
             this.bvx += Math.sign(this.bx - h.seed || 1) * 520;
-            this.float(this.bx, this.by - 36, 'swamped!', '#d4eeff'); Sfx.play('splash');
-          } else this.float(this.bx, this.by - 36, 'through the trough', '#9dd8ff');
+            Sfx.play('splash');
+          }
         }
         continue;
       }
       if (h.kind === 'boulder') {
         if (h.t < 1.2) continue;
-        // Down it comes: a smash where it lands, then it sits in the sea as an ordinary rock.
-        this.explode(h.x, h.y, h.r + 24); this.cameras.main.shake(120, 0.005); Sfx.play('stone-slam');
-        if (d < h.r + 22) this.damageBoat(2);
-        h.kind = 'rock'; h.hp = h.maxHp = 3;
+        // Down it comes: a smash where it lands. On the deck it bursts to gravel; in the sea it sits as a rock.
+        this.explode(h.x, h.y, h.r + 24); this.scene.cameras.main.shake(120, 0.005); Sfx.play('stone-slam');
+        if (d < h.r + 22) this.hurtCrew(2);
+        if (this.hullDist(h.x, h.y) < h.r) { h.dead = true; continue; }
+        h.kind = 'rock'; h.hp = h.maxHp = 3; h.deck = false; h.dx = 0;
         continue;
       }
-      if (h.kind === 'mine' && d < 90 && h.armed === undefined && !held) h.armed = 0.6;
+      // Everything left is solid, and drifting at the ship.
+      const near = this.hullDist(h.x, h.y);
+      if (h.kind === 'mine' && near < 70 && h.armed === undefined && !held) h.armed = 0.9;
       if (h.kind === 'mine' && h.armed !== undefined && !held) {
         h.armed -= dt;
-        if (h.armed <= 0) { this.explode(h.x, h.y, 80); h.dead = true; if (d < 80) this.damageBoat(2); continue; }
+        if (h.armed <= 0) { this.explode(h.x, h.y, 80); h.dead = true; Sfx.play('explosion-large'); if (near < 80) this.damageBoat(1); if (d < 95) this.hurtCrew(1); continue; }
       }
-      if (d < h.r + 16 && h.kind !== 'reef' && Save.S().boat.uber === 'uber-cragplate') {
+      if (!this.hullTouch(h.x, h.y, h.r)) continue;
+      if (h.kind !== 'reef' && Save.S().boat.uber === 'uber-cragplate') {
         // The Cragplate Ram: the stone prow smashes rocks, drift and mines aside unharmed.
         h.dead = true; this.explode(h.x, h.y, 34); Sfx.play('rock-throw');
         if (h.kind === 'rock' && this.rng() < 0.3) this.loot.push({ kind: 'crate', x: h.x, y: h.y, t: 0, taken: false });
         continue;
       }
-      if (d < h.r + 16) {
-        this.damageBoat(h.kind === 'drift' ? 1 : h.kind === 'reef' ? 2 : 1);
-        if (h.kind !== 'reef') { h.dead = true; this.explode(h.x, h.y, 30); }
-        else this.bvx = Math.sign(this.bx - h.x || 1) * 260;
-      }
+      h.dead = true;
+      this.explode(h.x, h.y, h.r + 12);
+      this.damageBoat(h.kind === 'reef' ? 2 : 1);
+      if (h.kind === 'whirl') this.bvx += (this.rng() < 0.5 ? -1 : 1) * 700;
     }
 
-    // Loot.
-    const reach = 26 + this.up('net') * 26;
+    // Loot: lean out from the rail as it passes.
+    const reach = 78 + this.up('net') * 34;
     for (const l of this.loot) {
       const d = Math.hypot(l.x - this.bx, l.y - this.by);
-      if (d < reach * 2.2 && this.up('net') > 0) { l.x += (this.bx - l.x) * dt * 2; l.y += (this.by - l.y) * dt * 2; }
+      if (d < reach * 2 && this.up('net') > 0) { l.x += (this.bx - l.x) * dt * 2; l.y += (this.by - l.y) * dt * 2; }
       if (d < reach) {
         l.taken = true;
         const deep = 1 + this.band() * 0.6;
         if (l.kind === 'crate') { const c = Math.round((8 + this.rng() * 10) * deep * this.boat.hold); this.haul += c; this.float(l.x, l.y, `+${c} 🪙`, '#ffd27a'); Sfx.play('money'); }
         if (l.kind === 'barrel') { this.hull = Math.min(this.maxHull, this.hull + 1); this.float(l.x, l.y, '+1 hull', '#9dffb0'); Sfx.play('heal'); }
         if (l.kind === 'orb') { this.orbs += 1; this.float(l.x, l.y, '+1 🔮', '#d0a8ff'); Sfx.play('sparkle'); }
-        if (l.kind === 'bottle') { const c = Math.round(30 * deep); this.haul += c; this.float(l.x, l.y, `Message in a bottle: +${c} 🪙`, '#ffe8c0'); Sfx.play('jackpot'); }
+        if (l.kind === 'bottle') { const c = Math.round(30 * deep); this.haul += c; this.float(l.x, l.y, `+${c} 🪙`, '#ffe8c0'); Sfx.play('jackpot'); }
       }
     }
 
     // Pump.
     if (this.up('pump') > 0 && this.hull < this.maxHull) {
       this.pumpT = (this.pumpT ?? 0) + dt;
-      if (this.pumpT > 16 - this.up('pump') * 5) { this.pumpT = 0; this.hull += 1; this.float(this.bx, this.by - 30, 'pumped +1', '#9dffb0'); }
+      if (this.pumpT > 16 - this.up('pump') * 5) { this.pumpT = 0; this.hull += 1; this.float(this.kx, this.ky - 30, '+1 hull', '#9dffb0'); }
     }
 
     this.updateBeast(dt);
+    this.syncTargets();
 
-    this.wake.unshift({ x: this.bx, y: this.by + 24 });
-    if (this.wake.length > 28) this.wake.pop();
-    for (const w of this.wake) w.y += scroll;
-
-    if (this.crossing && this.toLand() <= 0) { this.landfall(); return; }
-    if (Phaser.Input.Keyboard.JustDown(k.H) || Phaser.Input.Keyboard.JustDown(k.ESC)) this.finish(false);
+    if (!this.over && p.hp <= 1) this.overboard();
+    if (!this.over && this.crossing && this.toLand() <= 0) this.landfall();
+    if (!this.over && this.homeKey && Phaser.Input.Keyboard.JustDown(this.homeKey)) this.finish(false);
     this.draw(time / 1000);
   }
 
   private pumpT = 0;
 
   /**
-   * The Outer Sea: a swell that heaves the boat side to side (stronger the deeper the band),
-   * breakers rolling in with one trough to thread, and the storm overhead flashing.
+   * The Outer Sea: a swell that heaves the deck under the crew (stronger the deeper the band),
+   * breakers rolling over the ship with one dry trough to stand in, and the storm overhead flashing.
    */
-  private roughWater(dt: number, scroll: number, bi: number): void {
+  private roughWater(dt: number, bi: number): void {
     this.swellT += dt;
     const heave = Math.sin(this.swellT * 0.62) * 0.7 + Math.sin(this.swellT * 1.37 + 1.1) * 0.3;
-    this.bvx += heave * (150 + bi * 60) * dt;
-    this.nextBreaker -= scroll;
+    this.bvx += heave * (480 + bi * 170) * dt;
+    this.nextBreaker -= dt;
     if (this.nextBreaker <= 0 && this.toLand() > COAST_M && !(this.beast && this.beast.phase !== 'sink')) {
-      const gap = 110 + this.rng() * 740;
+      const gap = SHIP_X + (this.rng() - 0.5) * 2 * (this.shipHw - RAIL - 10);
       this.hazards.push({ kind: 'breaker', x: 480, y: -70, r: 20, hp: 999, maxHp: 999, t: 0, seed: gap, dead: false });
-      this.nextBreaker = (1250 - bi * 220) * (0.75 + this.rng() * 0.5);
+      this.nextBreaker = (8.5 - bi * 1.2) * (0.75 + this.rng() * 0.5);
     }
     this.flashT += dt;
     this.nextFlash -= dt;
     if (this.nextFlash <= 0) {
       this.nextFlash = 5 + this.rng() * 7;
       this.flashT = 0; this.flashX = 80 + this.rng() * 800;
-      this.cameras.main.flash(140, 200, 220, 255);
+      this.scene.cameras.main.flash(140, 200, 220, 255);
       Sfx.play('thunder');
     }
+  }
+
+  /**
+   * Set a hazard adrift. Most of the sea slides by on either hand; the ones that matter are on a
+   * line for the hull — from ahead, or (out in deeper water) swept in from abeam on a cross-current.
+   */
+  private adrift(h: Hazard, bi: number, atHull: boolean): Hazard {
+    if (!atHull) {
+      // Wide of the ship: scenery, and loot for anyone who breaks it anyway.
+      const side = this.rng() < 0.5 ? -1 : 1;
+      // (A mine goes off at anything close, so the ones meant to miss are given real room.)
+      h.x = SHIP_X + side * (this.shipHw + h.r + (h.kind === 'mine' ? 110 : 34) + this.rng() * (360 - this.shipHw));
+      h.y = -50 - this.rng() * 110;
+      h.dx = 0;
+      return h;
+    }
+    const tx = SHIP_X + (this.rng() - 0.5) * this.shipHw;
+    if (bi >= 1 && this.rng() < 0.28) {
+      const side = this.rng() < 0.5 ? -1 : 1, secs = 5.5 + this.rng() * 2.5;
+      const ty = this.bowY + this.shipLen * (0.25 + this.rng() * 0.6);
+      h.x = SHIP_X + side * (500 + h.r); h.y = ty - SEA_PX * secs;
+      h.dx = (tx - h.x) / secs;
+      return h;
+    }
+    const ty = this.bowY + this.rng() * this.shipLen * 0.7;
+    h.y = -40 - this.rng() * 70;
+    const secs = (ty - h.y) / SEA_PX;
+    h.x = Phaser.Math.Clamp(tx + (this.rng() - 0.5) * 2 * Math.min(420, 62 * secs), 30, 930);
+    h.dx = (tx - h.x) / secs;
+    return h;
+  }
+
+  /** How many of a row are on a line for the hull: about one, more in deep water, fewer for a handy boat with a long rudder. */
+  private threats(bi: number): number {
+    const steer = Math.pow(this.boat.handling / 2.2, 0.6) * (1 + this.up('rudder') * 0.15);
+    return (this.rng() < 0.75 / steer ? 1 : 0) + (this.rng() < (0.1 + bi * 0.15) / steer ? 1 : 0);
   }
 
   private spawnRow(bi: number): void {
     if (this.last) { this.spawnLastRow(bi); return; }
     const r = this.rng;
-    const n = 1 + Math.floor(r() * (2 + bi));
+    const aimed = this.threats(bi), n = aimed + 2 + Math.floor(r() * (2 + bi));
     for (let i = 0; i < n; i++) {
       const roll = r();
       let kind: HazardKind = 'rock';
-      if (roll < 0.1 + bi * 0.03) kind = 'mine';
-      else if (roll < 0.18 + bi * 0.05) kind = 'whirl';
-      else if (roll < 0.3) kind = 'drift';
-      else if (roll < 0.38 + bi * 0.03) kind = 'reef';
-      else if (bi >= 2 && roll < 0.5) kind = 'tentacle';
-      else if (bi >= 1 && roll < 0.55) kind = 'spout';
-      const x = 50 + r() * 860;
-      const rr = kind === 'reef' ? 46 + r() * 30 : kind === 'whirl' ? 30 : kind === 'drift' ? 14 : kind === 'mine' ? 13 : kind === 'tentacle' ? 22 : kind === 'spout' ? 18 : 18 + r() * 18;
-      const hp = kind === 'rock' ? Math.ceil(rr / 12) + bi : kind === 'drift' ? 1 : kind === 'mine' ? 1 : 999;
-      const y = kind === 'tentacle' ? 120 + r() * 300 : -60 - r() * 120;
-      this.hazards.push({ kind, x: kind === 'tentacle' ? Phaser.Math.Clamp(this.bx + (r() - 0.5) * 300, 60, 900) : x, y, r: rr, hp, maxHp: hp, t: 0, seed: r() * 1000, dead: false });
+      if (roll < 0.09 + bi * 0.03) kind = 'mine';
+      else if (roll < 0.13 + bi * 0.04) kind = 'whirl';
+      else if (roll < 0.23) kind = 'drift';
+      else if (roll < 0.31 + bi * 0.03) kind = 'reef';
+      else if (bi >= 2 && i >= aimed && roll < 0.4) kind = 'tentacle';
+      else if (bi >= 1 && i >= aimed && roll < 0.45) kind = 'spout';
+      const rr = kind === 'reef' ? 38 + r() * 20 : kind === 'whirl' ? 30 : kind === 'drift' ? 14 : kind === 'mine' ? 13 : kind === 'tentacle' ? 24 : kind === 'spout' ? 18 : 18 + r() * 18;
+      const hp = kind === 'rock' ? Math.ceil(rr / 12) + bi : kind === 'reef' ? 6 + bi * 2 : kind === 'whirl' ? 3 + bi : kind === 'tentacle' ? 2 + bi : kind === 'drift' ? 1 : kind === 'mine' ? 1 : 999;
+      const h: Hazard = { kind, x: 0, y: 0, r: rr, hp, maxHp: hp, t: 0, seed: r() * 1000, dead: false };
+      if (kind === 'tentacle') {
+        // Up over the rail beside the crew.
+        const at = this.deckSpot();
+        h.x = Phaser.Math.Linear(at.x, this.bx, 0.6); h.y = Phaser.Math.Linear(at.y, this.by, 0.6); h.deck = true;
+      } else if (kind === 'spout') {
+        h.x = SHIP_X + (r() - 0.5) * this.shipHw * 1.6; h.y = -60 - r() * 60;
+      } else this.adrift(h, bi, i < aimed);
+      this.hazards.push(h);
     }
   }
 
@@ -566,41 +790,53 @@ export class SeaVoyageScene extends Phaser.Scene {
     h.hp -= d;
     if (h.hp <= 0 && !h.dead) {
       h.dead = true;
-      if (h.kind === 'mine') { this.explode(h.x, h.y, 80); if (Math.hypot(h.x - this.bx, h.y - this.by) < 80) this.damageBoat(2); }
+      if (h.kind === 'mine') { this.explode(h.x, h.y, 80); Sfx.play('explosion-large'); if (this.hullDist(h.x, h.y) < 30) this.damageBoat(1); if (Math.hypot(h.x - this.bx, h.y - this.by) < 95) this.hurtCrew(1); }
       else if (h.kind === 'obshard') this.splitShard(h);
-      else { this.explode(h.x, h.y, h.r + 10); Sfx.play('stone-slam'); if (h.kind === 'rock' && this.rng() < 0.3) this.loot.push({ kind: 'crate', x: h.x, y: h.y, t: 0, taken: false }); }
-    } else Sfx.play('hit-light');
+      else if (h.kind === 'whirl') { this.explode(h.x, h.y, h.r * 1.6); Sfx.play('splash'); }
+      else { this.explode(h.x, h.y, h.r + 10); Sfx.play('stone-slam'); if ((h.kind === 'rock' || h.kind === 'reef') && this.rng() < (h.kind === 'reef' ? 0.8 : 0.3)) this.loot.push({ kind: 'crate', x: h.x, y: h.y, t: 0, taken: false }); }
+    }
   }
 
+  /** The hull takes a blow: a plank (or `n`) gone. */
   private damageBoat(n: number): void {
     if (this.invuln > 0 || this.over) return;
     if (this.helmWard && Save.S().boat.uber === 'uber-fortunehelm') {
       this.helmWard = false; this.invuln = 0.9;
-      this.float(this.bx, this.by - 34, 'the ward holds', '#ffe08a'); Sfx.play('shield-block');
+      Sfx.play('shield-block');
       return;
     }
     if (this.plateReady && Save.S().boat.uber === 'uber-cragplate') {
       this.plateReady = false; this.invuln = 0.9; this.turretCd = 8;
-      this.float(this.bx, this.by - 34, 'the cragplate holds', '#e0c8a0'); Sfx.play('shield-block');
+      Sfx.play('shield-block');
       return;
     }
     this.hull -= n;
     this.invuln = 0.9;
-    this.cameras.main.shake(180, 0.008);
-    this.cameras.main.flash(120, 255, 60, 40);
+    this.scene.cameras.main.shake(180, 0.008);
+    this.scene.cameras.main.flash(120, 255, 60, 40);
     Sfx.play('hit-heavy');
     if (this.hull <= 0) { this.sink(); return; }
     if (Save.S().boat.uber === 'uber-greenwood') this.thornBurst();
   }
 
+  /** The sea reaches the crew: `n` planks' worth, off the player's own health. A dodge roll's grace still counts. */
+  private hurtCrew(n: number): void {
+    if (this.crewInvuln > 0 || this.over) return;
+    this.crewInvuln = 0.7;
+    const p = this.api.player;
+    if (!p.active) return;
+    p.takeDamage(n * CREW_HIT);
+    this.scene.cameras.main.shake(120, 0.005);
+  }
+
   private explode(x: number, y: number, r: number): void {
-    const c = this.add.circle(x, y, r, 0xffe8c0, 0.45).setScale(0.3);
-    this.tweens.add({ targets: c, scale: 1, alpha: 0, duration: 300, onComplete: () => c.destroy() });
+    const c = this.scene.add.circle(x, y, r, 0xffe8c0, 0.45).setScale(0.3);
+    this.scene.tweens.add({ targets: c, scale: 1, alpha: 0, duration: 300, onComplete: () => c.destroy() });
   }
 
   private float(x: number, y: number, s: string, color: string): void {
-    const t = this.add.text(x, y, s, { fontFamily: FONT_DISPLAY, fontSize: '14px', color, stroke: '#000', strokeThickness: 4 }).setOrigin(0.5).setDepth(12);
-    this.tweens.add({ targets: t, y: y - 40, alpha: 0, duration: 1100, onComplete: () => t.destroy() });
+    const t = this.scene.add.text(x, y, s, { fontFamily: FONT_DISPLAY, fontSize: '14px', color, stroke: '#000', strokeThickness: 4 }).setOrigin(0.5).setDepth(12);
+    this.scene.tweens.add({ targets: t, y: y - 40, alpha: 0, duration: 1100, onComplete: () => t.destroy() });
   }
 
   private uberTick(): void {
@@ -628,12 +864,12 @@ export class SeaVoyageScene extends Phaser.Scene {
    */
   private uberMast(): void {
     const ahead = this.hazards
-      .filter((h) => !h.dead && h.y < this.by && h.y > -20 && (h.kind === 'rock' || h.kind === 'obshard' || h.kind === 'drift' || h.kind === 'mine' || h.kind === 'bramble'))
-      .sort((a, b) => Math.hypot(a.x - this.bx, a.y - this.by) - Math.hypot(b.x - this.bx, b.y - this.by))
+      .filter((h) => !h.dead && h.y < this.ky + 140 && h.y > -20 && (h.kind === 'rock' || h.kind === 'obshard' || h.kind === 'drift' || h.kind === 'mine' || h.kind === 'bramble'))
+      .sort((a, b) => Math.hypot(a.x - this.kx, a.y - this.ky) - Math.hypot(b.x - this.kx, b.y - this.ky))
       .slice(0, 3);
     this.mastBolts = ahead.map((h) => ({ x: h.x, y: h.y }));
     for (const h of ahead) { h.dead = true; this.explode(h.x, h.y, 30); }
-    if (this.beast?.phase === 'fight' && Math.hypot(this.beast.x - this.bx, this.beast.y - this.by) < 420) {
+    if (this.beast?.phase === 'fight' && Math.hypot(this.beast.x - this.kx, this.beast.y - this.ky) < 420) {
       this.hitBeast(3); this.mastBolts.push({ x: this.beast.x, y: this.beast.y });
     }
     if (!this.mastBolts.length) { this.turretCd = 0.5; return; }
@@ -674,16 +910,16 @@ export class SeaVoyageScene extends Phaser.Scene {
    */
   private uberProw(): void {
     this.turretCd = 0.05;
-    const now = this.time.now / 1000;
+    const now = this.scene.time.now / 1000;
     for (let i = 0; i < 3; i++) {
       if (now < this.prowReady[i]) continue;
-      const m = this.prowMount(i), hx = this.bx + m.x, hy = this.by + m.y;
+      const m = this.fit(this.prowMount(i)), hx = m.x, hy = m.y;
       let best: Hazard | null = null, bd = PROW_REACH;
       for (const h of this.hazards) {
         if (h.dead || !(h.kind === 'rock' || h.kind === 'obshard' || h.kind === 'drift' || h.kind === 'mine' || h.kind === 'bramble' || h.kind === 'tentacle')) continue;
-        const dx = h.x - this.bx;
-        const side = dx < -34 ? 0 : dx > 34 ? 2 : 1;
-        if (side !== i || h.y > this.by + 10) continue;
+        const dx = h.x - this.kx;
+        const third = this.shipHw * 0.36, side = dx < -third ? 0 : dx > third ? 2 : 1;
+        if (side !== i || h.y > this.ky + 70) continue;
         const d = Math.hypot(h.x - hx, h.y - hy) - h.r;
         if (d < bd) { bd = d; best = h; }
       }
@@ -714,17 +950,16 @@ export class SeaVoyageScene extends Phaser.Scene {
     h.tick = DIE_TICK;
     h.armed = (h.armed ?? h.maxHp) - n;
     if (h.armed <= 0) this.burstDie(h);
-    else Sfx.play('hit-light');
   }
 
   /** A die comes up empty: it bursts in a ring of spray, and a boat inside the ring is struck. */
   private burstDie(h: Hazard): void {
     h.dead = true;
     this.explode(h.x, h.y, h.r + 14);
-    const ring = this.add.circle(h.x, h.y, DIE_RING, 0xd8f0ff, 0.14).setStrokeStyle(5, 0xffffff, 0.85).setScale(0.25);
-    this.tweens.add({ targets: ring, scale: 1, alpha: 0, duration: 360, onComplete: () => ring.destroy() });
+    const ring = this.scene.add.circle(h.x, h.y, DIE_RING, 0xd8f0ff, 0.14).setStrokeStyle(5, 0xffffff, 0.85).setScale(0.25);
+    this.scene.tweens.add({ targets: ring, scale: 1, alpha: 0, duration: 360, onComplete: () => ring.destroy() });
     Sfx.play('splash');
-    if (Math.hypot(this.bx - h.x, this.by - h.y) < DIE_RING) { this.damageBoat(1); this.float(this.bx, this.by - 36, 'snake eyes!', '#ffd27a'); }
+    if (Math.hypot(this.bx - h.x, this.by - h.y) < DIE_RING) this.hurtCrew(1);
   }
 
   /** The Fortune Helm's last boon (null before its first spin) and the wedge angle it landed on. */
@@ -762,21 +997,21 @@ export class SeaVoyageScene extends Phaser.Scene {
     Sfx.play('jackpot');
     if (boon === 'gust') {
       this.sailT = 0;
-      this.float(this.bx, this.by - 40, 'GUST!', '#e8f8ff'); Sfx.play('gust');
+      Sfx.play('gust');
     } else if (boon === 'ward') {
       this.helmWard = true;
-      this.float(this.bx, this.by - 40, 'WARD!', '#ffe08a'); Sfx.play('sparkle');
+      Sfx.play('sparkle');
     } else {
       let best: { x: number; y: number } | null = null, bd = 460;
       for (const h of this.hazards) {
-        if (h.dead || h.y > this.by - 20 || h.y < -20 || !(h.kind === 'rock' || h.kind === 'drift' || h.kind === 'mine' || h.kind === 'bramble' || h.kind === 'die')) continue;
-        const at = h.kind === 'die' ? this.dieAt(h) : h, d = Math.hypot(at.x - this.bx, at.y - this.by);
+        if (h.dead || h.y > this.ky + 120 || h.y < -20 || !this.breakable(h)) continue;
+        const at = h.kind === 'die' ? this.dieAt(h) : h, d = Math.hypot(at.x - this.kx, at.y - this.ky);
         if (d < bd) { bd = d; best = at; }
       }
       if (!best && this.beast?.phase === 'fight') best = this.beast;
-      const a = best ? Math.atan2(best.y - this.by, best.x - this.bx) : -Math.PI / 2;
-      this.shots.push({ x: this.bx, y: this.by - 20, vx: Math.cos(a) * 560, vy: Math.sin(a) * 560, dmg: 3, life: 1.4, big: true });
-      this.float(this.bx, this.by - 40, 'BROADSIDE!', '#ffb07a'); Sfx.play('flame-burst');
+      const a = best ? Math.atan2(best.y - this.ky, best.x - this.kx) : -Math.PI / 2;
+      this.shots.push({ x: this.kx, y: this.ky - 20, vx: Math.cos(a) * 560, vy: Math.sin(a) * 560, dmg: 3, life: 1.4, big: true });
+      Sfx.play('flame-burst');
     }
   }
 
@@ -791,19 +1026,18 @@ export class SeaVoyageScene extends Phaser.Scene {
   private uberHorn(): void {
     this.turretCd = HORN_EVERY;
     this.hornT = 0;
-    let held = 0;
-    for (const h of this.hazards) {
+        for (const h of this.hazards) {
       if (h.dead) continue;
-      const dx = h.x - this.bx, d = Math.hypot(dx, h.y - this.by);
+      const dx = h.x - this.kx, d = Math.hypot(dx, h.y - this.ky);
       if ((h.kind === 'drift' || h.kind === 'mine') && d < HORN_REACH) {
         h.x = Phaser.Math.Clamp(h.x + (Math.sign(dx) || (this.rng() < 0.5 ? -1 : 1)) * (110 - Math.min(80, Math.abs(dx) * 0.4)), 30, 930);
+        h.dx = 0;
       }
-      const ahead = h.kind === 'ring' ? d > h.r : h.y < this.by - 10 && h.y > -80;
-      if (ahead) { h.held = HORN_HOLD; held++; }
+      const ahead = h.kind === 'ring' ? d > h.r : h.y < this.ky + 120 && h.y > -80 && !h.deck;
+      if (ahead) h.held = HORN_HOLD;
     }
-    if (held) this.float(this.bx, this.by - 44, 'the sea holds its breath', '#e8dcb0');
     Sfx.play('sonic-pulse');
-    this.cameras.main.shake(260, 0.003);
+    this.scene.cameras.main.shake(260, 0.003);
   }
 
   /** Seconds since the Burning Glass Prow last lanced (drawn as the beams while < 0.5), and where its beams struck. */
@@ -818,15 +1052,14 @@ export class SeaVoyageScene extends Phaser.Scene {
    */
   private uberGlass(): void {
     const at = (h: Hazard): Pt => (h.kind === 'die' ? this.dieAt(h) : h);
-    const burnable = (h: Hazard) => h.kind === 'rock' || h.kind === 'obshard' || h.kind === 'drift' || h.kind === 'mine' || h.kind === 'bramble'
-      || h.kind === 'tentacle' || h.kind === 'die' || (h.kind === 'slick' && h.t >= SLICK_FLIGHT);
+    const burnable = (h: Hazard) => (this.breakable(h) && h.kind !== 'reef' && h.kind !== 'glassreef' && h.kind !== 'whirl') || (h.kind === 'slick' && h.t >= SLICK_FLIGHT);
     const ahead = this.hazards
       .filter((h) => {
         if (h.dead || !burnable(h)) return false;
-        const p = at(h), dy = this.by - p.y;
-        return dy > 10 && dy < GLASS_REACH && p.y > -30 && Math.abs(p.x - this.bx) < 70 + dy * 0.6;
+        const p = at(h), dy = this.ky - p.y;
+        return dy > -200 && dy < GLASS_REACH && p.y > -30 && Math.abs(p.x - this.kx) < this.shipHw + 40 + Math.max(0, dy) * 0.6;
       })
-      .sort((a, b) => Math.hypot(at(a).x - this.bx, at(a).y - this.by) - Math.hypot(at(b).x - this.bx, at(b).y - this.by))
+      .sort((a, b) => Math.hypot(at(a).x - this.kx, at(a).y - this.ky) - Math.hypot(at(b).x - this.kx, at(b).y - this.ky))
       .slice(0, 2);
     this.glassHits = ahead.map((h) => ({ ...at(h) }));
     for (const h of ahead) {
@@ -834,7 +1067,7 @@ export class SeaVoyageScene extends Phaser.Scene {
       h.dead = true; this.explode(p.x, p.y, h.r + 12);
       if (h.kind === 'rock' && this.rng() < 0.3) this.loot.push({ kind: 'crate', x: h.x, y: h.y, t: 0, taken: false });
     }
-    if (!ahead.length && this.beast?.phase === 'fight' && this.beast.y < this.by && this.by - this.beast.y < GLASS_REACH + 60 && Math.abs(this.beast.x - this.bx) < 260) {
+    if (!ahead.length && this.beast?.phase === 'fight' && this.beast.y < this.ky && this.ky - this.beast.y < GLASS_REACH + 60 && Math.abs(this.beast.x - this.kx) < 260) {
       this.hitBeast(3); this.glassHits.push({ x: this.beast.x, y: this.beast.y });
     }
     if (!this.glassHits.length) { this.turretCd = 0.5; return; }
@@ -850,8 +1083,8 @@ export class SeaVoyageScene extends Phaser.Scene {
     if (h.tick === undefined) { h.tick = 1; this.explode(h.x, h.y, h.r * 0.8); Sfx.play('light-beam'); }
     if (h.armed || d > h.r + 8) return;
     h.armed = 1;
-    this.damageBoat(1);
-    this.float(this.bx, this.by - 36, 'scorched by the glass!', '#fff4c8'); Sfx.play('status-burn');
+    this.hurtCrew(1);
+    Sfx.play('status-burn');
   }
 
   /** A Cantor ring meeting the boat: through a rest it passes; anywhere else it costs a plank and shoves the boat outward. */
@@ -863,11 +1096,10 @@ export class SeaVoyageScene extends Phaser.Scene {
     h.armed = 1;
     const a = Math.atan2(this.by - h.y, this.bx - h.x);
     const inRest = (h.gaps ?? []).some((gp) => Math.abs(Phaser.Math.Angle.Wrap(a - gp)) < RING_REST);
-    if (inRest) { this.float(this.bx, this.by - 36, 'through the rest', '#f0dca0'); return; }
-    this.damageBoat(1);
+    if (inRest) return;
+    this.hurtCrew(1);
     this.bvx += Math.cos(a) * 640;
-    this.by = Math.min(590, this.by + Math.max(0, Math.sin(a)) * 34);
-    this.float(this.bx, this.by - 36, 'a plank sings loose!', '#f0dca0'); Sfx.play('sonic-pulse');
+    Sfx.play('sonic-pulse');
   }
 
   /** The Cragplate has hardened: the next hit on the hull is shrugged off. */
@@ -878,7 +1110,6 @@ export class SeaVoyageScene extends Phaser.Scene {
     this.turretCd = 8;
     if (this.plateReady) return;
     this.plateReady = true;
-    this.float(this.bx, this.by - 30, 'the cragplate hardens', '#e0c8a0');
     Sfx.play('stone-rise');
   }
 
@@ -892,12 +1123,10 @@ export class SeaVoyageScene extends Phaser.Scene {
   private uberSail(): void {
     this.sailT = 0;
     this.turretCd = 4.2;
-    let turned = 0;
     for (const sh of this.shots) {
-      if (!sh.foe || Math.hypot(sh.x - this.bx, sh.y - this.by) > 240) continue;
-      sh.vx = -sh.vx * 1.4; sh.vy = -sh.vy * 1.4; sh.foe = false; sh.dmg = 2; sh.life = 2; turned++;
+      if (!sh.foe || this.hullDist(sh.x, sh.y) > 150) continue;
+      sh.vx = -sh.vx * 1.4; sh.vy = -sh.vy * 1.4; sh.foe = false; sh.dmg = 2; sh.life = 2;
     }
-    if (turned) this.float(this.bx, this.by - 40, `blown back ×${turned}`, '#e8f8ff');
     Sfx.play('gust');
   }
 
@@ -906,7 +1135,7 @@ export class SeaVoyageScene extends Phaser.Scene {
     this.turretCd = 10;
     if (this.hull >= this.maxHull) return;
     this.hull += 1;
-    this.float(this.bx, this.by - 30, 'the keel regrows +1', '#9dffb0');
+    this.float(this.kx, this.ky - 30, '+1 hull', '#9dffb0');
     Sfx.play('heal');
   }
 
@@ -915,12 +1144,11 @@ export class SeaVoyageScene extends Phaser.Scene {
    * wood — every rock, drift, mine and bramble mat close by is torn, and a near beast is raked.
    */
   private thornBurst(): void {
-    const R = 150;
     for (const h of this.hazards) {
-      if (h.dead || h.kind === 'whirl' || h.kind === 'reef' || h.kind === 'tentacle' || h.kind === 'spout' || h.kind === 'gust' || h.kind === 'boulder' || h.kind === 'breaker' || h.kind === 'arc' || h.kind === 'slick' || h.kind === 'ring' || h.kind === 'burn' || h.kind === 'glassreef' || h.kind === 'squall') continue;
-      if (Math.hypot(h.x - this.bx, h.y - this.by) < R + h.r) { if (h.kind === 'die') this.knockDie(h, 1); else this.damageHazard(h, 3); }
+      if (h.dead || !this.breakable(h) || h.kind === 'reef' || h.kind === 'glassreef') continue;
+      if (this.hullDist(h.x, h.y) < 90 + h.r) { if (h.kind === 'die') this.knockDie(h, 1); else this.damageHazard(h, 3); }
     }
-    if (this.beast?.phase === 'fight' && Math.hypot(this.beast.x - this.bx, this.beast.y - this.by) < 260) this.hitBeast(4);
+    if (this.beast?.phase === 'fight' && this.hullDist(this.beast.x, this.beast.y) < 200) this.hitBeast(4);
     this.thornT = 0;
     Sfx.play('thorn');
   }
@@ -937,36 +1165,37 @@ export class SeaVoyageScene extends Phaser.Scene {
     let any = false;
     for (const h of this.hazards) {
       if (h.dead) continue;
-      const dx = h.x - this.bx, dy = h.y - this.by;
-      if (dy > -20 || dy < -reach || Math.abs(dx) > 70 + (-dy) * 0.45) continue;
+      const dx = h.x - this.kx, dy = h.y - this.ky;
+      if (dy > 40 || dy < -reach || Math.abs(dx) > this.shipHw + 30 + Math.max(0, -dy) * 0.45 || h.deck) continue;
       any = true;
       if (h.kind === 'whirl') { h.dead = true; this.explode(h.x, h.y, h.r * 1.6); continue; }
-      if (h.kind === 'reef' || h.kind === 'tentacle' || h.kind === 'spout' || h.kind === 'gust' || h.kind === 'boulder' || h.kind === 'breaker' || h.kind === 'arc' || h.kind === 'slick' || h.kind === 'ring' || h.kind === 'burn' || h.kind === 'glassreef' || h.kind === 'squall') continue;
+      if (!this.breakable(h) || h.kind === 'tentacle') continue;
       if (h.kind === 'die') { if (h.t >= DIE_ROLL) h.x = Phaser.Math.Clamp(h.x + (Math.sign(dx) || 1) * 70, 30, 930); this.knockDie(h, 1); continue; }
       h.x = Phaser.Math.Clamp(h.x + (Math.sign(dx) || 1) * 70, 30, 930);
+      h.dx = Math.sign(dx || 1) * 26;
       this.damageHazard(h, 2);
     }
     for (const l of this.loot) {
-      const dx = l.x - this.bx, dy = l.y - this.by;
-      if (dy < 0 && dy > -reach - 80 && Math.abs(dx) < 260) { l.x += (this.bx - l.x) * 0.55; l.y += (this.by - l.y) * 0.45; }
+      const dx = l.x - this.kx, dy = l.y - this.ky;
+      if (dy < 0 && dy > -reach - 80 && Math.abs(dx) < 300) { l.x += (this.kx - l.x) * 0.55; }
     }
-    if (this.beast?.phase === 'fight' && this.beast.y < this.by && Math.abs(this.beast.x - this.bx) < 200) { this.hitBeast(3); any = true; }
+    if (this.beast?.phase === 'fight' && this.beast.y < this.ky + 40 && Math.abs(this.beast.x - this.kx) < 240) { this.hitBeast(3); any = true; }
     this.bowWaveT = 0;
     this.turretCd = any ? 3.2 : 1.2;
     if (any) Sfx.play('water-jet');
   }
 
   private uberTurret(): void {
-    let best: { x: number; y: number } | null = null, bd = 380;
+    let best: { x: number; y: number } | null = null, bd = 420;
     for (const h of this.hazards) {
-      if (h.dead || h.kind === 'whirl' || h.kind === 'reef' || h.kind === 'spout' || h.kind === 'tentacle' || h.kind === 'gust' || h.kind === 'boulder' || h.kind === 'breaker' || h.kind === 'arc' || h.kind === 'slick' || h.kind === 'ring' || h.kind === 'burn' || h.kind === 'glassreef' || h.kind === 'squall' || h.y > this.by) continue;
-      const d = Math.hypot(h.x - this.bx, h.y - this.by);
+      if (h.dead || !this.breakable(h) || h.y < -10 || h.y > this.ky + 100) continue;
+      const d = Math.hypot(h.x - this.kx, h.y - this.ky);
       if (d < bd) { bd = d; best = h; }
     }
     if (this.beast?.phase === 'fight') best = this.beast;
     if (!best) { this.turretCd = 0.3; return; }
-    const a = Math.atan2(best.y - this.by, best.x - this.bx);
-    this.shots.push({ x: this.bx, y: this.by - 10, vx: Math.cos(a) * 420, vy: Math.sin(a) * 420, dmg: 2, life: 1.4, big: true });
+    const a = Math.atan2(best.y - this.ky, best.x - this.kx);
+    this.shots.push({ x: this.kx, y: this.ky - 10, vx: Math.cos(a) * 420, vy: Math.sin(a) * 420, dmg: 2, life: 1.4, big: true });
     this.turretCd = 1.1;
     Sfx.play('flame-burst');
   }
@@ -986,21 +1215,20 @@ export class SeaVoyageScene extends Phaser.Scene {
       dropsUber: uber?.id ?? 'uber-brazier', kind,
     };
     this.bandText.setText(`⚠ SEA BEAST — ${BEASTS[kind].name}`).setAlpha(1);
-    this.tweens.add({ targets: this.bandText, alpha: 0, delay: 2200, duration: 700 });
+    this.scene.tweens.add({ targets: this.bandText, alpha: 0, delay: 2200, duration: 700 });
     Sfx.play('roar');
-    this.cameras.main.shake(500, 0.006);
+    this.scene.cameras.main.shake(500, 0.006);
   }
 
   private hitBeast(d: number): void {
     const b = this.beast;
     if (!b || b.phase !== 'fight') return;
     b.hp -= d;
-    Sfx.play('hit-medium');
     if (b.hp <= 0) {
       b.phase = 'sink';
       b.t = 0;
       Sfx.play('victory');
-      this.cameras.main.flash(400, 255, 200, 120);
+      this.scene.cameras.main.flash(400, 255, 200, 120);
       const s = Save.S();
       const reward = 120 + this.band() * 60;
       this.haul += reward;
@@ -1019,8 +1247,8 @@ export class SeaVoyageScene extends Phaser.Scene {
     const b = this.beast;
     if (!b) return;
     if (b.phase === 'rise') {
-      b.y = Phaser.Math.Linear(b.y, 150, 0.03);
-      if (b.y > 140) { b.phase = 'fight'; b.t = 0; }
+      b.y = Phaser.Math.Linear(b.y, 60, 0.03);
+      if (b.y > 52) { b.phase = 'fight'; b.t = 0; }
       return;
     }
     if (b.phase === 'sink') {
@@ -1028,8 +1256,10 @@ export class SeaVoyageScene extends Phaser.Scene {
       if (b.t > 3) this.beast = null;
       return;
     }
-    b.x = 480 + Math.sin(b.t * 0.7) * 300;
-    b.y = 150 + Math.sin(b.t * 1.3) * 30;
+    // It works round the ship: lying off one beam, then crossing ahead of the bow to the other.
+    const u = Math.tanh(3 * Math.sin(b.t * 0.32));
+    b.x = SHIP_X + (this.shipHw + 140) * u;
+    b.y = 60 + (this.shipLen * 0.42 + Math.sin(b.t * 1.1) * 40) * u * u;
     b.nextAttack -= dt;
     if (b.attack) {
       b.attackT += dt;
@@ -1041,14 +1271,14 @@ export class SeaVoyageScene extends Phaser.Scene {
         Sfx.play(b.kind === 'wyrm' ? 'water-jet' : b.kind === 'brambleback' ? 'thorn' : b.kind === 'skyray' ? 'whoosh' : b.kind === 'cragjaw' ? 'rock-throw' : b.kind === 'galvaneel' ? 'zap' : b.kind === 'hydra' ? 'status-poison' : b.kind === 'wheelback' ? 'dice' : b.kind === 'cantor' ? 'sonic-pulse' : b.kind === 'lensback' ? 'light-beam' : 'fireball');
       }
       if (b.attack === 'slam' && b.attackT > 1.0 && b.attackT - dt <= 1.0) {
-        for (let i = 0; i < 3; i++) this.hazards.push({ kind: 'tentacle', x: Phaser.Math.Clamp(this.bx + (i - 1) * 110, 60, 900), y: this.by - 20, r: 26, hp: 999, maxHp: 999, t: 0, seed: i, dead: false });
+        for (let i = 0; i < 3; i++) this.hazards.push({ kind: 'tentacle', x: this.bx + (i - 1) * 62, y: this.by - 20 + (i === 1 ? 0 : 26), r: 26, hp: 3, maxHp: 3, t: 0, seed: i, dead: false, deck: true });
       }
       if (b.attack === 'wave' && b.attackT > 0.8 && b.attackT - dt <= 0.8 && BEASTS[b.kind]?.spawn === 'rockfall') {
         // The Cragjaw heaves its back: boulders shrug off the basalt pillars and arc down at the
         // boat — one aimed where it is, two either side; read the shadows and slip between.
-        for (const off of [0, -150, 150]) {
-          const x = Phaser.Math.Clamp(this.bx + off + (this.rng() - 0.5) * 40, 50, 910);
-          this.hazards.push({ kind: 'boulder', x, y: this.by - 150 - this.rng() * 60, r: 26, hp: 999, maxHp: 999, t: 0, seed: off, dead: false });
+        for (const off of [0, -74, 74]) {
+          const x = this.bx + off + (this.rng() - 0.5) * 24;
+          this.hazards.push({ kind: 'boulder', x, y: this.by + (off ? (this.rng() - 0.5) * 130 : 0), r: 26, hp: 999, maxHp: 999, t: 0, seed: off, dead: false, deck: true });
         }
         Sfx.play('quake');
       } else if (b.attack === 'wave' && b.attackT > 0.8 && b.attackT - dt <= 0.8 && BEASTS[b.kind]?.spawn === 'arcs') {
@@ -1056,37 +1286,36 @@ export class SeaVoyageScene extends Phaser.Scene {
         // dark beats differ: read each one and cross it while it gutters.
         for (let i = 0; i < 3; i++) {
           const span = 220 + this.rng() * 160, cx = Phaser.Math.Clamp(this.bx + (this.rng() - 0.5) * 360, span / 2, 960 - span / 2);
-          this.hazards.push({ kind: 'arc', x: cx, y: -40 - i * 150, r: span / 2, hp: 999, maxHp: 999, t: 0, seed: i * 0.6, dead: false, armed: 1 });
+          this.hazards.push({ kind: 'arc', x: cx, y: this.bowY - 50 - i * 120, r: span / 2, hp: 999, maxHp: 999, t: 0, seed: i * 0.6, dead: false, armed: 1 });
         }
         Sfx.play('electric-charge');
       } else if (b.attack === 'wave' && b.attackT > 0.8 && b.attackT - dt <= 0.8 && BEASTS[b.kind]?.spawn === 'slicks') {
         // The Hydra's heads spit globs of venom in a ragged volley — one at the boat, the rest either
         // side and further up the sea — that land as slicks; the gaps between them are the way through.
-        const offs = [0, -170, 170, (this.rng() < 0.5 ? -1 : 1) * 320];
+        const offs = [0, -84, 84, (this.rng() < 0.5 ? -1 : 1) * 40];
         offs.forEach((off, i) => {
-          const x = Phaser.Math.Clamp(this.bx + off + (this.rng() - 0.5) * 50, 50, 910);
-          this.hazards.push({ kind: 'slick', x, y: this.by - 170 - i * 70 - this.rng() * 40, r: 58 + this.rng() * 18, hp: 999, maxHp: 999, t: -i * 0.18, seed: b.x + (i - 1.5) * 50, dead: false });
+          const x = this.bx + off + (this.rng() - 0.5) * 30;
+          this.hazards.push({ kind: 'slick', x, y: this.by + (i ? (this.rng() - 0.5) * 170 : 0), r: 44 + this.rng() * 14, hp: 999, maxHp: 999, t: -i * 0.18, seed: b.x + (i - 1.5) * 50, dead: false, deck: true });
         });
         Sfx.play('acid-spray');
       } else if (b.attack === 'wave' && b.attackT > 0.8 && b.attackT - dt <= 0.8 && BEASTS[b.kind]?.spawn === 'dice') {
         // The Wheelback's wheel throws its dice: a line of them tumbling out across the sea, one
         // rolling right into the boat's lane, each set to burst about when the boat reaches it —
         // slip into a gap between the rings, or shoot a die out early.
-        for (let k = -3; k <= 3; k++) {
-          const x = this.bx + k * 230 + (this.rng() - 0.5) * 30;
-          if (x < 50 || x > 910) continue;
+        for (let k = -2; k <= 2; k++) {
+          const x = this.bx + k * 108 + (this.rng() - 0.5) * 24;
           const pips = 2 + Math.floor(this.rng() * 3);
-          const y = this.by - this.speed * (DIE_ROLL + pips * DIE_TICK) - 30 - this.rng() * 40;
+          const y = this.by + (k ? (this.rng() - 0.5) * 150 : 0);
           const from = Phaser.Math.Clamp(x + (x < b.x ? 1 : -1) * 190, 20, 940);
-          this.hazards.push({ kind: 'die', x, y, r: 22, hp: 999, maxHp: pips, t: -Math.abs(k) * 0.08, seed: from, dead: false, armed: pips });
+          this.hazards.push({ kind: 'die', x, y, r: 22, hp: 999, maxHp: pips, t: -Math.abs(k) * 0.08, seed: from, dead: false, armed: pips, deck: true });
         }
         Sfx.play('dice');
       } else if (b.attack === 'wave' && b.attackT > 0.8 && b.attackT - dt <= 0.8 && BEASTS[b.kind]?.spawn === 'rings') {
         // The Cantor sings a phrase: three sound-rings spreading from its throat one after another, each
         // broken by two rests — one near the boat's line but never on it, so you steer for each in turn.
-        const cx = b.x, cy = b.y + 78, aim = Math.atan2(this.by - cy, this.bx - cx);
+        const cx = b.x, cy = b.y + 78, rest = this.deckSpot(), aim = Math.atan2(rest.y - cy, rest.x - cx);
         for (let i = 0; i < 3; i++) {
-          const g1 = aim + (this.rng() < 0.5 ? -1 : 1) * (0.28 + this.rng() * 0.45);
+          const g1 = aim + (this.rng() - 0.5) * 0.3;
           const g2 = g1 + (this.rng() < 0.5 ? -1 : 1) * (1.0 + this.rng() * 0.7);
           this.hazards.push({ kind: 'ring', x: cx, y: cy, r: 30, hp: 999, maxHp: 999, t: -i * 0.95, seed: i, dead: false, gaps: [g1, g2] });
         }
@@ -1097,8 +1326,8 @@ export class SeaVoyageScene extends Phaser.Scene {
         // beam lands — slip into a gap between them before they burn.
         const slant = this.rng() < 0.5 ? -1 : 1;
         [0, -1, 1, -2, 2].forEach((k) => {
-          const x = Phaser.Math.Clamp(this.bx + k * 140 + (this.rng() - 0.5) * 24, 40, 920);
-          this.hazards.push({ kind: 'burn', x, y: this.by - 8 + k * slant * 12, r: 46, hp: 999, maxHp: 999, t: -Math.abs(k) * 0.45, seed: k, dead: false });
+          const x = this.bx + k * 74 + (this.rng() - 0.5) * 16;
+          this.hazards.push({ kind: 'burn', x, y: this.by + k * slant * 34, r: 40, hp: 999, maxHp: 999, t: -Math.abs(k) * 0.45, seed: k, dead: false });
         });
         Sfx.play('light-beam');
       } else if (b.attack === 'wave' && b.attackT > 0.8 && b.attackT - dt <= 0.8 && BEASTS[b.kind]?.spawn === 'gusts') {
@@ -1116,7 +1345,7 @@ export class SeaVoyageScene extends Phaser.Scene {
         Sfx.play('thorn');
       } else if (b.attack === 'wave' && b.attackT > 0.8 && b.attackT - dt <= 0.8 && BEASTS[b.kind]?.spawn === 'whirls') {
         // The Wyrm's coils stir the sea into a pair of whirlpools that close on the boat.
-        for (const side of [-1, 1]) this.hazards.push({ kind: 'whirl', x: Phaser.Math.Clamp(this.bx + side * (150 + this.rng() * 60), 60, 900), y: this.by - 260, r: 30, hp: 999, maxHp: 999, t: 0, seed: side, dead: false });
+        for (const side of [-1, 1]) this.hazards.push({ kind: 'whirl', x: SHIP_X + side * (this.shipHw + 170 + this.rng() * 50), y: this.bowY - 70 + this.rng() * this.shipLen * 0.35, r: 30, hp: 4 + this.band(), maxHp: 4 + this.band(), t: 0, seed: side, dead: false, dx: -side * 34 });
         Sfx.play('tornado');
       } else if (b.attack === 'wave' && b.attackT > 0.8 && b.attackT - dt <= 0.8) {
         const gap = 80 + this.rng() * 800;
@@ -1143,8 +1372,20 @@ export class SeaVoyageScene extends Phaser.Scene {
     if (!this.crossing) s.wastesBest = Math.max(s.wastesBest, Math.round(this.dist));
     Save.persist();
     Sfx.play('defeat');
-    this.cameras.main.shake(600, 0.012);
+    this.scene.cameras.main.shake(600, 0.012);
     this.endCard('SUNK', [`${lost?.name ?? 'Your boat'} went down at ${Math.round(this.dist)} m.`, `The hold (${this.haul} 🪙) sank with it.`, 'A fisherman dragged you back to port.'], '#ff8a7a');
+  }
+
+  /** Swept off the deck: the hold goes over the side with you, but the boat is towed home. */
+  private overboard(): void {
+    if (this.over) return;
+    this.over = true;
+    const s = Save.S();
+    if (!this.crossing) s.wastesBest = Math.max(s.wastesBest, Math.round(this.dist));
+    Save.persist();
+    Sfx.play('defeat');
+    this.scene.cameras.main.shake(400, 0.01);
+    this.endCard('OVERBOARD', [`Swept off the deck at ${Math.round(this.dist)} m.`, `The hold (${this.haul} 🪙) went over the side with you.`, `${this.boat.name} was towed back to port.`], '#ff8a7a');
   }
 
   private finish(_arrived: boolean): void {
@@ -1178,7 +1419,7 @@ export class SeaVoyageScene extends Phaser.Scene {
     this.fromPos = at;
     Sfx.play('reward-big');
     if (this.last) {
-      this.cameras.main.flash(700, 220, 200, 255);
+      this.scene.cameras.main.flash(700, 220, 200, 255);
       this.endCard('THE PINNACLE', [
         first ? 'The Muster runs its boats up the black shingle of Glasswater Landing.' : 'Glasswater Landing, under the spire again.',
         `Hold: +${this.haul} 🪙${this.orbs ? `  +${this.orbs} 🔮` : ''}`,
@@ -1186,7 +1427,7 @@ export class SeaVoyageScene extends Phaser.Scene {
       ], '#c9b0ff');
       return;
     }
-    this.cameras.main.flash(500, 255, 250, 230);
+    this.scene.cameras.main.flash(500, 255, 250, 230);
     this.endCard('LANDFALL', [
       first ? `${isle.name} — first landing.` : `${isle.name} again.`,
       `Hold: +${this.haul} 🪙${this.orbs ? `  +${this.orbs} 🔮` : ''}`,
@@ -1195,23 +1436,21 @@ export class SeaVoyageScene extends Phaser.Scene {
   }
 
   private endCard(title: string, lines: string[], color: string): void {
-    const W = this.scale.width;
-    const bg = this.add.rectangle(W / 2, 320, 520, 240, 0x08121c, 0.92).setDepth(20).setStrokeStyle(2, 0x6ac8ff);
-    const t = this.add.text(W / 2, 240, title, { fontFamily: FONT_DISPLAY, fontSize: '36px', color, stroke: '#000', strokeThickness: 6 }).setOrigin(0.5).setDepth(21);
-    const b = this.add.text(W / 2, 320, lines.join('\n'), { fontFamily: FONT_UI, fontSize: '16px', color: '#e8f4ff', align: 'center', lineSpacing: 6 }).setOrigin(0.5).setDepth(21);
-    const h = this.add.text(W / 2, 412, 'Press any key', { fontFamily: FONT_UI, fontSize: '13px', color: '#9ab8d0' }).setOrigin(0.5).setDepth(21);
-    void bg; void t; void b; void h;
-    this.time.delayedCall(900, () => {
-      const go = () => this.scene.start('IsleWorldScene', { area: this.from, pos: this.fromPos });
-      this.input.keyboard?.once('keydown', go);
-      this.input.once('pointerdown', go);
+    const W = this.scene.scale.width, scene = this.scene;
+    scene.add.rectangle(W / 2, 320, 520, 240, 0x08121c, 0.92).setDepth(400).setScrollFactor(0).setStrokeStyle(2, 0x6ac8ff);
+    scene.add.text(W / 2, 240, title, { fontFamily: FONT_DISPLAY, fontSize: '36px', color, stroke: '#000', strokeThickness: 6 }).setOrigin(0.5).setDepth(401).setScrollFactor(0);
+    scene.add.text(W / 2, 320, lines.join('\n'), { fontFamily: FONT_UI, fontSize: '16px', color: '#e8f4ff', align: 'center', lineSpacing: 6 }).setOrigin(0.5).setDepth(401).setScrollFactor(0);
+    scene.add.text(W / 2, 412, 'Press ENTER', { fontFamily: FONT_UI, fontSize: '13px', color: '#9ab8d0' }).setOrigin(0.5).setDepth(401).setScrollFactor(0);
+    // Not "any key": the crew is still mashing their abilities when the card comes up.
+    scene.time.delayedCall(700, () => {
+      scene.input.keyboard?.once('keydown-ENTER', () => scene.scene.start('IsleWorldScene', { area: this.from, pos: this.fromPos }));
     });
   }
 
   // ── Drawing ──────────────────────────────────────────────────────────
 
   private draw(t: number): void {
-    const W = this.scale.width, H = this.scale.height;
+    const W = this.scene.scale.width, H = this.scene.scale.height;
     const g = this.g;
     g.clear();
     const bi = this.band();
@@ -1222,7 +1461,7 @@ export class SeaVoyageScene extends Phaser.Scene {
     const seaC = Phaser.Display.Color.GetColor(sea.r, sea.g, sea.b);
     g.fillStyle(seaC, 1); g.fillRect(0, 0, W, H);
     // Swell bands scrolling with distance.
-    const off = (this.dist * 10) % 60;
+    const off = (this.seaY) % 60;
     for (let y = -60 + off; y < H; y += 60) {
       g.lineStyle(2, B.foam, 0.12);
       g.beginPath();
@@ -1230,21 +1469,23 @@ export class SeaVoyageScene extends Phaser.Scene {
       g.strokePath();
     }
     for (let i = 0; i < 40; i++) {
-      const x = (i * 211) % W, y = ((i * 97 + this.dist * 10) % (H + 20)) - 10;
+      const x = (i * 211) % W, y = ((i * 97 + this.seaY) % (H + 20)) - 10;
       g.fillStyle(B.foam, 0.18); g.fillEllipse(x, y, 14, 3);
     }
     if (this.rough) this.drawRoughWater(g, t, B);
     if (this.last) this.drawLastWater(g, t, B);
-    // Wake
-    for (let i = 1; i < this.wake.length; i++) {
-      const a = this.wake[i - 1], b = this.wake[i];
-      g.lineStyle(10 - i * 0.3, 0xffffff, 0.25 * (1 - i / this.wake.length));
-      g.lineBetween(a.x, a.y, b.x, b.y);
-    }
     if (this.crossing && this.toLand() < COAST_M + 200) { if (this.last) this.drawLastCoast(g, t); else this.drawCoast(g, t); }
     if (this.last) this.drawMuster(g, t);
+    if (!this.over || this.hull > 0) this.drawShip(g, t);
     for (const l of this.loot) this.drawLoot(g, l, t);
     for (const h of this.hazards) this.drawHazard(g, h, t);
+    // How much is left of anything the crew has started on.
+    for (const h of this.hazards) {
+      if (h.dead || h.kind === 'die' || h.hp >= h.maxHp || h.maxHp > 900 || !this.breakable(h)) continue;
+      const w = Math.max(22, h.r * 1.4), k = Phaser.Math.Clamp(h.hp / h.maxHp, 0, 1);
+      g.fillStyle(0x000000, 0.6); g.fillRect(h.x - w / 2 - 1, h.y - h.r - 11, w + 2, 6);
+      g.fillStyle(k > 0.5 ? 0x9de07a : k > 0.25 ? 0xf0c848 : 0xff6a4a, 1); g.fillRect(h.x - w / 2, h.y - h.r - 10, w * k, 4);
+    }
     if (this.beast) {
       if (this.beast.kind === 'wyrm') this.drawWyrm(g, this.beast, t);
       else if (this.beast.kind === 'brambleback') this.drawBrambleback(g, this.beast, t);
@@ -1262,16 +1503,16 @@ export class SeaVoyageScene extends Phaser.Scene {
       this.thornT += 1 / 60;
       const k = this.thornT / 0.45;
       for (let i = 0; i < 14; i++) {
-        const a = (i / 14) * Math.PI * 2, r0 = 22 + k * 40, r1 = r0 + 18 + k * 70;
+        const a = (i / 14) * Math.PI * 2, r0 = 0.9 + k * 0.25, r1 = r0 + 0.12 + k * 0.4, cy = this.bowY + this.shipLen / 2;
         g.lineStyle(3 * (1 - k) + 1, 0x7aa83a, 1 - k);
-        g.lineBetween(this.bx + Math.cos(a) * r0, this.by + Math.sin(a) * r0, this.bx + Math.cos(a) * r1, this.by + Math.sin(a) * r1);
+        g.lineBetween(this.kx + Math.cos(a) * r0 * this.shipHw, cy + Math.sin(a) * r0 * this.shipLen * 0.5, this.kx + Math.cos(a) * r1 * this.shipHw, cy + Math.sin(a) * r1 * this.shipLen * 0.5);
       }
     }
     if (this.sailT < 0.7) {
       // The Windcatcher fills: wind streaks rush past the boat from astern.
       const k = this.sailT / 0.7;
       for (let i = 0; i < 10; i++) {
-        const sx = this.bx + (i - 4.5) * 22, sy = this.by + 40 - k * 220 - (i % 3) * 18;
+        const sx = this.kx + (i - 4.5) * 22, sy = this.ky + 40 - k * 220 - (i % 3) * 18;
         g.lineStyle(2, 0xffffff, 0.6 * (1 - k)); g.lineBetween(sx, sy, sx, sy + 40);
       }
     }
@@ -1280,8 +1521,8 @@ export class SeaVoyageScene extends Phaser.Scene {
       const a = 1 - this.mastT / 0.3;
       for (const p of this.mastBolts) {
         for (const [w, c] of [[4, 0x6ab8ff], [1.5, 0xffffff]] as const) {
-          g.lineStyle(w, c, a); g.beginPath(); g.moveTo(this.bx, this.by - 30);
-          for (let k = 1; k <= 6; k++) { const u = k / 6; g.lineTo(Phaser.Math.Linear(this.bx, p.x, u) + (k < 6 ? Math.sin(p.x + k * 4.1) * 12 : 0), Phaser.Math.Linear(this.by - 30, p.y, u)); }
+          g.lineStyle(w, c, a); g.beginPath(); g.moveTo(this.kx, this.ky - 30);
+          for (let k = 1; k <= 6; k++) { const u = k / 6; g.lineTo(Phaser.Math.Linear(this.kx, p.x, u) + (k < 6 ? Math.sin(p.x + k * 4.1) * 12 : 0), Phaser.Math.Linear(this.ky - 30, p.y, u)); }
           g.strokePath();
         }
       }
@@ -1293,13 +1534,13 @@ export class SeaVoyageScene extends Phaser.Scene {
       const k = Math.min(1, this.hornT / 1.6), R = 30 + (1 - (1 - k) * (1 - k)) * HORN_REACH, a = 1 - k;
       const pts = (rr: number, wob: number) => {
         const out: Phaser.Geom.Point[] = [];
-        for (let i = 0; i <= 48; i++) { const an = (i / 48) * Math.PI * 2, w = rr + Math.sin(an * 6 + this.hornT * 9) * wob; out.push(new Phaser.Geom.Point(this.bx + Math.cos(an) * w, this.by - 20 + Math.sin(an) * w * 0.9)); }
+        for (let i = 0; i <= 48; i++) { const an = (i / 48) * Math.PI * 2, w = rr + Math.sin(an * 6 + this.hornT * 9) * wob; out.push(new Phaser.Geom.Point(this.kx + Math.cos(an) * w, this.ky - 20 + Math.sin(an) * w * 0.9)); }
         return out;
       };
       g.lineStyle(16 * a + 2, 0xe8dcb0, 0.12 * a); g.strokePoints(pts(R, 4), true);
       g.lineStyle(4 * a + 1, 0xf4ecd0, 0.55 * a); g.strokePoints(pts(R, 4), true);
       if (R > 90) { g.lineStyle(2, 0xd8d0b8, 0.3 * a); g.strokePoints(pts(R - 60, 3), true); }
-      const mouth = { x: this.bx + Math.sin(this.heading) * (this.boat.len / 2 + 14), y: this.by - Math.cos(this.heading) * (this.boat.len / 2 + 14) };
+      const mouth = this.fit({ x: 0, y: -this.boat.len / 2 - 14 });
       for (let i = 0; i < 6; i++) {
         const q = Math.min(1, this.hornT * 1.5) * (0.4 + i * 0.12);
         g.fillStyle(0xe8e4d8, 0.22 * a); g.fillCircle(mouth.x + Math.sin(i * 2.1) * q * 18, mouth.y - q * 40 - i * 4, 5 + q * 12);
@@ -1310,7 +1551,7 @@ export class SeaVoyageScene extends Phaser.Scene {
       // halo, a bright body and a white core, flickering — with a flash and a spray of sparks where it burns.
       this.glassT += 1 / 60;
       const k = this.glassT / 0.5, a = 1 - k * k, fl = 0.8 + 0.2 * Math.sin(this.glassT * 90);
-      const lens = { x: this.bx + Math.sin(this.heading) * (this.boat.len / 2 + 4), y: this.by - Math.cos(this.heading) * (this.boat.len / 2 + 4) };
+      const lens = this.fit({ x: 0, y: -this.boat.len / 2 - 4 });
       for (const p of this.glassHits) {
         g.lineStyle(14, 0xffd060, 0.18 * a); g.lineBetween(lens.x, lens.y, p.x, p.y);
         g.lineStyle(6, 0xfff4c8, 0.6 * a * fl); g.lineBetween(lens.x, lens.y, p.x, p.y);
@@ -1328,18 +1569,18 @@ export class SeaVoyageScene extends Phaser.Scene {
     if (this.bowWaveT < 0.6) {
       const k = this.bowWaveT / 0.6;
       g.lineStyle(6 * (1 - k) + 2, 0xd8f4ff, 0.7 * (1 - k));
-      g.beginPath(); g.arc(this.bx, this.by - 10, 40 + k * 290, -Math.PI / 2 - 0.55, -Math.PI / 2 + 0.55, false); g.strokePath();
+      g.beginPath(); g.arc(this.kx, this.ky - 10, 40 + k * 290, -Math.PI / 2 - 0.55, -Math.PI / 2 + 0.55, false); g.strokePath();
     }
     for (const s of this.shots) {
       const c = s.foe ? BEASTS[this.beast?.kind ?? 'magmaw']?.shot ?? 0xff5a1a : this.elementColor;
       g.fillStyle(c, 0.35); g.fillCircle(s.x, s.y, s.big ? 10 : 7);
       g.fillStyle(0xffffff, 0.9); g.fillCircle(s.x, s.y, s.big ? 4 : 3);
     }
-    if (!this.over || this.hull > 0) this.drawBoat(g, t);
     // Deep vignette
     if (bi >= 2) {
-      for (let r = 0; r < 6; r++) { g.lineStyle(60, 0x000000, 0.08 + bi * 0.03); g.strokeCircle(this.bx, this.by, 360 + r * 60 - bi * 30); }
+      for (let r = 0; r < 6; r++) { g.lineStyle(60, 0x000000, 0.08 + bi * 0.03); g.strokeCircle(SHIP_X, this.bowY + this.shipLen / 2, 420 + r * 60 - bi * 30); }
     }
+    this.drawFittings(this.gFit, t);
     this.drawHud();
   }
 
@@ -1348,8 +1589,8 @@ export class SeaVoyageScene extends Phaser.Scene {
    * off their crests, slanting rain, and a fork of lightning on each storm flash.
    */
   private drawRoughWater(g: Phaser.GameObjects.Graphics, t: number, B: (typeof BANDS)[number]): void {
-    const W = this.scale.width, H = this.scale.height;
-    const off = (this.dist * 10 * 0.8) % 150;
+    const W = this.scene.scale.width, H = this.scene.scale.height;
+    const off = (this.seaY * 0.8) % 150;
     for (let y = -150 + off; y < H + 150; y += 150) {
       g.fillStyle(B.deep, 0.55);
       g.beginPath(); g.moveTo(0, y + 60);
@@ -1380,34 +1621,119 @@ export class SeaVoyageScene extends Phaser.Scene {
     }
   }
 
-  private drawBoat(g: Phaser.GameObjects.Graphics, t: number): void {
-    const b = this.boat, x = this.bx, y = this.by;
-    const L = b.len, flick = this.invuln > 0 && Math.floor(t * 20) % 2 === 0;
-    if (flick) return;
-    const rot = this.heading;
-    const pt = (dx: number, dy: number) => new Phaser.Geom.Point(x + dx * Math.cos(rot) - dy * Math.sin(rot), y + dx * Math.sin(rot) + dy * Math.cos(rot));
-    g.fillStyle(0x000000, 0.25); g.fillEllipse(x + 4, y + 6, L * 0.7, L * 1.1);
-    const hull = [pt(0, -L / 2 - 6), pt(L * 0.3, -L * 0.1), pt(L * 0.26, L / 2), pt(-L * 0.26, L / 2), pt(-L * 0.3, -L * 0.1)];
-    g.fillStyle(Phaser.Display.Color.ValueToColor(b.color).darken(30).color, 1); g.fillPoints(hull, true, true);
-    g.fillStyle(b.color, 1); g.fillPoints(hull.map((p) => new Phaser.Geom.Point(x + (p.x - x) * 0.82, y + (p.y - y) * 0.86)), true, true);
-    // Planks
-    g.lineStyle(1, 0x2a1a0a, 0.5);
-    for (let i = -2; i <= 2; i++) { const a = pt(i * L * 0.08, -L * 0.3), c = pt(i * L * 0.08, L * 0.42); g.lineBetween(a.x, a.y, c.x, c.y); }
-    // Sails
-    for (let s = 0; s < Math.max(1, b.sails); s++) {
-      const sy = -L * 0.12 + s * L * 0.28 - (b.sails > 1 ? L * 0.12 : 0);
-      const billow = Math.sin(t * 2 + s) * 3;
-      const m = pt(0, sy);
-      g.fillStyle(0x3a2a1a, 1); g.fillCircle(m.x, m.y, 3);
-      if (b.sails > 0) {
-        const l = pt(-L * 0.42, sy + 4 + billow), r = pt(L * 0.42, sy + 4 + billow), c = pt(0, sy - 10 + billow);
-        g.fillStyle(0xe8dcc0, 0.95); g.fillTriangle(l.x, l.y, r.x, r.y, c.x, c.y);
-        g.fillStyle(this.elementColor, 0.8); g.fillCircle(c.x, (l.y + c.y) / 2, 4);
+  /** Scale of the boat's fittings: their art is drawn in the old little-boat units and blown up to the deck. */
+  private get fitS(): number { return this.shipLen / (this.boat.len + 6); }
+
+  /** A point in the fittings' boat-local units, on screen. */
+  private fit(m: Pt): Pt {
+    const S = this.fitS;
+    return { x: SHIP_X + m.x * S, y: this.bowY + (this.boat.len / 2 + 6 + m.y) * S };
+  }
+
+  /** The ship from above — hull, planking, masts with their sails furled out of the way, hatch and wheel: a floor to fight on. */
+  private drawShip(g: Phaser.GameObjects.Graphics, t: number): void {
+    const b = this.boat, L = this.shipLen, top = this.bowY, hw = this.shipHw, stern = this.sternY;
+    const shade = (amt: number) => (amt < 0 ? Phaser.Display.Color.ValueToColor(b.color).darken(-amt).color : Phaser.Display.Color.ValueToColor(b.color).lighten(amt).color);
+    const dark = shade(-38), deck = shade(8), pale = shade(26);
+    const outline = (grow: number, ox = 0, oy = 0): Phaser.Geom.Point[] => {
+      const pts: Phaser.Geom.Point[] = [], n = 24;
+      for (let i = 0; i <= n; i++) { const y = top + L * (i / n); pts.push(new Phaser.Geom.Point(SHIP_X + Math.max(0, this.hullHalf(y) + grow) + ox, y + oy)); }
+      for (let i = n; i >= 0; i--) { const y = top + L * (i / n); pts.push(new Phaser.Geom.Point(SHIP_X - Math.max(0, this.hullHalf(y) + grow) + ox, y + oy)); }
+      return pts;
+    };
+    // Her shadow on the water, and the wake she leaves.
+    g.fillStyle(0x000000, 0.24); g.fillPoints(outline(8, 7, 10), true, true);
+    for (const side of [-1, 1]) {
+      for (let i = 0; i < 9; i++) {
+        const k = ((this.seaY * 0.012 + i / 9) % 1), y = stern - 6 + k * 150, x = SHIP_X + side * (hw * 0.8 + k * 70);
+        g.fillStyle(0xffffff, 0.3 * (1 - k)); g.fillEllipse(x + Math.sin(t * 2 + i) * 3, y, 26 - k * 8, 7);
+      }
+      // The bow wave curling off the stem.
+      for (let i = 0; i < 6; i++) {
+        const k = ((this.seaY * 0.02 + i / 6) % 1), y = top + 6 + k * L * 0.34, x = SHIP_X + side * (this.hullHalf(y) + 6 + k * 16);
+        g.fillStyle(0xffffff, 0.42 * (1 - k)); g.fillEllipse(x, y, 16 - k * 6, 5);
       }
     }
-    // Bow cannon / brazier
-    const bow = pt(0, -L / 2 + 4);
-    g.fillStyle(0x2a2a2e, 1); g.fillCircle(bow.x, bow.y, 5);
+    for (let i = 0; i < 7; i++) {
+      const k = ((this.seaY * 0.016 + i / 7) % 1);
+      g.fillStyle(0xffffff, 0.22 * (1 - k)); g.fillEllipse(SHIP_X + Math.sin(i * 2.3 + t) * hw * 0.5, stern + 8 + k * 130, 30, 8);
+    }
+    // Hull and deck.
+    g.fillStyle(dark, 1); g.fillPoints(outline(0), true, true);
+    g.fillStyle(deck, 1); g.fillPoints(outline(-9), true, true);
+    // Planks run fore and aft, each starting where the bow has opened wide enough for it.
+    for (let off = -hw + 14; off < hw - 6; off += 15) {
+      let y0 = top + 12;
+      while (y0 < stern && this.hullHalf(y0) - 11 < Math.abs(off)) y0 += 5;
+      if (y0 >= stern - 20) continue;
+      g.lineStyle(1.5, dark, 0.4); g.lineBetween(SHIP_X + off, y0, SHIP_X + off, stern - 10);
+      // Butt joints, staggered.
+      for (let y = y0 + 30 + ((off * 7 + 900) % 50); y < stern - 20; y += 86) { g.lineStyle(1.5, dark, 0.35); g.lineBetween(SHIP_X + off, y, SHIP_X + off + 15, y); }
+    }
+    g.lineStyle(3, pale, 0.5); g.strokePoints(outline(-9), true, true);
+    g.lineStyle(4, 0x1a1008, 0.85); g.strokePoints(outline(0), true, true);
+    if (b.sails > 0) {
+      // Hatch amidships.
+      const hy = top + L * 0.66;
+      g.fillStyle(0x1a1008, 0.85); g.fillRoundedRect(SHIP_X - 24, hy - 17, 48, 34, 4);
+      g.lineStyle(1.5, pale, 0.5);
+      for (let i = -2; i <= 2; i++) g.lineBetween(SHIP_X + i * 8, hy - 15, SHIP_X + i * 8, hy + 15);
+      for (let i = -1; i <= 1; i++) g.lineBetween(SHIP_X - 22, hy + i * 9, SHIP_X + 22, hy + i * 9);
+      // Masts: the yard swung fore-and-aft and the sail furled along it, so the deck stays clear.
+      for (let m = 0; m < b.sails; m++) {
+        const my = top + L * (b.sails > 1 ? 0.34 + m * 0.2 : 0.42), span = (this.hullHalf(my) - 14) * 0.95;
+        g.fillStyle(0x000000, 0.18); g.fillRoundedRect(SHIP_X - span + 4, my + 2, span * 2, 12, 6);
+        g.fillStyle(0x4a3220, 1); g.fillRoundedRect(SHIP_X - span, my - 4, span * 2, 8, 4);
+        for (let x = -span + 10; x < span - 6; x += 15) { g.fillStyle(0xe8dcc0, 0.95); g.fillCircle(SHIP_X + x, my - 1 + Math.sin(t * 1.5 + x) * 0.6, 7); g.fillStyle(0xcbbd9c, 0.9); g.fillCircle(SHIP_X + x + 2, my + 1, 3); }
+        g.fillStyle(0x2a1a0e, 1); g.fillCircle(SHIP_X, my, 12);
+        g.fillStyle(0x6a4a2e, 1); g.fillCircle(SHIP_X, my, 8);
+        g.fillStyle(this.elementColor, 0.95); g.fillTriangle(SHIP_X + 4, my - 4, SHIP_X + 4, my + 4, SHIP_X + 22 + Math.sin(t * 5 + m) * 3, my + Math.sin(t * 4 + m) * 3);
+      }
+    } else {
+      // A raft: logs lashed with rope.
+      for (const v of [0.3, 0.55, 0.8]) {
+        const y = top + L * v, w = this.hullHalf(y) - 6;
+        g.lineStyle(5, 0x3a2a18, 0.7); g.lineBetween(SHIP_X - w, y, SHIP_X + w, y);
+        g.lineStyle(2, 0xcbb890, 0.8); g.lineBetween(SHIP_X - w, y - 2, SHIP_X + w, y - 2);
+      }
+    }
+    if (Save.S().boat.uber !== 'uber-fortunehelm') {
+      // The wheel, aft.
+      const wy = stern - 34;
+      g.fillStyle(0x000000, 0.2); g.fillCircle(SHIP_X + 2, wy + 3, 15);
+      g.lineStyle(3, 0x5a3a1e, 1); g.strokeCircle(SHIP_X, wy, 12);
+      for (let i = 0; i < 6; i++) { const a = i * (Math.PI / 3) + Math.sin(t * 0.8) * 0.3; g.lineStyle(2, 0x7a5430, 1); g.lineBetween(SHIP_X, wy, SHIP_X + Math.cos(a) * 15, wy + Math.sin(a) * 15); }
+      g.fillStyle(0xc8a050, 1); g.fillCircle(SHIP_X, wy, 3.5);
+    }
+    // Stores lashed down on the quarters.
+    for (const side of [-1, 1]) {
+      const y = stern - 26, x = SHIP_X + side * (this.hullHalf(y) - 24);
+      g.fillStyle(0x000000, 0.2); g.fillCircle(x + 2, y + 3, 11);
+      g.fillStyle(0x6a4a2a, 1); g.fillCircle(x, y, 10); g.lineStyle(2, 0x2a2a2e, 0.9); g.strokeCircle(x, y, 10); g.lineStyle(1.5, 0x2a2a2e, 0.7); g.strokeCircle(x, y, 5);
+    }
+    if (this.up('cannon') > 0) {
+      // The Bow Cannon, trained ahead.
+      const cy = top + 30, kick = Math.max(0, 1 - (2.4 - this.up('cannon') * 0.45 - this.fireCd) * 6) * 4;
+      g.fillStyle(0x3a2a1a, 1); g.fillRoundedRect(SHIP_X - 9, cy - 2, 18, 16, 3);
+      g.fillStyle(0x2a2a2e, 1); g.fillRoundedRect(SHIP_X - 5, cy - 20 + kick, 10, 24, 3);
+      g.fillStyle(0x55555c, 1); g.fillRect(SHIP_X - 5, cy - 20 + kick, 3, 24);
+    }
+    if (this.invuln > 0) {
+      // Struck: the gunwale flares where the planks went.
+      g.lineStyle(6, 0xff5a3a, 0.35 + 0.35 * Math.sin(t * 40)); g.strokePoints(outline(2), true, true);
+    }
+  }
+
+  /** The boat's Uber-upgrade, on its own scaled layer (`gFit`): the same carvings as ever, at deck size. */
+  private drawFittings(g: Phaser.GameObjects.Graphics, t: number): void {
+    const b = this.boat, x = 0, y = 0;
+    const L = b.len;
+    const rot = 0;
+    const S = this.fitS, oy = this.bowY + (L / 2 + 6) * S;
+    g.clear();
+    g.setPosition(SHIP_X, oy).setScale(S);
+    if (this.over && this.hull <= 0) return;
+    const pt = (dx: number, dy: number) => new Phaser.Geom.Point(x + dx, y + dy);
     if (Save.S().boat.uber === 'uber-brazier') {
       const br = pt(0, L * 0.3);
       g.fillStyle(0x3a2a20, 1); g.fillRect(br.x - 6, br.y - 4, 12, 8);
@@ -1450,7 +1776,7 @@ export class SeaVoyageScene extends Phaser.Scene {
       // Three carved serpent heads on the bow — left, centre and right — on short necks of dark
       // green-stained wood with yellow-painted eyes. One that has bitten lunges at its target and
       // snaps back; while it grows back it is a stump with a new head budding out of it.
-      const now = this.time.now / 1000;
+      const now = this.scene.time.now / 1000;
       for (let i = 0; i < 3; i++) {
         const m = this.prowMount(i), base = pt(m.x * 0.85, m.y + 10);
         const regrow = this.prowReady[i] > now ? 1 - (this.prowReady[i] - now) / PROW_REGROW : 1;
@@ -1458,7 +1784,7 @@ export class SeaVoyageScene extends Phaser.Scene {
         let hx = pt(m.x, m.y).x, hy = pt(m.x, m.y).y;
         if (since < 0.3) {
           const k = Math.sin((since / 0.3) * Math.PI);
-          hx = Phaser.Math.Linear(hx, bite.x, k * 0.85); hy = Phaser.Math.Linear(hy, bite.y, k * 0.85);
+          hx = Phaser.Math.Linear(hx, (bite.x - SHIP_X) / S, k * 0.85); hy = Phaser.Math.Linear(hy, (bite.y - oy) / S, k * 0.85);
         }
         const grown = since < 0.3 ? 1 : regrow;
         const ang = Math.atan2(hy - base.y, hx - base.x);
@@ -1575,9 +1901,6 @@ export class SeaVoyageScene extends Phaser.Scene {
         g.lineStyle(1, 0xffffff, 0.8); g.lineBetween(lc.x - s, lc.y, lc.x + s, lc.y); g.lineBetween(lc.x, lc.y - s, lc.x, lc.y + s);
       }
     }
-    // The captain: a dot of your element at the tiller.
-    const cap = pt(0, L * 0.4);
-    g.fillStyle(this.elementColor, 1); g.fillCircle(cap.x, cap.y, 5);
   }
 
   private drawHazard(g: Phaser.GameObjects.Graphics, h: Hazard, t: number): void {
@@ -2329,7 +2652,7 @@ export class SeaVoyageScene extends Phaser.Scene {
 
   /** The shore rising over the horizon as a crossing nears its end. */
   private drawCoast(g: Phaser.GameObjects.Graphics, t: number): void {
-    const W = this.scale.width;
+    const W = this.scene.scale.width;
     const k = Phaser.Math.Clamp(1 - (this.toLand() - 0) / (COAST_M + 200), 0, 1);
     const shore = -40 + k * 300;
     const land = this.crossing?.color ?? 0x8aa86a;
@@ -2743,22 +3066,22 @@ export class SeaVoyageScene extends Phaser.Scene {
    * The Last Crossing's weather: the Shroud's last squalls rolling across the sea from either side
    * (thickest in the Shroud's Wake), and a violet flash now and then from what is left of the storm wall.
    */
-  private lastWater(dt: number, scroll: number, bi: number): void {
-    this.nextSquall -= scroll;
+  private lastWater(dt: number, bi: number): void {
+    this.nextSquall -= dt;
     if (this.nextSquall <= 0 && this.toLand() > COAST_M + 300) {
       const fromLeft = this.rng() < 0.5, r = 100 + this.rng() * 40;
       this.hazards.push({
-        kind: 'squall', x: fromLeft ? -r * 0.6 : 960 + r * 0.6, y: 170 + this.rng() * 120, r, hp: 999, maxHp: 999, t: 0,
+        kind: 'squall', x: fromLeft ? -r * 0.6 : 960 + r * 0.6, y: this.bowY + 20 + this.rng() * this.shipLen * 0.4, r, hp: 999, maxHp: 999, t: 0,
         seed: this.rng() * 1000, dead: false, vx: (fromLeft ? 1 : -1) * (60 + this.rng() * 40), tick: 1.4,
       });
-      this.nextSquall = (bi === 1 ? 1500 : 2700) * (0.75 + this.rng() * 0.5);
+      this.nextSquall = (bi === 1 ? 9 : 15) * (0.75 + this.rng() * 0.5);
     }
     this.flashT += dt;
     this.nextFlash -= dt;
     if (this.nextFlash <= 0 && bi < 2) {
       this.nextFlash = 7 + this.rng() * 9;
       this.flashT = 0; this.flashX = 80 + this.rng() * 800;
-      this.cameras.main.flash(160, 150, 110, 230);
+      this.scene.cameras.main.flash(160, 150, 110, 230);
       Sfx.play('thunder');
     }
   }
@@ -2766,17 +3089,21 @@ export class SeaVoyageScene extends Phaser.Scene {
   /** A row of the Last Crossing's sea: mostly drifting obsidian, glass reefs coming up ahead, the odd wreck of an older challenger. */
   private spawnLastRow(bi: number): void {
     const r = this.rng;
-    const n = 1 + Math.floor(r() * (2 + bi * 0.8));
+    const aimed = this.threats(bi), n = aimed + 2 + Math.floor(r() * (2 + bi * 0.8));
     for (let i = 0; i < n; i++) {
-      const roll = r(), x = 50 + r() * 860;
+      const roll = r();
+      let h: Hazard;
       if (roll < 0.16 + bi * 0.05) {
-        this.hazards.push({ kind: 'glassreef', x, y: 170 + r() * 100, r: 34 + r() * 22, hp: 999, maxHp: 999, t: 0, seed: r() * 1000, dead: false });
+        // A glass reef: it rides in under the surface like any rock, and only shows (and can only be broken) once it is up.
+        const hp = 5 + bi * 2;
+        h = { kind: 'glassreef', x: 0, y: 0, r: 34 + r() * 18, hp, maxHp: hp, t: -1.2 - r() * 1.5, seed: r() * 1000, dead: false };
       } else if (roll < 0.3 + bi * 0.04) {
-        this.hazards.push({ kind: 'drift', x, y: -60 - r() * 120, r: 14, hp: 1, maxHp: 1, t: 0, seed: r() * 1000, dead: false });
+        h = { kind: 'drift', x: 0, y: 0, r: 14, hp: 1, maxHp: 1, t: 0, seed: r() * 1000, dead: false };
       } else {
         const rr = 16 + r() * 16 + bi * 3, hp = Math.ceil(rr / 10) + bi;
-        this.hazards.push({ kind: 'obshard', x, y: -60 - r() * 120, r: rr, hp, maxHp: hp, t: 0, seed: r() * 1000, dead: false, vx: (r() - 0.5) * 30 });
+        h = { kind: 'obshard', x: 0, y: 0, r: rr, hp, maxHp: hp, t: 0, seed: r() * 1000, dead: false };
       }
+      this.hazards.push(this.adrift(h, bi, i < aimed));
     }
   }
 
@@ -2787,18 +3114,18 @@ export class SeaVoyageScene extends Phaser.Scene {
     if (h.r < 15) { if (this.rng() < 0.2) this.loot.push({ kind: 'crate', x: h.x, y: h.y, t: 0, taken: false }); return; }
     const r = h.r * 0.6, hp = Math.max(1, Math.ceil(h.maxHp / 2) - 1);
     for (const dir of [-1, 1]) {
-      this.hazards.push({ kind: 'obshard', x: h.x + dir * r, y: h.y, r, hp, maxHp: hp, t: 0, seed: this.rng() * 1000, dead: false, vx: dir * (120 + this.rng() * 70) });
+      this.hazards.push({ kind: 'obshard', x: h.x + dir * r, y: h.y, r, hp, maxHp: hp, t: 0, seed: this.rng() * 1000, dead: false, vx: dir * (120 + this.rng() * 70), dx: (h.dx ?? 0) * 0.5 });
     }
   }
 
   /** A glass reef: harmless while its seams flash under the water; once it breaks the surface it is a wall of spikes. */
-  private reefTouch(h: Hazard, d: number): void {
+  private reefTouch(h: Hazard): void {
     if (h.t < REEF_RISE) return;
     if (!h.armed) { h.armed = 1; this.explode(h.x, h.y, h.r + 10); Sfx.play('crystal-shatter'); }
-    if (d < h.r + 14) {
-      this.damageBoat(2);
-      this.bvx = Math.sign(this.bx - h.x || 1) * 280;
-    }
+    if (!this.hullTouch(h.x, h.y, h.r)) return;
+    h.dead = true;
+    this.explode(h.x, h.y, h.r + 14);
+    this.damageBoat(2);
   }
 
   /**
@@ -2816,8 +3143,8 @@ export class SeaVoyageScene extends Phaser.Scene {
       if (h.armed < SQUALL_WARN) return;
       const { x: sx, y: sy } = h.spot;
       h.flash = 0; h.gaps = [sx, sy]; h.spot = undefined; h.armed = undefined; h.tick = 1.5 + this.rng() * 1.2;
-      Sfx.play('thunder'); this.cameras.main.shake(140, 0.004);
-      if (Math.hypot(this.bx - sx, this.by - sy) < SQUALL_HIT) { this.damageBoat(1); this.float(this.bx, this.by - 36, 'struck!', '#c9b0ff'); }
+      Sfx.play('thunder'); this.scene.cameras.main.shake(140, 0.004);
+      if (Math.hypot(this.bx - sx, this.by - sy) < SQUALL_HIT) this.hurtCrew(1);
       return;
     }
     h.tick = (h.tick ?? 1) - dt;
@@ -2839,7 +3166,7 @@ export class SeaVoyageScene extends Phaser.Scene {
    * by under the keel.
    */
   private drawLastWater(g: Phaser.GameObjects.Graphics, t: number, B: (typeof BANDS)[number]): void {
-    const W = this.scale.width, H = this.scale.height;
+    const W = this.scene.scale.width, H = this.scene.scale.height;
     const { hz, x, h } = this.lastSpire();
     const k = h / 400, tipX = x + 14 * k;
     const open = Save.test({ monarch: 'obsidian-king' });
@@ -2864,18 +3191,18 @@ export class SeaVoyageScene extends Phaser.Scene {
       g.lineStyle(1, 0xdce4ff, 0.22 * tw); g.lineBetween(sx - sm, sy, sx + sm, sy);
     }
     // Long mirror glints sliding past with the sea.
-    const off = (this.dist * 10) % 110;
+    const off = (this.seaY) % 110;
     for (let y = hz - 110 + off; y < H; y += 110) {
       if (y < hz + 4) continue;
       for (let i = 0; i < 3; i++) {
-        const gx = ((i * 331 + Math.floor((this.dist * 10) / 110) * 97 + y * 0.3) % W + W) % W, gw = 60 + i * 50;
+        const gx = ((i * 331 + Math.floor((this.seaY) / 110) * 97 + y * 0.3) % W + W) % W, gw = 60 + i * 50;
         g.lineStyle(1, OBS.edge, 0.12); g.lineBetween(gx, y + i * 23, gx + gw, y + i * 23);
         g.lineStyle(1, 0xffffff, 0.08); g.lineBetween(gx + gw * 0.3, y + i * 23 - 1, gx + gw * 0.55, y + i * 23 - 1);
       }
     }
     // Seams in the glass of the sea.
     for (let i = 0; i < 6; i++) {
-      const span = H + 240, raw = i * 211 + this.dist * 10, n = Math.floor(raw / span);
+      const span = H + 240, raw = i * 211 + this.seaY, n = Math.floor(raw / span);
       const yy = (raw % span) - 120;
       if (yy < hz) continue;
       const rng = mulberry(i * 7919 + n * 131 + 3);
@@ -2891,7 +3218,7 @@ export class SeaVoyageScene extends Phaser.Scene {
    * lightning forks down out of it now and then.
    */
   private drawLastSky(g: Phaser.GameObjects.Graphics, t: number): void {
-    const W = this.scale.width;
+    const W = this.scene.scale.width;
     const { hz, x, h, p } = this.lastSpire();
     const steps = 10;
     for (let i = 0; i < steps; i++) {
@@ -2934,7 +3261,7 @@ export class SeaVoyageScene extends Phaser.Scene {
    * station with you — and, as the beach comes up, surging ahead to ground first.
    */
   private drawMuster(g: Phaser.GameObjects.Graphics, t: number): void {
-    const H = this.scale.height;
+    const H = this.scene.scale.height;
     const surge = this.toLand() < COAST_M ? Math.pow(1 - Math.max(0, this.toLand()) / COAST_M, 1.5) : 0;
     ISLES.slice(0, 10).forEach((isle, i) => {
       const side = i % 2 === 0 ? -1 : 1, rank = Math.floor(i / 2);
@@ -2975,7 +3302,7 @@ export class SeaVoyageScene extends Phaser.Scene {
    * wrecks, and violet-white surf breaking softly on the glass.
    */
   private drawLastCoast(g: Phaser.GameObjects.Graphics, t: number): void {
-    const W = this.scale.width;
+    const W = this.scene.scale.width;
     const k = Phaser.Math.Clamp(1 - this.toLand() / (COAST_M + 200), 0, 1);
     const shore = -40 + k * 300;
     const edgeY = (x: number) => shore + Math.sin(x * 0.012 + 1.3) * 22;
@@ -3062,7 +3389,7 @@ export class SeaVoyageScene extends Phaser.Scene {
     const { x, y, r } = h;
     const rng = mulberry(Math.floor(h.seed * 977));
     if (h.t < REEF_RISE) {
-      const k = h.t / REEF_RISE, fl = Math.sin(t * (10 + k * 18)) > 0 ? 1 : 0.45;
+      const k = Math.max(0, h.t) / REEF_RISE, fl = Math.sin(t * (10 + k * 18)) > 0 ? 1 : 0.45;
       g.fillStyle(0x000000, 0.2 + k * 0.3); g.fillEllipse(x, y, r * 2.2, r * 1.3);
       g.lineStyle(1.2, OBS.seam, 0.25 + 0.4 * k); g.strokeEllipse(x, y, r * 2.2 * (1.25 - k * 0.25), r * 1.3 * (1.25 - k * 0.25));
       for (let i = 0; i < 7; i++) {
@@ -3144,13 +3471,12 @@ export class SeaVoyageScene extends Phaser.Scene {
   private drawHud(): void {
     const g = this.gHud;
     g.clear();
-    g.fillStyle(0x000000, 0.45); g.fillRoundedRect(8, 6, 300, 54, 8);
+    g.fillStyle(0x000000, 0.45); g.fillRoundedRect(8, 6, Math.max(300, 24 + this.maxHull * 18), 54, 8);
     for (let i = 0; i < this.maxHull; i++) {
       g.fillStyle(i < this.hull ? 0x8ad8a0 : 0x3a2a2a, 1); g.fillRoundedRect(16 + i * 18, 40, 14, 12, 3);
     }
     const leg = this.crossing ? `  → ${this.crossing.name} ${Math.max(0, Math.round(this.toLand()))} m` : `  ${Math.round(this.dist)} m`;
     this.hudText.setText(`${this.boat.name}${leg}\nHold ${this.haul} 🪙  ${this.orbs ? this.orbs + ' 🔮' : ''}`);
-    if (this.burstCd > 0) { g.fillStyle(0x000000, 0.45); g.fillRect(840, 12, 104, 10); g.fillStyle(this.elementColor, 1); g.fillRect(842, 14, 100 * (1 - this.burstCd / 7), 6); }
     if (Save.S().boat.uber === 'uber-fortunehelm') {
       // The Fortune Helm's dial: a gold arc filling toward the next spin, the last boon's colour in the
       // hub, and a gold pip while a ward is held.

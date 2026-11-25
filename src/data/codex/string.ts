@@ -12,7 +12,9 @@ const string: ElementCodex = {
     'A big velvet-black spider. Its taut strings hook enemies (where they strike) and walls and stay '
     + 'tied to it — bodies cannot pass them, and a string that snaps lashes whoever broke it. Spiders '
     + 'walk the web, a purple strand slows and snares, a control bar puts the enemy on your arrow keys, '
-    + 'and Linen Tomb wraps them in silk in the middle of the arena.',
+    + 'and Linen Tomb wraps them in silk in the middle of the arena. The price is its body: a long abdomen '
+    + 'drags behind it, and every lobe can be hit — a blast or a piercing shot hurts once per lobe it '
+    + 'catches, and the red bulb on the end takes triple damage.',
 
   abilities: {
     'string-snag': {

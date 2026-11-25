@@ -6,6 +6,7 @@ import { ART_REPRISE, CAVERN_FISH, CAVERN_FISHERIES, CAVERN_ITEMS, CAVERN_SCRIPT
 import { CAVERN_COLOR } from './palette';
 import { REPRISE_BOSS } from './prince';
 import { CAVERN_QUESTS } from './quests';
+import { FALLEN } from './fallen';
 
 /**
  * The Cavern Court — echo, tier 2 of Choirholm, Prince Reprise the Twice-Heard.
@@ -37,4 +38,5 @@ export const CAVERN_COURT: CourtBundle = {
   shops: CAVERN_SHOPS,
   fish: CAVERN_FISH,
   fisheries: CAVERN_FISHERIES,
+  fallen: FALLEN,
 };

@@ -2,6 +2,7 @@ import type { CourtBundle } from '../../../../IslesTypes';
 import { CATHEDRAL_AREA } from './area';
 import { CATHEDRAL_ENCOUNTERS, CATHEDRAL_GIMMICKS } from './encounters';
 import { CATHEDRAL_FLOOR } from './floor';
+import { FALLEN } from './fallen';
 import { ART_VESPER, CATHEDRAL_FISH, CATHEDRAL_FISHERIES, CATHEDRAL_ITEMS, CATHEDRAL_SCRIPTS, CATHEDRAL_SHOPS } from './items';
 import { CATHEDRAL_COLOR } from './palette';
 import { VESPER_BOSS } from './prince';
@@ -37,4 +38,5 @@ export const CATHEDRAL_COURT: CourtBundle = {
   shops: CATHEDRAL_SHOPS,
   fish: CATHEDRAL_FISH,
   fisheries: CATHEDRAL_FISHERIES,
+  fallen: FALLEN,
 };

@@ -48,7 +48,7 @@ export const FALLEN: FallenBundle = {
       id: fallenId('superposition', 'face-up'),
       court: 'superposition',
       name: 'Neither Face Up',
-      foeName: 'Fountain-Keeper Mehitabel Spurge',
+      foeName: 'Fountain-Keeper Mehitabel Quince',
       foeElement: 'fortune',
       difficulty: 4,
       gimmick: fallenId('superposition', 'face-up'),

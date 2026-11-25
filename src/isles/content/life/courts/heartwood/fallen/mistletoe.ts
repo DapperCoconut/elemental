@@ -5,7 +5,7 @@ import { fallenId } from '../../../../meteor/spec';
 import { HW, alive, clamp, dist, leaf } from '../palette';
 
 /**
- * Berries on the Bough — Sorrel Gall, the mistletoe-wife, who cuts the kissing-boughs for the
+ * Berries on the Bough — Sorrel Mundy, the mistletoe-wife, who cuts the kissing-boughs for the
  * Midwinter dance. In the true world she cut the parasite off the short households' boughs for
  * nothing. In the star's telling she seeded it on them, so the boughs gave less sap and came up
  * short at the scales — and she was paid for every white ring that followed.
@@ -66,7 +66,7 @@ function make(ctx: GimmickCtx): EncounterGimmick {
         const gain = Math.max(3, Math.round(c.store));
         if (by === 'player') ctx.heal(ctx.player, gain); else tk.healBoss(gain, c.x, c.y - 30);
         ctx.float(c.x, c.y - 44, 'CUT', '#f6f3ea');
-        ctx.sfx('snap');
+        ctx.sfx('trap-snap');
         ctx.flash(c.x, c.y - 14, HW.leafGreen);
         c.tgt?.remove();
         clumps = clumps.filter((q) => q !== c);

@@ -7,7 +7,7 @@ import { alive, clamp, dist } from '../util';
 import { fallenId } from '../../../../meteor/spec';
 
 /**
- * Brought On Under Glass — Forcer Amaryllis Vane, who in the King's telling kept the forcing lawn
+ * Brought On Under Glass — Forcer Amaryllis Pym, who in the King's telling kept the forcing lawn
  * and put the answerers-back under its cloches herself, "to bring them on".
  *
  * Bell cloches the height of a man come down out of the sky. Each one's shadow is marked on the

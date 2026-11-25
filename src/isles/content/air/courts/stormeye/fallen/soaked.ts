@@ -5,7 +5,7 @@ import { fallenId } from '../../../../meteor/spec';
 import { Clock, S, alive, clamp, dist, drawBolt, drawCloud, jit } from '../util';
 
 /**
- * SOAKED THROUGH — Aldous Brine, Slicker-Maker (cloth).
+ * SOAKED THROUGH — Ignatius Brine, Slicker-Maker (cloth).
  *
  * Stormeye wears yellow oilskins because yellow is the only colour you can see in a squall, and
  * because a man soaked to the skin is a man the lightning likes. In the star's telling the

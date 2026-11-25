@@ -113,7 +113,7 @@ export const FALLEN: FallenBundle = {
       id: fallenId('mind', 'cord'),
       court: 'mind',
       name: 'Out of Body',
-      foeName: 'Trance-Medium Perdita Kellaway',
+      foeName: 'Trance-Medium Zenobia Kellaway',
       foeElement: 'death',
       difficulty: 5,
       hpMult: 1.25,

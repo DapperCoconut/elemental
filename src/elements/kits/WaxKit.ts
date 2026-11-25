@@ -384,7 +384,7 @@ export class WaxKit implements SummonPurgeTarget {
     return owner === 'player' ? this.api.hasUpgrade(slot) : this.api.hasNpcUpgrade(slot);
   }
   private targetsOf(owner: Owner): Fighter[] {
-    const list = owner === 'player' ? this.api.enemies : [this.api.player];
+    const list = owner === 'player' ? this.api.enemies : this.api.player.bodies();
     return list.filter((f) => f && f.active && f.hp > 0);
   }
   private nearestTarget(owner: Owner, x: number, y: number): Fighter | null {

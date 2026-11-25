@@ -88,7 +88,7 @@ export const FALLEN: FallenBundle = {
       id: fallenId('hearth', 'kiln-cart'),
       court: 'hearth',
       name: 'The Kiln Cart',
-      foeName: 'Dorrit Vane, Carter',
+      foeName: 'Dorrit Mapp, Carter',
       foeElement: 'magnet',
       difficulty: 5,
       hpMult: 1.15,

@@ -179,6 +179,92 @@ check('bot: loads poisons, throws bombs, lays acid, lays toxin', !!casts.poison 
 check('bot: shoots its own bomb into clusters', !!casts.cluster, JSON.stringify(casts));
 await shot('14-bot-late');
 
+console.log('\n[3] the five upgrades');
+await startMatch('slime', 'fire');
+await step(10);
+await still();
+await sc((sc) => { sc.hasUpgradeFor = () => true; });
+await step(5);
+
+// Click+ — Self-Inject.
+await sc((sc) => sc.slimeKit.doSelfInject('player'));
+await step(4);
+const si = await sc((sc) => ({ ammo: sc.slimeKit.sides.player.ammo, tox: sc.player.venomSelfToxin, acid: sc.slimeKit.sides.player.grid.isAcid(sc.player.x, sc.player.y) }));
+check('Self-Inject: a shot spent, 5 self-toxin, a puddle underfoot', si.ammo === 2 && si.tox === 5 && si.acid, JSON.stringify(si));
+await sc((sc) => { const k = sc.slimeKit; const s = k.sides.player; s.selfInjectAt = 0; s.loaded = 1; s.loadedShots = 1; k.doSelfInject('player'); });
+await step(4);
+const sb = await sc((sc) => ({ left: sc.player.venomBoonUntil[1] - sc.time.now, spd: sc.slimeKit.getPlayerSpeedMult(), loaded: sc.slimeKit.sides.player.loaded }));
+check('…a loaded Paralyzing becomes its boon: ×1.3 speed on acid, stretched by self-toxin', sb.left > 8800 && sb.left < 9800 && Math.abs(sb.spd - 1.3) < 0.001 && sb.loaded === null, JSON.stringify(sb));
+await sc((sc) => { sc.player.venomBoonUntil[0] = sc.time.now + 5000; sc.player.venomBoonUntil[2] = sc.time.now + 5000; sc.player.venomBoonUntil[3] = sc.time.now + 5000; sc.player.hp = 50; sc.player.isInvincible = true; });
+await step(70);
+await sc((sc) => { sc.player.isInvincible = false; });
+const sg = await sc((sc) => ({ guard: sc.player.venomMeltIncomingMult, hp: sc.player.hp }));
+check('Disintegrating boon guards (×0.7), Melting boon heals', Math.abs(sg.guard - 0.7) < 0.001 && sg.hp > 52, JSON.stringify(sg));
+await shot('15-boons');
+
+// E+ — Poison Synergy.
+await sc((sc) => { const k = sc.slimeKit; k.addSplat('player', sc.npc.x, sc.npc.y, 60); const t = sc.time.now; sc.npc.venomRotUntil = t + 6000; sc.npc.venomMeltingUntil = t + 6000; });
+await step(70);
+const y1 = await sc((sc) => sc.npc.venomMeltIncomingMult);
+check('Disintegrating + Melting: vulnerability builds on the acid', y1 > 2.04 && y1 < 2.2, String(y1));
+await sc((sc) => { const t = sc.time.now; sc.npc.venomRotUntil = 0; sc.npc.venomMeltingUntil = 0; sc.npc.venomParalyzedUntil = t + 6000; sc.npc.purgedUntil = t + 6000; });
+await step(4);
+await shot('16-synergy');
+const y2 = await sc((sc) => ({ locked: sc.npc.venomLockUntil > sc.time.now, ids: [...(sc.npc.venomLockIds ?? [])] }));
+check('Paralyzing + Purging: movement abilities locked', y2.locked && y2.ids.length > 0, JSON.stringify(y2));
+await sc((sc) => { sc.npc.purgedUntil = 0; sc.npc.venomParalyzedUntil = 0; sc.npc.shieldHp = 30; });
+await step(3);
+const hpY = await sc((sc) => { const t = sc.time.now; sc.npc.venomRotUntil = t + 900; sc.npc.purgedUntil = t + 900; return sc.npc.hp; });
+await step(3);
+const y3 = await sc((sc) => ({ hp: sc.npc.hp, sh: sc.npc.shieldHp }));
+check('Disintegrating + Purging: the stripped shield costs 12', hpY - y3.hp >= 12 && y3.sh === 0, JSON.stringify({ lost: hpY - y3.hp, ...y3 }));
+await step(80);
+
+// R+ — poison bombs.
+const bomb = async (dx, dy) => {
+  await sc((sc, dx, dy) => { const k = sc.slimeKit; k.holdBomb('player'); k.doPoison('player', sc.player.x + dx, sc.player.y + dy); }, dx, dy);
+  const filled = await sc((sc) => ({ bomb: sc.slimeKit.sides.player.bombPoison, gun: sc.slimeKit.sides.player.loaded }));
+  await step(6);
+  await shot(`17-bomb-filled-${filled.bomb}`);
+  await sc((sc) => sc.slimeKit.doBomb('player', sc.npc.x, sc.npc.y));
+  await step(80);
+  return filled;
+};
+const f3 = await bomb(-100, 0);
+const red = await sc((sc) => { const g = sc.slimeKit.sides.player.grid; let n = 0; for (const c of g.cells) if (c === 3) n++; return n; });
+check('Melting bomb: the vial fills the bomb, not the gun, and old acid turns red', f3.bomb === 3 && f3.gun === null && red > 0, JSON.stringify({ ...f3, red }));
+await shot('18-red-acid');
+await bomb(100, 0);
+const f1 = await sc((sc) => ({ stun: sc.npc.stunnedUntil - Date.now(), para: sc.npc.venomParalyzedUntil > sc.time.now }));
+check('Paralyzing bomb: stunned and paralyzed', f1.para && f1.stun > -200 && f1.stun < 4600, JSON.stringify(f1));
+await bomb(0, 100);
+check('Purging bomb: a third of the kit\'s damage is true for 8s', await sc((sc) => sc.slimeKit.sides.player.trueUntil > sc.time.now));
+await bomb(0, -100);
+check('Disintegrating bomb: full vulnerability at once', (await sc((sc) => sc.npc.venomVulnStacks)) === 5);
+
+// F+ — Consume.
+await startMatch('slime', 'fire');
+await step(10);
+await still();
+await sc((sc) => { sc.hasUpgradeFor = () => true; sc.npc.setPosition(430, 320); });
+await step(5);
+await sc((sc) => sc.slimeKit.doBurrow('player'));
+await step(20);
+const t1 = await sc((sc) => ({ under: sc.slimeKit.isBurrowed('player'), acid: sc.slimeKit.coverage('player') }));
+check('Consume: burrows on clean floor', t1.under && t1.acid === 0, JSON.stringify(t1));
+await sc((sc) => { sc.npc.venomMeltingUntil = sc.time.now + 8000; sc.npc.quantumHasteUntil = 0; });
+await step(20);
+await shot('19-tunnel-bite');
+const t2 = await sc((sc) => ({ under: sc.slimeKit.isBurrowed('player'), bottle: sc.slimeKit.sides.player.bottle?.poisons ?? null, acid: sc.slimeKit.coverage('player') }));
+check('…forced up after 0.5s, the trail laid, the bite bottles their Melting', !t2.under && t2.acid > 0 && !!t2.bottle && t2.bottle[3] === true, JSON.stringify(t2));
+await step(20);
+await shot('20-bottle');
+await sc((sc) => sc.slimeKit.drinkBottle('player'));
+await step(3);
+const t3 = await sc((sc) => ({ bottle: sc.slimeKit.sides.player.bottle, boon: sc.player.venomBoonUntil[3] > sc.time.now }));
+check('drinking it gives the Melting boon', t3.bottle === null && t3.boon, JSON.stringify(t3));
+await shot('21-drunk');
+
 console.log(`\n${results.filter((r) => r.ok).length}/${results.length} passed, ${errors.length} page error(s)`);
 await page.close();
 await browser.disconnect();

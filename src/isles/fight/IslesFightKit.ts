@@ -16,6 +16,7 @@ import { genomeCastRules } from '../systems/Genome';
 import { makeStrikeTarget } from '../../boss/framework/StrikeTargets';
 import type { ProjectileRegistry } from '../../combat/ProjectileRegistry';
 import { shotsNear, type ShotHandle } from '../../combat/ShotHandles';
+import { SeaVoyageKit } from '../sea/SeaVoyageKit';
 
 /**
  * The Ten Isles' half of a fight: the encounter's gimmick, the charm / artifact / meal scripts,
@@ -75,6 +76,8 @@ export class IslesFightKit {
   private heading = new Map<Fighter, { a: number; x: number; y: number }>();
   /** Until when each fighter counts as dashing (moved faster than any walk this frame). */
   private dashUntil = new Map<Fighter, number>();
+  /** The sea, when this fight is a voyage: built on first use, reset every match like the kit itself. */
+  private voyage: SeaVoyageKit | null = null;
 
   constructor(private api: IslesArenaApi) {}
 
@@ -97,6 +100,18 @@ export class IslesFightKit {
     this.gGround = this.gAir = this.gHud = null;
     this.bannerText = null;
     setCrowdControl(payload ? { stun: this.stun, root: this.root, silence: this.silence } : null);
+    const sea = payload?.kind === 'voyage' ? { dest: payload.voyage?.dest ?? payload.id, from: payload.area, pos: payload.pos } : null;
+    if (sea && !this.voyage) {
+      const api = this.api;
+      this.voyage = new SeaVoyageKit({
+        get scene() { return api.scene; },
+        get player() { return api.player; },
+        get npc() { return api.npc; },
+        addEnemy: (f) => api.addEnemy(f),
+        removeEnemy: (f) => api.removeEnemy(f),
+      });
+    }
+    this.voyage?.reset(sea);
     if (!payload) return;
 
     const { scene, player, npc } = this.api;
@@ -497,6 +512,8 @@ export class IslesFightKit {
       for (const sc of this.scripts) sc.drawAir?.(gA, time);
       this.gimmick?.drawHud?.(gH, time);
     }
+    // Last of all: the voyage puts the crew back on the deck after everything else has moved them.
+    this.voyage?.update(time, delta);
   }
 
   private coolRate(f: Fighter, rate: number, deltaMs: number): void {
@@ -509,6 +526,7 @@ export class IslesFightKit {
     if (!this.payload) return 1;
     let m = (this.gimmick?.playerSpeedMult?.() ?? 1) * (this.tk?.getPlayerSpeedMult() ?? 1);
     for (const w of this.spdWindows) m *= w.mult;
+    m *= this.voyage?.getPlayerSpeedMult() ?? 1;
     return Phaser.Math.Clamp(m, 0.25, 2.2);
   }
 
@@ -538,6 +556,8 @@ const mixDark = (c: number): number => {
  * (before the fighters exist). A prince's own `drawArena` paints over this where it has one.
  */
 export function paintIslesFloor(scene: Phaser.Scene, payload: IslesFightPayload, W: number, H: number): void {
+  // A voyage has no floor: SeaVoyageKit paints the sea and the ship every frame.
+  if (payload.kind === 'voyage') return;
   const key = payload.court ?? (payload.kind === 'warden' || payload.kind === 'councilor' ? getEncounter(payload.id)?.court : undefined) ?? 'kiln';
   const floor = getFloor(key) ?? getFloor('kiln');
   const g = scene.add.graphics().setDepth(-100);

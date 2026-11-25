@@ -5,7 +5,7 @@ import { SF, P, alive, clamp, dist } from '../palette';
 import { fallenId } from '../../../../meteor/spec';
 
 /**
- * Thin Glass — Picker Morrow Flint, in the star's telling the crater-picker who prised fused glass
+ * Thin Glass — Picker Jasper Flint, in the star's telling the crater-picker who prised fused glass
  * out of the fallen-star bowls for the Prince's charms, and sold the pickers who kept a shard.
  *
  * The fight is down in a fresh crater: one skin of black star-glass over a vein that is still

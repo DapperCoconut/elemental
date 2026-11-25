@@ -55,7 +55,8 @@ export const ABILITY_TAGS: Record<string, readonly AbilityTag[]> = {
   // Electricity
   'electro-dash': ['recast'],
   'pain-battery': ['hold'],
-  // Venom
+  // Venom (right click on Inject is the Click+ Self-Inject; F drinks a Consume bottle before it dives)
+  'venom-inject': ['rmb', 'hold'],
   'pick-your-poison': ['hold'],
   'acid-reflux': ['recast'],
   'venom-burrow': ['recast'],

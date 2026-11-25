@@ -79,7 +79,7 @@ function makeThreeMarks(ctx: GimmickCtx): EncounterGimmick {
         if (t.inBay >= markMs()) {
           t.inBay = 0;
           t.marks++;
-          ctx.sfx('snap');
+          ctx.sfx('trap-snap');
           if (t.marks >= 3) report(s, time);
         }
       }

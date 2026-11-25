@@ -26,7 +26,7 @@ export const FALLEN: FallenBundle = {
       id: fallenId('treasury', 'cash-railway'),
       court: 'treasury',
       name: 'The Cash Railway',
-      foeName: 'Head Cashier Euphrasia Trundle',
+      foeName: 'Head Cashier Melisande Trundle',
       foeElement: 'technology',
       difficulty: 4,
       hpMult: 1.1,
@@ -35,7 +35,7 @@ export const FALLEN: FallenBundle = {
       look: { body: 0xe0c4a8, accent: 0x2a5a3c, hat: 'visor', traits: ['glasses', 'book'], size: 0.95, eye: EYE },
       challenge: [
         'Every wage on the Row comes down my wires. I hear a light cup before it leaves the desk. I always have.',
-        'Short again, the Pellows. Short again. Pull the cord, Euphrasia. The cup knows the way to the bailiff.',
+        'Short again, the Pellows. Short again. Pull the cord, Melisande. The cup knows the way to the bailiff.',
         'Mind your head, dear. The wires run lower than you think, and they never once run your way.',
       ],
       beaten: [

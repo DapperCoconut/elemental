@@ -9,7 +9,7 @@ import {
 import { alive, pagePlate } from './common';
 
 /**
- * Keep to the Path — Brannock Hale, the Huntsman, who in the King's telling kept the licensed
+ * Keep to the Path — Brannock Pennock, the Huntsman, who in the King's telling kept the licensed
  * road through the Fable wood and set his snares for anyone who walked it out of turn.
  *
  * A path winds across the yard through the wood. Off it, the wood notices you: every moment you

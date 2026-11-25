@@ -5,7 +5,7 @@ import { fallenId } from '../../../../meteor/spec';
 import { ABY, alive, clamp, dist, drawFish } from '../palette';
 
 /**
- * Patch the Skin — Sealwright Fen's fight (the mender who sealed the houses that were left under).
+ * Patch the Skin — Sealwright Emrys's fight (the mender who sealed the houses that were left under).
  *
  * The arena's four walls are the skin of the city's bubble, and the trench sea leans on it from
  * outside. Any shot that strikes the skin **punctures** it — either side's — and the skin gives
@@ -14,8 +14,8 @@ import { ABY, alive, clamp, dist, drawFish } from '../palette';
  * shoves whoever is in it, and it keeps firing on a beat until someone seals it. Strike a
  * puncture to **seal** it with a gout of wax.
  *
- * The exploit is aim: a missed shot is a hole behind your foe. Fire past Fen into the wall at
- * his back and the jet comes through where he stands. Fen walks the walls sealing, and will
+ * The exploit is aim: a missed shot is a hole behind your foe. Fire past Emrys into the wall at
+ * his back and the jet comes through where he stands. Emrys walks the walls sealing, and will
  * happily shoot holes behind you.
  *
  * Halfway **the skin thins**: the bubble shrinks a stride in from every wall, and the strip

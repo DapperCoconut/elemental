@@ -1103,7 +1103,7 @@ export class CreationKit {
 
   /** Everyone this side's blasts and shrapnel are allowed to hurt. */
   private foes(owner: 'player' | 'npc'): Fighter[] {
-    return owner === 'player' ? this.api.enemies : [this.player];
+    return owner === 'player' ? this.api.enemies : this.player.bodies();
   }
 
   /**
@@ -1612,7 +1612,7 @@ export class CreationKit {
       // calls (daggers, bolts, constructs) as well as projectiles. Weakened rides the same
       // field from the other direction: everything this side hits takes 25% less.
       const empowered = (active('buff') ? 1.25 : 1) * (hexed('buff') ? 0.75 : 1);
-      for (const victim of (owner === 'player' ? this.api.enemies : [this.player])) {
+      for (const victim of (owner === 'player' ? this.api.enemies : this.player.bodies())) {
         victim.empoweredIncomingMult = empowered;
       }
 
@@ -1856,7 +1856,7 @@ export class CreationKit {
     this.scene.cameras.main.shake(180 + tier * 70, 0.006 + tier * 0.003);
 
     const victimSide: 'player' | 'npc' = owner === 'player' ? 'npc' : 'player';
-    for (const target of (owner === 'player' ? this.api.enemies : [this.player])) {
+    for (const target of (owner === 'player' ? this.api.enemies : this.player.bodies())) {
       if (!target.active || target.hp <= 0) continue;
       if (Phaser.Math.Distance.Between(tx, ty, target.x, target.y) > MORTAR_RADIUS) continue;
       target.takeDamage(MORTAR_DAMAGE);
@@ -2070,7 +2070,7 @@ export class CreationKit {
       }
 
       let hit = false;
-      for (const target of (w.owner === 'player' ? this.api.enemies : [this.player])) {
+      for (const target of (w.owner === 'player' ? this.api.enemies : this.player.bodies())) {
         if (!target.active || target.hp <= 0) continue;
         if (Phaser.Math.Distance.Between(w.x, w.y, target.x, target.y) > WRENCH_HIT_RADIUS) continue;
         target.takeDamage(WRENCH_DAMAGE);
@@ -2885,7 +2885,7 @@ export class CreationKit {
         if (crow) this.witchFx.feather(d.sprite.x, d.sprite.y, Math.atan2(-d.vy, -d.vx));
         else this.fx(d.owner).emberTrail(d.sprite.x, d.sprite.y, Math.atan2(-d.vy, -d.vx), CREATION.silver);
       }
-      for (const dTarget of (d.owner === 'player' ? this.api.enemies : [this.player])) {
+      for (const dTarget of (d.owner === 'player' ? this.api.enemies : this.player.bodies())) {
         if (!dTarget.active || dTarget.hp <= 0) continue;
         const tId = dTarget === this.player ? 'player' : String(this.api.enemies.indexOf(dTarget as Fighter));
         if (!d.hitSet.has(tId) && Phaser.Math.Distance.Between(d.sprite.x, d.sprite.y, dTarget.x, dTarget.y) <= 20) {
@@ -2940,7 +2940,7 @@ export class CreationKit {
         const blast = b.blastRadius ?? 50;
         if (Phaser.Math.Distance.Between(b.sprite.x, b.sprite.y, b.targetX, b.targetY) <= 20) {
           this.fx(b.owner).explosion(b.sprite.x, b.sprite.y, blast + 6, { shards: 8, smoke: 2, core: CREATION.ember });
-          for (const rktTarget of (b.owner === 'player' ? this.api.enemies : [this.player])) {
+          for (const rktTarget of (b.owner === 'player' ? this.api.enemies : this.player.bodies())) {
             if (!rktTarget.active || rktTarget.hp <= 0) continue;
             if (Phaser.Math.Distance.Between(b.sprite.x, b.sprite.y, rktTarget.x, rktTarget.y) <= blast) {
               rktTarget.takeDamage(b.damage);
@@ -2988,7 +2988,7 @@ export class CreationKit {
       }
       // Check enemy hit
       let _boltHit = false;
-      for (const bTarget of (b.owner === 'player' ? this.api.enemies : [this.player])) {
+      for (const bTarget of (b.owner === 'player' ? this.api.enemies : this.player.bodies())) {
         if (!bTarget.active || bTarget.hp <= 0) continue;
         if (Phaser.Math.Distance.Between(b.sprite.x, b.sprite.y, bTarget.x, bTarget.y) <= 18) {
           bTarget.takeDamage(b.damage);
@@ -3172,7 +3172,7 @@ export class CreationKit {
         sb.tickAccum += delta;
         if (sb.tickAccum >= 300) {
           sb.tickAccum -= 300;
-          for (const sbTarget of (sb.owner === 'player' ? this.api.enemies : [this.player])) {
+          for (const sbTarget of (sb.owner === 'player' ? this.api.enemies : this.player.bodies())) {
             if (!sbTarget.active || sbTarget.hp <= 0) continue;
             if (Math.abs(sbTarget.x - sb.x) <= sb.w / 2 + 22 && Math.abs(sbTarget.y - sb.y) <= sb.h / 2 + 22) {
               sbTarget.takeDamage(5);

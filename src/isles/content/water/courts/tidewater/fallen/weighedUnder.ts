@@ -8,9 +8,9 @@ import {
 import { alive, clamp, dist, stepDt } from '../util';
 
 /**
- * Weighed Under — Ballast-Master Coyle (gravity).
+ * Weighed Under — Ballast-Master Durn (gravity).
  *
- * The Queen keeps the drowned "as ballast for the crown", and Coyle is the man who weighs it. In
+ * The Queen keeps the drowned "as ballast for the crown", and Durn is the man who weighs it. In
  * this fight ballast is literal: every hard blow you take hangs another stone on your ankles —
  * five at most. Each stone slows you, and each stone also puts weight behind your own blows (your
  * foe takes more from you the heavier you are). Weight is a choice, until the sea comes.
@@ -18,11 +18,11 @@ import { alive, clamp, dist, stepDt } from '../util';
  * Swells roll across the flats in bands (a dark trough shows first). Caught light, a swell lifts
  * you and sets you down a step on with a slap. Caught carrying three stones or more, you are
  * *weighed under*: held on the bottom, hurt, and the sea keeps two of your stones. Below half
- * Coyle's swells come two at once.
+ * Durn's swells come two at once.
  *
  * In the middle stands the crown's weighbridge. Strike it and every stone you carry is tipped
  * across the beam and hung on your foe instead. Then the beam has to settle before it weighs again.
- * Coyle does it to you whenever he is heavier — so load him up, tip him right before a swell, and
+ * Durn does it to you whenever he is heavier — so load him up, tip him right before a swell, and
  * watch the sea take its tithe off the tithe-man.
  */
 
@@ -159,7 +159,7 @@ function make(ctx: GimmickCtx): EncounterGimmick {
 
     npcSeek() {
       const time = ctx.scene.time.now;
-      // A swell is coming over Coyle: walk off the band, the short way.
+      // A swell is coming over Durn: walk off the band, the short way.
       const s = swells.find((w) => !w.fired && inSwell(w, npc));
       if (s) {
         const v = s.vertical ? npc.x : npc.y;

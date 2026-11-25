@@ -10,10 +10,10 @@ import {
 import { alive, clamp, dist, stepDt } from '../util';
 
 /**
- * Neither Face Up — Fountain-Keeper Mehitabel Spurge.
+ * Neither Face Up — Fountain-Keeper Mehitabel Quince.
  *
  * Either Square's fountain is full of coins that landed on their edges, and the court says a coin
- * in the air is both faces at once. In the King's telling Spurge is the keeper who settled the
+ * in the air is both faces at once. In the King's telling Quince is the keeper who settled the
  * Grid's undecided cases with a toss: heads, the house stays lit; tails, it goes dark. She never
  * once let a coin land on its own.
  *
@@ -235,7 +235,7 @@ function make(ctx: GimmickCtx): EncounterGimmick {
     },
 
     drawHud(g) {
-      // Spurge's book: the last eight tosses, newest on the left.
+      // Quince's book: the last eight tosses, newest on the left.
       const x0 = 18, y0 = H - 34;
       g.fillStyle(0x0c0b10, 0.72); g.fillRoundedRect(x0 - 8, y0 - 16, 8 * 22 + 8, 32, 6);
       g.lineStyle(1, BRASS_DARK, 1); g.strokeRoundedRect(x0 - 8, y0 - 16, 8 * 22 + 8, 32, 6);
@@ -256,7 +256,7 @@ function make(ctx: GimmickCtx): EncounterGimmick {
   };
 }
 
-/** Spurge's fountain set into the north wall: basalt basin, lit violet water, a copper spout. */
+/** Quince's fountain set into the north wall: basalt basin, lit violet water, a copper spout. */
 function fountainBasin(g: G, x: number, y: number, time: number): void {
   shadow(g, x, y + 22, 170, 34, 0.35);
   g.fillStyle(BASALT_DARK, 1); g.fillEllipse(x, y + 8, 168, 54);

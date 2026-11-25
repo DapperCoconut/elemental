@@ -6,7 +6,7 @@ import { alive, clamp } from '../util';
 import { fallenId } from '../../../../meteor/spec';
 
 /**
- * Raked at Dawn — Tobias Harrow, who rakes the Bloom Court's gravel walks every morning before the
+ * Raked at Dawn — Ephraim Harrow, who rakes the Bloom Court's gravel walks every morning before the
  * gardens wake. In the King's telling he read the night's footprints before he raked them out, and
  * the Weigh-Warden always knew which household had crept north in the dark.
  *

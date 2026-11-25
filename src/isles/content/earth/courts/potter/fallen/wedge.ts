@@ -6,7 +6,7 @@ import { IRON, IRON_LIT, MARL, MARL_DARK, MARL_DEEP, MARL_LIT, SLIP_LIT } from '
 import { alive, clamp, dist, ease } from '../util';
 
 /**
- * Folded Over — Wedgewife Hulda Brack, who wedged the tithe clay on the great bench.
+ * Folded Over — Wedgewife Hulda Clegg, who wedged the tithe clay on the great bench.
  *
  * Wedging is folding: you lift half the slab, fold it over onto the other half and press, again
  * and again, until no air is left in it. Hulda wedged the clay every soldier of the Tithe Ranks

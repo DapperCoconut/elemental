@@ -2,7 +2,8 @@ import Phaser from 'phaser';
 import { PreviewScript, PreviewCtx } from '../../../ui/AbilityPreview';
 import {
   ACID, AcidAura, AcidAvatar, AcidFx, POISONS, PoisonKind, STING_TONES, VILE_TONES,
-  drawAcidBar, drawAcidBomb, drawAcidFloor, drawAfflictions, drawPoisonWheel, drawToxinMark, drawVenomBlob,
+  drawAcidBar, drawAcidBomb, drawAcidFloor, drawAfflictions, drawBloodBottle, drawBombFill, drawBoons, drawPoisonWheel,
+  drawSynergy, drawToxinMark, drawVenomBlob,
 } from '../../../elements/kits/AcidVisuals';
 import { AcidGrid, CellState } from '../../../elements/kits/AcidGrid';
 
@@ -73,7 +74,8 @@ function label(ctx: PreviewCtx, x: number, y: number, color: string, size = 11):
   }).setOrigin(0.5).setDepth(14));
 }
 
-interface Pool { x: number; y: number; radius: number; hot: boolean; seed: number; alpha?: number }
+/** `red` is not a pool of its own: it boils whatever acid was already inside the circle, as a Melting bomb does. */
+interface Pool { x: number; y: number; radius: number; hot: boolean; seed: number; alpha?: number; red?: boolean }
 
 /**
  * One grid for a whole board of splashes, rasterised from the circles whenever they change and
@@ -85,12 +87,13 @@ function poolLayer(ctx: PreviewCtx, pools: Pool[]): AcidGrid {
   const grid = new AcidGrid(0, 0, ctx.w, ctx.h);
   let sig = '';
   ctx.onFrame(() => {
-    const next = pools.map((p) => `${p.x | 0},${p.y | 0},${p.radius | 0},${p.hot ? 1 : 0}`).join(';');
+    const next = pools.map((p) => `${p.x | 0},${p.y | 0},${p.radius | 0},${p.hot ? 1 : 0}${p.red ? 'r' : ''}`).join(';');
     if (next === sig) return;
     sig = next;
     grid.clear();
-    for (const p of pools) if (!p.hot) grid.paintCircle(p.x, p.y, p.radius, CellState.Cool);
-    for (const p of pools) if (p.hot) grid.paintCircle(p.x, p.y, p.radius, CellState.Hot);
+    for (const p of pools) if (!p.hot && !p.red) grid.paintCircle(p.x, p.y, p.radius, CellState.Cool);
+    for (const p of pools) if (p.red) grid.reddenCircle(p.x, p.y, p.radius);
+    for (const p of pools) if (p.hot && !p.red) grid.paintCircle(p.x, p.y, p.radius, CellState.Hot);
     drawAcidFloor(g, ctx.tint, grid, VILE_TONES);
   });
   return grid;
@@ -197,37 +200,62 @@ export const inject: PreviewScript = {
   },
 };
 
+/** The venom's own boons, drawn on the caster with the kit's own veins. */
+function boonMarks(ctx: PreviewCtx, at: () => { x: number; y: number }, read: () => boolean[], onAcid: () => boolean): void {
+  const g = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
+  ctx.onFrame((_dt, elapsed) => {
+    g.clear();
+    const on = read();
+    const p = at();
+    if (on.some(Boolean)) drawBoons(g, p.x, p.y, elapsed / 1000, on, onAcid());
+  });
+}
+
+const BOON_LINES = [
+  'CORRODED HIDE — 30% less damage taken on your acid',
+  'QUICKENED — 30% faster on your acid',
+  'PURIFIED — 25% more damage dealt on your acid',
+  'RENDERED — heals 4 a second on your acid',
+];
+
 export const injectUpgraded: PreviewScript = {
-  duration: 4200,
-  caption: 'Corrosive Dose — each hit also eats 12 off their maximum HP, permanently',
+  duration: 7200,
+  caption: 'Self-Inject — right click: a shot into your own arm. A 40px puddle, 5 self-toxin, and a loaded poison becomes its boon',
   run(ctx) {
     const { fx, av } = stage(ctx, { noDummy: true });
-    dummy(ctx, ctx.tx, ctx.ty);
     const pools: Pool[] = [];
     poolLayer(ctx, pools);
-    const mag = magazine(ctx, av, () => null);
+    let loaded: PoisonKind | null = null;
+    const mag = magazine(ctx, av, () => loaded);
+    const boons = [false, false, false, false];
+    boonMarks(ctx, () => ({ x: ctx.cx, y: ctx.cy }), () => boons, () => pools.length > 0);
+    let selfToxin = 0;
+    const count = label(ctx, ctx.cx, ctx.cy - 44, '#99ee44', 11);
+    const line = label(ctx, ctx.w * 0.5, 14, '#ffffff', 10);
+    ctx.onFrame(() => count.setText(selfToxin > 0 ? `💉 ${selfToxin}  ·  buffs +${selfToxin * 2}%` : ''));
 
-    // A max-HP bar over the target, shrinking from the right as each shot eats into it.
-    const bw = 74, bh = 6;
-    const bar = ctx.adopt(ctx.scene.add.graphics().setDepth(13));
-    const cap = label(ctx, ctx.tx, ctx.ty - 40, '#88ff33', 10);
-    let maxHp = 100;
-    ctx.onFrame(() => {
-      bar.clear();
-      bar.fillStyle(ctx.tint(ACID.rot), 0.9);
-      bar.fillRect(ctx.tx - bw / 2 - 1, ctx.ty - 30, bw + 2, bh + 2);
-      bar.fillStyle(0x552222, 1);
-      bar.fillRect(ctx.tx - bw / 2, ctx.ty - 29, bw, bh);
-      bar.fillStyle(ctx.tint(ACID.lime), 1);
-      bar.fillRect(ctx.tx - bw / 2, ctx.ty - 29, bw * (maxHp / 100), bh);
-      cap.setText(`max ${maxHp}`);
-    });
-    for (const d of [400, 820, 1240]) {
-      ctx.at(d, () => {
-        if (!mag.fire()) return;
-        injectShot(ctx, fx, pools, null, () => { maxHp -= 12; float(ctx, ctx.tx, ctx.ty - 52, '−12 MAX HP', '#88ff33', 10); });
-      });
-    }
+    const stab = (): void => {
+      if (!mag.fire()) return;
+      const carried = loaded;
+      loaded = null;
+      selfToxin += 5;
+      av.play('clap');
+      pools.push({ x: ctx.cx, y: ctx.cy, radius: 40, hot: true, seed: seeded() });
+      fx.gather(ctx.cx, ctx.cy, 38, 240, () => ({ x: ctx.cx, y: ctx.cy }), 6, VILE_TONES);
+      fx.ring(ctx.cx, ctx.cy, 30, 6, carried !== null ? POISONS[carried].color : ACID.glow, 260, 3.5, 8);
+      fx.ring(ctx.cx, ctx.cy, 12, 40, ACID.hotRim, 340, 3, 4);
+      if (carried === null) return;
+      boons[carried] = true;
+      const p = POISONS[carried];
+      fx.ring(ctx.cx, ctx.cy, 44, 10, p.color, 420, 4, 8);
+      line.setText(BOON_LINES[carried]).setColor(`#${p.color.toString(16).padStart(6, '0')}`);
+    };
+    // A plain stab first: the puddle and the toxin. Then one with each of two vials loaded.
+    ctx.at(500, stab);
+    ctx.at(1400, () => openWheel(ctx, fx, 1, 650, () => { loaded = 1; }));
+    ctx.at(2500, stab);
+    ctx.at(4000, () => openWheel(ctx, fx, 3, 650, () => { loaded = 3; }));
+    ctx.at(5100, stab);
   },
 };
 
@@ -319,27 +347,57 @@ export const pickYourPoison: PreviewScript = {
   },
 };
 
+/** What each pair of poisons does on one body with Poison Synergy, keyed `low-high` by poison index. */
+const SYNERGY_LINES: Record<string, string> = {
+  '0-1': 'up to +30% damage taken, the faster they move',
+  '0-2': '12 damage for every buff stripped',
+  '0-3': '+3% damage taken a second on your acid (max 30%)',
+  '1-2': 'abilities that move them cannot be cast',
+  '1-3': 'a wider, faster trail of acid',
+  '2-3': 'every hit adds 0.25s to their negative effects',
+};
+
 export const pickYourPoisonUpgraded: PreviewScript = {
-  duration: 4600,
-  caption: 'Double Dose — one pick loads your next two Inject shots',
+  duration: 9400,
+  caption: 'Poison Synergy — two poisons running on one body react. Each of the six pairs does something of its own',
   run(ctx) {
     const { fx, av } = stage(ctx, { noDummy: true });
     dummy(ctx, ctx.tx, ctx.ty);
     const pools: Pool[] = [{ x: ctx.tx, y: ctx.ty, radius: 60, hot: false, seed: seeded() }];
     poolLayer(ctx, pools);
-    let shots = 0;
-    const mag = magazine(ctx, av, () => (shots > 0 ? 3 : null));
+    let loaded: PoisonKind | null = null;
+    const mag = magazine(ctx, av, () => loaded);
     const state = { on: [0, 0, 0, 0] as [number, number, number, number], vuln: 0 };
     afflicted(ctx, ctx.tx, ctx.ty, state);
-    ctx.at(300, () => { av.play('clap'); openWheel(ctx, fx, 3, 650, () => { shots = 2; float(ctx, ctx.cx, ctx.cy - 40, 'MELTING ×2', '#cc55ff', 11); }); });
-    for (const d of [1300, 1720, 2140]) {
-      ctx.at(d, () => {
+    const braid = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
+    const pairs: [PoisonKind, PoisonKind][] = [[0, 1], [0, 2], [0, 3], [1, 2], [1, 3], [2, 3]];
+    ctx.onFrame((_dt, elapsed) => {
+      braid.clear();
+      let slot = 0;
+      for (const [a, b] of pairs) if (state.on[a] && state.on[b]) drawSynergy(braid, ctx.tx, ctx.ty, elapsed / 1000, a, b, slot++);
+    });
+    const line = label(ctx, ctx.w * 0.5, 14, '#ffffff', 10);
+    // Disintegrating, then Melting on top of it, then Paralyzing on top of both.
+    const order: PoisonKind[] = [0, 3, 1];
+    order.forEach((kind, n) => {
+      const t0 = 300 + n * 2900;
+      ctx.at(t0, () => { av.play('clap'); openWheel(ctx, fx, kind, 650, () => { loaded = kind; }); });
+      ctx.at(t0 + 950, () => {
         mag.fire();
-        const carried: PoisonKind | null = shots > 0 ? 3 : null;
-        if (shots > 0) shots--;
-        injectShot(ctx, fx, pools, carried, () => { if (carried !== null) state.on[3] = 1; });
+        loaded = null;
+        injectShot(ctx, fx, pools, kind, () => {
+          const p = POISONS[kind];
+          fx.ring(ctx.tx, ctx.ty, 8, 46, p.color, 380, 3.5, 8);
+          // Announce the pair this poison just made with the newest one already running.
+          const partner = order.slice(0, n).reverse().find((k) => state.on[k]);
+          state.on[kind] = 1;
+          if (partner === undefined) { line.setText(`${p.name} alone — no reaction yet`).setColor('#cccccc'); return; }
+          const lo = Math.min(kind, partner), hi = Math.max(kind, partner);
+          line.setText(`${POISONS[lo].name} + ${POISONS[hi].name} — ${SYNERGY_LINES[`${lo}-${hi}`]}`).setColor('#ffffff');
+          fx.ring(ctx.tx, ctx.ty, 30, 6, POISONS[partner].color, 300, 3, 9);
+        });
       });
-    }
+    });
   },
 };
 
@@ -357,11 +415,14 @@ const BOMB_SIZES = [
  */
 function throwBomb(
   ctx: PreviewCtx, fx: AcidFx, av: AcidAvatar, pools: Pool[], tier: number, burstX: number,
-  opts: { shootAt?: number; onBurst?: () => void } = {},
+  opts: { shootAt?: number; onBurst?: () => void; holdMs?: number; fill?: { kind: PoisonKind; at: number } } = {},
 ): void {
   const g = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
   const def = BOMB_SIZES[tier - 1];
-  const bomb = { x: ctx.cx - 16, y: ctx.cy - 30, held: true, live: true, grow: 0, spin: 0 };
+  const bomb = { x: ctx.cx - 16, y: ctx.cy - 30, held: true, live: true, grow: 0, spin: 0, fill: null as PoisonKind | null };
+  // A Melting bomb splashes 30% wider and boils the acid already under it.
+  const blast = def.radius * (opts.fill?.kind === 3 ? 1.3 : 1);
+  if (opts.fill) ctx.at(opts.fill.at, () => { bomb.fill = opts.fill!.kind; });
   const lets: { x0: number; y0: number; x1: number; y1: number; p: number }[] = [];
   av.play('flex');
   ctx.onFrame((dt, elapsed) => {
@@ -384,16 +445,20 @@ function throwBomb(
     bomb.grow = Math.min(1, bomb.grow + dt / 220);
     bomb.spin += dt * 0.007;
     if (!bomb.held) bomb.x += 300 * (dt / 1000);
-    drawAcidBomb(g, ctx.tint, bomb.x, bomb.held ? bomb.y + Math.sin(t * 5) * 2 : bomb.y, def.size * bomb.grow, tier, t, bomb.spin, VILE_TONES);
+    const by = bomb.held ? bomb.y + Math.sin(t * 5) * 2 : bomb.y;
+    drawAcidBomb(g, ctx.tint, bomb.x, by, def.size * bomb.grow, tier, t, bomb.spin, VILE_TONES);
+    if (bomb.fill !== null) drawBombFill(g, bomb.x, by, def.size * bomb.grow, bomb.fill, t);
     if (!bomb.held && bomb.x >= burstX) {
       bomb.live = false;
-      pools.push({ x: burstX, y: ctx.cy, radius: def.radius, hot: true, seed: seeded() });
-      fx.splash(burstX, ctx.cy, def.radius, { droplets: 14 + tier * 6, fizz: 6, duration: 520, depth: 6, tones: tier >= 3 ? STING_TONES : VILE_TONES });
-      fx.ring(burstX, ctx.cy, def.radius * 0.2, def.radius * 1.1, tier >= 3 ? ACID.sting : ACID.neon, 420, 5 + tier, 7);
+      if (bomb.fill === 3) pools.push({ x: burstX, y: ctx.cy, radius: blast, hot: false, red: true, seed: seeded() });
+      pools.push({ x: burstX, y: ctx.cy, radius: blast, hot: true, seed: seeded() });
+      fx.splash(burstX, ctx.cy, blast, { droplets: 14 + tier * 6, fizz: 6, duration: 520, depth: 6, tones: tier >= 3 ? STING_TONES : VILE_TONES });
+      fx.ring(burstX, ctx.cy, blast * 0.2, blast * 1.1, tier >= 3 ? ACID.sting : ACID.neon, 420, 5 + tier, 7);
+      if (bomb.fill !== null) fx.ring(burstX, ctx.cy, blast * 0.1, blast * 1.2, POISONS[bomb.fill].color, 520, 7, 8);
       opts.onBurst?.();
     }
   });
-  ctx.at(650, () => {
+  ctx.at(opts.holdMs ?? 650, () => {
     bomb.held = false;
     bomb.x = ctx.cx + 28;
     bomb.y = ctx.cy;
@@ -451,37 +516,44 @@ export const acidReflux: PreviewScript = {
 };
 
 export const acidRefluxUpgraded: PreviewScript = {
-  duration: 7000,
+  duration: 7600,
   scale: 0.8,
-  caption: 'Seeping Reflux — every 2s each bomb pool has a 20% chance to bud one at 55% its size',
+  caption: 'Poison bombs — pick a vial with the bomb in hand and it goes into the bomb. Melting: a 30% wider blast that boils the acid already there red',
   run(ctx) {
     const { fx, av } = stage(ctx, { noDummy: true });
-    const pools: Pool[] = [];
+    dummy(ctx, ctx.tx, ctx.ty);
+    // Acid already down around the target — what a Melting bomb turns red.
+    const pools: Pool[] = [
+      { x: ctx.tx - 30, y: ctx.ty - 26, radius: 62, hot: false, seed: seeded() },
+      { x: ctx.tx + 34, y: ctx.ty + 30, radius: 56, hot: false, seed: seeded() },
+      { x: ctx.tx - 96, y: ctx.ty + 44, radius: 40, hot: false, seed: seeded() },
+    ];
     poolLayer(ctx, pools);
-    ctx.at(300, () => throwBomb(ctx, fx, av, pools, 2, ctx.cx + 200));
-    // Budding is a dice roll in the kit; here it is laid out so the loop always shows it.
-    const buds: [number, number, number][] = [[2400, 0.4, 118], [3200, 2.6, 124], [4000, -1.3, 120], [4800, 1.5, 150], [5600, -2.4, 156]];
-    for (const [d, a, dist] of buds) {
-      ctx.at(d, () => {
-        const x = ctx.cx + 200 + Math.cos(a) * dist, y = ctx.cy + Math.sin(a) * dist * 0.8;
-        pools.push({ x, y, radius: 58, hot: true, seed: seeded() });
-        fx.ring(x, y, 17, 58, ACID.hotRim, 340, 3, 4);
-        fx.fizz(x, y, 5, 40, 4, VILE_TONES);
+    const line = label(ctx, ctx.w * 0.5, 14, '#ffffff', 9);
+    line.setText('Disintegrating ×1.5 damage, 15% vulnerable  ·  Paralyzing 1.5s stun  ·  Purging true damage, then 33% of yours for 8s');
+    ctx.at(300, () => {
+      throwBomb(ctx, fx, av, pools, 2, ctx.tx - 20, {
+        holdMs: 1900,
+        fill: { kind: 3, at: 1250 },
+        onBurst: () => {
+          float(ctx, ctx.tx, ctx.ty - 26, '38', '#cc55ff', 13);
+          float(ctx, ctx.tx, ctx.ty - 62, 'RED ACID — sears the first to touch it', '#ff6a3d', 10);
+        },
       });
-    }
+      // The wheel opens with the bomb still in hand; the vial runs into the bomb, not the gun.
+      ctx.at(600, () => openWheel(ctx, fx, 3, 650, () => float(ctx, ctx.cx, ctx.cy - 60, 'BOMB FILLED', '#cc55ff', 10)));
+    });
   },
 };
 
 // ══ F — Burrow ════════════════════════════════════════════════════════
 
-function burrowScript(rattling: boolean): PreviewScript {
+const burrowScript = (): PreviewScript => {
   return {
     duration: 7000,
     scale: 0.9,
     bodyTexture: '',
-    caption: rattling
-      ? 'Rattling Strike — surfacing also blasts 20 in 90px, they drip acid for 5s, and the bite is toxin ×1.5'
-      : 'F — invincible and ×1.35 speed under your acid; come up biting: 30, debuffs back to full, toxin ×1.25',
+    caption: 'F — invincible and ×1.35 speed under your acid; come up biting: 30, debuffs back to full, toxin ×1.25',
     run(ctx) {
       const fx = ctx.capture(() => new AcidFx(ctx.scene, ctx.tint).setSink(ctx.sink));
       const at = { x: ctx.cx, y: ctx.cy, alpha: 1 };
@@ -533,26 +605,100 @@ function burrowScript(rattling: boolean): PreviewScript {
           av.setHold('gun', ctx.aim);
           av.play('slam', ctx.aim);
           fx.splash(at.x, at.y, 56, { droplets: 12, fizz: 4, etch: false, depth: 6, tones: VILE_TONES });
-          fx.bite(at.x, at.y, 0, 113, rattling ? 3 : 2, 8, VILE_TONES);
+          fx.bite(at.x, at.y, 0, 113, 2, 8, VILE_TONES);
           fx.punctures(vx, ctx.cy, 0, 9, VILE_TONES);
           float(ctx, vx, ctx.cy - 24, '30', '#66ff33', 13);
           left = 8;
-          toxin = rattling ? 60 : 50;
-          float(ctx, vx, ctx.cy - 76, rattling ? 'RESTORED · TOXIN ×1.5' : 'RESTORED · TOXIN ×1.25', '#ccff88', 10);
-          if (!rattling) return;
-          fx.splash(at.x, at.y, 90, { droplets: 18, fizz: 4, depth: 6, duration: 480, tones: STING_TONES });
-          float(ctx, vx, ctx.cy - 40, '20', '#ff6666', 12);
-          for (let i = 1; i <= 4; i++) {
-            ctx.at(i * 900, () => pools.push({ x: vx + (i % 2 ? 14 : -10), y: ctx.cy + (i - 2) * 16, radius: 22, hot: true, seed: seeded() }));
-          }
+          toxin = 50;
+          float(ctx, vx, ctx.cy - 76, 'RESTORED · TOXIN ×1.25', '#ccff88', 10);
         });
       });
     },
   };
 }
 
-export const burrow = burrowScript(false);
-export const burrowUpgraded = burrowScript(true);
+export const burrow = burrowScript();
+
+/** Consume (F+): a dive on clean floor, the half-second tunnel, the bite, the bottle, the drink. */
+export const burrowUpgraded: PreviewScript = {
+  duration: 7600,
+  scale: 0.9,
+  bodyTexture: '',
+  caption: 'Consume — tunnel 0.5s under clean floor, trailing acid. The bite fills a bottle: F again drinks their buffs at double length, and your poisons in them as boons',
+  run(ctx) {
+    const fx = ctx.capture(() => new AcidFx(ctx.scene, ctx.tint).setSink(ctx.sink));
+    const at = { x: ctx.cx, y: ctx.cy, alpha: 1 };
+    const av = drivenCaster(ctx, () => at);
+    av.setHold('gun', ctx.aim);
+    // No acid anywhere: the whole dive is the half-second Consume allows.
+    const pools: Pool[] = [];
+    poolLayer(ctx, pools);
+    const vx = ctx.cx + 205;
+    dummy(ctx, vx, ctx.cy);
+    // They are Melting, and carrying a shield with four seconds left on it.
+    const state = { on: [0, 0, 0, 1] as [number, number, number, number], vuln: 0 };
+    afflicted(ctx, vx, ctx.cy, state);
+    const theirs = label(ctx, vx, ctx.cy - 44, '#66aaff', 10).setText('🛡 4.0s');
+    const mine = label(ctx, ctx.cx, ctx.cy - 60, '#ffffff', 10);
+    const boons = [false, false, false, false];
+    boonMarks(ctx, () => at, () => boons, () => true);
+    let bottle = -1;
+    const bg = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
+    ctx.onFrame((_dt, elapsed) => {
+      bg.clear();
+      mine.setPosition(at.x, at.y - 60);
+      if (bottle < 0) return;
+      drawBloodBottle(bg, at.x - 24, at.y + 8, elapsed / 1000, [POISONS[3].color], Phaser.Math.Clamp((elapsed - bottle) / 260, 0, 1));
+    });
+
+    ctx.at(600, () => {
+      at.alpha = 0.4;
+      av.setHold('brace', ctx.aim);
+      fx.gather(at.x, at.y, 46, 400, () => ({ x: at.x, y: at.y }), 5, VILE_TONES);
+      const aura = ctx.capture(() => new AcidAura(ctx.scene, ctx.tint, 'burrow', VILE_TONES, 30, 4));
+      let under = true;
+      let laid = at.x;
+      const trail: { x: number; at: number }[] = [];
+      let clock = 0;
+      ctx.onFrame((dt, elapsed) => {
+        clock = elapsed;
+        // The trail comes up a beat behind the burrower, as it does in the kit.
+        while (trail.length > 0 && elapsed - trail[0].at >= 650) pools.push({ x: trail.shift()!.x, y: ctx.cy, radius: 13, hot: true, seed: seeded() });
+        if (!under) return;
+        aura.update(dt, at.x, at.y, 1);
+        at.x += 150 * 1.35 * (dt / 1000);
+        while (at.x - laid >= 8) { laid += 8; trail.push({ x: laid, at: elapsed }); }
+      });
+      // Half a second off the acid and it is forced up — into the bite.
+      ctx.at(500, () => {
+        under = false;
+        aura.destroy();
+        at.alpha = 1;
+        for (const dab of trail.splice(0)) pools.push({ x: dab.x, y: ctx.cy, radius: 13, hot: true, seed: seeded() });
+        av.setHold('gun', ctx.aim);
+        av.play('slam', ctx.aim);
+        fx.splash(at.x, at.y, 56, { droplets: 12, fizz: 4, etch: false, depth: 6, tones: VILE_TONES });
+        fx.bite(at.x, at.y, 0, 113, 3, 8, VILE_TONES);
+        fx.punctures(vx, ctx.cy, 0, 9, VILE_TONES);
+        float(ctx, vx, ctx.cy - 24, '30', '#66ff33', 13);
+        fx.ring(at.x, at.y, 40, 8, 0xd81c2c, 320, 3.5, 9);
+        bottle = clock;
+        mine.setText('BOTTLED: 🛡 4.0s · MELTING').setColor('#ff8a8a');
+      });
+      // F again: drink it.
+      ctx.at(2300, () => {
+        bottle = -1;
+        av.play('raise', -Math.PI / 2, 420);
+        fx.ring(at.x, at.y, 8, 52, 0xd81c2c, 420, 5, 8);
+        fx.ring(at.x, at.y, 46, 12, 0x7a0a12, 360, 4, 8);
+        fx.ring(at.x, at.y, 44, 10, POISONS[3].color, 420, 4, 8);
+        boons[3] = true;
+        mine.setText('🛡 8.0s  ·  RENDERED — heals 4 a second on your acid').setColor('#cc55ff');
+        theirs.setText('🛡 4.0s');
+      });
+    });
+  },
+};
 
 // ══ Q — Acid Apocalypse ═══════════════════════════════════════════════
 

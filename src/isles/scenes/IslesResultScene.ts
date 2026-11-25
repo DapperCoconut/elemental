@@ -36,6 +36,8 @@ export class IslesResultScene extends Phaser.Scene {
   }
 
   create(): void {
+    // A voyage settles itself on the water (SeaVoyageKit); anything that still lands here just walks back to the quay.
+    if (this.payload.kind === 'voyage') { this.scene.start('IsleWorldScene', { area: this.payload.area, pos: this.payload.pos }); return; }
     const W = this.scale.width, H = this.scale.height;
     Music.play('campaign');
     this.settle();

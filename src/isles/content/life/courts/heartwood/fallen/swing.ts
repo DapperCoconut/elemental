@@ -5,7 +5,7 @@ import { fallenId } from '../../../../meteor/spec';
 import { HW, alive, angDiff, clamp, dist, sapLantern } from '../palette';
 
 /**
- * The Turning Swing — Hollin Wick, Lamplighter of the Lantern Ledge. In the true world he lit
+ * The Turning Swing — Rowley Wick, Lamplighter of the Lantern Ledge. In the true world he lit
  * the Great Sap Lantern at dusk so the climbers could find their knots. In the star's telling he
  * hung it lower on the nights the pruners came, so they could read the white rings by its light.
  *

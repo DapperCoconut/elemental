@@ -67,6 +67,7 @@ import { ElectricityKit, ElectricityArenaApi } from '../elements/kits/Electricit
 import { TechnologyKit, TechArenaApi } from '../elements/kits/TechnologyKit';
 import { ProjectileRegistry } from '../combat/ProjectileRegistry';
 import { isStrikeTarget, strikeTargetHit } from '../boss/framework/StrikeTargets';
+import { BodySection } from '../entities/BodySection';
 import { shotsNear } from '../combat/ShotHandles';
 import { SummonPurgeTarget } from '../combat/SummonPurge';
 import { FormRevertTarget } from '../combat/FormRevert';
@@ -442,6 +443,8 @@ export class ArenaScene extends Phaser.Scene {
   private campaign: { slot: 0 | 1 | 2; worldId: string; fightId: string; isChallenge: boolean; hardMode?: boolean } | null = null;
   private enemies: Fighter[] = [];
   private enemyGroup!: Phaser.Physics.Arcade.Group;
+  /** Extra hit bodies of the player's own (String's abdomen): npc shots overlap these too. */
+  private playerParts!: Phaser.Physics.Arcade.Group;
   private invasionKit!: InvasionKit;
   private invasionCoopKit: InvasionCoopKit | null = null;
   /**
@@ -2823,6 +2826,8 @@ export class ArenaScene extends Phaser.Scene {
         buildNpcContext: (x, y) => arena.buildNpcContext(x, y),
         setStatusIndicator: (id, status) => arena.statusHudKit.setCustom(id, status),
         broadcast: (id) => arena.broadcastMasteryCast(id),
+        addBodySection: (owner, f) => (owner === 'npc' ? arena.addMapEnemy(f) : arena.playerParts.add(f)),
+        removeBodySection: (owner, f) => (owner === 'npc' ? arena.removeMapEnemy(f) : arena.playerParts.remove(f, false, false)),
       };
       this.stringKit = new StringKit(stringApi);
     }
@@ -4092,6 +4097,7 @@ export class ArenaScene extends Phaser.Scene {
 
     // ── Unified enemy physics group ────────────────────────────────
     this.enemyGroup = this.physics.add.group();
+    this.playerParts = this.physics.add.group();
     if (!this.isInvasion) {
       this.enemyGroup.add(this.npc, true);
     }
@@ -4230,6 +4236,10 @@ export class ArenaScene extends Phaser.Scene {
           // own. Without this they would fall through to the `this.npc` route
           // below and quietly damage the front bot instead of themselves.
           this.applyProjectileToEnemy(proj, target);
+        } else if (target instanceof BodySection) {
+          // A lobe of the npc's own body (String's abdomen): hit as itself, so a shot that
+          // passes through bodies bills each one, and the section multiplies what it forwards.
+          this.applyProjectileToEnemy(proj, target);
         } else if (this.clotTree && target === this.clotTree.hitbox) {
           if (!proj.isHeal) {
             target.setIncomingCritContext(this.player.critChance, this.player.critMult);
@@ -4248,16 +4258,9 @@ export class ArenaScene extends Phaser.Scene {
       this,
     );
 
-    this.physics.add.overlap(
-      this.projectiles,
-      this.player,
-      (a, b) => {
-        // Unlike the group-vs-group overlap above, Phaser's dispatcher swaps argument
-        // order when one side is a single body instead of a group: since `this.player`
-        // is a lone sprite and `this.projectiles` is a group, it internally calls
-        // collideSpriteVsGroup(this.player, this.projectiles, ...), so the callback
-        // always receives (this.player, projectileMember) — `b` is the projectile here.
-        const proj = b as Projectile;
+    // `partMult` — the shot landed on one of the player's extra bodies (String's abdomen) rather
+    // than on the player: same hit, same riders, multiplied by what that section takes.
+    const npcShotHitsPlayer = (proj: Projectile, partMult = 1): void => {
         if (!proj.active || proj.isFromPlayer) return;
         // Illusion Dance — see the twin check in the enemy overlap above.
         if (this.player.projectilePhase) return;
@@ -4305,7 +4308,7 @@ export class ArenaScene extends Phaser.Scene {
         if (proj.ruinRusted && this.ruinKit.applyRustedHit(proj, this.player)) return;
         // Apply attacker's crit context before damage
         this.player.setIncomingCritContext(this.npc.critChance, this.npc.critMult);
-        let _playerDmg = Math.round(proj.damage * this.npc.outgoingDamageMult);
+        let _playerDmg = Math.round(proj.damage * this.npc.outgoingDamageMult * partMult);
         // Paint's Still Life F+: a shot landing on a painted-red part of you hits harder.
         if (this.player.paintZoneMult) _playerDmg = Math.round(_playerDmg * this.player.paintZoneMult(proj.x, proj.y));
         // Phantom: back-hit multiplier (2× base, 3× starred)
@@ -4352,8 +4355,6 @@ export class ArenaScene extends Phaser.Scene {
         if (proj.texture.key === 'proj-acid-whip') this.slimeKit.onWhipHit(this.player, proj);
         if (proj.texture.key === 'proj-venom-blob') {
           this.slimeKit.onInjectHit(this.player, proj);
-          // Corrosive Dose on the opponent's gun: the shot eats max HP too.
-          if (this.npcElement.id === 'slime' && this.hasNpcUpgrade('click')) this.player.reduceMaxHp(proj.damage);
         }
         // Gunpowder Corruption perk: an npc musket ball leaves rot in the player
         if ((proj as any).isMusketShot && this.npcElementId === 'gunpowder') {
@@ -4361,10 +4362,16 @@ export class ArenaScene extends Phaser.Scene {
         }
         proj.setActive(false).setVisible(false);
         (proj.body as Phaser.Physics.Arcade.Body).stop();
-      },
-      undefined,
-      this,
-    );
+    };
+    // Unlike the group-vs-group overlaps, Phaser's dispatcher swaps argument order when one side
+    // is a single body instead of a group: since `this.player` is a lone sprite it internally
+    // calls collideSpriteVsGroup(this.player, this.projectiles, ...), so the callback always
+    // receives (this.player, projectileMember) — `b` is the projectile here.
+    this.physics.add.overlap(this.projectiles, this.player, (_a, b) => npcShotHitsPlayer(b as Projectile));
+    this.physics.add.overlap(this.projectiles, this.playerParts, (a, b) => {
+      const part = b as BodySection;
+      if (part.active && part.hp > 0) npcShotHitsPlayer(a as Projectile, part.damageMult);
+    });
 
     // ── Defeat + damage events ────────────────────────────────────
     this.player.once('defeated', () => {
@@ -5114,7 +5121,7 @@ export class ArenaScene extends Phaser.Scene {
     }
 
     // ── Arena labels ───────────────────────────────────────────────
-    if (!this.isInvasion && !this.isBossFight && !this.worldBossId && !this.reality) {
+    if (!this.isInvasion && !this.isBossFight && !this.worldBossId && !this.reality && this.isles?.kind !== 'voyage') {
       this.add.text(180, 20, `${this.playerElement.emoji} YOU`, {
         fontSize: '14px', color: '#ffffff',
       }).setOrigin(0.5).setDepth(20);
@@ -11768,7 +11775,7 @@ export class ArenaScene extends Phaser.Scene {
         }
         continue; // skip normal slow/DoT
       }
-      const _puddleTargets = (p.owner === 'player' ? this.reachableEnemies : [this.player])
+      const _puddleTargets = (p.owner === 'player' ? this.reachableEnemies : this.player.bodies())
         .filter(t => t.active && t.hp > 0 && Phaser.Math.Distance.Between(p.x, p.y, t.x, t.y) <= p.radius);
       if (_puddleTargets.length > 0) {
         p.tickAccum += delta;
@@ -12383,7 +12390,7 @@ export class ArenaScene extends Phaser.Scene {
       // body and every attack it makes.
       // The practice range is the other body that never decides for itself: the
       // player drives it, and `O` is the only thing that hands it back its kit.
-      : (this.isInvasion || this.isBossFight || !!this.worldBossId || this.reality?.kind === 'boss' || (this.reality?.kind === 'trials' && this.realityDungeonKit?.npcDormant() === true) || (this.dummyPractice && !this.dummyAttacksOn) || this.shadowKit.isConsumeActive() || this.time.now < this.shadowKit.getNpcThrowUntil()) ? null : (this.npc as NpcOpponent).doAI(
+      : (this.isInvasion || this.isBossFight || !!this.worldBossId || this.isles?.kind === 'voyage' || this.reality?.kind === 'boss' || (this.reality?.kind === 'trials' && this.realityDungeonKit?.npcDormant() === true) || (this.dummyPractice && !this.dummyAttacksOn) || this.shadowKit.isConsumeActive() || this.time.now < this.shadowKit.getNpcThrowUntil()) ? null : (this.npc as NpcOpponent).doAI(
         npcTarget,
         (tx: number, ty: number) => this.buildNpcContext(tx, ty),
         time,
@@ -13090,7 +13097,7 @@ export class ArenaScene extends Phaser.Scene {
    * applies to whichever Fighter was actually hit.
    */
   private applyProjectileToEnemy(proj: Projectile, target: Fighter): void {
-    const isNpc = target === this.npc;
+    const isNpc = target === this.npc || (target instanceof BodySection && target.owner === this.npc);
     if (proj.isHeal) return; // heal projectiles don't damage the enemy
     // Kill credit — see Fighter.lastDamageOwner. Stamped before any of the
     // on-hit riders below, so a shot that kills through a status still counts.
@@ -13271,8 +13278,6 @@ export class ArenaScene extends Phaser.Scene {
     }
     if (proj.texture.key === 'proj-venom-blob') {
       this.slimeKit.onInjectHit(target, proj);
-      // Corrosive Dose: Inject hits also strip max HP equal to the damage dealt
-      if (this.hasUpgradeFor('slime', 'click')) target.reduceMaxHp(_npcDmg);
     }
     proj.setActive(false).setVisible(false);
     (proj.body as Phaser.Physics.Arcade.Body).stop();
@@ -13487,11 +13492,14 @@ export class ArenaScene extends Phaser.Scene {
           this.spawnHitFlash(t.x, t.y, 0x9944ff);
         }
       }
-      if (this.player !== except && Phaser.Math.Distance.Between(cx, cy, this.player.x, this.player.y) <= radius) {
-        this.player.lastDamageOwner = 'npc';
-        this.player.takeDamage(damage);
-        this.spawnHitFlash(this.player.x, this.player.y, 0x9944ff);
-        this.spawnDamageNumber(this.player.x, this.player.y - 28, damage);
+      // The player, and every extra body that is part of them (String's abdomen).
+      for (const t of this.player.bodies()) {
+        if (t === except || this.player === except) continue;
+        if (Phaser.Math.Distance.Between(cx, cy, t.x, t.y) > radius) continue;
+        t.lastDamageOwner = 'npc';
+        t.takeDamage(damage);
+        this.spawnHitFlash(t.x, t.y, 0x9944ff);
+        this.spawnDamageNumber(t.x, t.y - 28, damage);
       }
     }
   }

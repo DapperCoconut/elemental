@@ -7,10 +7,10 @@ import { CANVAS, CANVAS_SHADE, FLOUR, GRAIN, TAR, TIMBER, TIMBER_DARK, TIMBER_LI
 import { alive, clamp, dist, stepDt, wrapAngle } from '../util';
 
 /**
- * The Bolting Loft — Sifter Brannock of the Grindstone.
+ * The Bolting Loft — Sifter Deverell of the Grindstone.
  *
  * Under the great mill the meal is "bolted": shaken through silk on turning reels until only the
- * finest flour comes through. In the star's telling Brannock bolted the King's share out of every
+ * finest flour comes through. In the star's telling Deverell bolted the King's share out of every
  * sack in Galeward — the white went up the lift to the Lung, the chaff came back down to the
  * millers' children — and nobody ever saw him sweep.
  *
@@ -21,7 +21,7 @@ import { alive, clamp, dist, stepDt, wrapAngle } from '../util';
  * Every so often the runner stone in the middle runs dry and screams, and sprays a fan of sparks
  * (marked first) that lights whatever ripe cloud it reaches. Dust in the eyes slows you.
  *
- * The exploit is plain: when Brannock stands in a ripe cloud, shoot through it. Halfway down he
+ * The exploit is plain: when Deverell stands in a ripe cloud, shoot through it. Halfway down he
  * opens the third spout — the King's share — and the stone runs dry more often.
  */
 

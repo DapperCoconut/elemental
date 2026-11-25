@@ -89,7 +89,7 @@ function make(ctx: GimmickCtx): EncounterGimmick {
     } else {
       cutN++;
       tk.healBoss(14, p.x, p.y - BELL_UP);
-      ctx.sfx('snap');
+      ctx.sfx('trap-snap');
       ctx.float(p.x, p.y - BELL_UP - 30, 'CORD CUT', OCOL.red);
       cave(p);
     }

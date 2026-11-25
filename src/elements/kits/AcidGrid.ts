@@ -5,13 +5,14 @@
  * "how much of the arena is acid" read the same numbers. A cell is empty, **cool** (spent acid,
  * the standing floor) or **hot** (freshly laid; it bites the first body that walks over it and
  * then cools). Coverage is simply acid cells over all cells, so overlapping sprays never count
- * twice — the reason the pools were replaced by a grid in the first place.
+ * twice — the reason the pools were replaced by a grid in the first place. A fourth state, **red**,
+ * is acid a Melting bomb boiled: it burns the first body to touch it far harder, then cools.
  */
 
 export const ACID_CELL = 16;
 
-export const CellState = { Empty: 0, Cool: 1, Hot: 2 } as const;
-export type CellState = 0 | 1 | 2;
+export const CellState = { Empty: 0, Cool: 1, Hot: 2, Red: 3 } as const;
+export type CellState = 0 | 1 | 2 | 3;
 
 export class AcidGrid {
   readonly cols: number;
@@ -78,6 +79,8 @@ export class AcidGrid {
         if (dx * dx + dy * dy > rr) continue;
         const i = r * this.cols + c;
         if (this.cells[i] === CellState.Empty) added++;
+        // Red acid stays red until somebody steps in it.
+        if (this.cells[i] === CellState.Red) continue;
         if (state === CellState.Hot || this.cells[i] === CellState.Empty) this.set(i, state);
       }
     }
@@ -89,8 +92,29 @@ export class AcidGrid {
     return added;
   }
 
-  /** Every hot cell under a body of radius `r` cools. Returns how many did. */
-  coolUnder(x: number, y: number, r: number): number {
+  /** Every acid cell whose centre is inside the circle turns red. Returns how many did. */
+  reddenCircle(x: number, y: number, radius: number): number {
+    let n = 0;
+    const c0 = Math.max(0, Math.floor((x - radius - this.x0) / ACID_CELL));
+    const c1 = Math.min(this.cols - 1, Math.floor((x + radius - this.x0) / ACID_CELL));
+    const r0 = Math.max(0, Math.floor((y - radius - this.y0) / ACID_CELL));
+    const r1 = Math.min(this.rows - 1, Math.floor((y + radius - this.y0) / ACID_CELL));
+    const rr = radius * radius;
+    for (let r = r0; r <= r1; r++) {
+      for (let c = c0; c <= c1; c++) {
+        const i = r * this.cols + c;
+        if (this.cells[i] === CellState.Empty || this.cells[i] === CellState.Red) continue;
+        const dx = this.x0 + c * ACID_CELL + ACID_CELL / 2 - x, dy = this.y0 + r * ACID_CELL + ACID_CELL / 2 - y;
+        if (dx * dx + dy * dy > rr) continue;
+        this.set(i, CellState.Red);
+        n++;
+      }
+    }
+    return n;
+  }
+
+  /** Every hot (or, with `state`, red) cell under a body of radius `r` cools. Returns how many did. */
+  coolUnder(x: number, y: number, r: number, state: CellState = CellState.Hot): number {
     let n = 0;
     const c0 = Math.max(0, Math.floor((x - r - this.x0) / ACID_CELL));
     const c1 = Math.min(this.cols - 1, Math.floor((x + r - this.x0) / ACID_CELL));
@@ -99,7 +123,7 @@ export class AcidGrid {
     for (let row = r0; row <= r1; row++) {
       for (let c = c0; c <= c1; c++) {
         const i = row * this.cols + c;
-        if (this.cells[i] !== CellState.Hot) continue;
+        if (this.cells[i] !== state) continue;
         this.set(i, CellState.Cool);
         n++;
       }

@@ -84,7 +84,7 @@ A new isle gets a new file here before its builders launch.
   forever at rising cost. Applied at match start through the item engine + cast hooks.
 - **Items**: `ItemEffect` stats + a bespoke script per item. Charms (3 equipped, permanent), food
   (one-fight buffs from fish & bakeries), artifacts (from princes; one equipped).
-- **Sea**: boats bought at docks (lost if sunk), upgrades, voyage minigame, Far Wastes endless with
+- **Sea**: boats bought at docks (lost if sunk), upgrades, voyage fought from the deck with your full kit, Far Wastes endless with
   depth bands and sea beasts that grant isle Uber-upgrades.
 
 ## Code map
@@ -99,7 +99,7 @@ A new isle gets a new file here before its builders launch.
 | `src/isles/fight/IslesFightKit.ts` | arena side: gimmicks, item scripts, genome cast rules (wired in ArenaScene via `isles` payload) |
 | `src/isles/systems/{Quests,Genome}.ts` | quest progression; genes → ItemsKit (`isles-genome`) + loadout |
 | `src/isles/scenes/*` | slot select, results, bag, genes, map/fast travel |
-| `src/isles/sea/SeaVoyageScene.ts` | sailing + Far Wastes + the Magmaw |
+| `src/isles/sea/SeaVoyageKit.ts` | sailing, fought from the deck inside ArenaScene (IslesFightKit hosts it) + Far Wastes + the beasts |
 | `src/isles/content/<isle>/` | content: `courts/<court>/` (one CourtBundle each), `isle/` (port, dungeon, monarch, wanderer, fish, rods), `genes/` |
 | `.check-isles.mjs` | content validator — run after any content edit |
 
@@ -289,3 +289,12 @@ A new isle gets a new file here before its builders launch.
   five new** — 300 new fights, not the 600 the Pillars line once said. A further five per court can be layered on later
   through the same `fallen` bundle if wanted.
 - Not yet built: revolts / anarchy / dark market; online co-op.
+- 2026-11-24: **sailing is fought from the deck.** `SeaVoyageScene` is gone; `SeaVoyageKit` runs inside ArenaScene
+  (isles payload `kind: 'voyage'`, launched by `IsleWorldScene.sail`, hosted and updated last by IslesFightKit; the npc
+  is shelved and `this.isles?.kind === 'voyage'` keeps its AI dormant). The boat sails herself and is a deck to walk on
+  (bigger boat = more deck, more hull). Rule one: solid things — rocks, reefs, drift, mines, bramble, whirlpools, obsidian
+  shards, risen glass reefs, tentacles, dice — are strike targets every ability can hit (hazard HP × `HP_UNIT` 12) and
+  cost hull if they reach it. Rule two: everything else (breakers, arcs, venom, rings, burns, squall bolts, beast spit,
+  slams) washes over the deck at the player, `CREW_HIT` 40 HP per plank's worth; at 1 HP they go OVERBOARD (hold lost,
+  boat kept). A beast is one strike target. Dock upgrades re-read: Long Rudder = fewer hull-bound rocks, Bow Cannon =
+  an automatic bow gun, Trawl Net = reach from the rail, Sails = shorter crossings. Not runtime-tested.

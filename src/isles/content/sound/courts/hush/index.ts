@@ -1,6 +1,7 @@
 import type { CourtBundle } from '../../../../IslesTypes';
 import { HUSH_AREA } from './area';
 import { HUSH_ENCOUNTERS, HUSH_GIMMICKS } from './encounters';
+import { FALLEN } from './fallen';
 import { HUSH_FLOOR } from './floor';
 import { ART_MUTE, HUSH_FISH, HUSH_FISHERIES, HUSH_ITEMS, HUSH_SCRIPTS, HUSH_SHOPS } from './items';
 import { HUSH_COLOR } from './palette';
@@ -37,4 +38,5 @@ export const HUSH_COURT: CourtBundle = {
   shops: HUSH_SHOPS,
   fish: HUSH_FISH,
   fisheries: HUSH_FISHERIES,
+  fallen: FALLEN,
 };

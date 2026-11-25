@@ -1,6 +1,7 @@
 import type { CourtBundle } from '../../../../IslesTypes';
 import { BRASS_AREA } from './area';
 import { BRASS_ENCOUNTERS, BRASS_GIMMICKS } from './encounters';
+import { FALLEN } from './fallen';
 import { BRASS_FLOOR } from './floor';
 import {
   ART_FANFARE, BRASS_BAKERIES, BRASS_FISH, BRASS_FISHERIES, BRASS_ITEMS, BRASS_SCRIPTS, BRASS_SHOPS,
@@ -40,4 +41,5 @@ export const BRASS_COURT: CourtBundle = {
   bakeries: BRASS_BAKERIES,
   fish: BRASS_FISH,
   fisheries: BRASS_FISHERIES,
+  fallen: FALLEN,
 };

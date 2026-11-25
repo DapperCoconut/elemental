@@ -7,7 +7,7 @@ import { alive, clamp, dist, stepDt } from '../util';
 import { fallenId } from '../../../../meteor/spec';
 
 /**
- * Still Water — Ysolde Brack, keeper of the crystal pool, who in the King's telling kept the
+ * Still Water — Sidony Tolliver, keeper of the crystal pool, who in the King's telling kept the
  * water so still that the Prince could read a household's face in it from the Cutting-House.
  *
  * The south of the yard is the pool's shallows: ankle-deep, clear to the amethyst bed, and still
@@ -17,7 +17,7 @@ import { fallenId } from '../../../../meteor/spec';
  * pool lands on the bank.
  *
  * Wade in and you cast no reflection — but the shallows drag at your feet. So: stand on the bank
- * and be reachable through the water, or stand in it and be slow. Ysolde wades out to wherever
+ * and be reachable through the water, or stand in it and be slow. Sidony wades out to wherever
  * your reflection lies and fights it; turn it round on her when she climbs out. Halfway, the
  * water remembers: reflections show where their owner stood a moment ago, and cut deeper.
  */

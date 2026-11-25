@@ -113,7 +113,7 @@ export const FALLEN: FallenBundle = {
       id: fallenId('stonehold', 'course'),
       court: 'stonehold',
       name: 'Course by Course',
-      foeName: 'Ebba Drystane, Waller',
+      foeName: 'Ragna Drystane, Waller',
       foeElement: 'death',
       difficulty: 5,
       hpMult: 1.25,

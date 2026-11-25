@@ -78,7 +78,7 @@ function make(ctx: GimmickCtx): EncounterGimmick {
       const h: Hole = { x: p.x, y: p.y, delay: p.delay, drilledAt: time + i * DRILL_EACH, cut: false, fired: false, firedAt: 0, hang: i === hangAt, target: null };
       h.target = ctx.target({
         x: h.x, y: h.y, r: 22, passThrough: true,
-        onStruck: () => { if (!h.fired && !h.cut && ctx.scene.time.now >= h.drilledAt) { h.cut = true; tk.sfx('snap'); } },
+        onStruck: () => { if (!h.fired && !h.cut && ctx.scene.time.now >= h.drilledAt) { h.cut = true; tk.sfx('trap-snap'); } },
       });
       holes.push(h);
     });

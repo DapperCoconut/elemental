@@ -63,7 +63,7 @@ export const FALLEN: FallenBundle = {
       court: 'corona',
       gimmick: fallenId('corona', 'footprints'),
       name: 'Footprints in the Glass',
-      foeName: 'Runner Ottoline',
+      foeName: 'Runner Annis',
       foeElement: 'dune',
       difficulty: 5,
       hpMult: 1.2,

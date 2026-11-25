@@ -9,11 +9,11 @@ import {
 import { alive, clamp, stepDt } from '../util';
 
 /**
- * Course by Course — Ebba Drystane, the Regent's waller.
+ * Course by Course — Ragna Drystane, the Regent's waller.
  *
- * When a Stonehold household came up short, Ebba was sent with a barrow of stone to wall them up
+ * When a Stonehold household came up short, Ragna was sent with a barrow of stone to wall them up
  * in their own front door before the cart came, course by course, no mortar, every stone
- * through-bonded. In the star's telling she was proud of the work. Nobody ever got out of an Ebba
+ * through-bonded. In the star's telling she was proud of the work. Nobody ever got out of an Ragna
  * wall.
  *
  * She strings a chalk line across the yard — square across the ground between the two of you,

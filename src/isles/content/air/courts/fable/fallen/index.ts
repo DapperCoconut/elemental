@@ -59,7 +59,7 @@ export const FALLEN: FallenBundle = {
     },
     {
       id: fallenId(COURT, 'licensed-path'), court: COURT, name: 'Keep to the Path',
-      foeName: 'Brannock Hale, Huntsman', foeElement: 'hunt', difficulty: 4, hpMult: 1.15,
+      foeName: 'Brannock Pennock, Huntsman', foeElement: 'hunt', difficulty: 4, hpMult: 1.15,
       gimmick: fallenId(COURT, 'licensed-path'),
       at: { x: 2150, y: 1200 },
       look: { body: 0xd0a888, accent: 0x3e7a5e, hat: 'tricorn', traits: ['satchel', 'beard', 'scarf'], size: 1.25, eye: EYE },

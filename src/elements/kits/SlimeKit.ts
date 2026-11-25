@@ -4,10 +4,12 @@ import { CastContext } from '../Ability';
 import { Projectile } from '../../combat/Projectile';
 import type { ProjectileRegistry } from '../../combat/ProjectileRegistry';
 import { STATUS_DESCRIPTORS, StatusDescriptor, isDebuff, remainingMs, stripBuffs } from '../../combat/StatusEffects';
+import { getElementCodex } from '../../data/AbilityCodex';
 import { AcidGrid, CellState } from './AcidGrid';
 import {
   ACID, AcidAura, AcidAvatar, AcidColorFn, AcidFx, AcidTones, NPC_TONES, POISONS, PoisonKind, STING_TONES, VILE_TONES,
-  drawAcidBar, drawAcidBomb, drawAcidBubbles, drawAcidFloor, drawAfflictions, drawPoisonWheel, drawToxinMark, drawVenomBlob,
+  drawAcidBar, drawAcidBomb, drawAcidBubbles, drawAcidFloor, drawAfflictions, drawBloodBottle, drawBombFill, drawBoons,
+  drawPoisonWheel, drawSynergy, drawToxinMark, drawVenomBlob,
 } from './AcidVisuals';
 
 type Owner = 'player' | 'npc';
@@ -26,15 +28,12 @@ function distToSegment(px: number, py: number, x1: number, y1: number, x2: numbe
 
 /**
  * One remembered pool (an Inject puddle, a bomb crater, a cluster splash). The acid itself lives
- * in the grid; a splat is only kept so Electrolysis has terminals to arc between and Seeping
- * Reflux (R+) has something to bud from — `bud` marks the ones a bomb laid.
+ * in the grid; a splat is only kept so Electrolysis has terminals to arc between.
  */
 interface Splat {
   x: number;
   y: number;
   radius: number;
-  nextSpreadAt: number;
-  bud: boolean;
 }
 
 /** A live Inject shot. The Projectile does the hitting; this is what lets it trickle and be read by a bomb. */
@@ -58,6 +57,8 @@ interface Bomb {
   bornAt: number;
   clustered: boolean;
   spin: number;
+  /** R+: the poison Pick Your Poison filled it with while it was in hand. */
+  poison: PoisonKind | null;
 }
 
 /** One cluster bomblet lobbed out of a shot bomb. */
@@ -96,11 +97,12 @@ interface HuskLikeVariant {
   speedMult?: number;
 }
 
-/** Rattling Strike (F+): a target dripping acid for a few seconds after a surfacing blast. */
-interface DrippingStatus {
-  owner: Owner;
-  until: number;
-  nextDripAt: number;
+/** Consume (F+): what a bite drew off — the bitten's buffs (ms left) and which of the venom's poisons ran in them. */
+interface Bottle {
+  /** Per buff descriptor id: time left on the bitten, and whether its expiry is on the wall clock. */
+  buffs: Map<string, { ms: number; wall: boolean }>;
+  poisons: boolean[];
+  filledAt: number;
 }
 
 /** Venom Mastery — Acid Walker: a short-lived acid print left in the walker's tracks. */
@@ -145,16 +147,30 @@ interface Side {
   reloadUntil: number;
   /** A fresh press started this burst — a click that began in a menu never fires. */
   triggerHeld: boolean;
-  /** Pick Your Poison: what is loaded, and for how many shots (two with E+). */
+  /** Pick Your Poison: what is loaded, and for how many shots. */
   loaded: PoisonKind | null;
   loadedShots: number;
   wheelOpen: boolean;
   wheelAt: number;
-  /** Online replica: when the owner's own pick last arrived, so the replayed cast does not re-guess it. */
+  /** Online replica: the owner's own pick and when it arrived, so the replayed cast does not re-guess it. */
   pickRelayAt: number;
+  pickRelayKind: PoisonKind;
   /** Acid Reflux: the bomb is out and in hand, waiting for the throw. */
   bombHeld: boolean;
   bombHeldAt: number;
+  /** R+: what the bomb in hand has been filled with. */
+  bombPoison: PoisonKind | null;
+  /** R+, Purging bomb: until then a third of every hit this side deals is true damage. */
+  trueUntil: number;
+  /** Click+ — Self-Inject: the right button's last state, and the gap between two stabs. */
+  rmbWas: boolean;
+  selfInjectAt: number;
+  boonHealAt: number;
+  /** F+ — Consume: how long this burrow has run off acid, and the trail still waiting to be laid. */
+  offAcidMs: number;
+  tunnel: { x: number; y: number; at: number }[];
+  bottle: Bottle | null;
+  botThinkAt: number;
   /** Shed Skin: the speed bonus banked this match. */
   shedSpeed: number;
   /** How many of the four coverage milestones this side has reached, and how many it has spent. */
@@ -179,7 +195,9 @@ function makeSide(): Side {
     grid: null, paintedVersion: -1, splats: [], burrowed: false, burrowedAt: 0, burrowLockUntil: 0,
     rainUntil: 0, rainTickAt: 0, rainDropAccum: 0, aimX: 0, aimY: 0,
     ammo: MAG_SIZE, reloadStart: 0, reloadUntil: 0, triggerHeld: false,
-    loaded: null, loadedShots: 0, wheelOpen: false, wheelAt: 0, pickRelayAt: -9999, bombHeld: false, bombHeldAt: 0,
+    loaded: null, loadedShots: 0, wheelOpen: false, wheelAt: 0, pickRelayAt: -9999, pickRelayKind: 0,
+    bombHeld: false, bombHeldAt: 0, bombPoison: null, trueUntil: 0, rmbWas: false, selfInjectAt: 0, boonHealAt: 0,
+    offAcidMs: 0, tunnel: [], bottle: null, botThinkAt: 0,
     shedSpeed: 0, shedReached: 0, shedUsed: 0,
     standAt: new Map(), hotOwed: new Map(), bubbles: [], bubbleAccum: 0,
     wasInAcid: false, footprintTrailUntil: 0, lastPrintX: 0, lastPrintY: 0, lastUnburrowAt: -FOOTPRINT_BOOST_MS,
@@ -316,22 +334,52 @@ const RAIN_TICK_MS = 500;
 const RAIN_TICK_DAMAGE = 6;
 const RAIN_DROP_INTERVAL_MS = 150;
 
-// Seeping Reflux (R+): bomb pools bud.
-const SPREAD_CHECK_MS = 2000;
-const SPREAD_CHANCE = 0.2;
-const SPREAD_RADIUS_MULT = 0.55;
-const SPREAD_MIN_RADIUS = 18;
-const SPREAD_OFFSET_MIN = 20;
-const SPREAD_OFFSET_MAX = 50;
+// Self-Inject (Click+): a shot spent on yourself.
+const SELF_INJECT_GAP_MS = 420;
+const SELF_TOXIN = 5;
+const SELF_PUDDLE_RADIUS = 40;
+/** A boon's base length — the same eight seconds its poison runs on an enemy. */
+const BOON_MS = 8000;
+/** What each boon is worth while the venom stands on its own acid. */
+const BOON_GUARD_MULT = 0.7;
+const BOON_SPEED_MULT = 1.3;
+const BOON_DAMAGE_MULT = 1.25;
+const BOON_HEAL = 2;
+const BOON_HEAL_MS = 500;
 
-// Rattling Strike (F+)
-const RATTLING_RADIUS = 90;
-const RATTLING_DAMAGE = 20;
-const RATTLING_DRIP_MS = 5000;
-const RATTLING_DRIP_INTERVAL_MS = 1000;
-const RATTLING_DRIP_RADIUS = 22;
-/** F+: the bite multiplies toxin by this instead of 1.25. */
-const RATTLING_TOXIN_MULT = 1.5;
+// Poison Synergy (E+): what each pair of poisons does on one body.
+/** Disintegrating + Paralyzing: this much more damage taken at `SYN_SPEED_FULL` px/s, scaled down to none at a standstill. */
+const SYN_SPEED_VULN = 0.3;
+const SYN_SPEED_FULL = 260;
+/** Disintegrating + Purging: damage for each buff a strip takes off, and the most one strip can charge for. */
+const SYN_STRIP_DAMAGE = 12;
+const SYN_STRIP_MAX = 3;
+/** Disintegrating + Melting: vulnerability gained per second on the acid, and its cap. */
+const SYN_ACID_VULN_PER_S = 0.03;
+const SYN_ACID_VULN_MAX = 0.3;
+/** Paralyzing + Melting: the drip is this big and this often instead. */
+const SYN_DRIP_RADIUS = 24;
+const SYN_DRIP_MS = 300;
+/** Purging + Melting: every hit adds this to each negative effect still running. */
+const SYN_EXTEND_MS = 250;
+
+// Poison bombs (R+): what a filled Acid Reflux adds to its blast.
+const ROT_BOMB_DAMAGE_MULT = 1.5;
+const PARA_BOMB_STUN_MS = 1500;
+const PURGE_BOMB_TRUE_MS = 8000;
+const PURGE_BOMB_TRUE_SHARE = 1 / 3;
+const MELT_BOMB_RADIUS_MULT = 1.3;
+/** Red acid: damage per cell the first body to touch it walks over — five times a fresh cell's nip. */
+const RED_DAMAGE_PER_CELL = 1.5;
+
+// Consume (F+)
+/** How long a burrow may run off the acid before it is forced up. */
+const TUNNEL_MAX_MS = 500;
+const TUNNEL_RADIUS = 13;
+/** The trail is laid this long after the tunnel passed, so a burrower is never standing on its own fresh trail. */
+const TUNNEL_LAY_MS = 650;
+/** A drunk bottle gives each stolen buff what it had left, plus this much again. */
+const BOTTLE_DURATION_MULT = 2;
 
 // Acid Flood (Q+): each rain beat, every clean cell touching acid has this chance to fill.
 const FLOOD_CREEP_CHANCE = 0.15;
@@ -381,6 +429,11 @@ const NPC_SHED_RANGE = 220;
 /** Every timed debuff the tray knows — what toxin stretches and the bite restores. */
 const DEBUFF_TIMERS: StatusDescriptor[] = STATUS_DESCRIPTORS
   .filter((d) => isDebuff(d) && d.kind === 'timer' && !!d.write);
+/** Every timed buff — what self-toxin stretches and a blood bottle carries off. Standing passives (150+) are neither. */
+const BUFF_TIMERS: StatusDescriptor[] = STATUS_DESCRIPTORS
+  .filter((d) => !isDebuff(d) && d.priority < 150 && d.kind === 'timer' && !!d.write);
+/** The six pairs of poisons, for the synergy marks. */
+const POISON_PAIRS: [PoisonKind, PoisonKind][] = [[0, 1], [0, 2], [0, 3], [1, 2], [1, 3], [2, 3]];
 
 // ── SlimeKit ──────────────────────────────────────────────────────────────
 
@@ -427,6 +480,17 @@ export class SlimeKit {
   private bomblets: Bomblet[] = [];
   /** Toxin's bookkeeping: the last state of every debuff timer on every body. */
   private debuffSeen = new Map<Fighter, Map<string, DebuffSeen>>();
+  /** Self-toxin's bookkeeping: the same, for the buff timers on a venom's own body. */
+  private buffSeen = new Map<Fighter, Map<string, DebuffSeen>>();
+  /** Poison Synergy — Disintegrating + Melting: the vulnerability each body has built up on the acid. */
+  private synVuln = new Map<Fighter, number>();
+  /** Poison Synergy — Purging + Melting: each body's health last frame, to see a hit land. */
+  private synHp = new Map<Fighter, number>();
+  /** Which abilities of an element move their caster, read once from the Codex. */
+  private moveIds = new Map<string, ReadonlySet<string>>();
+  /** Paralyzing bomb: bodies stunned where they stand, and until when. */
+  private stuns = new Map<Fighter, number>();
+  private lastUpdateAt = 0;
   /** Disintegrating: when each rotting body takes its next tick. */
   private rotNext = new Map<Fighter, number>();
   /** Melting: where each melting body last dripped. */
@@ -441,7 +505,6 @@ export class SlimeKit {
   private electroArcs: ElectroArc[] = [];
   private electroNextAt = 0;
   private electroJolted = new Map<Fighter, number>();
-  private drippingEnemies = new Map<Fighter, DrippingStatus>();
   private footprints: AcidFootprint[] = [];
   private coverageAccum = 0;
   private sessionBestCoverage = 0;
@@ -535,10 +598,10 @@ export class SlimeKit {
     }
   }
 
-  private addSplat(owner: Owner, x: number, y: number, radius: number, ring = true, bud = false): void {
+  private addSplat(owner: Owner, x: number, y: number, radius: number, ring = true): void {
     this.paint(owner, x, y, radius);
     const s = this.side(owner);
-    if (s.splats.length < MAX_SPLATS) s.splats.push({ x, y, radius, nextSpreadAt: this.now + SPREAD_CHECK_MS, bud });
+    if (s.splats.length < MAX_SPLATS) s.splats.push({ x, y, radius });
     if (ring) {
       const fx = this.fx(owner);
       fx.ring(x, y, radius * 0.3, radius, ACID.hotRim, 340, 3, 4);
@@ -554,6 +617,33 @@ export class SlimeKit {
     }
   }
 
+  /** A boon is running on this side's venom *and* it is standing on its own acid — the only place one counts. */
+  private boon(owner: Owner, kind: PoisonKind): boolean {
+    const f = this.fighter(owner);
+    return this.isAcid(owner) && this.alive(f) && this.now < f.venomBoonUntil[kind] && this.onAcid(owner, f.x, f.y);
+  }
+
+  /**
+   * Every hit this kit deals for a side goes through here: the Purging boon's damage, and — for
+   * eight seconds after a Purging bomb — a third of it landing as true damage.
+   */
+  private hit(owner: Owner, t: Fighter, amount: number, opts: { source?: object; sourceX?: number; sourceY?: number }): void {
+    const total = Math.round(amount * (this.boon(owner, 2) ? BOON_DAMAGE_MULT : 1));
+    const pure = this.now < this.side(owner).trueUntil ? Math.round(total * PURGE_BOMB_TRUE_SHARE) : 0;
+    if (total - pure > 0) t.takeDamage(total - pure, opts);
+    if (pure > 0) t.takeDamage(pure, { ...opts, trueDamage: true });
+  }
+
+  /** Turn one of the four poisons on the venom itself. Self-toxin stretches it like any other buff. */
+  private grantBoon(owner: Owner, kind: PoisonKind): void {
+    const f = this.fighter(owner);
+    if (!this.alive(f)) return;
+    f.venomBoonUntil[kind] = Math.max(f.venomBoonUntil[kind], this.now + BOON_MS);
+    const p = POISONS[kind];
+    this.fx(owner).ring(f.x, f.y, 44, 10, p.color, 420, 4, 8);
+    this.fx(owner).ring(f.x, f.y, 10, 30, p.dark, 300, 5, 8);
+  }
+
   // ── Public accessors ────────────────────────────────────────────────
 
   getPlayerSpeedMult(): number { return this.speedMult('player'); }
@@ -561,7 +651,7 @@ export class SlimeKit {
 
   private speedMult(owner: Owner): number {
     const s = this.side(owner);
-    return (s.burrowed ? BURROW_SPEED_MULT : 1) * (1 + s.shedSpeed);
+    return (s.burrowed ? BURROW_SPEED_MULT : 1) * (1 + s.shedSpeed) * (this.boon(owner, 1) ? BOON_SPEED_MULT : 1);
   }
 
   isBurrowed(owner: Owner = 'player'): boolean { return this.side(owner).burrowed; }
@@ -602,7 +692,16 @@ export class SlimeKit {
       f.venomParalyzedUntil = 0;
       f.venomMeltingUntil = 0;
       f.venomMeltIncomingMult = 1;
+      f.venomBoonUntil = [0, 0, 0, 0];
+      f.venomSelfToxin = 0;
+      f.venomLockUntil = 0;
+      f.venomLockIds = null;
     }
+    this.buffSeen.clear();
+    this.synVuln.clear();
+    this.synHp.clear();
+    this.stuns.clear();
+    this.lastUpdateAt = 0;
     for (const f of this.paraSlowed) if (f.active) f.walkSpeedMult = 1;
     this.paraSlowed.clear();
     this.blobs = [];
@@ -619,7 +718,6 @@ export class SlimeKit {
     this.electroArcs = [];
     this.electroNextAt = 0;
     this.electroJolted = new Map();
-    this.drippingEnemies = new Map();
     this.footprints = [];
     this.coverageAccum = 0;
     this.sessionBestCoverage = 0;
@@ -650,6 +748,9 @@ export class SlimeKit {
   onInjectHit(target: Fighter, proj: Projectile): void {
     const owner: Owner = proj.isFromPlayer ? 'player' : 'npc';
     const poison = (proj as unknown as { venomPoison?: PoisonKind | null }).venomPoison ?? null;
+    // The share of the shot a Purging bomb turned into true damage rides behind the hit itself.
+    const pure = (proj as unknown as { venomPure?: number }).venomPure ?? 0;
+    if (pure > 0) target.takeDamage(pure, { source: this.fighter(owner), sourceX: proj.x, sourceY: proj.y, trueDamage: true });
     this.addToxin(target, INJECT_TOXIN);
     if (poison !== null) this.applyPoison(owner, target, poison);
     // The trickle runs all the way into the puddle, not just to where the shot last dripped.
@@ -694,9 +795,9 @@ export class SlimeKit {
 
   /** Purged: every buff stripped now and kept off for `ms`, speed boosts held down, a husk's baked bonuses gone. */
   private purge(owner: Owner, target: Fighter, ms: number): void {
+    // The strip itself is `updateAfflictions`' — it sees the timer jump this same frame — so the
+    // Disintegrating + Purging synergy counts what came off in one place.
     target.purgedUntil = Math.max(target.purgedUntil, this.now + ms);
-    this.purgeSeen.set(target, target.purgedUntil);
-    stripBuffs(target);
     if (!this.purgeAuras.has(target)) {
       this.purgeAuras.set(target, new AcidAura(this.arena.scene, this.col(owner), 'purge', this.tones(owner), 28, 4));
     }
@@ -728,25 +829,80 @@ export class SlimeKit {
       if (!seen) { seen = new Map(); this.debuffSeen.set(f, seen); }
       const mult = f.netAuthoritativeDamage || f.hp <= 0
         ? 1 : 1 + Math.min(TOXIN_MAX, f.toxinStacks) * TOXIN_STRETCH_PER_STACK;
-      for (const desc of DEBUFF_TIMERS) {
-        let until = desc.read(f);
-        const rec = seen.get(desc.id);
-        if (rec && until <= rec.until) { rec.until = until; continue; }
-        let left = remainingMs(until, wall, time);
-        if (left <= 0) continue;
-        const guarded = !!rec && time < rec.guardUntil;
-        if (mult > 1 && !guarded) {
-          until += left * (mult - 1);
-          left *= mult;
-          desc.write!(f, until);
-        }
-        seen.set(desc.id, {
-          until,
-          fullMs: guarded && rec ? Math.max(rec.fullMs, left) : left,
-          guardUntil: guarded && rec ? rec.guardUntil : time + STRETCH_GUARD_MS,
-        });
-      }
+      this.stretchFresh(f, seen, DEBUFF_TIMERS, mult, time, wall);
     }
+  }
+
+  /**
+   * Self-toxin at work (Click+): the same diff, over the buff timers on a venom's own body. It is
+   * tracked from the first frame, stacks or not, so the first Self-Inject does not mistake every
+   * buff already running for a new one.
+   */
+  private trackBuffs(time: number): void {
+    const wall = Date.now();
+    for (const owner of BOTH) {
+      const f = this.fighter(owner);
+      if (!this.isAcid(owner) || !f?.active) { if (f) this.buffSeen.delete(f); continue; }
+      let seen = this.buffSeen.get(f);
+      if (!seen) { seen = new Map(); this.buffSeen.set(f, seen); }
+      const mult = f.hp <= 0 ? 1 : 1 + Math.min(TOXIN_MAX, f.venomSelfToxin) * TOXIN_STRETCH_PER_STACK;
+      this.stretchFresh(f, seen, BUFF_TIMERS, mult, time, wall);
+    }
+  }
+
+  /** One body's timers against what was last seen of them: a jump forward is stretched by `mult` and remembered. */
+  private stretchFresh(
+    f: Fighter, seen: Map<string, DebuffSeen>, timers: StatusDescriptor[], mult: number, time: number, wall: number,
+  ): void {
+    for (const desc of timers) {
+      let until = desc.read(f);
+      const rec = seen.get(desc.id);
+      if (rec && until <= rec.until) { rec.until = until; continue; }
+      let left = remainingMs(until, wall, time);
+      if (left <= 0) continue;
+      const guarded = !!rec && time < rec.guardUntil;
+      if (mult > 1 && !guarded) {
+        until += left * (mult - 1);
+        left *= mult;
+        desc.write!(f, until);
+      }
+      seen.set(desc.id, {
+        until,
+        fullMs: guarded && rec ? Math.max(rec.fullMs, left) : left,
+        guardUntil: guarded && rec ? rec.guardUntil : time + STRETCH_GUARD_MS,
+      });
+    }
+  }
+
+  /** Poison Synergy — Purging + Melting: every negative effect still running on `t` gains `ms`. */
+  private extendDebuffs(t: Fighter, ms: number): void {
+    const time = this.now;
+    const wall = Date.now();
+    const seen = this.debuffSeen.get(t);
+    for (const desc of DEBUFF_TIMERS) {
+      const until = desc.read(t);
+      if (remainingMs(until, wall, time) <= 0) continue;
+      desc.write!(t, until + ms);
+      // Not a fresh application: toxin must not stretch the extension as well.
+      const rec = seen?.get(desc.id);
+      if (rec) rec.until = until + ms;
+    }
+  }
+
+  /** The abilities of this body's element that move their caster — what the Paralyzing + Purging lock refuses. */
+  private moveIdsFor(f: Fighter): ReadonlySet<string> {
+    const id = f.element?.id ?? '';
+    let ids = this.moveIds.get(id);
+    if (!ids) {
+      const set = new Set<string>();
+      for (const [abilityId, entry] of Object.entries(getElementCodex(id)?.abilities ?? {})) {
+        const rows = [...entry.effects, ...(entry.upgrade?.effects ?? [])];
+        if (rows.some((e) => e.tag === 'movement')) set.add(abilityId);
+      }
+      ids = set;
+      this.moveIds.set(id, ids);
+    }
+    return ids;
   }
 
   /** The bite: every negative effect still running on `t` goes back to the full length it was applied at. */
@@ -770,17 +926,21 @@ export class SlimeKit {
   }
 
   /** The four poisons, ticking on whoever carries them. */
-  private updateAfflictions(time: number): void {
+  private updateAfflictions(time: number, delta: number): void {
     const wall = Date.now();
     const strip = time >= this.purgeStripAt;
     if (strip) this.purgeStripAt = time + PURGE_STRIP_MS;
     for (const f of this.allFighters()) {
       if (!f.active) continue;
-      if (f.hp <= 0) { f.venomMeltIncomingMult = 1; continue; }
+      if (f.hp <= 0) { f.venomMeltIncomingMult = 1; f.venomLockUntil = 0; continue; }
       const poisoner = this.poisonerOf(f);
       const onAcid = this.onAcid(poisoner, f.x, f.y);
       // Whether this sim owns what happens to this body (an online victim's is the attacker's).
       const mine = !f.netAuthoritativeDamage;
+      // Poison Synergy (E+): which of the poisoner's four are running together on this body.
+      const synergy = this.up(poisoner, 'e');
+      const rotting = time < f.venomRotUntil;
+      const purged = time < f.purgedUntil;
 
       // Disintegrating: 5 a second, and each tick is 3% more damage taken for 8s (max 15%).
       if (time < f.venomRotUntil) {
@@ -789,7 +949,7 @@ export class SlimeKit {
         if (time >= next) {
           this.rotNext.set(f, next + ROT_TICK_MS);
           if (mine) {
-            f.takeDamage(ROT_DAMAGE, { source: this.rotNext });
+            this.hit(poisoner, f, ROT_DAMAGE, { source: this.rotNext });
             f.venomVulnStacks = Math.min(VULN_MAX_STACKS, f.venomVulnStacks + 1);
             f.venomVulnUntil = Math.max(f.venomVulnUntil, time + VULN_MS);
             this.noteAcidHit(poisoner, f);
@@ -803,12 +963,15 @@ export class SlimeKit {
       }
       if (mine && f.venomVulnStacks > 0 && time >= f.venomVulnUntil) f.venomVulnStacks = 0;
 
-      // Paralyzing: no dashes or dodges anywhere; slow and slippery on the acid.
+      // Paralyzing: no dashes or dodges anywhere; slow and slippery on the acid. A Paralyzing
+      // bomb's stun holds the body where it stands through the same walk-speed write.
       const paralyzed = time < f.venomParalyzedUntil;
+      const stunned = time < (this.stuns.get(f) ?? 0);
+      if (!stunned) this.stuns.delete(f);
       if (paralyzed) f.mobilityBlockedUntil = Math.max(f.mobilityBlockedUntil, time + 120);
-      if (paralyzed && onAcid) {
-        f.walkSpeedMult = Math.min(f.walkSpeedMult, PARA_SLOW_MULT);
-        f.inkSlipUntil = Math.max(f.inkSlipUntil, wall + 220);
+      if (stunned || (paralyzed && onAcid)) {
+        f.walkSpeedMult = Math.min(f.walkSpeedMult, stunned ? 0 : PARA_SLOW_MULT);
+        if (!stunned) f.inkSlipUntil = Math.max(f.inkSlipUntil, wall + 220);
         this.paraSlowed.add(f);
       } else if (this.paraSlowed.delete(f)) {
         f.walkSpeedMult = 1;
@@ -816,29 +979,80 @@ export class SlimeKit {
 
       // Purged: a fresh one — ours, or the opponent's arriving through the mirror — strips at
       // once, and nothing positive sticks for as long as it runs.
-      const seenPurge = this.purgeSeen.get(f) ?? 0;
+      let seenPurge = this.purgeSeen.get(f) ?? 0;
+      // A Purge that has run out is forgotten, so the next one — however short — strips on the hit.
+      if (!purged && seenPurge !== 0) { this.purgeSeen.delete(f); seenPurge = 0; }
+      let stripped = 0;
       if (f.purgedUntil > seenPurge) {
         this.purgeSeen.set(f, f.purgedUntil);
-        if (f.purgedUntil > time) stripBuffs(f);
-      } else if (strip && time < f.purgedUntil) {
-        stripBuffs(f);
+        if (purged) stripped = stripBuffs(f);
+      } else if (strip && purged) {
+        stripped = stripBuffs(f);
+      }
+      // Synergy — Disintegrating + Purging: every buff that comes off costs them.
+      if (synergy && mine && rotting && stripped > 0) {
+        this.hit(poisoner, f, SYN_STRIP_DAMAGE * Math.min(SYN_STRIP_MAX, stripped), { source: this.purgeSeen, sourceX: f.x, sourceY: f.y });
+        this.fx(poisoner).ring(f.x, f.y, 6, 40, POISONS[2].color, 260, 4, 8);
+        this.fx(poisoner).ring(f.x, f.y, 4, 26, POISONS[0].color, 320, 4, 8);
+        this.noteAcidHit(poisoner, f);
+      }
+
+      // Synergy — Paralyzing + Purging: whatever moves its caster cannot be cast at all. Written
+      // on every sim, because the refusal happens on the victim's own.
+      if (synergy && paralyzed && purged) {
+        f.venomLockIds = this.moveIdsFor(f);
+        f.venomLockUntil = Math.min(f.venomParalyzedUntil, f.purgedUntil);
+      } else if (f.venomLockUntil !== 0) {
+        f.venomLockUntil = 0;
       }
 
       // Melting: double damage on the acid, and the body drips more of it wherever it goes.
       const melting = time < f.venomMeltingUntil;
-      f.venomMeltIncomingMult = melting && onAcid ? 2 : 1;
+      let incoming = melting && onAcid ? 2 : 1;
+      // Synergy — Paralyzing + Melting: a wider, faster trail.
+      const wide = synergy && paralyzed && melting;
       if (melting && this.isAcid(poisoner)) {
+        const every = wide ? SYN_DRIP_MS : MELT_DRIP_MS;
         let st = this.meltDrip.get(f);
-        if (!st) { st = { at: time + MELT_DRIP_MS, x: f.x, y: f.y }; this.meltDrip.set(f, st); }
+        if (!st) { st = { at: time + every, x: f.x, y: f.y }; this.meltDrip.set(f, st); }
         if (time >= st.at) {
-          st.at = time + MELT_DRIP_MS;
-          this.paint(poisoner, st.x, st.y, MELT_DRIP_RADIUS);
+          st.at = time + every;
+          this.paint(poisoner, st.x, st.y, wide ? SYN_DRIP_RADIUS : MELT_DRIP_RADIUS);
           st.x = f.x;
           st.y = f.y;
         }
       } else {
         this.meltDrip.delete(f);
       }
+
+      // Synergy — Disintegrating + Paralyzing: the faster they move, the more it hurts.
+      if (synergy && rotting && paralyzed) {
+        const v = (f.body as Phaser.Physics.Arcade.Body | null)?.velocity;
+        const speed = v ? Math.hypot(v.x, v.y) : 0;
+        incoming *= 1 + SYN_SPEED_VULN * Phaser.Math.Clamp(speed / SYN_SPEED_FULL, 0, 1);
+      }
+      // Synergy — Disintegrating + Melting: vulnerability that builds for as long as they stand in it.
+      if (synergy && rotting && melting) {
+        let v = this.synVuln.get(f) ?? 0;
+        if (onAcid) v = Math.min(SYN_ACID_VULN_MAX, v + SYN_ACID_VULN_PER_S * delta / 1000);
+        this.synVuln.set(f, v);
+        incoming *= 1 + v;
+      } else {
+        this.synVuln.delete(f);
+      }
+      // Synergy — Purging + Melting: each hit they take drags their negative effects out a little.
+      if (synergy && purged && melting) {
+        const was = this.synHp.get(f);
+        if (mine && was !== undefined && f.hp < was) this.extendDebuffs(f, SYN_EXTEND_MS);
+        this.synHp.set(f, f.hp);
+      } else {
+        this.synHp.delete(f);
+      }
+
+      // The Disintegrating boon: the venom itself shrugs off damage while it stands on its own acid.
+      const self: Owner | null = f === this.arena.player ? 'player' : f === this.arena.npc ? 'npc' : null;
+      if (self && this.boon(self, 0)) incoming *= BOON_GUARD_MULT;
+      f.venomMeltIncomingMult = incoming;
     }
   }
 
@@ -861,8 +1075,11 @@ export class SlimeKit {
     const poison = s.loadedShots > 0 ? s.loaded : null;
     if (s.loadedShots > 0 && --s.loadedShots === 0) s.loaded = null;
 
-    const proj = new Projectile(this.arena.scene, mx, my, 'proj-venom-blob', INJECT_DAMAGE, owner === 'player');
+    const total = Math.round(INJECT_DAMAGE * (this.boon(owner, 2) ? BOON_DAMAGE_MULT : 1));
+    const pure = this.now < s.trueUntil ? Math.round(total * PURGE_BOMB_TRUE_SHARE) : 0;
+    const proj = new Projectile(this.arena.scene, mx, my, 'proj-venom-blob', total - pure, owner === 'player');
     (proj as unknown as { venomPoison: PoisonKind | null }).venomPoison = poison;
+    (proj as unknown as { venomPure: number }).venomPure = pure;
     this.arena.projectiles.add(proj);
     proj.launch(Math.cos(ang) * INJECT_SPEED, Math.sin(ang) * INJECT_SPEED);
     proj.setRotation(ang);
@@ -879,25 +1096,59 @@ export class SlimeKit {
     }
   }
 
+  /**
+   * Click+ — Self-Inject (right click): one shot out of the barrel and into the venom's own arm.
+   * A puddle of acid at its feet, a few stacks of its own toxin — and if a poison was loaded, that
+   * poison's boon instead of its harm. `relayed` is an online replica being told what the owner did.
+   */
+  doSelfInject(owner: Owner, relayed?: PoisonKind | null): void {
+    const f = this.fighter(owner);
+    const s = this.side(owner);
+    if (!this.alive(f) || s.burrowed || !this.up(owner, 'click')) return;
+    const replica = relayed !== undefined;
+    if (!replica && (this.reloading(owner) || s.ammo <= 0 || this.now < s.selfInjectAt)) return;
+    s.selfInjectAt = this.now + SELF_INJECT_GAP_MS;
+    if (s.ammo <= 0) s.ammo = MAG_SIZE;
+    const poison = replica ? relayed : (s.loadedShots > 0 ? s.loaded : null);
+    if (s.loadedShots > 0 && --s.loadedShots === 0) s.loaded = null;
+    this.relay(owner, `acid-self-${poison ?? 'n'}`);
+
+    s.ammo--;
+    if (s.ammo <= 0) {
+      s.reloadStart = this.now;
+      s.reloadUntil = this.now + RELOAD_MS;
+    }
+    f.venomSelfToxin = Math.min(TOXIN_MAX, f.venomSelfToxin + SELF_TOXIN);
+    this.addSplat(owner, f.x, f.y, SELF_PUDDLE_RADIUS);
+    if (poison !== null) this.grantBoon(owner, poison);
+    const fx = this.fx(owner);
+    this.avatar(owner)?.play('clap');
+    fx.gather(f.x, f.y, 38, 240, () => (f.active ? { x: f.x, y: f.y } : null), 6, this.tones(owner));
+    fx.ring(f.x, f.y, 30, 6, poison !== null ? POISONS[poison].color : ACID.glow, 260, 3.5, 8);
+    fx.droplets(f.x, f.y - 6, 6, { speed: 80, angle: -Math.PI / 2, spread: 1.4, size: 2.6, life: 420, fall: 40, depth: 8, tones: this.tones(owner) });
+  }
+
   /** Which vial the aim is leaning toward: up, right, down, left. */
   private wheelPick(f: Fighter, tx: number, ty: number): PoisonKind {
     const a = Math.atan2(ty - f.y, tx - f.x);
     return (((Math.round(a / (Math.PI / 2)) + 1) % 4) + 4) % 4 as PoisonKind;
   }
 
-  /** E — Pick Your Poison: load the next Inject shot (two with E+) with the vial the aim points at. */
+  /**
+   * E — Pick Your Poison: load the next Inject shot with the vial the aim points at. With R+ and
+   * the bomb in hand, the vial goes into the bomb instead.
+   */
   doPoison(owner: Owner, tx: number, ty: number): void {
     const f = this.fighter(owner);
     const s = this.side(owner);
     if (!this.alive(f)) return;
     // A replica's pick is the owner's: it arrives as its own message, because the two sims never
     // agree exactly on where the caster stood when the aim was read.
-    const relayed = this.isReplica(owner) && this.now - s.pickRelayAt < 1500 && s.loaded !== null;
-    const kind = relayed ? s.loaded! : this.isBot(owner) ? this.botPoisonPick() : this.wheelPick(f, tx, ty);
+    const relayed = this.isReplica(owner) && this.now - s.pickRelayAt < 1500;
+    const kind = relayed ? s.pickRelayKind : this.isBot(owner) ? this.botPoisonPick() : this.wheelPick(f, tx, ty);
     this.relay(owner, `acid-pick-${kind}`);
     s.wheelOpen = false;
-    s.loaded = kind;
-    s.loadedShots = this.up(owner, 'e') ? 2 : 1;
+    this.loadPoison(owner, kind);
     const p = POISONS[kind];
     const vx = f.x + Math.cos(p.angle) * WHEEL_RADIUS, vy = f.y + Math.sin(p.angle) * WHEEL_RADIUS;
     const fx = this.fx(owner);
@@ -906,6 +1157,17 @@ export class SlimeKit {
     fx.ring(f.x, f.y, 34, 10, p.color, 340, 4, 8);
     fx.fizz(vx, vy, 5, 14, 9, this.tones(owner));
     this.avatar(owner)?.play('clap');
+  }
+
+  /** Where a picked vial goes: into the bomb in hand with R+, otherwise into the gun. */
+  private loadPoison(owner: Owner, kind: PoisonKind): void {
+    const s = this.side(owner);
+    if (s.bombHeld && this.up(owner, 'r')) {
+      s.bombPoison = kind;
+    } else {
+      s.loaded = kind;
+      s.loadedShots = 1;
+    }
   }
 
   /** The bot's pick: strip a shield if there is one, otherwise whichever poison is not already running. */
@@ -949,14 +1211,23 @@ export class SlimeKit {
     const f = this.fighter(owner);
     const s = this.side(owner);
     if (!this.alive(f)) return;
+    // R+: a bot never stands holding the bomb, so it fills it on the way out if a vial is ready.
+    if (this.isBot(owner) && this.up(owner, 'r') && s.bombPoison === null
+        && this.shedSlot(owner) !== 'e' && f.getCooldownRatio('pick-your-poison') >= 1) {
+      s.bombPoison = this.botPoisonPick();
+      f.triggerCooldown('pick-your-poison');
+    }
     s.bombHeld = false;
+    const poison = s.bombPoison;
+    s.bombPoison = null;
     const coverage = this.coverage(owner);
     const ang = Math.atan2(ty - f.y, tx - f.x);
     this.bombs.push({
       owner, x: f.x + Math.cos(ang) * 28, y: f.y + Math.sin(ang) * 28,
       vx: Math.cos(ang) * BOMB_SPEED, vy: Math.sin(ang) * BOMB_SPEED,
-      tier: this.bombTier(coverage), coverage, bornAt: this.now, clustered: false, spin: Math.random() * 6,
+      tier: this.bombTier(coverage), coverage, bornAt: this.now, clustered: false, spin: Math.random() * 6, poison,
     });
+    if (poison !== null) this.fx(owner).ring(f.x, f.y, 6, 34, POISONS[poison].color, 260, 4, 8);
     this.avatar(owner)?.play('slam', ang);
     this.fx(owner).muzzleSpray(f.x, f.y, ang, 1.4, 7, this.tones(owner));
   }
@@ -975,8 +1246,10 @@ export class SlimeKit {
         for (const blob of this.blobs) {
           if (blob.owner !== bomb.owner || !blob.proj.active) continue;
           if (Phaser.Math.Distance.Between(blob.proj.x, blob.proj.y, bomb.x, bomb.y) > CLUSTER_TRIGGER_R + r) continue;
-          this.cluster(bomb, blob.poison);
-          this.relay(bomb.owner, `acid-cluster-${blob.poison ?? 'n'}`);
+          // The clusters carry the shot's poison, or failing that whatever the bomb was filled with.
+          const carried = blob.poison ?? bomb.poison;
+          this.cluster(bomb, carried);
+          this.relay(bomb.owner, `acid-cluster-${carried ?? 'n'}`);
           blob.proj.destroy();
           break;
         }
@@ -996,29 +1269,60 @@ export class SlimeKit {
   }
 
   private explodeBomb(bomb: Bomb, x: number, y: number): void {
-    const { owner, tier } = bomb;
+    const { owner, tier, poison } = bomb;
     const def = BOMB_TIERS[tier - 1];
     const f = this.fighter(owner);
+    const s = this.side(owner);
     const fx = this.fx(owner);
     const tones = tier >= 3 ? STING_TONES : this.tones(owner);
-    this.addSplat(owner, x, y, def.radius, true, true);
+    // A Melting bomb splashes wider, and boils the acid that was already there red.
+    const radius = def.radius * (poison === 3 ? MELT_BOMB_RADIUS_MULT : 1);
+    if (poison === 3) this.grid(owner).reddenCircle(x, y, radius);
+    this.addSplat(owner, x, y, radius, true);
     // Gouts thrown past the rim, so the crater has a ragged edge instead of a compass circle.
     const gouts = 4 + tier * 2;
     for (let i = 0; i < gouts; i++) {
       const a = (i / gouts) * Math.PI * 2 + Math.random() * 0.6;
-      const d = def.radius * (0.85 + Math.random() * 0.3);
+      const d = radius * (0.85 + Math.random() * 0.3);
       this.paint(owner, x + Math.cos(a) * d, y + Math.sin(a) * d, 16 + tier * 3);
     }
-    fx.splash(x, y, def.radius, { droplets: 14 + tier * 6, fizz: 6, duration: 520, depth: 6, tones });
-    fx.ring(x, y, def.radius * 0.2, def.radius * 1.1, tier >= 3 ? ACID.sting : ACID.neon, 420, 5 + tier, 7);
-    fx.flash(x, y, def.radius * 0.7, 7, tones);
+    fx.splash(x, y, radius, { droplets: 14 + tier * 6, fizz: 6, duration: 520, depth: 6, tones });
+    fx.ring(x, y, radius * 0.2, radius * 1.1, tier >= 3 ? ACID.sting : ACID.neon, 420, 5 + tier, 7);
+    fx.flash(x, y, radius * 0.7, 7, tones);
+    if (poison !== null) {
+      fx.ring(x, y, radius * 0.1, radius * 1.2, POISONS[poison].color, 520, 7, 8);
+      fx.ring(x, y, radius * 0.1, radius * 0.8, POISONS[poison].dark, 420, 9, 7);
+    }
     this.arena.scene.cameras.main.shake(160 + tier * 60, 0.003 + tier * 0.002);
+    // A Purging bomb: for eight seconds a third of everything this venom deals is true damage.
+    if (poison === 2) s.trueUntil = this.now + PURGE_BOMB_TRUE_MS;
     const toxin = this.bombToxin(bomb.coverage);
+    const damage = def.damage * (poison === 0 ? ROT_BOMB_DAMAGE_MULT : 1);
     for (const t of this.targetsOf(owner)) {
-      if (Phaser.Math.Distance.Between(x, y, t.x, t.y) > def.radius + this.bodyR(t)) continue;
-      t.takeDamage(def.damage, { source: f, sourceX: x, sourceY: y });
+      if (Phaser.Math.Distance.Between(x, y, t.x, t.y) > radius + this.bodyR(t)) continue;
+      const opts = { source: f, sourceX: x, sourceY: y };
+      if (poison === 2) {
+        // The whole blast is true damage.
+        t.takeDamage(Math.round(damage * (this.boon(owner, 2) ? BOON_DAMAGE_MULT : 1)), { ...opts, trueDamage: true });
+      } else {
+        this.hit(owner, t, damage, opts);
+      }
       this.addToxin(t, toxin);
-      this.arena.spawnHitFlash(t.x, t.y, this.col(owner)(tier >= 3 ? ACID.sting : ACID.neon));
+      if (poison !== null) this.applyPoison(owner, t, poison);
+      const lands = this.alive(t) && !t.netAuthoritativeDamage && !t.isInvincible;
+      if (poison === 0 && lands) {
+        // Disintegrating: eaten through on the spot, not a tick at a time.
+        t.venomVulnStacks = VULN_MAX_STACKS;
+        t.venomVulnUntil = Math.max(t.venomVulnUntil, this.now + VULN_MS);
+      }
+      if (poison === 1 && lands && !t.unstoppable) {
+        // Paralyzing: stopped in their tracks.
+        this.stuns.set(t, Math.max(this.stuns.get(t) ?? 0, this.now + PARA_BOMB_STUN_MS));
+        t.applyDisarm(PARA_BOMB_STUN_MS);
+        t.stunnedUntil = Math.max(t.stunnedUntil, Date.now() + PARA_BOMB_STUN_MS);
+        if (t !== this.arena.player) t.earthStunnedUntil = Math.max(t.earthStunnedUntil, this.now + PARA_BOMB_STUN_MS);
+      }
+      this.arena.spawnHitFlash(t.x, t.y, poison !== null ? POISONS[poison].color : this.col(owner)(tier >= 3 ? ACID.sting : ACID.neon));
       this.noteAcidHit(owner, t);
     }
   }
@@ -1049,11 +1353,11 @@ export class SlimeKit {
       const c = this.bomblets[i];
       if (time - c.bornAt < CLUSTER_FLIGHT_MS) continue;
       this.bomblets.splice(i, 1);
-      this.addSplat(c.owner, c.x1, c.y1, CLUSTER_RADIUS, true, true);
+      this.addSplat(c.owner, c.x1, c.y1, CLUSTER_RADIUS, true);
       this.fx(c.owner).splash(c.x1, c.y1, CLUSTER_RADIUS, { droplets: 8, fizz: 3, depth: 6, tones: this.tones(c.owner) });
       for (const t of this.targetsOf(c.owner)) {
         if (Phaser.Math.Distance.Between(c.x1, c.y1, t.x, t.y) > CLUSTER_RADIUS + this.bodyR(t)) continue;
-        t.takeDamage(CLUSTER_DAMAGE, { source: c, sourceX: c.x1, sourceY: c.y1 });
+        this.hit(c.owner, t, CLUSTER_DAMAGE, { source: c, sourceX: c.x1, sourceY: c.y1 });
         this.addToxin(t, CLUSTER_TOXIN);
         if (c.poison !== null) this.applyPoison(c.owner, t, c.poison);
         this.arena.spawnHitFlash(t.x, t.y, this.col(c.owner)(ACID.neon));
@@ -1091,9 +1395,11 @@ export class SlimeKit {
     const f = this.fighter(owner);
     if (s.burrowed || !this.alive(f)) return;
     // The player is checked before the cooldown is spent; a replica was in acid on its own sim.
-    if (owner === 'npc' && !this.isReplica('npc') && !this.onAcid('npc', f.x, f.y)) return;
+    // Consume (F+) tunnels under clean floor too.
+    if (owner === 'npc' && !this.isReplica('npc') && !this.up('npc', 'f') && !this.onAcid('npc', f.x, f.y)) return;
     s.burrowed = true;
     s.burrowedAt = this.now;
+    s.offAcidMs = 0;
     s.wheelOpen = false;
     f.isInvincible = true;
     f.setAlpha(0.4);
@@ -1121,13 +1427,17 @@ export class SlimeKit {
     f.isInvincible = false;
     f.setAlpha(1);
     this.relay(owner, 'acid-surface');
+    // Whatever of the tunnel had not been laid yet comes up with the venom.
+    for (const dab of s.tunnel) this.paint(owner, dab.x, dab.y, TUNNEL_RADIUS);
+    s.tunnel = [];
+    s.offAcidMs = 0;
     const fx = this.fx(owner);
     const tones = this.tones(owner);
     fx.splash(f.x, f.y, 56, { droplets: 12, fizz: 4, etch: false, depth: 6, tones });
     if (!bite) return;
 
     // The bite: damage, every negative effect back to full length, toxin up by a quarter.
-    const rattling = this.up(owner, 'f');
+    const consume = this.up(owner, 'f');
     const reach = this.biteReach(owner);
     let bitten = 0;
     for (const t of this.targetsOf(owner)) {
@@ -1135,11 +1445,13 @@ export class SlimeKit {
       const ang = Math.atan2(t.y - f.y, t.x - f.x);
       if (bitten === 0) {
         this.avatar(owner)?.play('slam', ang);
-        fx.bite(f.x, f.y, ang, reach, rattling ? 3 : 2, 8, tones);
+        fx.bite(f.x, f.y, ang, reach, consume ? 3 : 2, 8, tones);
       }
-      t.takeDamage(BITE_DAMAGE, { source: f, sourceX: f.x, sourceY: f.y });
+      // Consume (F+): the bottle is filled from what they carried the moment the teeth went in.
+      if (consume) this.fillBottle(owner, t);
+      this.hit(owner, t, BITE_DAMAGE, { source: f, sourceX: f.x, sourceY: f.y });
       this.refreshDebuffs(t);
-      this.addToxin(t, t.toxinStacks * ((rattling ? RATTLING_TOXIN_MULT : BITE_TOXIN_MULT) - 1));
+      this.addToxin(t, t.toxinStacks * (BITE_TOXIN_MULT - 1));
       fx.punctures(t.x, t.y, ang, 9, tones);
       this.arena.spawnHitFlash(t.x, t.y, this.col(owner)(ACID.neon));
       if (owner === 'player') this.arena.recordMasteryStat('burrowAttacks', 1);
@@ -1147,20 +1459,68 @@ export class SlimeKit {
       bitten++;
     }
     if (bitten === 0) this.avatar(owner)?.play('flex');
+  }
 
-    // Rattling Strike (F+): a red blast at the hole, and the caught drip acid for five seconds.
-    if (!rattling) return;
-    const x = f.x, y = f.y;
-    fx.splash(x, y, RATTLING_RADIUS, { droplets: 18, fizz: 4, depth: 6, duration: 480, tones: STING_TONES });
-    this.arena.scene.cameras.main.shake(180, 0.005);
-    for (const t of this.targetsOf(owner)) {
-      if (Phaser.Math.Distance.Between(x, y, t.x, t.y) > RATTLING_RADIUS + this.bodyR(t)) continue;
-      t.takeDamage(RATTLING_DAMAGE, { source: f, sourceX: x, sourceY: y });
-      this.arena.spawnHitFlash(t.x, t.y, this.col(owner)(ACID.sting));
-      fx.splash(t.x, t.y, 34, { droplets: 6, fizz: 0, etch: false, depth: 8, tones: STING_TONES });
-      this.drippingEnemies.set(t, { owner, until: this.now + RATTLING_DRIP_MS, nextDripAt: this.now });
-      this.noteAcidHit(owner, t);
+  /**
+   * Consume (F+): draw a bitten body's blood off into the bottle — every timed buff it is carrying
+   * (with how long each has left) and which of this venom's poisons are running in it. Several
+   * bodies bitten at once share the one bottle. A body with neither leaves it empty, and an empty
+   * bottle is not kept.
+   */
+  private fillBottle(owner: Owner, t: Fighter): void {
+    const s = this.side(owner);
+    const time = this.now;
+    const wall = Date.now();
+    const bottle: Bottle = s.bottle ?? { buffs: new Map(), poisons: [false, false, false, false], filledAt: time };
+    for (const desc of BUFF_TIMERS) {
+      const until = desc.read(t);
+      const left = remainingMs(until, wall, time);
+      if (left <= 0) continue;
+      const had = bottle.buffs.get(desc.id);
+      if (!had || left > had.ms) bottle.buffs.set(desc.id, { ms: left, wall: until > 1e11 });
     }
+    const running = [t.venomRotUntil, t.venomParalyzedUntil, t.purgedUntil, t.venomMeltingUntil];
+    running.forEach((until, k) => { if (time < until) bottle.poisons[k] = true; });
+    if (bottle.buffs.size === 0 && !bottle.poisons.some(Boolean)) return;
+    if (!s.bottle) {
+      const f = this.fighter(owner);
+      this.fx(owner).ring(f.x, f.y, 40, 8, 0xd81c2c, 320, 3.5, 9);
+    }
+    s.bottle = bottle;
+  }
+
+  /**
+   * Consume (F+), the recast: drink it. Every buff the bitten carried lands on the venom for what
+   * it had left plus as much again, and each of the venom's own poisons that was in the blood comes
+   * back as that poison's boon. `relayed` is an online replica being told which boons the owner got
+   * — the stolen buffs live on the owner's own machine.
+   */
+  private drinkBottle(owner: Owner, relayed?: number): void {
+    const s = this.side(owner);
+    const f = this.fighter(owner);
+    const bottle = s.bottle;
+    s.bottle = null;
+    if (!this.alive(f)) return;
+    const replica = relayed !== undefined;
+    if (!replica && !bottle) return;
+    const poisons = replica ? [0, 1, 2, 3].map((k) => (relayed & (1 << k)) !== 0) : bottle!.poisons;
+    this.relay(owner, `acid-drink-${poisons.reduce((m, on, k) => m | (on ? 1 << k : 0), 0)}`);
+    if (!replica) {
+      const time = this.now;
+      const wall = Date.now();
+      for (const desc of BUFF_TIMERS) {
+        const got = bottle!.buffs.get(desc.id);
+        if (!got) continue;
+        const give = got.ms * BOTTLE_DURATION_MULT;
+        if (give > remainingMs(desc.read(f), wall, time)) desc.write!(f, (got.wall ? wall : time) + give);
+      }
+    }
+    poisons.forEach((on, k) => { if (on) this.grantBoon(owner, k as PoisonKind); });
+    const fx = this.fx(owner);
+    this.avatar(owner)?.play('raise', -Math.PI / 2, 420);
+    fx.ring(f.x, f.y, 8, 52, 0xd81c2c, 420, 5, 8);
+    fx.ring(f.x, f.y, 46, 12, 0x7a0a12, 360, 4, 8);
+    fx.droplets(f.x, f.y - 10, 8, { speed: 90, angle: -Math.PI / 2, spread: 1.8, size: 2.6, life: 460, fall: 60, depth: 8, tones: STING_TONES });
   }
 
   doApocalypse(owner: Owner): void {
@@ -1257,11 +1617,11 @@ export class SlimeKit {
     this.updateBlobs();
     if (this.bombs.length > 0) this.updateBombs(time, delta);
     if (this.bomblets.length > 0) this.updateBomblets(time);
-    this.updateAfflictions(time);
+    this.updateAfflictions(time, delta);
     this.trackDebuffs(time);
+    this.trackBuffs(time);
     this.updateElectrolysis(time);
     this.updateMurkToad(time);
-    if (this.drippingEnemies.size > 0) this.updateDripping(time);
     if (this.footprints.length > 0) this.updateFootprints(time);
 
     const cov = this.coverage('player') * 100;
@@ -1282,18 +1642,42 @@ export class SlimeKit {
       s.ammo = MAG_SIZE;
       if (this.alive(f)) this.fx(owner).ring(f.x, f.y, 26, 8, ACID.glow, 220, 3, 7);
     }
-    if (!this.alive(f)) { s.bombHeld = false; s.wheelOpen = false; }
+    if (!this.alive(f)) { s.bombHeld = false; s.bombPoison = null; s.wheelOpen = false; s.bottle = null; }
 
-    // The floor: fresh cells nip and cool, standing burns and poisons.
+    // Consume (F+): the tunnel's trail surfaces a beat behind the burrower.
+    while (s.tunnel.length > 0 && time - s.tunnel[0].at >= TUNNEL_LAY_MS) {
+      const dab = s.tunnel.shift()!;
+      this.paint(owner, dab.x, dab.y, TUNNEL_RADIUS);
+    }
+
+    // The Melting boon: the venom's own acid knits it back together.
+    if (!this.isReplica(owner) && time >= s.boonHealAt && this.boon(owner, 3)) {
+      s.boonHealAt = time + BOON_HEAL_MS;
+      f.heal(BOON_HEAL);
+      this.fx(owner).droplets(f.x, f.y + 10, 2, { speed: 50, angle: -Math.PI / 2, spread: 0.8, size: 2.2, life: 420, depth: 8, tones: this.tones(owner) });
+    }
+
+    // A bot's own presses: drink what it bit off, and stab itself when a shot is better spent that way.
+    if (this.isBot(owner) && this.alive(f) && !s.burrowed && time >= s.botThinkAt) {
+      s.botThinkAt = time + 400;
+      if (s.bottle) this.drinkBottle(owner);
+      else if (this.npcSelfInjectWorth()) this.doSelfInject(owner);
+    }
+
+    // The floor: fresh cells nip and cool, red ones sear, standing burns and poisons.
     for (const t of this.targetsOf(owner)) {
-      const cooled = grid.coolUnder(t.x, t.y, this.bodyR(t) * 0.8);
-      if (cooled > 0) {
-        const owed = (s.hotOwed.get(t) ?? 0) + cooled * HOT_DAMAGE_PER_CELL;
+      const r = this.bodyR(t) * 0.8;
+      const cooled = grid.coolUnder(t.x, t.y, r);
+      const seared = grid.coolUnder(t.x, t.y, r, CellState.Red);
+      if (cooled > 0 || seared > 0) {
+        const owed = (s.hotOwed.get(t) ?? 0) + cooled * HOT_DAMAGE_PER_CELL + seared * RED_DAMAGE_PER_CELL;
         const dmg = Math.floor(owed);
         s.hotOwed.set(t, owed - dmg);
         if (dmg > 0) {
-          t.takeDamage(dmg, { source: grid, sourceX: t.x, sourceY: t.y });
-          this.fx(owner).splash(t.x, t.y + 6, 26, { droplets: 4, fizz: 2, etch: false, depth: 8, tones: this.tones(owner) });
+          this.hit(owner, t, dmg, { source: grid, sourceX: t.x, sourceY: t.y });
+          this.fx(owner).splash(t.x, t.y + 6, seared > 0 ? 34 : 26, {
+            droplets: seared > 0 ? 8 : 4, fizz: 2, etch: false, depth: 8, tones: seared > 0 ? STING_TONES : this.tones(owner),
+          });
           this.noteAcidHit(owner, t);
         }
       }
@@ -1301,7 +1685,7 @@ export class SlimeKit {
         const at = s.standAt.get(t) ?? 0;
         if (time >= at) {
           s.standAt.set(t, time + STAND_TICK_MS);
-          t.takeDamage(STAND_DAMAGE, { source: grid, sourceX: t.x, sourceY: t.y });
+          this.hit(owner, t, STAND_DAMAGE, { source: grid, sourceX: t.x, sourceY: t.y });
           this.addToxin(t, STAND_TOXIN);
           this.noteAcidHit(owner, t);
           this.fx(owner).droplets(t.x, t.y + 8, 3, {
@@ -1313,24 +1697,24 @@ export class SlimeKit {
       }
     }
 
-    // Seeping Reflux (R+): every pool a bomb laid periodically buds a smaller one.
-    if (this.up(owner, 'r')) {
-      for (const sp of s.splats.slice()) {
-        if (!sp.bud || time < sp.nextSpreadAt) continue;
-        sp.nextSpreadAt = time + SPREAD_CHECK_MS;
-        if (s.splats.length >= MAX_SPLATS || Math.random() >= SPREAD_CHANCE) continue;
-        const a = Math.random() * Math.PI * 2;
-        const d = Phaser.Math.Between(SPREAD_OFFSET_MIN, SPREAD_OFFSET_MAX);
-        this.addSplat(owner, sp.x + Math.cos(a) * d, sp.y + Math.sin(a) * d, Math.max(SPREAD_MIN_RADIUS, sp.radius * SPREAD_RADIUS_MULT), true, true);
-      }
-    }
-
-    // Burrow: invincible while under, and the end of the acid is the end of the tunnel. A bot
-    // comes up inside its own bite.
+    // Burrow: invincible while under, and the end of the acid is the end of the tunnel — or, with
+    // Consume (F+), half a second past it, trailing acid. A bot comes up inside its own bite.
     if (s.burrowed) {
+      const consume = this.up(owner, 'f');
+      const under = grid.isAcid(f.x, f.y);
+      if (consume && this.alive(f)) {
+        if (under) {
+          s.offAcidMs = 0;
+        } else {
+          s.offAcidMs += delta;
+          const last = s.tunnel[s.tunnel.length - 1];
+          if (!last || Phaser.Math.Distance.Between(last.x, last.y, f.x, f.y) >= 8) s.tunnel.push({ x: f.x, y: f.y, at: time });
+        }
+      }
       if (!this.alive(f)) {
         s.burrowed = false;
-      } else if (!this.isReplica(owner) && !grid.isAcid(f.x, f.y)) {
+        s.tunnel = [];
+      } else if (!this.isReplica(owner) && !under && (!consume || s.offAcidMs >= TUNNEL_MAX_MS)) {
         this.surface(owner);
       } else {
         f.isInvincible = true;
@@ -1350,7 +1734,7 @@ export class SlimeKit {
         s.rainTickAt += RAIN_TICK_MS;
         for (const t of this.targetsOf(owner)) {
           if (!grid.isAcid(t.x, t.y)) continue;
-          t.takeDamage(RAIN_TICK_DAMAGE, { source: grid, sourceX: t.x, sourceY: t.y });
+          this.hit(owner, t, RAIN_TICK_DAMAGE, { source: grid, sourceX: t.x, sourceY: t.y });
           this.arena.spawnHitFlash(t.x, t.y, this.col(owner)(ACID.neon));
           this.fx(owner).splash(t.x, t.y, 30, { droplets: 5, fizz: 0, etch: false, depth: 8, tones: this.tones(owner) });
           this.noteAcidHit(owner, t);
@@ -1397,17 +1781,7 @@ export class SlimeKit {
     }
   }
 
-  // ── Rattling drips, footprints ──────────────────────────────────────
-
-  private updateDripping(time: number): void {
-    for (const [t, st] of this.drippingEnemies) {
-      if (!t.active || t.hp <= 0 || time >= st.until) { this.drippingEnemies.delete(t); continue; }
-      if (time >= st.nextDripAt) {
-        st.nextDripAt = time + RATTLING_DRIP_INTERVAL_MS;
-        this.addSplat(st.owner, t.x, t.y, RATTLING_DRIP_RADIUS, false);
-      }
-    }
-  }
+  // ── Footprints ───────────────────────────────────────────────────────
 
   private spawnFootprint(owner: Owner, x: number, y: number, time: number, boosted: boolean): void {
     const radius = boosted ? FOOTPRINT_BOOST_RADIUS : FOOTPRINT_RADIUS;
@@ -1426,7 +1800,7 @@ export class SlimeKit {
       fp.nextTickAt = time + FOOTPRINT_TICK_MS;
       for (const t of this.targetsOf(fp.owner)) {
         if (Phaser.Math.Distance.Between(t.x, t.y, fp.x, fp.y) > fp.radius) continue;
-        t.takeDamage(fp.damage, { source: fp, sourceX: fp.x, sourceY: fp.y });
+        this.hit(fp.owner, t, fp.damage, { source: fp, sourceX: fp.x, sourceY: fp.y });
         this.arena.spawnHitFlash(t.x, t.y, this.col(fp.owner)(ACID.neon));
         this.noteAcidHit(fp.owner, t);
       }
@@ -1483,7 +1857,7 @@ export class SlimeKit {
     const dmg = ELECTRO_DAMAGE * (surge ? ELECTRO_SURGE_MULT : 1);
     for (const t of this.targetsOf('player')) {
       if (distToSegment(t.x, t.y, a.x, a.y, b.x, b.y) > ELECTRO_LANE_HALF_W) continue;
-      t.takeDamage(dmg, { source: a, sourceX: a.x, sourceY: a.y });
+      this.hit('player', t, dmg, { source: a, sourceX: a.x, sourceY: a.y });
       this.electroJolted.set(t, time + ELECTRO_JOLT_MS);
       this.arena.spawnHitFlash(t.x, t.y, this.pcol(surge ? ACID.glow : ACID.caustic));
       this.noteAcidHit('player', t);
@@ -1652,6 +2026,12 @@ export class SlimeKit {
       const para = time < f.venomParalyzedUntil ? 1 : 0;
       const melt = time < f.venomMeltingUntil ? 1 : 0;
       if (rot || vuln || para || melt) drawAfflictions(sg, f.x, f.y, t, rot, vuln, para, melt);
+      // Poison Synergy (E+): a braid for every pair reacting on this body.
+      if (this.up(this.poisonerOf(f), 'e')) {
+        const on = [rot === 1, para === 1, time < f.purgedUntil, melt === 1];
+        let slot = 0;
+        for (const [a, b] of POISON_PAIRS) if (on[a] && on[b]) drawSynergy(sg, f.x, f.y, t, a, b, slot++);
+      }
     }
     for (const blob of this.blobs) {
       const p = blob.proj;
@@ -1665,6 +2045,7 @@ export class SlimeKit {
     for (const bomb of this.bombs) {
       const tones = this.tones(bomb.owner);
       drawAcidBomb(sg, this.col(bomb.owner), bomb.x, bomb.y, BOMB_TIERS[bomb.tier - 1].size, bomb.tier, t, bomb.spin, tones);
+      if (bomb.poison !== null) drawBombFill(sg, bomb.x, bomb.y, BOMB_TIERS[bomb.tier - 1].size, bomb.poison, t);
     }
     for (const c of this.bomblets) {
       const p = Phaser.Math.Clamp((time - c.bornAt) / CLUSTER_FLIGHT_MS, 0, 1);
@@ -1684,15 +2065,25 @@ export class SlimeKit {
       const s = this.side(owner);
       const f = this.fighter(owner);
       if (!this.isAcid(owner) || !this.alive(f) || f.forceInvisible) continue;
+      const facing = owner === 'player'
+        ? Math.atan2(s.aimY - f.y, s.aimX - f.x) : Math.atan2(this.arena.player.y - f.y, this.arena.player.x - f.x);
+      // The venom's own boons, climbing it.
+      const boons = f.venomBoonUntil.map((until) => time < until);
+      if (!s.burrowed && boons.some(Boolean)) drawBoons(sg, f.x, f.y, t, boons, this.onAcid(owner, f.x, f.y), f.alpha);
+      // Consume's bottle, hanging at the hip away from the gun.
+      if (s.bottle && !s.burrowed) {
+        const flecks = s.bottle.poisons.flatMap((on, k) => (on ? [POISONS[k].color as number] : []));
+        const pop = Phaser.Math.Clamp((time - s.bottle.filledAt) / 260, 0, 1);
+        drawBloodBottle(sg, f.x + Math.cos(facing + 2.2) * 27, f.y + 6 + Math.sin(facing + 2.2) * 12, t, flecks, pop, f.alpha);
+      }
       // The bomb in hand, hefted over the off shoulder and swelling as it is pulled out.
       if (s.bombHeld && !s.burrowed) {
-        const facing = owner === 'player'
-          ? Math.atan2(s.aimY - f.y, s.aimX - f.x) : Math.atan2(this.arena.player.y - f.y, this.arena.player.x - f.x);
         const grow = Phaser.Math.Clamp((time - s.bombHeldAt) / 220, 0, 1);
         const tier = this.bombTier(this.coverage(owner));
         const hx = f.x + Math.cos(facing - 2.1) * 30;
         const hy = f.y + Math.sin(facing - 2.1) * 30 - 6 + Math.sin(t * 5) * 2;
         drawAcidBomb(sg, this.col(owner), hx, hy, BOMB_TIERS[tier - 1].size * grow, tier, t, t * 1.2, this.tones(owner), f.alpha);
+        if (s.bombPoison !== null) drawBombFill(sg, hx, hy, BOMB_TIERS[tier - 1].size * grow, s.bombPoison, t, f.alpha);
       }
     }
     this.drawWheel(sg, time, t);
@@ -1750,7 +2141,7 @@ export class SlimeKit {
         }).setOrigin(0, 0.5).setDepth(20).setScrollFactor(0);
       }
       const shed = shedding ? ` · SHED ${this.shedCharges(owner)}` : '';
-      const load = s.loaded !== null ? ` · ${POISONS[s.loaded].name}${s.loadedShots > 1 ? ' ×2' : ''}` : '';
+      const load = s.loaded !== null ? ` · ${POISONS[s.loaded].name}` : '';
       const who = owner === 'player' ? 'ACID' : 'FOE ACID';
       this.barText[owner]!.setVisible(true).setPosition(x + bw + 10, y + bh / 2)
         .setColor(owner === 'player' ? '#ccff88' : '#eeff99')
@@ -1847,16 +2238,26 @@ export class SlimeKit {
     const shedSlot = this.shedSlot('player');
 
     // F: under, and back up. Entering needs acid underfoot, checked before the cooldown is spent.
+    // With Consume (F+) a bottle in hand is drunk first, and the dive needs no acid.
     if (shedSlot !== 'f' && Phaser.Input.Keyboard.JustDown(fKey)) {
       if (s.burrowed) this.surface('player');
-      else if (now >= s.burrowLockUntil && this.onAcid('player', player.x, player.y)) player.castAbility('venom-burrow', ctx);
+      else if (s.bottle) this.drinkBottle('player');
+      else if (now >= s.burrowLockUntil && (this.up('player', 'f') || this.onAcid('player', player.x, player.y))) {
+        player.castAbility('venom-burrow', ctx);
+      }
     }
+    const rmb = pointer.rightButtonDown();
+    const stab = rmb && !s.rmbWas;
+    s.rmbWas = rmb;
     // No attacking underground.
     if (s.burrowed) {
       s.wheelOpen = false;
       s.triggerHeld = false;
       return;
     }
+
+    // Click+ — Self-Inject: right click turns the next shot on yourself.
+    if (stab) this.doSelfInject('player');
 
     // Venom Mastery — Shed Skin takes over whichever slot it is bound to.
     if (shedSlot) {
@@ -1865,8 +2266,9 @@ export class SlimeKit {
     }
 
     // Click: hold to keep firing. The burst has to start on a fresh press.
-    if (pointer.isDown && !pointerWasDown) s.triggerHeld = true;
-    if (!pointer.isDown) s.triggerHeld = false;
+    const lmb = pointer.leftButtonDown();
+    if (lmb && !pointerWasDown) s.triggerHeld = true;
+    if (!lmb) s.triggerHeld = false;
     if (s.triggerHeld && now >= s.reloadUntil && ready('venom-inject')) player.castAbility('venom-inject', ctx);
 
     // E: hold to open the wheel, release toward a vial. A tap picks whatever the cursor is nearest.
@@ -1902,9 +2304,15 @@ export class SlimeKit {
       const k = Number(id.slice('acid-pick-'.length));
       if (!Number.isInteger(k) || k < 0 || k > 3) return;
       const s = this.side('npc');
-      s.loaded = k as PoisonKind;
-      s.loadedShots = this.up('npc', 'e') ? 2 : 1;
+      s.pickRelayKind = k as PoisonKind;
       s.pickRelayAt = this.now;
+      this.loadPoison('npc', k as PoisonKind);
+    } else if (id.startsWith('acid-self-')) {
+      const k = Number(id.slice('acid-self-'.length));
+      this.doSelfInject('npc', Number.isInteger(k) && k >= 0 && k <= 3 ? k as PoisonKind : null);
+    } else if (id.startsWith('acid-drink-')) {
+      const mask = Number(id.slice('acid-drink-'.length));
+      this.drinkBottle('npc', Number.isInteger(mask) ? mask & 15 : 0);
     } else if (id.startsWith('acid-cluster-')) {
       const bomb = this.bombs.find((b) => b.owner === 'npc' && !b.clustered);
       const k = Number(id.slice('acid-cluster-'.length));
@@ -1935,6 +2343,24 @@ export class SlimeKit {
     return { x: bomb.x + bomb.vx * lead, y: bomb.y + bomb.vy * lead };
   }
 
+  /**
+   * Synergy — Self-Inject (Click+). Two reasons a bot turns a shot on itself: it wants to dive and
+   * has no acid to dive into (the stab leaves a puddle underfoot), or the barrel is down to a last
+   * shot the target is too far away to be hit by.
+   */
+  npcSelfInjectWorth(): boolean {
+    const s = this.side('npc');
+    if (!this.up('npc', 'click') || s.burrowed || this.reloading('npc') || s.ammo <= 0 || this.now < s.selfInjectAt) return false;
+    const npc = this.arena.npc;
+    const tgt = this.arena.player;
+    if (!this.alive(npc) || !this.alive(tgt)) return false;
+    const d = Phaser.Math.Distance.Between(npc.x, npc.y, tgt.x, tgt.y);
+    const wantsDive = npc.getCooldownRatio('venom-burrow') >= 1 && this.now >= s.burrowLockUntil && this.npcShedSlot() !== 'f'
+      && !this.up('npc', 'f') && !this.onAcid('npc', npc.x, npc.y) && !s.grid?.nearestAcid(npc.x, npc.y, 160)
+      && (npc.hp / Math.max(1, npc.maxHp) < 0.35 || (tgt.toxinStacks >= 12 && d < 380));
+    return wantsDive || (s.ammo === 1 && d > 420);
+  }
+
   /** Nothing is loaded: Pick Your Poison is worth the press. */
   npcPoisonWorth(): boolean {
     return this.isAcid('npc') && this.side('npc').loaded === null && this.alive(this.arena.player);
@@ -1955,12 +2381,15 @@ export class SlimeKit {
     if (!this.isAcid('npc') || s.burrowed || this.now < s.burrowLockUntil) return false;
     const npc = this.arena.npc;
     const tgt = this.arena.player;
-    if (!this.alive(npc) || !this.alive(tgt) || !this.onAcid('npc', npc.x, npc.y)) return false;
+    const onAcid = this.onAcid('npc', npc.x, npc.y);
+    // Consume (F+) can start a tunnel on clean floor, but it only runs half a second.
+    if (!this.alive(npc) || !this.alive(tgt) || (!onAcid && !this.up('npc', 'f'))) return false;
     const d = Phaser.Math.Distance.Between(npc.x, npc.y, tgt.x, tgt.y);
     const time = this.now;
     const poisoned = time < tgt.venomRotUntil || time < tgt.venomParalyzedUntil || time < tgt.venomMeltingUntil
       || time < tgt.purgedUntil || tgt.toxinStacks >= 12;
     const hurt = npc.hp / Math.max(1, npc.maxHp) < 0.35;
+    if (!onAcid) return poisoned && d > this.biteReach('npc') * 0.8 && d < this.biteReach('npc') * 0.8 + 90;
     return (poisoned && d > this.biteReach('npc') * 0.8 && d < 380) || (hurt && d < 260);
   }
 

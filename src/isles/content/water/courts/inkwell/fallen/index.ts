@@ -88,7 +88,7 @@ const ENCOUNTERS: EncounterDef[] = [
     court: 'inkwell',
     gimmick: RETURN_TO_SENDER.id,
     name: 'Return to Sender',
-    foeName: 'Process-Server Nell',
+    foeName: 'Process-Server Marit',
     foeElement: 'echo',
     difficulty: 5,
     hpMult: 1.2,

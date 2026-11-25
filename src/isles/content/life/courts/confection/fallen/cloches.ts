@@ -6,7 +6,7 @@ import { BRASS, CHERRY, GRAPE, ICING, LEMON, MINT, PINK, dist, gumdrop, wrappedS
 import { alive, clamp } from './util';
 
 /**
- * The Taster's Cloches — Comfit Vane, Royal Taster to His Sweetness, who in the King's telling
+ * The Taster's Cloches — Comfit Drage, Royal Taster to His Sweetness, who in the King's telling
  * tasted every dish before the Prince and put the bad ones in front of whoever had displeased him.
  *
  * Silver cloches are set down in a row and one is lifted to show the Prince's bonbon in its gold

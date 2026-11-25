@@ -90,7 +90,7 @@ function make(ctx: GimmickCtx): EncounterGimmick {
         sw.lockUntil = tk.now + 650;
         sw.owner = sw.owner === null ? by : otherSide(sw.owner);
         sw.flipAt = tk.now;
-        ctx.sfx(sw.owner === by ? 'clang' : 'snap');
+        ctx.sfx(sw.owner === by ? 'clang' : 'trap-snap');
         // Throwing a feeder off a ringing breaker saves it.
         if (trip && load(trip.victim) <= rated) {
           const v = fighter(trip.victim);

@@ -48,7 +48,7 @@ export const FALLEN: FallenBundle = {
       id: fallenId(COURT, 'queens-lamps'),
       court: COURT,
       name: 'The Queen\'s Lamps',
-      foeName: 'Lamplighter Hesper Gill',
+      foeName: 'Lamplighter Winifred Gill',
       foeElement: 'light',
       difficulty: 4,
       gimmick: fallenId(COURT, 'queens-lamps'),

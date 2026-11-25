@@ -582,7 +582,7 @@ export class ConquestKit implements ConquestMenuHost {
    * so its soldiers point at the husks rather than at the person they are playing with.
    */
   private targetsOf(owner: Owner): Fighter[] {
-    const list = owner === 'player' || this.api.isCoop ? this.api.enemies : [this.api.player];
+    const list = owner === 'player' || this.api.isCoop ? this.api.enemies : this.api.player.bodies();
     return list.filter((f) => this.alive(f));
   }
 

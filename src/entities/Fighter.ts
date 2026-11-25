@@ -143,6 +143,15 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
    * rather than a Fighter reference, so nothing holds a body past its death.
    */
   public lastDamageOwner: 'player' | 'npc' | null = null;
+  /**
+   * Extra hit bodies that are part of this fighter (String's abdomen — see `BodySection`). Each
+   * forwards the damage it takes here. Empty for everyone else.
+   */
+  public bodySections: Fighter[] = [];
+  /** This fighter and every extra body that is part of it: what an attack aimed at it may hit. */
+  bodies(): Fighter[] {
+    return this.bodySections.length ? [this, ...this.bodySections] : [this];
+  }
   public shieldCharges = 0;
   public shieldHp = 0;
   /** Metal R+ (Blood Clottage): dark-red HP layer. Absorbs damage at half rate and is spent before normal HP. */
@@ -1125,6 +1134,20 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   public venomMeltingUntil = 0;
   /** SlimeKit writes this every frame: 2 while melting *and* standing on the poisoner's acid. */
   public venomMeltIncomingMult = 1;
+  /**
+   * Venom's own boons (scene clock), indexed like the poisons: 0 Disintegrating (damage reduction
+   * on its acid), 1 Paralyzing (speed on its acid), 2 Purging (damage dealt on its acid), 3 Melting
+   * (healing on its acid). Self-Inject (Click+) and a drunk blood bottle (F+) set them; SlimeKit reads them.
+   */
+  public venomBoonUntil: number[] = [0, 0, 0, 0];
+  /** Venom — Self-Inject (Click+): the venom's own toxin, 0–100. Each stack makes every new positive effect on it last 2% longer. */
+  public venomSelfToxin = 0;
+  /**
+   * Venom — Poison Synergy (E+), Paralyzing + Purging: until this scene-clock time every ability
+   * in `venomLockIds` (the ones that move their caster) refuses to cast. SlimeKit writes both.
+   */
+  public venomLockUntil = 0;
+  public venomLockIds: ReadonlySet<string> | null = null;
   /** What Disintegrating's vulnerability does to incoming damage right now. */
   venomVulnMult(): number {
     return this.venomVulnStacks > 0 && this.scene.time.now < this.venomVulnUntil
@@ -2010,6 +2033,9 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     if (now < this.disarmedUntil || now < this.chickenUntil) return false;
     if (now < this.silencedUntil && ability.displayKey !== 'Click') return false;
     if (now < (this.lockouts.get(abilityId)?.until ?? 0)) return false;
+    // Venom's Paralyzing + Purging synergy: anything that moves its caster is simply off. A replica's
+    // casts were already allowed on its own machine.
+    if (!this.netGhost && this.venomLockIds?.has(abilityId) && this.scene && this.scene.time.now < this.venomLockUntil) return false;
     if (this.isChargedUltimate(ability)) {
       if (this.ultCharge + 0.001 < this.ultCost(ability)) return false;
     } else if (now - (this.cooldowns.get(abilityId) ?? 0) < this.storedCooldown(abilityId, ability)) return false;

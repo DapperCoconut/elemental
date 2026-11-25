@@ -1519,7 +1519,7 @@ export class LifeKit {
   }
 
   private hostilesFor(owner: 'player' | 'npc'): Fighter[] {
-    return owner === 'player' ? this.api.enemies : [this.api.player];
+    return owner === 'player' ? this.api.enemies : this.api.player.bodies();
   }
 
   private updatePlantList(list: Plant[], owner: 'player' | 'npc', time: number, delta: number): void {

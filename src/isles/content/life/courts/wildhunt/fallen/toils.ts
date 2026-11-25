@@ -6,7 +6,7 @@ import { ANTLER_DARK, BARK_DARK, ENDGRAIN, HUNT_RED, TIMBER, TIMBER_DARK, TIMBER
 import { EMBER, alive } from './kit';
 
 /**
- * The Toils — Agnes Hurle, Toil-Mistress of the deer park: in the King's telling she pitched the
+ * The Toils — Millicent Hurle, Toil-Mistress of the deer park: in the King's telling she pitched the
  * long nets — the *toils* — round the households that ran, and drew them in stake by stake until
  * there was nowhere left to run but into the mesh.
  *
@@ -15,7 +15,7 @@ import { EMBER, alive } from './kit';
  * back inside. When it can draw no tighter it is struck and pitched wide again.
  *
  * Exploit: strike a stake and it falls inward, bringing both its nets down flat across the turf a
- * moment later — anyone under them is tangled hard. Drop the toils on Agnes. A felled stake leaves
+ * moment later — anyone under them is tangled hard. Drop the toils on Millicent. A felled stake leaves
  * a gap you can step out through until the re-pitch. At half, the drawing-rope is hauled: the ring
  * closes faster and walks round as it closes, so its stakes sweep the turf.
  */
@@ -265,6 +265,6 @@ function drawTangle(g: G, x: number, y: number, time: number): void {
 
 export const FALLEN_TOILS: GimmickDef = {
   id: ID,
-  rules: 'A ring of nets draws in round you; touch the mesh and you are tangled. Strike a stake to drop its nets flat inward — drop them on Agnes.',
+  rules: 'A ring of nets draws in round you; touch the mesh and you are tangled. Strike a stake to drop its nets flat inward — drop them on Millicent.',
   make,
 };

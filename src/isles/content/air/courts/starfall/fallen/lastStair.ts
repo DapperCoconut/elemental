@@ -5,7 +5,7 @@ import { SF, alive, breathBottle, clamp, dist } from '../palette';
 import { fallenId } from '../../../../meteor/spec';
 
 /**
- * Down the Last Stair — Stair-Sergeant Tamsin Crake, in the star's telling the collectors'
+ * Down the Last Stair — Stair-Sergeant Rosalind Crake, in the star's telling the collectors'
  * sergeant on the Last Stair, who saw every crate of corked breath up the final flight to the Lung
  * and every debtor who tried to climb after it back down.
  *

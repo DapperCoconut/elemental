@@ -7,7 +7,7 @@ import { alive, clamp, dist, stepDt } from '../util';
 import { fallenId } from '../../../../meteor/spec';
 
 /**
- * The Queen Changes Hands — Apiarist Orrin Hume of the Pollinarium, who in the King's telling let
+ * The Queen Changes Hands — Apiarist Lubin Hume of the Pollinarium, who in the King's telling let
  * the crown's bees loose on any household that hid honey back from the Tithe: wherever the queen is
  * carried, the swarm goes.
  *

@@ -11,7 +11,7 @@ import { alive, clamp, dist, heatColor, segsCross, stepDt } from '../util';
 import { hurt, onFloor } from './kit';
 
 /**
- * The Glare of Number Two — Bryony Hale, Keeper of the Second Furnace. When a blast furnace is
+ * The Glare of Number Two — Bryony Stithy, Keeper of the Second Furnace. When a blast furnace is
  * tapped the open hole throws a heat you feel across the whole cast-house; the hands work behind
  * wheeled iron screens. In the King's telling Bryony decides who gets a screen on tapping night.
  *

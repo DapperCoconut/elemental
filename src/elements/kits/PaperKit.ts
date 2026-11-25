@@ -730,7 +730,7 @@ export class PaperKit implements SummonPurgeTarget {
 
   /** Everything this side is allowed to hurt. */
   private targetsOf(owner: Owner): Fighter[] {
-    const list = owner === 'player' ? this.api.enemies : [this.api.player];
+    const list = owner === 'player' ? this.api.enemies : this.api.player.bodies();
     return list.filter((f) => this.alive(f));
   }
 

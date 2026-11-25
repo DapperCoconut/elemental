@@ -114,7 +114,7 @@ export const FALLEN: FallenBundle = {
       id: fallenId('sailmaker', 'shrouds-and-stays'),
       court: 'sailmaker',
       name: 'Shrouds and Stays',
-      foeName: 'Topman Jory Lanyard',
+      foeName: 'Topman Ruan Halse',
       foeElement: 'gunpowder',
       difficulty: 5,
       hpMult: 1.25,

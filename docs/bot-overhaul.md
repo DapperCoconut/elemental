@@ -267,6 +267,15 @@ fate, creation, growth, rubber, acid, hunt, time; then the remainder). For each 
   milestone within 220px; `npcAcidShedSlot` keeps the rotation off that key. Profile
   `skirmisher [100, 240]`. The ×3 Serpentine dodge is gone; a Paralyzed bot (`mobilityBlockedUntil`)
   does not dodge at all.
+  **Upgrade rework (2026-11-24): Self-Inject / Poison Synergy / Poison Bomb / Consume.** All four are
+  played **kit-side**, so `doSlimeAbilities` did not change: `npcSelfInjectWorth()` (Click+ — stab
+  itself when it wants to dive and has no acid near, since the stab leaves a puddle underfoot, or to
+  spend a last shot the target is out of reach of), the bomb is filled on the throw when Pick Your
+  Poison is ready (R+, `doBomb`), a bottle is drunk on the next 400ms think (F+), and
+  `npcAcidBurrowReady` lets an F+ bot start a tunnel on clean floor when the target is within the
+  half-second it lasts. Poison Synergy needs no bot code — `botPoisonPick` already prefers a poison
+  that is not running, which is what stacks pairs. A bot (or anyone) under Paralyzing + Purging has
+  its movement abilities refused in `Fighter.castAbility` (`venomLockIds`).
 
 - **Savor / `gum` (2026-10-26, replaces Slime).** No upgrades or mastery, so steps 1–2 do not
   apply. Rotation `doSavorAbilities` rewritten for the two rows; profile `skirmisher [140, 320]`.
