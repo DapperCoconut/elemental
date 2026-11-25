@@ -2,6 +2,7 @@ import type { CourtBundle } from '../../../../IslesTypes';
 import { TRIBUNAL_AREA } from './area';
 import { TRIBUNAL_ENCOUNTERS, TRIBUNAL_GIMMICKS } from './encounters';
 import { TRIBUNAL_FLOOR } from './floor';
+import { FALLEN } from './fallen';
 import { ART_VERDICT, TRIBUNAL_FISH, TRIBUNAL_FISHERIES, TRIBUNAL_ITEMS, TRIBUNAL_SCRIPTS, TRIBUNAL_SHOPS } from './items';
 import { TRIBUNAL_COLOR } from './palette';
 import { VERDICT_BOSS } from './prince';
@@ -37,4 +38,5 @@ export const TRIBUNAL_COURT: CourtBundle = {
   shops: TRIBUNAL_SHOPS,
   fish: TRIBUNAL_FISH,
   fisheries: TRIBUNAL_FISHERIES,
+  fallen: FALLEN,
 };

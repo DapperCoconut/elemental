@@ -1,6 +1,7 @@
 import type { CourtBundle } from '../../../../IslesTypes';
 import { NOON_AREA } from './area';
 import { NOON_ENCOUNTERS, NOON_GIMMICKS } from './encounters';
+import { FALLEN } from './fallen';
 import { NOON_FLOOR } from './floor';
 import {
   ART_LUMEN, NOON_BAKERIES, NOON_FISH, NOON_FISHERIES, NOON_ITEMS, NOON_SCRIPTS, NOON_SHOPS,
@@ -40,4 +41,5 @@ export const NOON_COURT: CourtBundle = {
   bakeries: NOON_BAKERIES,
   fish: NOON_FISH,
   fisheries: NOON_FISHERIES,
+  fallen: FALLEN,
 };

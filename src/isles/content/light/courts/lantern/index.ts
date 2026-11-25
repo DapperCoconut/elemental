@@ -1,6 +1,7 @@
 import type { CourtBundle } from '../../../../IslesTypes';
 import { LANTERN_AREA } from './area';
 import { LANTERN_ENCOUNTERS, LANTERN_GIMMICKS } from './encounters';
+import { FALLEN } from './fallen';
 import { LANTERN_FLOOR } from './floor';
 import { ART_WISP, LANTERN_FISH, LANTERN_FISHERIES, LANTERN_ITEMS, LANTERN_SCRIPTS, LANTERN_SHOPS } from './items';
 import { LANTERN_COLOR } from './palette';
@@ -37,4 +38,5 @@ export const LANTERN_COURT: CourtBundle = {
   shops: LANTERN_SHOPS,
   fish: LANTERN_FISH,
   fisheries: LANTERN_FISHERIES,
+  fallen: FALLEN,
 };

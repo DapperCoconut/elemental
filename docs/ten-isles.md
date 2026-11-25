@@ -288,6 +288,11 @@ A new isle gets a new file here before its builders launch.
 - Hard mode reading of "10 encounters per court": the court's own five (already hard-tuned in every gimmick) **plus
   five new** — 300 new fights, not the 600 the Pillars line once said. A further five per court can be layered on later
   through the same `fallen` bundle if wanted.
+- 2026-11-24: **the Fall is content-complete — 60/60 courts have their Fallen Five** (300 new fights, 304 rule lines in
+  `docs/ten-isles/fallen-rules.md`), plus Fallpoint and the Fallen King. tsc, validator and `npm run build` clean.
+  Not runtime-tested. Known validator gaps: no check that a rule is exploitable or that the bot uses its exploit;
+  smoke never sets `stunnedUntil` and its `shotsNear` mock is one fixed shot; older (pre-Light) Fallen gimmicks still
+  use `ctx.float` text pop-ups.
 - Not yet built: revolts / anarchy / dark market; online co-op.
 - 2026-11-24: **sailing is fought from the deck.** `SeaVoyageScene` is gone; `SeaVoyageKit` runs inside ArenaScene
   (isles payload `kind: 'voyage'`, launched by `IsleWorldScene.sail`, hosted and updated last by IslesFightKit; the npc

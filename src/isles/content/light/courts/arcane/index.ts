@@ -1,6 +1,7 @@
 import type { CourtBundle } from '../../../../IslesTypes';
 import { ARCANE_AREA } from './area';
 import { ARCANE_ENCOUNTERS, ARCANE_GIMMICKS } from './encounters';
+import { FALLEN } from './fallen';
 import { ARCANE_FLOOR } from './floor';
 import { ART_SIGIL, ARCANE_FISH, ARCANE_FISHERIES, ARCANE_ITEMS, ARCANE_SCRIPTS, ARCANE_SHOPS } from './items';
 import { ARCANE_COLOR } from './palette';
@@ -38,4 +39,5 @@ export const ARCANE_COURT: CourtBundle = {
   shops: ARCANE_SHOPS,
   fish: ARCANE_FISH,
   fisheries: ARCANE_FISHERIES,
+  fallen: FALLEN,
 };

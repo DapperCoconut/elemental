@@ -2,6 +2,7 @@ import type { CourtBundle } from '../../../../IslesTypes';
 import { WORKSHOP_AREA } from './area';
 import { WORKSHOP_ENCOUNTERS, WORKSHOP_GIMMICKS } from './encounters';
 import { WORKSHOP_FLOOR } from './floor';
+import { FALLEN } from './fallen';
 import { ART_ARTIFEX, WORKSHOP_FISH, WORKSHOP_FISHERIES, WORKSHOP_ITEMS, WORKSHOP_SCRIPTS, WORKSHOP_SHOPS } from './items';
 import { WORKSHOP_COLOR } from './palette';
 import { ARTIFEX_BOSS } from './prince';
@@ -37,4 +38,5 @@ export const WORKSHOP_COURT: CourtBundle = {
   shops: WORKSHOP_SHOPS,
   fish: WORKSHOP_FISH,
   fisheries: WORKSHOP_FISHERIES,
+  fallen: FALLEN,
 };

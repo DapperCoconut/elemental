@@ -2,6 +2,7 @@ import type { CourtBundle } from '../../../../IslesTypes';
 import { MURAL_AREA } from './area';
 import { MURAL_ENCOUNTERS, MURAL_GIMMICKS } from './encounters';
 import { MURAL_FLOOR } from './floor';
+import { FALLEN } from './fallen';
 import { ART_HUE, MURAL_FISH, MURAL_FISHERIES, MURAL_ITEMS, MURAL_SCRIPTS, MURAL_SHOPS } from './items';
 import { MURAL_COLOR } from './palette';
 import { HUE_BOSS } from './prince';
@@ -37,4 +38,5 @@ export const MURAL_COURT: CourtBundle = {
   shops: MURAL_SHOPS,
   fish: MURAL_FISH,
   fisheries: MURAL_FISHERIES,
+  fallen: FALLEN,
 };
