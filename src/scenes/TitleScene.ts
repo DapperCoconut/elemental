@@ -9,7 +9,7 @@ import { GAUNTLET_COST } from '../data/GauntletData';
 import {
   C, T, DEPTH, FONT_DISPLAY, FONT_UI, hex, mix,
   addBackdrop, addButton, addChip, addIconButton, addToggle, showToast,
-  addFeatureCard, drawIcon, fillDiamond, drawGlow, IconName,
+  addFeatureCard, drawIcon, drawIconSocket, fillDiamond, drawGlow, IconName,
   addScrim, addPanel, drawMeter, fillNotchedGradient, strokeNotched, tintPlate,
 } from '../ui';
 import * as Ranked from '../data/RankedData';
@@ -65,7 +65,9 @@ export class TitleScene extends Phaser.Scene {
 
     // ── Wordmark ────────────────────────────────────────────────────
     const titleY = 100;
+    this.buildTitleHalo(cx, titleY);
     this.buildFlourishes(cx, titleY);
+    this.buildElementWisps(width, height);
 
     const title = this.add.text(cx, titleY, 'ELEMENTAL', {
       fontSize: '66px',
@@ -75,10 +77,18 @@ export class TitleScene extends Phaser.Scene {
     }).setOrigin(0.5).setDepth(DEPTH.content + 2).setInteractive({ useHandCursor: true });
     this.tintLogo(title);
     this.wireLogoClicks(title);
+    this.buildTitleEmbers(cx, titleY);
 
-    this.add.text(cx, titleY + 50, 'F O R G E   Y O U R   E L E M E N T', {
-      fontSize: '12px', fontFamily: FONT_UI, color: T.dim, letterSpacing: 4,
-    }).setOrigin(0.5).setDepth(DEPTH.content);
+    const tagline = this.add.text(cx, titleY + 52, 'F O R G E   Y O U R   E L E M E N T', {
+      fontSize: '12px', fontFamily: FONT_UI, color: hex(mix(C.ember, 0xffffff, 0.55)), letterSpacing: 4,
+    }).setOrigin(0.5).setDepth(DEPTH.content).setAlpha(0.8);
+    const tagG = this.add.graphics().setDepth(DEPTH.content);
+    for (const side of [-1, 1]) {
+      const tx = cx + side * (tagline.width / 2 + 18);
+      fillDiamond(tagG, tx, titleY + 52, 3.5, C.ember, 0.8);
+      tagG.lineStyle(1, C.ember, 0.35);
+      tagG.beginPath(); tagG.moveTo(tx + side * 8, titleY + 52); tagG.lineTo(tx + side * 60, titleY + 52); tagG.strokePath();
+    }
 
     // ── Category hub ────────────────────────────────────────────────
     // Four big doors instead of seven narrow plates and a rail: each opens a sub-panel of
@@ -270,8 +280,9 @@ export class TitleScene extends Phaser.Scene {
     const total = cats.length * cardW + (cats.length - 1) * gap;
     const x0 = cx - total / 2 + cardW / 2;
     cats.forEach((cat, i) => {
-      addFeatureCard(this, {
-        x: x0 + i * (cardW + gap), y: cy, w: cardW, h: cardH,
+      const x = x0 + i * (cardW + gap);
+      const card = addFeatureCard(this, {
+        x, y: cy, w: cardW, h: cardH,
         skew: 0,
         accent: cat.accent,
         icon: cat.icon,
@@ -281,6 +292,38 @@ export class TitleScene extends Phaser.Scene {
         status: `▶  ${cat.modes.length} MODES`,
         depth: DEPTH.panel,
         onClick: () => this.openCategory(cat),
+      });
+
+      // The empty floor of the card carries its modes as a row of lit sockets — the door
+      // shows what is behind it without repeating the kicker's words.
+      const row = this.add.graphics().setDepth(DEPTH.panel + 2);
+      const sockR = 13;
+      const sockGap = 38;
+      const rowY = cy + 66;
+      cat.modes.forEach((mode, m) => {
+        const sx = x + (m - (cat.modes.length - 1) / 2) * sockGap;
+        drawIconSocket(row, mode.icon, sx, rowY, sockR, mix(mode.accent, 0xffffff, 0.15), mode.action ? 0.95 : 0.45);
+      });
+      card.objects.push(row);
+      const iconHome = card.iconGfx.y;
+
+      // Entrance: each door rises into place a beat after the one before it.
+      for (const o of card.objects) {
+        const go = o as Phaser.GameObjects.GameObject & Phaser.GameObjects.Components.Alpha
+          & Phaser.GameObjects.Components.Transform;
+        if (typeof go.setAlpha !== 'function') continue;
+        const homeY = go.y;
+        go.setAlpha(0);
+        go.y = homeY + 24;
+        this.tweens.add({
+          targets: go, alpha: 1, y: homeY, duration: 420, delay: 120 + i * 90, ease: 'Cubic.easeOut',
+        });
+      }
+
+      // A slow idle bob on each glyph so the hub never sits perfectly still.
+      this.tweens.add({
+        targets: card.iconGfx, y: iconHome - 3, duration: 1600 + i * 180,
+        delay: 700 + i * 90, yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
       });
     });
   }
@@ -477,6 +520,70 @@ export class TitleScene extends Phaser.Scene {
 
   // ── Emblem ──────────────────────────────────────────────────────────
 
+  /** A breathing furnace-glow behind the wordmark, so the title sits in light, not on paint. */
+  private buildTitleHalo(cx: number, cy: number): void {
+    const g = this.add.graphics().setDepth(DEPTH.base + 1).setPosition(cx, cy);
+    for (let k = 16; k >= 1; k--) {
+      g.fillStyle(mix(C.ember, 0xffcc66, k / 20), 0.022);
+      g.fillEllipse(0, 0, 220 + k * 30, 40 + k * 8);
+    }
+    this.tweens.add({
+      targets: g, alpha: { from: 0.7, to: 1 }, scaleX: { from: 0.97, to: 1.03 },
+      duration: 2400, yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
+    });
+  }
+
+  /** Sparks lifting off the top of the letterforms, as if the wordmark were still cooling. */
+  private buildTitleEmbers(cx: number, cy: number): void {
+    const colors = [0xffd27a, 0xffa040, C.ember];
+    for (let i = 0; i < 16; i++) {
+      const spark = this.add.circle(0, 0, 1.6, colors[i % colors.length], 1).setDepth(DEPTH.content + 3);
+      const launch = (): void => {
+        const sx = cx + Phaser.Math.Between(-250, 250);
+        spark.setPosition(sx, cy + Phaser.Math.Between(-18, 6));
+        spark.setAlpha(Phaser.Math.FloatBetween(0.6, 1));
+        spark.setScale(Phaser.Math.FloatBetween(0.6, 1.4));
+        this.tweens.add({
+          targets: spark,
+          x: sx + Phaser.Math.Between(-24, 24),
+          y: spark.y - Phaser.Math.Between(40, 90),
+          alpha: 0, scale: 0.2,
+          duration: Phaser.Math.Between(1300, 2600),
+          ease: 'Sine.easeOut',
+          onComplete: () => { if (spark.active) this.time.delayedCall(Phaser.Math.Between(0, 900), launch); },
+        });
+      };
+      spark.setAlpha(0);
+      this.time.delayedCall(Phaser.Math.Between(0, 2400), launch);
+    }
+  }
+
+  /** Soft drifting lights in the five base colours — the elements loose in the room. */
+  private buildElementWisps(width: number, height: number): void {
+    SIGIL_ELEMENTS.forEach((el, i) => {
+      for (let n = 0; n < 2; n++) {
+        const wisp = this.add.graphics().setDepth(DEPTH.backdrop + 2);
+        for (let k = 4; k >= 1; k--) {
+          wisp.fillStyle(el.color, 0.05);
+          wisp.fillCircle(0, 0, k * 7);
+        }
+        wisp.fillStyle(mix(el.color, 0xffffff, 0.5), 0.5);
+        wisp.fillCircle(0, 0, 2.2);
+        const x = 60 + ((i * 2 + n) / 9) * (width - 120) + Phaser.Math.Between(-30, 30);
+        const y = Phaser.Math.Between(height * 0.3, height - 60);
+        wisp.setPosition(x, y).setAlpha(0);
+        this.tweens.add({
+          targets: wisp, alpha: { from: 0, to: 0.9 }, duration: 2200, yoyo: true,
+          delay: Phaser.Math.Between(0, 3000), repeat: -1, repeatDelay: Phaser.Math.Between(400, 2000),
+        });
+        this.tweens.add({
+          targets: wisp, x: x + Phaser.Math.Between(-60, 60), y: y - Phaser.Math.Between(30, 90),
+          duration: Phaser.Math.Between(5000, 8000), yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
+        });
+      }
+    });
+  }
+
   /**
    * Etched wings flanking the wordmark: tapering rules with diamond finials and
    * a pair of angled feathers. Keeps the title from floating unanchored without
@@ -550,6 +657,33 @@ export class TitleScene extends Phaser.Scene {
         duration: 1800 + i * 260, yoyo: true, repeat: -1, ease: 'Sine.easeInOut',
       });
     });
+
+    // A spark runs the rail end to end, taking on each element's colour as it passes the gem.
+    const x0 = cx - span - 46;
+    const x1 = cx + span + 46;
+    const spark = this.add.graphics().setDepth(DEPTH.base + 4);
+    const paintSpark = (col: number): void => {
+      spark.clear();
+      for (let k = 4; k >= 1; k--) {
+        spark.fillStyle(col, 0.1);
+        spark.fillEllipse(-k * 4, 0, 10 + k * 9, 3 + k * 2);
+      }
+      spark.fillStyle(mix(col, 0xffffff, 0.6), 1);
+      spark.fillCircle(0, 0, 2);
+    };
+    const run = { x: x0 };
+    paintSpark(C.ember);
+    spark.setPosition(x0, cy);
+    this.tweens.add({
+      targets: run, x: x1, duration: 4200, repeat: -1, repeatDelay: 1800, ease: 'Sine.easeInOut',
+      onUpdate: () => {
+        spark.x = run.x;
+        const idx = Phaser.Math.Clamp(Math.round((run.x - (cx - span)) / step), 0, SIGIL_ELEMENTS.length - 1);
+        const near = Math.abs(run.x - (cx - span + idx * step)) < step * 0.5;
+        paintSpark(near ? SIGIL_ELEMENTS[idx].color : C.ember);
+        spark.setAlpha(Math.min(1, (run.x - x0) / 40, (x1 - run.x) / 40));
+      },
+    });
   }
 
   // ── Logo cheat unlock ────────────────────────────────────────────────
@@ -565,9 +699,15 @@ export class TitleScene extends Phaser.Scene {
       : Cheats.getLogoProgress();
 
     const body = mix(LOGO_COLD, LOGO_HOT, t);
-    title.setColor(hex(mix(body, 0xffffff, 0.35)));
     title.setStroke(hex(mix(body, 0x000000, 0.72)), 6);
     title.setShadow(0, 5, hex(mix(body, 0x000000, 0.85)), 14, false, true);
+    // Molten fill: white-hot crown, the body colour through the middle, cooling to a deep
+    // glow at the feet. The canvas is drawn at logical scale, so stops use logical pixels.
+    const grd = title.context.createLinearGradient(0, 0, 0, title.height);
+    grd.addColorStop(0.18, hex(mix(body, 0xffffff, 0.82)));
+    grd.addColorStop(0.5, hex(mix(body, 0xffffff, 0.28)));
+    grd.addColorStop(0.82, hex(mix(body, 0x000000, 0.12)));
+    title.setFill(grd);
   }
 
   private wireLogoClicks(title: Phaser.GameObjects.Text): void {
