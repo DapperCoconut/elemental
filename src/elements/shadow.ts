@@ -4,7 +4,7 @@ import { Ability, CastContext } from './Ability';
 const caltrop: Ability = {
   id: 'shadow-caltrop',
   name: 'Shadow Caltrops',
-  description: 'Throw an obsidian caltrop to the cursor. It lies on the ground for up to 8s; the enemy who steps on it takes 5 dmg + 10% Hopelessness. Hold Click to keep throwing.',
+  description: 'Throw an obsidian caltrop to the cursor. It lies on the ground for up to 8s; the enemy who steps on it takes 10 dmg + 10% Hopelessness. Hold Click to keep throwing.',
   displayKey: 'Click',
   cooldown: 650,
   cast(ctx: CastContext) {

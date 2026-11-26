@@ -57,7 +57,7 @@ const TRIPLINE_HIT_CD_MS = 1500;
 const CALTROP_RANGE = 340;
 const CALTROP_FLIGHT_MS = 300;
 const CALTROP_LIFETIME_MS = 8000;
-const CALTROP_DAMAGE = 5;
+const CALTROP_DAMAGE = 10;
 const CALTROP_HOPELESS = 10;
 /** How close a foot has to come to a lying caltrop to tread on it. */
 const CALTROP_TRIGGER_R = 22;

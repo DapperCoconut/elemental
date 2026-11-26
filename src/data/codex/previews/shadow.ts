@@ -153,7 +153,7 @@ function pop(ctx: PreviewCtx, x: number, y: number, text: string, color: string)
 
 export const shadowCaltrop: PreviewScript = {
   duration: 4400,
-  caption: 'Click — a caltrop lies 8s where it lands; treading on it costs 5 damage and 10 Hopelessness',
+  caption: 'Click — a caltrop lies 8s where it lands; treading on it costs 10 damage and 10 Hopelessness',
   run(ctx) {
     const { fx, av } = stage(ctx, { noDummy: true });
     let hope = 0;

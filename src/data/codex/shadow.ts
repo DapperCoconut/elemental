@@ -64,7 +64,7 @@ const shadow: ElementCodex = {
         + 'the oldest goes.',
       cast: 'Click, aimed at the cursor. Hold to keep throwing on the 0.65s cooldown.',
       effects: [
-        { tag: 'damage', label: 'Tread', detail: '5 damage to the enemy who steps on it, plus 10 Hopelessness. One victim per caltrop.' },
+        { tag: 'damage', label: 'Tread', detail: '10 damage to the enemy who steps on it, plus 10 Hopelessness. One victim per caltrop.' },
         { tag: 'summon', label: 'On the floor', detail: 'Lies where it lands for up to 8s, a 22px trigger. Up to 18 of yours at once; the oldest is swept away to make room.' },
         { tag: 'area', label: 'Reach', detail: 'Up to 340px; a throw past that falls short at 340px along the aim.' },
         { tag: 'utility', label: 'Availability', detail: '0.65s cooldown. Holding Click re-throws the moment it is ready.' },
