@@ -222,7 +222,7 @@ export class Fishing {
 
     const W = this.scene.scale.width, H = this.scene.scale.height;
     if (this.phase === 'bite') {
-      this.label.setVisible(true).setPosition(W / 2, H * 0.28).setText('❗ STRIKE! [E]').setScale(1 + Math.sin(this.t * 20) * 0.08);
+      this.label.setVisible(true).setPosition(W / 2, H * 0.28).setText('❗ STRIKE! [E / click]').setScale(1 + Math.sin(this.t * 20) * 0.08);
     } else if (this.phase === 'wait') {
       this.label.setVisible(true).setPosition(W / 2, H * 0.28).setScale(1).setText('…wait for the bite…');
       this.label.setAlpha(0.6);
@@ -251,7 +251,7 @@ export class Fishing {
     h.fillStyle(0x2a1a10, 1); h.fillRoundedRect(gx + 34, gy, 12, GAUGE_H, 5);
     h.fillStyle(this.progress > 0.66 ? 0x6aff9a : this.progress > 0.33 ? 0xffd27a : 0xff7a5a, 1);
     h.fillRoundedRect(gx + 34, gy + GAUGE_H * (1 - this.progress), 12, GAUGE_H * this.progress, 5);
-    this.label.setVisible(true).setPosition(gx + 18, gy - 26).setScale(0.85).setText('HOLD [E]');
+    this.label.setVisible(true).setPosition(gx + 18, gy - 26).setScale(0.85).setText('HOLD [E / mouse]');
     void FONT_UI;
   }
 }

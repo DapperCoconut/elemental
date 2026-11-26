@@ -3,6 +3,7 @@ import { FONT_DISPLAY, FONT_UI } from '../../ui';
 import { Sfx } from '../../audio';
 import type { NpcLook } from '../IslesTypes';
 import { drawNpc } from './NpcArt';
+import { woodButton, onRightClick, type WoodButton } from './IslesUi';
 
 /**
  * The world's conversation box: a parchment panel along the bottom with the speaker's live
@@ -35,7 +36,9 @@ export class WorldDialogue {
   private titleT: Phaser.GameObjects.Text;
   private body: Phaser.GameObjects.Text;
   private more: Phaser.GameObjects.Text;
-  private choiceTexts: Phaser.GameObjects.Text[] = [];
+  private choiceTexts: WoodButton[] = [];
+  private accent = 0xff9d5c;
+  private choicesAt = 0;
   private opts: DialogueOpts | null = null;
   private idx = 0;
   private shown = 0;
@@ -53,9 +56,11 @@ export class WorldDialogue {
     this.body = scene.add.text(196, H - 138, '', {
       fontFamily: FONT_UI, fontSize: '17px', color: '#3a2412', wordWrap: { width: W - 240 }, lineSpacing: 4,
     });
-    this.more = scene.add.text(W - 44, H - 36, '▶', { fontFamily: FONT_DISPLAY, fontSize: '16px', color: '#8a5a2a' }).setOrigin(1, 1);
+    this.more = scene.add.text(W - 44, H - 36, 'click ▶', { fontFamily: FONT_DISPLAY, fontSize: '16px', color: '#8a5a2a' }).setOrigin(1, 1);
     this.root.add([this.panel, this.face, this.nameT, this.titleT, this.body, this.more]);
     this.drawPanel(0xff9d5c);
+    // Right-click backs out of a conversation (the same as Esc / “Not yet”).
+    onRightClick(scene, () => { if (this.isOpen && scene.time.now - this.openedAt > 150) this.close(); });
   }
 
   get isOpen(): boolean { return this.opts !== null; }
@@ -87,7 +92,9 @@ export class WorldDialogue {
     this.shown = 0;
     this.sel = 0;
     this.openedAt = this.scene.time.now;
-    this.drawPanel(o.accent ?? 0xff9d5c);
+    this.accent = o.accent ?? 0xff9d5c;
+    this.drawPanel(this.accent);
+    this.body.setWordWrapWidth(this.scene.scale.width - 240);
     this.nameT.setText(o.name);
     this.titleT.setText(o.title ?? '');
     this.root.setVisible(true);
@@ -127,16 +134,16 @@ export class WorldDialogue {
     else if (this.opts.look) drawNpc(g, this.opts.look, { x: px, y: py, t: this.t, look: 0.3, moving: false, talking: typing, scale: 2.7 });
 
     this.choiceTexts.forEach((c, i) => {
-      c.setColor(i === this.sel ? '#7a2a08' : '#5a3a1e');
-      c.setText(`${i === this.sel ? '▶ ' : '   '}${this.opts?.choices?.[i]?.label ?? ''}`);
+      c.text.setColor(i === this.sel ? '#7a2a08' : '#3a2412');
+      c.text.setText(`${i === this.sel ? '▶ ' : ''}${this.opts?.choices?.[i]?.label ?? ''}`);
     });
   }
 
-  /** E / Space / click. */
-  advance(): void {
+  /** E / Space / a click on the box (choices are picked by clicking their own buttons). */
+  advance(fromClick = false): void {
     if (!this.opts) return;
     if (this.scene.time.now - this.openedAt < 120) return;
-    if (this.choiceTexts.length) { this.choose(this.sel); return; }
+    if (this.choiceTexts.length) { if (!fromClick) this.choose(this.sel); return; }
     const full = this.line;
     if (this.shown < full.length) { this.shown = full.length; return; }
     if (this.atLast) { this.showChoicesOrFinish(); return; }
@@ -157,14 +164,19 @@ export class WorldDialogue {
     if (o.choices?.length && !this.choiceTexts.length) {
       const H = this.scene.scale.height;
       const W = this.scene.scale.width;
+      // A column of buttons up the right of the box; a long list grows upward over the world.
+      const n = o.choices.length;
+      const bh = 28, gap = 4;
+      const bw = Math.min(420, Math.max(220, ...o.choices.map((c) => c.label.length * 9 + 40)));
+      const bottom = H - 40;
+      this.choicesAt = this.scene.time.now;
+      this.body.setWordWrapWidth(W - 280 - bw);
       o.choices.forEach((c, i) => {
-        const t = this.scene.add.text(W - 60, H - 150 + i * 30, c.label, {
-          fontFamily: FONT_DISPLAY, fontSize: '16px', color: '#5a3a1e',
-        }).setOrigin(1, 0).setInteractive({ useHandCursor: true });
-        t.on('pointerover', () => { this.sel = i; });
-        t.on('pointerdown', () => this.choose(i));
-        this.root.add(t);
-        this.choiceTexts.push(t);
+        const by = bottom - (n - 1 - i) * (bh + gap);
+        const b = woodButton(this.scene, W - 50 - bw / 2, by, bw, bh, c.label, () => { if (this.scene.time.now - this.choicesAt > 150) this.choose(i); }, {
+          parent: this.root, light: true, accent: this.accent, fontSize: 15, onHover: () => { this.sel = i; },
+        });
+        this.choiceTexts.push(b);
       });
       return;
     }

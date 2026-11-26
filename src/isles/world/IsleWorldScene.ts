@@ -30,6 +30,7 @@ import { prepareLoadout } from '../systems/Genome';
 import * as Unrest from '../systems/Unrest';
 import { UnrestWorld, type Roamer } from './UnrestWorld';
 import { CoopWorld } from './CoopWorld';
+import { woodButton } from './IslesUi';
 import { Coop } from '../net/IslesCoop';
 import type { FightCall } from '../net/IslesMsg';
 
@@ -97,6 +98,8 @@ interface BossStand {
   rig: BossRig;
   g: Phaser.GameObjects.Graphics;
   plate: Phaser.GameObjects.Text;
+  /** Already beaten: still stands (faded) for a rematch. */
+  beaten: boolean;
 }
 
 interface Interactable {
@@ -173,6 +176,10 @@ export class IsleWorldScene extends Phaser.Scene {
   private hudCoins!: Phaser.GameObjects.Text;
   private hudTracker!: Phaser.GameObjects.Text;
   private hudPrompt!: Phaser.GameObjects.Text;
+  /** The clickable HUD bar (bag, genes, map, menu): hidden while a panel or talk is open. */
+  private hudButtons: Phaser.GameObjects.GameObject[] = [];
+  private leftClicked = false;
+  private rightClicked = false;
   private hudArea!: Phaser.GameObjects.Text;
   private miniG!: Phaser.GameObjects.Graphics;
   private toasts: { t: Phaser.GameObjects.Text; until: number }[] = [];
@@ -253,8 +260,10 @@ export class IsleWorldScene extends Phaser.Scene {
     this.buildHud();
     // A cheat save carries a fast-travel menu to every area of every isle.
     this.cheatTravel = isCheatMode() ? new CheatTravel(this, def.id, HUD_Z + 10, (id) => this.cheatTravelTo(id)) : null;
-    this.input.on('pointerdown', () => {
-      if (this.dialogue.isOpen) this.dialogue.advance();
+    this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
+      if (this.dialogue.isOpen && !p.rightButtonDown()) this.dialogue.advance(true);
+      // Fishing reads the mouse too: left click strikes, holding it reels, right-click reels in.
+      if (p.rightButtonDown()) this.rightClicked = true; else this.leftClicked = true;
     });
 
     const onResume = () => { this.graceUntil = this.time.now + 150; this.refreshHud(); };
@@ -535,16 +544,23 @@ export class IsleWorldScene extends Phaser.Scene {
   private buildBosses(): void {
     for (const p of this.def.pois) {
       if (p.kind !== 'prince' && p.kind !== 'monarch') continue;
-      const done = p.kind === 'prince' ? Save.S().princes.includes(p.id) : Save.S().monarchs.includes(p.id);
-      if (done) continue;
+      const beaten = p.kind === 'prince' ? Save.S().princes.includes(p.id) : Save.S().monarchs.includes(p.id);
       const def = getIslesBoss(bossIdFor(p.id));
       if (!def) continue;
+      // A beaten boss stays for rematches; if a rebel of the unrest has taken the seat, they stand aside.
+      let at = p.at;
+      if (beaten && this.champions.some((c) => Math.hypot(c.pos.x - p.at.x, c.pos.y - p.at.y) < 90)) {
+        const side = [110, -110].map((dx) => ({ x: p.at.x + dx, y: p.at.y })).find((q) => !this.blocked(q.x, q.y, 20));
+        at = side ?? { x: p.at.x, y: p.at.y + 110 };
+      }
       const rig = new BossRig();
-      rig.reset(p.at.x, p.at.y - 40);
-      const plate = this.add.text(p.at.x, p.at.y - 112, `${def.name}\n${def.title}`, {
-        fontFamily: FONT_DISPLAY, fontSize: '12px', color: '#ffb47a', stroke: '#000', strokeThickness: 4, align: 'center',
+      rig.reset(at.x, at.y - 40);
+      const plate = this.add.text(at.x, at.y - 112, beaten ? `${def.name}\n(beaten)` : `${def.name}\n${def.title}`, {
+        fontFamily: FONT_DISPLAY, fontSize: '12px', color: beaten ? '#a8a090' : '#ffb47a', stroke: '#000', strokeThickness: 4, align: 'center',
       }).setOrigin(0.5, 1).setDepth(9200);
-      this.bosses.push({ kind: p.kind, id: p.id, at: p.at, def, rig, g: this.add.graphics().setDepth(p.at.y), plate });
+      const g = this.add.graphics().setDepth(at.y);
+      if (beaten) g.setAlpha(0.6);
+      this.bosses.push({ kind: p.kind, id: p.id, at, def, rig, g, plate, beaten });
     }
   }
 
@@ -565,7 +581,7 @@ export class IsleWorldScene extends Phaser.Scene {
     }
     for (const c of this.champions) list.push({ ...this.championInteractable(c), championOf: c });
     for (const b of this.bosses) {
-      list.push({ x: b.at.x, y: b.at.y, r: REACH + 30, prio: 2, label: () => `Face ${b.def.name}`, use: () => this.approachBoss(b) });
+      list.push({ x: b.at.x, y: b.at.y, r: REACH + 30, prio: 2, label: () => (b.beaten ? `Rematch ${b.def.name}` : `Face ${b.def.name}`), use: () => this.approachBoss(b) });
     }
     for (const p of this.def.pois) {
       switch (p.kind) {
@@ -792,7 +808,7 @@ export class IsleWorldScene extends Phaser.Scene {
     const portrait = (g: Phaser.GameObjects.Graphics, x: number, y: number, t: number) => this.drawBossAt(g, b, x, y - 40, t, 1.4);
     if (b.kind === 'prince') {
       const court = courtOfArea(this.def.id) ?? [...allAreas()].map((a) => courtOfArea(a.id)).find((c) => c?.prince.id === b.id);
-      const ready = court ? Save.courtReady(court.id) || isCheatMode() : true;
+      const ready = b.beaten || (court ? Save.courtReady(court.id) || isCheatMode() : true);
       if (!ready && court) {
         const all = courtChampions(court);
         const n = all.filter((e) => Save.S().encounters.includes(e.id)).length;
@@ -806,7 +822,7 @@ export class IsleWorldScene extends Phaser.Scene {
         name: b.def.name, title: b.def.title, portrait, accent: b.def.color,
         lines: [...b.def.intro.slice(0, 2)],
         choices: [
-          { label: `Fight ${b.def.name}`, pick: () => this.launchFight({ kind: 'prince', id: b.id, court: court?.id }, court?.element ?? 'fire', 4) },
+          { label: b.beaten ? `Rematch ${b.def.name}` : `Fight ${b.def.name}`, pick: () => this.launchFight({ kind: 'prince', id: b.id, court: court?.id }, court?.element ?? 'fire', 4) },
           { label: 'Not yet', pick: () => {} },
         ],
       });
@@ -816,7 +832,7 @@ export class IsleWorldScene extends Phaser.Scene {
         name: b.def.name, title: b.def.title, portrait, accent: b.def.color,
         lines: [...b.def.intro],
         choices: [
-          { label: isle?.pinnacle ? 'Climb the steps' : `Challenge the ${isle ? 'monarch of ' + isle.name : 'monarch'}`, pick: () => this.launchFight({ kind: 'monarch', id: b.id, court: this.def.id }, isle?.element ?? 'fire', 5) },
+          { label: b.beaten ? `Rematch ${b.def.name}` : isle?.pinnacle ? 'Climb the steps' : `Challenge the ${isle ? 'monarch of ' + isle.name : 'monarch'}`, pick: () => this.launchFight({ kind: 'monarch', id: b.id, court: this.def.id }, isle?.element ?? 'fire', 5) },
           { label: 'Not yet', pick: () => {} },
         ],
       });
@@ -1052,6 +1068,8 @@ export class IsleWorldScene extends Phaser.Scene {
     const back = JD(k.ESC) || JD(k.Q);
     const up = JD(k.W) || JD(k.UP), down = JD(k.S) || JD(k.DOWN), left = JD(k.A) || JD(k.LEFT), right = JD(k.D) || JD(k.RIGHT);
 
+    const lClick = this.leftClicked, rClick = this.rightClicked;
+    this.leftClicked = this.rightClicked = false;
     this.dialogue.update(dt);
     this.ledger.update();
 
@@ -1074,7 +1092,7 @@ export class IsleWorldScene extends Phaser.Scene {
       return;
     }
     if (this.fishing.busy) {
-      this.fishing.update(dt, act, k.E.isDown || k.SPACE.isDown, back);
+      this.fishing.update(dt, act || lClick, k.E.isDown || k.SPACE.isDown || this.input.activePointer.leftButtonDown(), back || rClick);
       this.animateWorld(now, dt, false);
       return;
     }
@@ -1130,7 +1148,8 @@ export class IsleWorldScene extends Phaser.Scene {
       choices: [
         { label: 'Resume', pick: () => {} },
         { label: 'Isle map (M)', pick: () => this.openMap() },
-        { label: 'Inventory (TAB)', pick: () => this.openOverlay('IslesInventoryScene') },
+        { label: 'Bag (TAB)', pick: () => this.openOverlay('IslesInventoryScene') },
+        { label: 'Gene tree (G)', pick: () => this.openOverlay('IslesGeneScene') },
         ...(Coop.active
           ? [{ label: Coop.isHost ? `Close the room (${Coop.roomCode ?? '…'})` : 'Leave the party', pick: () => {
             const guest = Coop.isGuest;
@@ -3984,8 +4003,24 @@ export class IsleWorldScene extends Phaser.Scene {
     this.hudCoins = this.add.text(W - 16, 12, '', { fontFamily: FONT_MONO, fontSize: '15px', color: '#ffe2a8', stroke: '#000', strokeThickness: 4 }).setOrigin(1, 0).setScrollFactor(0).setDepth(HUD_Z + 1);
     this.hudArea = this.add.text(16, 12, '', { fontFamily: FONT_DISPLAY, fontSize: '15px', color: '#ffe2b0', stroke: '#000', strokeThickness: 4 }).setScrollFactor(0).setDepth(HUD_Z + 1);
     this.hudTracker = this.add.text(W - 16, 44, '', { fontFamily: FONT_UI, fontSize: '12px', color: '#f2e2c8', stroke: '#000', strokeThickness: 3, align: 'right', wordWrap: { width: 270 } }).setOrigin(1, 0).setScrollFactor(0).setDepth(HUD_Z + 1);
-    this.hudPrompt = this.add.text(W / 2, H - 46, '', { fontFamily: FONT_DISPLAY, fontSize: '15px', color: '#ffffff', stroke: '#000', strokeThickness: 4 }).setOrigin(0.5).setScrollFactor(0).setDepth(HUD_Z + 1);
-    this.add.text(16, H - 22, 'WASD move · SHIFT run · E interact · TAB bag · G genes · M map · ESC menu', { fontFamily: FONT_UI, fontSize: '11px', color: '#c8b898', stroke: '#000', strokeThickness: 3 }).setScrollFactor(0).setDepth(HUD_Z + 1);
+    this.hudPrompt = this.add.text(W / 2, H - 56, '', { fontFamily: FONT_DISPLAY, fontSize: '15px', color: '#ffffff', stroke: '#000', strokeThickness: 4, padding: { x: 14, y: 8 } }).setOrigin(0.5).setScrollFactor(0).setDepth(HUD_Z + 1);
+    // Click the prompt to use what you are standing at (same as E).
+    this.hudPrompt.setInteractive({ useHandCursor: true }).on('pointerdown', (p: Phaser.Input.Pointer) => {
+      if (p.rightButtonDown() || !this.current || this.hudBusy() || this.time.now < this.graceUntil) return;
+      Sfx.play('ui-click');
+      this.current.use();
+    });
+    const bar: [string, () => void][] = [
+      ['🎒 Bag', () => this.openOverlay('IslesInventoryScene')],
+      ['🧬 Genes', () => this.openOverlay('IslesGeneScene')],
+      ['🗺️ Map', () => this.openMap()],
+      ['☰ Menu', () => this.pauseMenu()],
+    ];
+    bar.forEach(([label, fn], i) => {
+      const b = woodButton(this, 16 + 38 + i * 82, H - 24, 76, 28, label, () => { if (!this.hudBusy() && !this.leaving) fn(); }, { depth: HUD_Z + 1, fontSize: 13, accent: 0xc8a06a });
+      this.hudButtons.push(...b.objs);
+    });
+    this.add.text(16 + 4 * 82 + 4, H - 24, 'WASD move · SHIFT run · E / click prompt', { fontFamily: FONT_UI, fontSize: '11px', color: '#c8b898', stroke: '#000', strokeThickness: 3 }).setOrigin(0, 0.5).setScrollFactor(0).setDepth(HUD_Z + 1);
     this.miniG = this.add.graphics().setScrollFactor(0).setDepth(HUD_Z);
     this.refreshHud();
   }
@@ -4012,6 +4047,10 @@ export class IsleWorldScene extends Phaser.Scene {
     this.hudTracker.setText([...trouble, ...rows.map((r) => `${r.ready ? '✔' : '◆'} ${r.name}\n${r.hint}`)].join('\n'));
   }
 
+  private hudBusy(): boolean {
+    return this.dialogue.isOpen || this.ledger.isOpen || this.fishing.busy;
+  }
+
   private updateHud(now: number): void {
     const W = this.scale.width, H = this.scale.height;
     const g = this.hudG;
@@ -4019,10 +4058,12 @@ export class IsleWorldScene extends Phaser.Scene {
     g.fillStyle(0x000000, 0.35); g.fillRoundedRect(8, 6, this.hudArea.width + 20, 28, 8);
     g.fillRoundedRect(W - this.hudCoins.width - 28, 6, this.hudCoins.width + 20, 28, 8);
     if (this.hudTracker.text) g.fillRoundedRect(W - 290, 38, 282, this.hudTracker.height + 12, 8);
-    const busy = this.dialogue.isOpen || this.ledger.isOpen || this.fishing.busy;
+    const busy = this.hudBusy();
+    for (const b of this.hudButtons) (b as unknown as Phaser.GameObjects.Components.Visible).setVisible(!busy);
     if (this.current && !busy) {
-      this.hudPrompt.setText(`[E]  ${this.current.label()}`).setVisible(true);
-      g.fillStyle(0x000000, 0.5); g.fillRoundedRect(W / 2 - this.hudPrompt.width / 2 - 14, H - 62, this.hudPrompt.width + 28, 32, 10);
+      this.hudPrompt.setText(`[E / click]  ${this.current.label()}`).setVisible(true);
+      g.fillStyle(0x000000, 0.55); g.fillRoundedRect(W / 2 - this.hudPrompt.width / 2, H - 56 - this.hudPrompt.height / 2, this.hudPrompt.width, this.hudPrompt.height, 10);
+      g.lineStyle(1, 0xffe2b0, 0.5); g.strokeRoundedRect(W / 2 - this.hudPrompt.width / 2, H - 56 - this.hudPrompt.height / 2, this.hudPrompt.width, this.hudPrompt.height, 10);
     } else this.hudPrompt.setVisible(false);
     // Toasts
     this.toasts = this.toasts.filter((t) => { if (now > t.until) { t.t.destroy(); return false; } return true; });
@@ -4047,7 +4088,7 @@ export class IsleWorldScene extends Phaser.Scene {
       g.fillRect(x0 + Phaser.Math.Clamp(e.rect.x + e.rect.w / 2, 0, this.def.w) * sx - 3, y0 + Phaser.Math.Clamp(e.rect.y + e.rect.h / 2, 0, this.def.h) * sy - 3, 6, 6);
     }
     for (const c of this.champions) { g.fillStyle(c.beaten ? 0x6a6a6a : c.enc.quest ? 0x6ac8ff : 0xff6a3a, 1); g.fillCircle(x0 + c.pos.x * sx, y0 + c.pos.y * sy, c.enc.unrest ? 3.2 : 2.5); }
-    for (const b of this.bosses) { g.fillStyle(0xff3a5a, 1); g.fillCircle(x0 + b.at.x * sx, y0 + b.at.y * sy, 4); }
+    for (const b of this.bosses) { g.fillStyle(b.beaten ? 0x6a6a6a : 0xff3a5a, 1); g.fillCircle(x0 + b.at.x * sx, y0 + b.at.y * sy, 4); }
     for (const a of this.actors) {
       const quest = allQuests().some((q) => q.giver === a.def.id && (Quests.offerable(q) || Quests.isReady(q)));
       g.fillStyle(quest ? 0xffd23a : 0xc8c0b0, quest ? 1 : 0.6); g.fillCircle(x0 + a.x * sx, y0 + a.y * sy, quest ? 2.5 : 1.5);

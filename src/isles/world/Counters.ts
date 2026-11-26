@@ -11,12 +11,14 @@ import {
 } from '../IslesRegistry';
 import type { IsleItemDef } from '../IslesTypes';
 import * as Quests from '../systems/Quests';
+import { woodButton, onRightClick, onWheel } from './IslesUi';
 
 /**
  * The counters you walk up to: a shop, the tackle stall, a bakery, the dock. Each is one
  * screen-space ledger panel (rows on the left, the selected row's detail on the right) drawn over
- * the living world. Keyboard: W/S or arrows pick, E/Enter acts, A/D or Tab switches tab, Esc/Q
- * leaves. Mouse works on everything.
+ * the living world. Mouse first: click a row to pick it (click it again, or the button, to act),
+ * the wheel scrolls, click a tab, ✕ or right-click leaves. Keyboard still works: W/S pick, E acts,
+ * A/D or Tab switches tab, Esc/Q leaves.
  */
 
 const Z = 31000;
@@ -49,11 +51,21 @@ export class LedgerPanel {
   private onClose: (() => void) | null = null;
   private note = '';
   private noteUntil = 0;
+  /** Keep the selection on screen (keyboard); the wheel turns this off and scrolls freely. */
+  private followSel = true;
+  private openedAt = 0;
 
   constructor(private scene: Phaser.Scene) {
     this.root = scene.add.container(0, 0).setScrollFactor(0).setDepth(Z).setVisible(false);
     this.g = scene.add.graphics();
     this.root.add(this.g);
+    onWheel(scene, (dir) => {
+      if (!this.isOpen) return;
+      this.followSel = false;
+      this.scroll += dir;
+      this.render();
+    });
+    onRightClick(scene, () => { if (this.isOpen && scene.time.now - this.openedAt > 150) this.close(); });
   }
 
   get isOpen(): boolean { return this.root.visible; }
@@ -66,6 +78,8 @@ export class LedgerPanel {
     this.scroll = 0;
     this.accent = accent;
     this.onClose = onClose ?? null;
+    this.followSel = true;
+    this.openedAt = this.scene.time.now;
     this.root.setVisible(true);
     Sfx.play('ui-open');
     this.render();
@@ -86,6 +100,7 @@ export class LedgerPanel {
     if (!this.isOpen) return;
     const rows = this.rows();
     if (k === 'back') { this.close(); return; }
+    this.followSel = true;
     if (k === 'up') this.sel = Math.max(0, this.sel - 1);
     if (k === 'down') this.sel = Math.min(rows.length - 1, this.sel + 1);
     if (k === 'left' || k === 'right') {
@@ -96,6 +111,13 @@ export class LedgerPanel {
       }
     }
     if (k === 'act') this.act();
+    this.render();
+  }
+
+  private setTab(i: number): void {
+    if (i === this.tab) return;
+    this.tab = i; this.sel = 0; this.scroll = 0; this.followSel = true;
+    Sfx.play('ui-tab');
     this.render();
   }
 
@@ -130,14 +152,23 @@ export class LedgerPanel {
       this.root.add(t); this.dyn.push(t); return t;
     };
     txt(x + 22, y + 14, this.title, { fontFamily: FONT_DISPLAY, fontSize: '22px', color: '#ffe2b0' });
-    txt(x + w - 22, y + 18, `🪙 ${Save.S().coins}   🔮 ${Save.S().orbs}   🗝️ ${Save.S().keys}`, { fontFamily: FONT_MONO, fontSize: '15px', color: '#ffd27a' }).setOrigin(1, 0);
+    txt(x + w - 70, y + 18, `🪙 ${Save.S().coins}   🔮 ${Save.S().orbs}   🗝️ ${Save.S().keys}`, { fontFamily: FONT_MONO, fontSize: '15px', color: '#ffd27a' }).setOrigin(1, 0);
+    const btn = (bx: number, by: number, bw: number, bh: number, label: string, fn: () => void, fs = 15, disabled = false) => {
+      const b = woodButton(this.scene, bx, by, bw, bh, label, fn, { accent: this.accent, parent: this.root, fontSize: fs, disabled });
+      this.dyn.push(...b.objs);
+      return b;
+    };
+    btn(x + w - 32, y + 26, 36, 32, '✕', () => this.close(), 16);
 
     // Tabs
     if (this.tabs.length > 1) {
       let tx = x + 22;
       this.tabs.forEach((tb, i) => {
-        const t = txt(tx, y + 62, tb.label, { fontFamily: FONT_DISPLAY, fontSize: '14px', color: i === this.tab ? '#ffe2b0' : '#8a6a4a' });
-        t.setInteractive({ useHandCursor: true }).on('pointerdown', () => { this.tab = i; this.sel = 0; this.scroll = 0; this.render(); });
+        const t = txt(tx, y + 62, tb.label, { fontFamily: FONT_DISPLAY, fontSize: '14px', color: i === this.tab ? '#ffe2b0' : '#8a6a4a', padding: { x: 4, y: 4 } });
+        t.setInteractive({ useHandCursor: true })
+          .on('pointerover', () => { if (i !== this.tab) t.setColor('#d8b890'); })
+          .on('pointerout', () => { if (i !== this.tab) t.setColor('#8a6a4a'); })
+          .on('pointerdown', (p: Phaser.Input.Pointer) => { if (!p.rightButtonDown()) this.setTab(i); });
         if (i === this.tab) { g.fillStyle(this.accent, 1); g.fillRect(tx, y + 82, t.width, 2); }
         tx += t.width + 26;
       });
@@ -146,8 +177,11 @@ export class LedgerPanel {
     const rows = this.rows();
     const listY = y + 94, rowH = 38, listW = w * 0.52;
     const visible = Math.floor((h - 150) / rowH);
-    if (this.sel < this.scroll) this.scroll = this.sel;
-    if (this.sel >= this.scroll + visible) this.scroll = this.sel - visible + 1;
+    if (this.followSel) {
+      if (this.sel < this.scroll) this.scroll = this.sel;
+      if (this.sel >= this.scroll + visible) this.scroll = this.sel - visible + 1;
+    }
+    this.scroll = Phaser.Math.Clamp(this.scroll, 0, Math.max(0, rows.length - visible));
     if (rows.length === 0) txt(x + 30, listY + 10, 'Nothing here yet.', { fontFamily: FONT_UI, fontSize: '16px', color: '#8a6a4a' });
     rows.slice(this.scroll, this.scroll + visible).forEach((r, k) => {
       const i = k + this.scroll;
@@ -156,13 +190,29 @@ export class LedgerPanel {
       g.fillStyle(on ? 0x4a2e1a : 0x2e1c10, 1); g.fillRoundedRect(x + 18, ry, listW, rowH - 4, 8);
       if (on) { g.lineStyle(2, this.accent, 1); g.strokeRoundedRect(x + 18, ry, listW, rowH - 4, 8); }
       const zone = this.scene.add.zone(x + 18, ry, listW, rowH - 4).setOrigin(0).setInteractive({ useHandCursor: true });
-      zone.on('pointerdown', () => { if (this.sel === i) this.act(); else this.sel = i; this.render(); });
-      this.root.add(zone); this.dyn.push(zone);
+      const hov = this.scene.add.graphics();
+      zone.on('pointerover', () => { if (!on) { hov.clear(); hov.lineStyle(1, this.accent, 0.6); hov.strokeRoundedRect(x + 18, ry, listW, rowH - 4, 8); } });
+      zone.on('pointerout', () => hov.clear());
+      zone.on('pointerdown', (p: Phaser.Input.Pointer) => {
+        if (p.rightButtonDown()) return;
+        if (this.sel === i) this.act(); else { this.sel = i; Sfx.play('ui-hover'); }
+        this.render();
+      });
+      this.root.add([hov, zone]); this.dyn.push(hov, zone);
       txt(x + 30, ry + 7, `${r.icon}  ${r.name}`, { fontFamily: FONT_UI, fontSize: '16px', color: r.dim ? '#7a6050' : '#f2e2c8' });
       txt(x + 18 + listW - 12, ry + 8, r.right, { fontFamily: FONT_MONO, fontSize: '14px', color: r.rightColor ?? '#ffd27a' }).setOrigin(1, 0);
     });
     if (rows.length > visible) {
-      txt(x + 18 + listW / 2, y + h - 40, `${this.scroll + 1}–${Math.min(rows.length, this.scroll + visible)} of ${rows.length}`, { fontFamily: FONT_UI, fontSize: '12px', color: '#8a6a4a' }).setOrigin(0.5, 0);
+      // Scrollbar: a track down the list's right edge with ▲ / ▼ buttons; the wheel works anywhere.
+      const sbx = x + 18 + listW + 12, top = listY + 16, bot = listY + visible * rowH - 20;
+      g.fillStyle(0x1a100a, 1); g.fillRoundedRect(sbx - 4, top, 8, bot - top, 4);
+      const span = bot - top, th = Math.max(24, span * visible / rows.length);
+      const ty = top + (span - th) * (this.scroll / Math.max(1, rows.length - visible));
+      g.fillStyle(this.accent, 0.9); g.fillRoundedRect(sbx - 4, ty, 8, th, 4);
+      const step = (d: number) => { this.followSel = false; this.scroll += d; this.render(); };
+      btn(sbx, listY + 4, 20, 20, '▲', () => step(-visible + 1), 10, this.scroll <= 0);
+      btn(sbx, listY + visible * rowH - 8, 20, 20, '▼', () => step(visible - 1), 10, this.scroll >= rows.length - visible);
+      txt(x + 18 + listW / 2, y + h - 40, `${this.scroll + 1}–${Math.min(rows.length, this.scroll + visible)} of ${rows.length}  ·  scroll for more`, { fontFamily: FONT_UI, fontSize: '12px', color: '#8a6a4a' }).setOrigin(0.5, 0);
     }
 
     // Detail
@@ -172,15 +222,9 @@ export class LedgerPanel {
     if (r) {
       txt(dx + 6, listY + 12, `${r.icon} ${r.name}`, { fontFamily: FONT_DISPLAY, fontSize: '18px', color: '#ffe2b0', wordWrap: { width: dw - 12 } });
       txt(dx + 6, listY + 46, r.detail.join('\n'), { fontFamily: FONT_UI, fontSize: '14px', color: '#e2ccaa', wordWrap: { width: dw - 16 }, lineSpacing: 5 });
-      if (r.verb) {
-        const bx = dx + dw / 2, by = y + h - 70;
-        g.fillStyle(this.accent, 1); g.fillRoundedRect(bx - 110, by - 18, 220, 38, 10);
-        g.fillStyle(0x2a1408, 1); g.fillRoundedRect(bx - 106, by - 14, 212, 30, 8);
-        const b = txt(bx, by + 1, `[E]  ${r.verb}`, { fontFamily: FONT_DISPLAY, fontSize: '16px', color: '#ffe2b0' }).setOrigin(0.5);
-        b.setInteractive({ useHandCursor: true }).on('pointerdown', () => this.act());
-      }
+      if (r.verb) btn(dx + dw / 2, y + h - 70, 240, 40, r.verb, () => this.act(), 16);
     }
-    txt(x + 22, y + h - 26, 'W/S select · E act · A/D tabs · Esc leave', { fontFamily: FONT_UI, fontSize: '12px', color: '#8a6a4a' });
+    txt(x + 22, y + h - 26, 'Click to pick · click again or the button to act · wheel scrolls · right-click or ✕ to leave', { fontFamily: FONT_UI, fontSize: '12px', color: '#8a6a4a' });
     if (this.note) {
       txt(W / 2, y + h - 30, this.note, { fontFamily: FONT_DISPLAY, fontSize: '15px', color: '#9dffb0', stroke: '#000', strokeThickness: 3 }).setOrigin(0.5, 1);
     }

@@ -7,6 +7,7 @@ import * as Save from '../IslesSave';
 import { getArea, ISLES } from '../IslesRegistry';
 import { drawPinnacle } from '../art/PinnacleArt';
 import { Coop } from '../net/IslesCoop';
+import { woodButton, onRightClick, onWheel } from '../world/IslesUi';
 
 /**
  * The Ten Isles' front door: three save slots over a moonlit sea, and — for an empty slot — the
@@ -37,6 +38,13 @@ export class IslesSlotScene extends Phaser.Scene {
     this.sel = Save.activeIndex();
     this.elements = allSelectableElements().filter((e) => e.id !== 'quantum');
     this.bg = this.add.graphics();
+    onRightClick(this, () => this.back());
+    onWheel(this, (dir) => {
+      if (this.mode !== 'pick') return;
+      const n = this.elements.length;
+      this.pickSel = Phaser.Math.Clamp(this.pickSel + dir, 0, n - 1);
+      this.render();
+    });
     this.keys = this.input.keyboard!.addKeys('W,S,A,D,UP,DOWN,LEFT,RIGHT,E,SPACE,ENTER,ESC,X,DELETE,J') as Record<string, Phaser.Input.Keyboard.Key>;
     this.render();
   }
@@ -52,7 +60,7 @@ export class IslesSlotScene extends Phaser.Scene {
       if (down) { this.sel = (this.sel + 1) % 3; Sfx.play('ui-hover'); this.render(); }
       if (go) this.choose(this.sel);
       // J: take this voyage into a friend's world.
-      if (JD(k.J) && Save.slots()[this.sel]) { Save.setActive(this.sel); Sfx.play('ui-click'); this.scene.start('IslesJoinScene'); return; }
+      if (JD(k.J) && Save.slots()[this.sel]) { this.join(this.sel); return; }
       if ((JD(k.X) || JD(k.DELETE)) && Save.slots()[this.sel]) { this.mode = 'confirmDelete'; this.render(); }
       if (back) this.scene.start('TitleScene');
     } else if (this.mode === 'pick') {
@@ -60,12 +68,28 @@ export class IslesSlotScene extends Phaser.Scene {
       if (up) { this.pickSel = (this.pickSel - 1 + n) % n; this.render(); }
       if (down) { this.pickSel = (this.pickSel + 1) % n; this.render(); }
       if (go) this.create_(this.sel, this.elements[this.pickSel].id);
-      if (back) { this.mode = 'slots'; this.render(); }
+      if (back) this.back();
       if (this.preview) this.preview.update(delta, 700, 400, false, Math.PI / 2 + Math.sin(time / 900) * 0.6);
     } else if (this.mode === 'confirmDelete') {
       if (JD(k.E) || JD(k.ENTER)) { Save.deleteSlot(this.sel); Sfx.play('ui-back'); this.mode = 'slots'; this.render(); }
       if (back || JD(k.SPACE)) { this.mode = 'slots'; this.render(); }
     }
+  }
+
+  /** Esc / right-click / the Back button: one step out. */
+  private back(): void {
+    if (this.mode === 'slots') this.scene.start('TitleScene');
+    else { this.mode = 'slots'; this.render(); }
+  }
+
+  private join(i: number): void {
+    if (!Save.slots()[i]) return;
+    Save.setActive(i); Sfx.play('ui-click'); this.scene.start('IslesJoinScene');
+  }
+
+  private btn(x: number, y: number, w: number, label: string, fn: () => void, o: { accent?: number; disabled?: boolean } = {}): void {
+    const b = woodButton(this, x, y, w, 32, label, fn, { accent: o.accent ?? 0xffa050, depth: 10, fontSize: 14, disabled: o.disabled });
+    this.dyn.push(...b.objs);
   }
 
   private choose(i: number): void {
@@ -155,7 +179,7 @@ export class IslesSlotScene extends Phaser.Scene {
       g.fillStyle(on ? 0x2e1c10 : 0x1a120c, 0.95); g.fillRoundedRect(W / 2 - 300, y, 600, 100, 14);
       g.lineStyle(on ? 3 : 1, on ? 0xffa050 : 0x5a3a24, 1); g.strokeRoundedRect(W / 2 - 300, y, 600, 100, 14);
       const zone = this.add.zone(W / 2 - 300, y, 600, 100).setOrigin(0).setInteractive({ useHandCursor: true });
-      zone.on('pointerdown', () => this.choose(i));
+      zone.on('pointerdown', (p: Phaser.Input.Pointer) => { if (!p.rightButtonDown() && this.mode === 'slots') this.choose(i); });
       zone.on('pointerover', () => { if (this.sel !== i) { this.sel = i; this.render(); } });
       this.dyn.push(zone);
       if (!s) {
@@ -168,10 +192,21 @@ export class IslesSlotScene extends Phaser.Scene {
       this.text(W / 2 - 276, y + 46, `${s.element.toUpperCase()}  ·  ${area?.name ?? s.area}${isle ? `, ${isle.name}` : ''}`, { fontFamily: FONT_UI, fontSize: '15px', color: '#d8b888' });
       this.text(W / 2 - 276, y + 70, `${s.hard ? '☄ THE FALL   ' : ''}Princes ${s.princes.length}/60   Monarchs ${s.monarchs.filter((m) => m !== 'obsidian-king').length}/10   Quests ${Object.values(s.quests).filter((q) => q.done).length}`, { fontFamily: FONT_UI, fontSize: '13px', color: '#a88868' });
       this.text(W / 2 + 276, y + 18, `🪙 ${s.coins}\n🔮 ${s.orbs}\n🗝️ ${s.keys}`, { fontFamily: FONT_MONO, fontSize: '14px', color: '#ffd27a', align: 'right' }).setOrigin(1, 0);
+      // Per-slot buttons, just right of the card.
+      if (this.mode === 'slots') {
+        this.btn(W / 2 + 300 + 70, y + 30, 120, '🤝 Join friend', () => this.join(i), { accent: 0x6ac8ff });
+        this.btn(W / 2 + 300 + 70, y + 70, 120, '🗑 Delete', () => { this.sel = i; this.mode = 'confirmDelete'; this.render(); }, { accent: 0xc84a3a });
+      }
     });
+    if (this.mode === 'confirmDelete') {
+      this.btn(W / 2 - 90, 590, 160, '🗑 Delete forever', () => { Save.deleteSlot(this.sel); Sfx.play('ui-back'); this.mode = 'slots'; this.render(); }, { accent: 0xc84a3a });
+      this.btn(W / 2 + 90, 590, 160, 'Keep it', () => { this.mode = 'slots'; this.render(); });
+    } else {
+      this.btn(90, 600, 120, '◀ Back', () => this.back(), { accent: 0x8a6a4a });
+    }
     const help = this.mode === 'confirmDelete'
-      ? `Delete ${slots[this.sel]?.name ?? 'this voyage'} forever?  E = delete · ESC = keep`
-      : 'W/S choose · E start · J join a friend · X delete · ESC back';
+      ? `Delete ${slots[this.sel]?.name ?? 'this voyage'} forever?`
+      : 'Click a voyage to start it · right-click to go back';
     this.text(W / 2, 540, help, { fontFamily: FONT_UI, fontSize: '15px', color: this.mode === 'confirmDelete' ? '#ff8a7a' : '#b89878', stroke: '#000', strokeThickness: 3 }).setOrigin(0.5);
   }
 
@@ -191,7 +226,10 @@ export class IslesSlotScene extends Phaser.Scene {
       if (on) { g.fillStyle(e.color, 0.3); g.fillRoundedRect(158, y, 314, 30, 8); g.lineStyle(2, e.color, 1); g.strokeRoundedRect(158, y, 314, 30, 8); }
       g.fillStyle(e.color, 1); g.fillCircle(178, y + 15, 7);
       const t = this.text(196, y + 6, e.name, { fontFamily: FONT_UI, fontSize: '16px', color: on ? '#ffffff' : '#c8b898' });
-      t.setInteractive({ useHandCursor: true }).on('pointerdown', () => { if (this.pickSel === i) this.create_(this.sel, e.id); else { this.pickSel = i; this.render(); } });
+      t.setInteractive({ useHandCursor: true }).on('pointerdown', (p: Phaser.Input.Pointer) => {
+        if (p.rightButtonDown()) return;
+        if (this.pickSel === i) this.create_(this.sel, e.id); else { this.pickSel = i; Sfx.play('ui-hover'); this.render(); }
+      });
     });
     const e = this.elements[this.pickSel];
     g.fillStyle(0x000000, 0.45); g.fillRoundedRect(560, 200, 280, 300, 14);
@@ -200,6 +238,8 @@ export class IslesSlotScene extends Phaser.Scene {
     this.preview.container.setScale(1.3);
     this.text(700, 230, e.name.toUpperCase(), { fontFamily: FONT_DISPLAY, fontSize: '24px', color: hex(e.color), stroke: '#000', strokeThickness: 5 }).setOrigin(0.5);
     this.text(700, 470, 'You can change element later from your bag.', { fontFamily: FONT_UI, fontSize: '12px', color: '#a88868', wordWrap: { width: 250 }, align: 'center' }).setOrigin(0.5);
-    this.text(W / 2, 580, 'W/S choose · E begin · ESC back', { fontFamily: FONT_UI, fontSize: '15px', color: '#b89878', stroke: '#000', strokeThickness: 3 }).setOrigin(0.5);
+    this.btn(700, 530, 220, `Begin as ${e.name}`, () => this.create_(this.sel, e.id), { accent: e.color });
+    this.btn(90, 600, 120, '◀ Back', () => this.back(), { accent: 0x8a6a4a });
+    this.text(W / 2, 580, 'Click an element · wheel scrolls · right-click to go back', { fontFamily: FONT_UI, fontSize: '15px', color: '#b89878', stroke: '#000', strokeThickness: 3 }).setOrigin(0.5);
   }
 }

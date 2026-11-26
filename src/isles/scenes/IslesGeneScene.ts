@@ -1,4 +1,5 @@
 import Phaser from 'phaser';
+import { woodButton, onRightClick } from '../world/IslesUi';
 import { FONT_DISPLAY, FONT_UI, FONT_MONO } from '../../ui';
 import { Sfx } from '../../audio';
 import { findElementDef } from '../../data/ElementRoster';
@@ -37,6 +38,7 @@ export class IslesGeneScene extends Phaser.Scene {
     this.color = findElementDef(this.element)?.color ?? 0xff7a2f;
     this.sel = 0;
     this.g = this.add.graphics();
+    onRightClick(this, () => this.close());
     this.keys = this.input.keyboard!.addKeys('W,S,A,D,UP,DOWN,LEFT,RIGHT,E,SPACE,ENTER,M,ESC,Q,G') as Record<string, Phaser.Input.Keyboard.Key>;
     this.render();
   }
@@ -83,7 +85,7 @@ export class IslesGeneScene extends Phaser.Scene {
     if (!nodeUnlocked(this.element, n)) { Sfx.play('ui-denied'); this.say('Sequence the genes beneath it first.'); return; }
     const lvl = Save.geneLevel(this.element, n.id);
     const cost = nextCost(n, lvl);
-    if (cost === null) { this.say(n.mastery && !isMastered(this.element, n.id) ? 'Maxed — press M to Master it.' : 'Fully sequenced.'); return; }
+    if (cost === null) { this.say(n.mastery && !isMastered(this.element, n.id) ? 'Maxed — Master it below.' : 'Fully sequenced.'); return; }
     if (!Save.spendOrbs(cost)) { Sfx.play('ui-denied'); this.say(`Needs ${cost} 🔮.`); return; }
     Save.setGeneLevel(this.element, n.id, lvl + 1);
     Sfx.play('level-up');
@@ -177,11 +179,16 @@ export class IslesGeneScene extends Phaser.Scene {
     this.dyn = [];
     const W = this.scale.width;
     const txt = (x: number, y: number, s: string, st: Phaser.Types.GameObjects.Text.TextStyle) => { const t = this.add.text(x, y, s, st); this.dyn.push(t); return t; };
+    const btn = (x: number, y: number, w: number, label: string, fn: () => void, disabled = false) => {
+      const b = woodButton(this, x, y, w, 32, label, fn, { accent: this.color, depth: 10, fontSize: 14, disabled });
+      this.dyn.push(...b.objs);
+    };
+    btn(W - 34, 70, 36, '✕', () => this.close());
     const el = findElementDef(this.element);
     if (!this.tree) {
       txt(W / 2, 260, 'GENOME UNSEQUENCED', { fontFamily: FONT_DISPLAY, fontSize: '30px', color: '#d0a8ff', stroke: '#000', strokeThickness: 5 }).setOrigin(0.5);
       txt(W / 2, 310, `${el?.name ?? this.element}'s genes will be sequenced when its isle is charted.\nChange element from your bag (TAB) to grow another tree.`, { fontFamily: FONT_UI, fontSize: '16px', color: '#c8b8e8', align: 'center' }).setOrigin(0.5);
-      txt(W / 2, 600, 'ESC / G to close', { fontFamily: FONT_UI, fontSize: '13px', color: '#8a7aa8' }).setOrigin(0.5);
+      txt(W / 2, 600, 'Right-click, ✕ or ESC to close', { fontFamily: FONT_UI, fontSize: '13px', color: '#8a7aa8' }).setOrigin(0.5);
       return;
     }
     const tree = this.tree;
@@ -196,7 +203,7 @@ export class IslesGeneScene extends Phaser.Scene {
       txt(p.x, p.y, n.infinite ? `∞${lvl ? lvl : ''}` : `${lvl}/${n.maxLevel}`, { fontFamily: FONT_MONO, fontSize: '13px', color: '#ffffff', stroke: '#000', strokeThickness: 3 }).setOrigin(0.5);
       txt(p.x, p.y + NODE_R + 9, n.name, { fontFamily: FONT_UI, fontSize: '10px', color: '#d8c8f0', stroke: '#000', strokeThickness: 3, align: 'center', wordWrap: { width: 140 } }).setOrigin(0.5, 0);
       const z = this.add.zone(p.x, p.y, NODE_R * 2 + 10, NODE_R * 2 + 10).setInteractive({ useHandCursor: true });
-      z.on('pointerdown', () => { if (this.sel === i) this.levelUp(); else { this.sel = i; this.render(); } });
+      z.on('pointerdown', (ptr: Phaser.Input.Pointer) => { if (ptr.rightButtonDown()) return; if (this.sel === i) this.levelUp(); else { this.sel = i; Sfx.play('ui-hover'); this.render(); } });
       this.dyn.push(z);
     });
 
@@ -218,11 +225,16 @@ export class IslesGeneScene extends Phaser.Scene {
     if (!open) lines.push(`Needs: ${n.needs.map((id) => tree.nodes.find((x) => x.id === id)?.name ?? id).join(', ')}`);
     if (n.mastery) {
       const m = isMastered(this.element, n.id);
-      lines.push('', `${m ? '★' : '☆'} Mastery — ${n.mastery.name}`, n.mastery.text, m ? 'Mastered.' : `${n.mastery.cost} 🔮 once maxed  [M]`);
+      lines.push('', `${m ? '★' : '☆'} Mastery — ${n.mastery.name}`, n.mastery.text, m ? 'Mastered.' : `${n.mastery.cost} 🔮 once maxed`);
     }
+    // The buttons along the foot of the detail card.
+    const bx = dx + 126;
+    const canMaster = !!n.mastery && !isMastered(this.element, n.id) && lvl >= n.maxLevel;
+    if (cost !== null) btn(bx, n.mastery ? 528 : 566, 250, open ? `🧬 Sequence — ${cost} 🔮` : '🔒 Locked', () => this.levelUp(), !open);
+    if (n.mastery && !isMastered(this.element, n.id)) btn(bx, 566, 250, `★ Master — ${n.mastery.cost} 🔮`, () => this.master(), !canMaster);
     txt(dx, 110, n.name, { fontFamily: FONT_DISPLAY, fontSize: '18px', color: '#ffffff', wordWrap: { width: 250 } });
     txt(dx, 146, lines.join('\n'), { fontFamily: FONT_UI, fontSize: '13px', color: '#d8c8f0', wordWrap: { width: 250 }, lineSpacing: 3 });
-    txt(W / 2 - 60, 616, 'Arrows move · E sequence · M master · ESC close', { fontFamily: FONT_UI, fontSize: '12px', color: '#8a7aa8' }).setOrigin(0.5);
+    txt(W / 2 - 60, 616, 'Click a gene to read it · click again or the button to sequence · right-click or ✕ to close', { fontFamily: FONT_UI, fontSize: '12px', color: '#8a7aa8' }).setOrigin(0.5);
     if (this.note) txt(410, 600, this.note, { fontFamily: FONT_DISPLAY, fontSize: '15px', color: '#9dffb0', stroke: '#000', strokeThickness: 4 }).setOrigin(0.5, 1);
   }
 }

@@ -5,6 +5,7 @@ import { Sfx } from '../../audio';
 import * as Save from '../IslesSave';
 import * as Unrest from '../systems/Unrest';
 import { Coop } from '../net/IslesCoop';
+import { woodButton, onRightClick } from '../world/IslesUi';
 import { getArea, courtOfArea, isleOf, getIsle, ALL_ISLE_IDS, ISLES, benchSeats, courtChampions } from '../IslesRegistry';
 import { benchOf } from '../content/pinnacle/spec';
 import { drawPinnacle, OBS } from '../art/PinnacleArt';
@@ -166,6 +167,7 @@ export class IslesMapScene extends Phaser.Scene {
 
   create(): void {
     this.g = this.add.graphics();
+    onRightClick(this, () => this.close());
     this.keys = this.input.keyboard!.addKeys('W,S,A,D,UP,DOWN,LEFT,RIGHT,E,SPACE,ENTER,ESC,M,Q,TAB') as Record<string, Phaser.Input.Keyboard.Key>;
     this.render();
   }
@@ -677,7 +679,12 @@ export class IslesMapScene extends Phaser.Scene {
     const isle = getIsle(isleOf(this.from) ?? 'fire');
     txt(56, 46, this.tab === 'isle' ? `${isle?.name ?? 'The Isle'}` : 'THE TEN ISLES', { fontFamily: FONT_DISPLAY, fontSize: '26px', color: '#3a2412' });
     txt(56, 78, this.tab === 'isle' ? `Held by ${isle?.monarch.name}, ${isle?.monarch.title}` : `Sea chart — ${ISLES.length} of ${ALL_ISLE_IDS.length} isles charted`, { fontFamily: FONT_UI, fontSize: '14px', color: '#5a3a1e' });
-    txt(W - 60, 48, '[TAB] ' + (this.tab === 'isle' ? 'Sea chart' : 'Isle map'), { fontFamily: FONT_DISPLAY, fontSize: '13px', color: '#5a3a1e' }).setOrigin(1, 0);
+    const btn = (x: number, y: number, w: number, label: string, fn: () => void, disabled = false) => {
+      const b = woodButton(this, x, y, w, 30, label, fn, { light: true, accent: 0x8a5a2a, depth: 10, fontSize: 13, disabled });
+      this.dyn.push(...b.objs);
+    };
+    btn(W - 66, 62, 36, '✕', () => this.close());
+    btn(W - 180, 62, 170, this.tab === 'isle' ? '🧭 Sea chart (TAB)' : '🗺️ Isle map (TAB)', () => { this.tab = this.tab === 'isle' ? 'sea' : 'isle'; Sfx.play('ui-tab'); this.render(); });
     if (this.tab === 'isle') {
       const L = this.layout();
       const s = Save.S();
@@ -691,15 +698,19 @@ export class IslesMapScene extends Phaser.Scene {
         else if (court) sub = s.princes.includes(court.prince.id) ? 'freed' : `${courtChampions(court).filter((e) => s.encounters.includes(e.id)).length}/${courtChampions(court).length} · ${court.prince.name}`;
         else if (benchSeats(id).length) sub = `${benchSeats(id).filter((e) => s.encounters.includes(e)).length}/${benchSeats(id).length} seats`;
         const t = txt(p.x, p.y + 24, `${label}${sub ? `\n${sub}` : ''}`, { fontFamily: FONT_UI, fontSize: '12px', color: id === this.sel ? '#1a0a00' : '#3a2412', align: 'center', fontStyle: id === this.sel ? 'bold' : 'normal' }).setOrigin(0.5, 0);
-        const z = this.add.zone(p.x, p.y, 48, 48).setInteractive({ useHandCursor: true });
-        z.on('pointerdown', () => { if (this.sel === id) this.travel(id); else { this.sel = id; this.render(); } });
+        const z = this.add.zone(p.x, p.y + 10, 84, 64).setInteractive({ useHandCursor: true });
+        z.on('pointerdown', (ptr: Phaser.Input.Pointer) => {
+          if (ptr.rightButtonDown()) return;
+          if (this.sel === id) this.travel(id); else { this.sel = id; Sfx.play('ui-hover'); this.render(); }
+        });
         this.dyn.push(z);
         void t;
       }
       const a = getArea(this.sel);
       const attuned = Save.S().waystones.includes(this.sel) || isCheatMode();
       txt(56, 560, a ? `${a.name} — ${a.subtitle}` : '', { fontFamily: FONT_DISPLAY, fontSize: '15px', color: '#3a2412' });
-      txt(56, 584, this.sel === this.from ? 'You are here.' : attuned ? '[E] Fast travel — waystone attuned' : 'Not attuned: walk there and touch its waystone.', { fontFamily: FONT_UI, fontSize: '13px', color: attuned ? '#1a5a8a' : '#6a4a2a' });
+      txt(56, 584, this.sel === this.from ? 'You are here.' : attuned ? 'Waystone attuned — click again or Travel' : 'Not attuned: walk there and touch its waystone.', { fontFamily: FONT_UI, fontSize: '13px', color: attuned ? '#1a5a8a' : '#6a4a2a' });
+      if (this.sel !== this.from) btn(W - 150, 576, 180, attuned ? '✦ Travel here' : 'Not attuned', () => this.travel(this.sel), !attuned);
     } else {
       const cx = W / 2, cy = 320;
       ALL_ISLE_IDS.forEach((id, i) => {
@@ -714,6 +725,6 @@ export class IslesMapScene extends Phaser.Scene {
       txt(cx, 580, 'The Far Wastes', { fontFamily: FONT_DISPLAY, fontSize: '13px', color: '#2a3a4a' }).setOrigin(0.5);
     }
     if (this.note) txt(W / 2, 612, this.note, { fontFamily: FONT_DISPLAY, fontSize: '13px', color: '#8a1a0a' }).setOrigin(0.5);
-    txt(W / 2 - 40, 612 - (this.note ? 22 : 0), 'Arrows choose · E travel · TAB chart · M/ESC close', { fontFamily: FONT_UI, fontSize: '12px', color: '#5a3a1e' }).setOrigin(0.5);
+    txt(W / 2 - 40, 612 - (this.note ? 22 : 0), 'Click a place to pick it, click again to travel · right-click or ✕ to close', { fontFamily: FONT_UI, fontSize: '12px', color: '#5a3a1e' }).setOrigin(0.5);
   }
 }
