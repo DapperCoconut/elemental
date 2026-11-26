@@ -4,15 +4,15 @@ import { behavior, cast, cut, effect, enlightened, fade, flat, gain, gene, linea
 /**
  * Firmament — Astra's gene tree.
  *
- * Astra shoots level: Starstruck (four solar shots straight left or right), Solar Flares (a plus
- * then an X of beams from her body), Celestial Smite (lightning on whoever is nearest the top of
- * the screen — her too), Worm Warp (a wormhole that swaps her with whoever it hits) and True Self —
- * the 8-second Star Trial, a stability bar that rises with damage dealt and falls with damage taken;
- * pass it to become the star and aim freely, fail it and Q is gone for the fight. The tree has three
- * lines: **Sunfire** (the shots and the flares), **Wormhole** (the warp and the smite — tempo) and
- * **Stability** (everything that keeps the trial's bar from emptying).
+ * Astra gathers mass: Anti-Matter (a mercury blob that annihilates on anything that is not a body,
+ * and three photons round the cursor), Supernova (a chunk of mass thrown off as fire), Nuclear
+ * Fusion (the hitbox becomes a furnace that eats shots and burns bodies), Comet (falls, is caught,
+ * swung and thrown) and Singularity — at full mass, a black hole with a kit of its own. The gene
+ * ids and line names predate the mass rework (2026-11-25) and were kept so no save loses a gene;
+ * the lines now read **Sunfire** (the click and the supernova), **Wormhole** (the comet and the
+ * furnace — tempo) and **Stability** (staying whole long enough to fill the bar).
  *
- * Starstruck fires every 750ms, so its window is 0.75s and never stacks on itself.
+ * Anti-Matter fires every 900ms, so its 0.75s window never stacks on itself.
  */
 export const ASTRA_GENE_TREE: GeneTree = {
   element: 'astra',
@@ -22,7 +22,7 @@ export const ASTRA_GENE_TREE: GeneTree = {
     /** Offence root: four shots of sunlight, and the foe is dazzled between them. */
     gene({
       id: 'gene-astra-solar-wind', name: 'Solar Wind', tier: 0, col: 0,
-      text: 'Starstruck casts make the foe take +2% damage for 0.75s',
+      text: 'Anti-Matter casts make the foe take +2% damage for 0.75s',
       maxLevel: 4, cost: linear(6, 2),
       grant: cast('click', (lv) => ({ damageMult: gain(0.02)(lv), ms: 750 })),
       mastery: {
@@ -31,15 +31,15 @@ export const ASTRA_GENE_TREE: GeneTree = {
         grant: behavior({ trigger: 'onHitDealt', chance: 0.1, cooldownSec: 3, action: 'sear', amount: 10, durationMs: 3000 }),
       },
     }),
-    /** Identity root: the wormhole folds your timetable as well as the space. */
+    /** Identity root: the comet's fall bends your timetable as well as the floor. */
     gene({
       id: 'gene-astra-wormlight', name: 'Wormlight', tier: 0, col: 1,
-      text: 'Worm Warp casts shave 300ms off every other cooldown',
+      text: 'Comet casts shave 300ms off every other cooldown',
       maxLevel: 4, cost: linear(6, 2),
       grant: cast('f', (lv) => ({ refundOthers: flat(300)(lv) })),
       mastery: {
         name: 'Folded Space', cost: 14,
-        text: 'Worm Warp casts have a 15% chance to come straight back — the far end opened early',
+        text: 'Comet casts have a 15% chance to come straight back — a second one was right behind it',
         grant: onCast('f', { refundSelfChance: 0.15 }),
       },
     }),
@@ -57,34 +57,34 @@ export const ASTRA_GENE_TREE: GeneTree = {
     }),
 
     // ── Tier 1 ────────────────────────────────────────────────────────
-    /** Flare Season: both blasts erupt inside half a second — be under them when they do. */
+    /** Flare Season: the shell of fire leaves them raw for a moment after it passes. */
     gene({
       id: 'gene-astra-flare-season', name: 'Flare Season', tier: 1, col: 0, needs: ['gene-astra-solar-wind'],
-      text: 'Solar Flares casts make the foe take +4% damage for 1.5s — through the plus and the X',
+      text: 'Supernova casts make the foe take +4% damage for 1.5s',
       maxLevel: 4, cost: linear(7, 3),
       grant: cast('e', (lv) => ({ damageMult: gain(0.04)(lv), ms: 1500 })),
       mastery: {
         name: 'Coronal Mass', cost: 18,
-        text: 'Solar Flares casts throw off a shell of plasma: 14 to everything within 110px',
+        text: 'Supernova casts throw off a shell of plasma: 14 to everything within 110px',
         grant: onCast('e', { burst: { damage: 14, radius: 110 } }),
       },
     }),
-    /** Slingshot Orbit: you come out of the wormhole still carrying its speed. */
+    /** Slingshot Orbit: the comet's wake carries you with it. */
     gene({
       id: 'gene-astra-slingshot-orbit', name: 'Slingshot Orbit', tier: 1, col: 1, needs: ['gene-astra-wormlight'],
-      text: 'Worm Warp casts make you 10% faster for 2s',
+      text: 'Comet casts make you 10% faster for 2s',
       maxLevel: 4, cost: linear(7, 3),
       grant: cast('f', (lv) => ({ speedMult: gain(0.1)(lv), ms: 2000 })),
       mastery: {
         name: 'Dark Lightning', cost: 18,
-        text: 'Celestial Smite casts shave 1s off every other cooldown',
+        text: 'Nuclear Fusion casts shave 1s off every other cooldown',
         grant: onCast('r', { refundOthers: 1000 }),
       },
     }),
-    /** Grounded: the Smite strikes whoever is highest — sometimes that is you. */
+    /** Grounded: the furnace is lit with them standing inside it. */
     gene({
       id: 'gene-astra-grounded', name: 'Grounded', tier: 1, col: 2, needs: ['gene-astra-corona-veil'],
-      text: 'Celestial Smite casts give you 5 shield HP — in case the bolt picks you',
+      text: 'Nuclear Fusion casts give you 5 shield HP',
       maxLevel: 4, cost: linear(7, 3),
       grant: cast('r', (lv) => ({ shield: flat(5)(lv) })),
       mastery: {
@@ -133,23 +133,23 @@ export const ASTRA_GENE_TREE: GeneTree = {
     }),
 
     // ── Tier 3 ────────────────────────────────────────────────────────
-    /** Brighter Star: the trial calls you again sooner. */
+    /** Brighter Star: the collapse comes again sooner. */
     gene({
       id: 'gene-astra-brighter-star', name: 'Brighter Star', tier: 3, col: 0, needs: ['gene-astra-magnitude'],
-      text: '−5% True Self (ultimate) cooldown',
+      text: '−5% Singularity (ultimate) cooldown',
       maxLevel: 3, cost: linear(14, 4),
       grant: stat((lv) => ({ ultimateCooldownMult: cut(0.05)(lv) })),
       mastery: {
         name: 'Supernova', cost: 28,
-        text: 'True Self casts flare the star out of you: 20 to everything within 130px — a head start on the bar',
+        text: 'Singularity casts flare the star out of you: 20 to everything within 130px as the world falls in',
         grant: onCast('q', { burst: { damage: 20, radius: 130 } }),
       },
     }),
-    /** Constellation: crosses Sunfire and Wormhole — every flare joins the dots back to you. */
+    /** Constellation: crosses Sunfire and Wormhole — every supernova joins the dots back to you. */
     gene({
       id: 'gene-astra-constellation', name: 'Constellation', tier: 3, col: 1,
       needs: ['gene-astra-sidereal-day', 'gene-astra-magnitude'],
-      text: 'Solar Flares casts heal 3 HP',
+      text: 'Supernova casts heal 3 HP',
       maxLevel: 4, cost: linear(11, 4),
       grant: cast('e', (lv) => ({ heal: flat(3)(lv) })),
       mastery: {
@@ -158,10 +158,10 @@ export const ASTRA_GENE_TREE: GeneTree = {
         grant: effect({ reviveHpFrac: 0.25 }),
       },
     }),
-    /** Trial by Fire: a shield to hold the stability bar up while it climbs. */
+    /** Trial by Fire: a shield for the moment the world falls in. */
     gene({
       id: 'gene-astra-trial-by-fire', name: 'Trial by Fire', tier: 3, col: 2, needs: ['gene-astra-starlight'],
-      text: 'True Self casts give you 8 shield HP for the Star Trial',
+      text: 'Singularity casts give you 8 shield HP',
       maxLevel: 3, cost: linear(14, 4),
       grant: cast('q', (lv) => ({ shield: flat(8)(lv) })),
       mastery: {

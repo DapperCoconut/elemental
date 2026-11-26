@@ -74,7 +74,7 @@ const MOVEMENT_PROFILES: Record<string, MovementProfile> = {
   chalk:       { archetype: 'zoner',      range: [240, 400], retreatHp: 0.32 },
   wax:         { archetype: 'brawler',    range: [100, 180], retreatHp: 0.30 },
   clay:        { archetype: 'skirmisher', range: [140, 300], retreatHp: 0.24 },
-  magma:       { archetype: 'summoner',   range: [220, 380], retreatHp: 0.30 },
+  magma:       { archetype: 'skirmisher', range: [130, 240], retreatHp: 0.25 },
   illusion:    { archetype: 'zoner',      range: [220, 380], retreatHp: 0.30 },
   depths:      { archetype: 'skirmisher', range: [160, 300], retreatHp: 0.28 },
   conquest:    { archetype: 'summoner',   range: [150, 250], retreatHp: 0.30 },
@@ -307,6 +307,14 @@ export interface NpcAiState {
   npcAirComboLive?: boolean;
   /** Mid-move (the maze, a frenzy, Signature Move): press nothing. */
   npcFearBusy?: boolean;
+  /** Technology: the admin console is already open — a second Q only burns the charge. */
+  npcTechConsoleOpen?: boolean;
+  /** Technology → Ban: the target is under 15% HP, so opening the console ends it. */
+  npcTechBanLive?: boolean;
+  /** Zip Bomb → Web Drag: our file is crawling loose; drag mode hauls it into the target. */
+  npcTechZipAdrift?: boolean;
+  /** Jail / restart / lag freeze → Zip Bomb: the target cannot walk away from a slow file. */
+  npcTechTargetPinned?: boolean;
   /** Transformed: the keys are Massacre / Haunt / Signature Move / Shadowy Descent / They Will Fall. */
   npcFearSlasher?: boolean;
   npcFearHaunting?: boolean;
@@ -331,6 +339,10 @@ export interface NpcAiState {
   echoAttachActive?: boolean;
   // Quantum
   subMoney?: number;
+  /** Subterfuge: room on the payroll (max 3) and a note to fill it. */
+  subCanRecruit?: boolean;
+  /** Subterfuge: an own recruit a Bribe would promote (F+) or keep from walking out. */
+  subBribeAim?: { x: number; y: number } | null;
   subBullets?: number;
   subLackeys?: number;
   // Justice
@@ -446,25 +458,29 @@ export interface NpcAiState {
   /** Paint Mastery — the slot Yin-Yang has taken over. The kit casts it on its own clock. */
   npcPaintYinYangSlot?: 'e' | 'r' | 'f' | 'q' | null;
   // Magma
-  npcMagmaBloat?: boolean;
-  npcMagmaVolcanoes?: number;
-  /** Blunder-Boil charges in hand. Zero means F is a reload message, not a shot. */
+  /** Going into the floor for Limoncello: nothing can be cast until it is back up. */
+  npcMagmaBusy?: boolean;
+  /** Blunderblast charges in hand. Zero means the click does nothing. */
   npcMagmaBlunderCharges?: number;
-  /** Pressure Gauge (F+): 0–1 on the gun. Past 0.6 the recoil flight itself hits people. */
-  npcMagmaGaugePressure?: number;
-  /** Pressure Gauge (F+): the next F bursts for 35 on the bot too — only worth it point blank. */
-  npcMagmaGaugeOver?: boolean;
-  /** Molten Mutiny's pendant is on and skimming. */
-  npcMagmaPendant?: boolean;
+  /** Hotshot: flintlock rounds still loaded. While above zero the click is a hitscan pistol. */
+  npcMagmaHotRounds?: number;
+  /** Nice Hot Drink is running: it takes nothing and cannot be slowed, so it should be brawling. */
+  npcMagmaNumb?: boolean;
+  /** Synergy: a core of its own is clamped on and still has its shell — every hit now cracks it. */
+  npcMagmaCoreHolding?: boolean;
+  /** A body with no core on it is inside clamping reach. */
+  npcMagmaCoreInReach?: boolean;
   /** The ship is up. Q is unavailable until it sinks. */
   npcMagmaShip?: boolean;
-  /** At the helm: the click is a broadside, movement is the kit's, F would throw it overboard. */
-  npcMagmaMounted?: boolean;
+  /** Synergy: a loaded deck gun the bot is standing by whose third holds a target — click it. */
+  npcMagmaCannonAim?: { x: number; y: number };
   /**
-   * Magma synergy: a volcano of its own standing next to the player that one cannonball would
-   * light on the spot. The kit owns the geometry; aim the broadside here instead of at the body.
+   * Synergy: where its feet should be going and how close is close enough — in to clamp a
+   * core (from anywhere while numb), or to the deck beside a gun worth lighting.
    */
-  npcMagmaCannonVolcano?: { x: number; y: number };
+  npcMagmaSeekPoint?: { x: number; y: number; stop: number };
+  /** Synergy: the anchor is lined up — a blast here sends it down the chain at the target. */
+  npcMagmaAnchorAim?: { x: number; y: number };
   // Illusion
   /** The dance is running: it is untouchable and hopping, so it should just be shooting. */
   npcIllusionDancing?: boolean;
@@ -491,12 +507,6 @@ export interface NpcAiState {
    * kit on a blind timer — the AI's only job is to stop casting the base ability it replaced.
    */
   npcIllusionMaskSlot?: 'e' | 'r' | 'f' | 'q' | null;
-  /**
-   * The vessel the AI should be charging, or undefined when it has nothing left to fill.
-   * Magma's summons are fed by its own attacks, so this is what it aims *at* — the one
-   * element in the game whose AI sometimes deliberately shoots away from you.
-   */
-  npcMagmaChargeTarget?: { x: number; y: number };
   /** Light (F+ Javelin Burst): a ramp sits inside Light Trick's radius — popping it fires 12 javelins. */
   npcLightTrickRamp?: boolean;
   /**
@@ -504,22 +514,6 @@ export interface NpcAiState {
    * the charge. Ramps, tricks, blinks and its own Solar Dynamo scorch are what fill it.
    */
   npcLightNovaReady?: boolean;
-  /**
-   * Magma Mastery: a saw is out. The kit runs the whole thing off its own timer, so all the
-   * routine has to do is stop layering casts on top of a tool it is already holding.
-   */
-  npcMagmaSawOut?: boolean;
-  /**
-   * Magma Mastery: the slot Magma Saw was bound over. The base ability underneath it is gone
-   * for the bot exactly as it is for a player, so the routine has to stop asking for it.
-   */
-  npcMagmaSawSlot?: string;
-  /**
-   * Magma Mastery: a critical cone of the bot's own with overfill banked in it. Standing in
-   * that collapse is the only way an Obsidian Coat is ever earned, so the kit hands the point
-   * over rather than hoping the fight drifts back through it.
-   */
-  magmaObsidianPoint?: { x: number; y: number };
   // Depths
   /**
    * Somewhere the AI has to physically be, overriding chase/strafe entirely: the air pocket
@@ -581,24 +575,24 @@ export interface NpcAiState {
   pressureCompressPoint?: { x: number; y: number };
   /** Exceed is worth its crash right now. */
   npcPressureExceedReady?: boolean;
+  /** Its own gas is in reach of its sparks and the chain of clouds ends on the target: hold a key to 100. */
+  npcPressureIgnite?: boolean;
+  /** It is holding for the sparks: stand here, back to the cloud, until they have caught. */
+  pressureStandPoint?: { x: number; y: number };
 
   // Astra
-  /** Holding Q+ or watching the finale — the kit has the bot's hands. */
+  /** The black hole, the finale or a comet being swung — the kit has the bot's hands. */
   npcAstraBusy?: boolean;
-  /** Where to stand: on the target's row, a touch below it. Absent in star mode. */
+  /** Where to walk: onto a comet lying on the floor, or to a nearby dust cloud or shard. */
   astraSeekPoint?: { x: number; y: number };
-  /** The level click would land (or the bot is the star and aims). */
-  npcAstraLanedUp?: boolean;
-  /** The smite would pick the target, not the bot. */
-  npcAstraSmiteSafe?: boolean;
-  /** The flares would land: the target is on an arm, or slowed by a smite and cannot step off. */
-  npcAstraFlareShot?: boolean;
-  /** Worm Warp is worth it: a theft in star mode, F+'s theft, or a swap that fixes the smite. */
-  npcAstraWarpShot?: boolean;
-  /** True Self is worth starting now. */
-  npcAstraTrialReady?: boolean;
-  /** In the Star Trial — only damage keeps it alive. */
-  npcAstraInTrial?: boolean;
+  /** Supernova would catch the target, and there is mass worth throwing. */
+  npcAstraNovaShot?: boolean;
+  /** Fusion pays: a body is inside the hitbox, or shots are about to enter it. */
+  npcAstraFusionShot?: boolean;
+  /** No comet is out and the target is in reach of one. */
+  npcAstraCometShot?: boolean;
+  /** The mass bar is full: collapse into the Singularity. */
+  npcAstraSingReady?: boolean;
 
   // Memory
   /** Spinning the cane up for a Snatch, or sweeping Rebirth's line — the kit has the bot's hands. */
@@ -1487,8 +1481,10 @@ export class NpcOpponent extends Fighter {
     }
 
     // ── Pressure: walking into its own pain orb (R+ Compression Charge) ──
-    if (aiState.pressureCompressPoint) {
-      const seek = aiState.pressureCompressPoint;
+    // …or standing its ground with its back to its own gas while a held key throws sparks into it.
+    const pressureSeek = aiState.pressureStandPoint ?? aiState.pressureCompressPoint;
+    if (pressureSeek) {
+      const seek = pressureSeek;
       const d = Phaser.Math.Distance.Between(this.x, this.y, seek.x, seek.y);
       if (d > 6) {
         const a = Phaser.Math.Angle.Between(this.x, this.y, seek.x, seek.y);
@@ -1510,7 +1506,7 @@ export class NpcOpponent extends Fighter {
       }
     }
 
-    // ── Astra: onto the target's row, a touch below it ──
+    // ── Astra: onto a comet to catch it, or a dust cloud to eat it ──
     if (aiState.astraSeekPoint) {
       const seek = aiState.astraSeekPoint;
       const d = Phaser.Math.Distance.Between(this.x, this.y, seek.x, seek.y);
@@ -1623,14 +1619,13 @@ export class NpcOpponent extends Fighter {
       }
     }
 
-    // ── Magma: standing in its own supercritical collapse ────────
-    // Same soft shape as the other seeks here, and for the same reason: the coat is worth
-    // walking into, not worth abandoning the fight for. Inside the blast it goes back to
-    // whatever the movement state was already doing.
-    if (aiState.magmaObsidianPoint) {
-      const seek = aiState.magmaObsidianPoint;
+    // ── Magma: walking in to clamp a core, or to a deck gun worth lighting ──
+    // Same soft shape as the other seeks here: the kit says where and how close, and once
+    // the bot is there the movement state goes back to what it was doing.
+    if (aiState.npcMagmaSeekPoint) {
+      const seek = aiState.npcMagmaSeekPoint;
       const d = Phaser.Math.Distance.Between(this.x, this.y, seek.x, seek.y);
-      if (d > 110) {
+      if (d > seek.stop) {
         const a = Phaser.Math.Angle.Between(this.x, this.y, seek.x, seek.y);
         body.setVelocity(Math.cos(a) * this.speed, Math.sin(a) * this.speed);
       }
@@ -2044,20 +2039,20 @@ export class NpcOpponent extends Fighter {
   }
 
   /**
-   * Astra. Everything it has is locked to a direction until it becomes the star, so the kit does
-   * the geometry and the bot plays to it. Synergies first:
+   * Astra. The kit owns the mass, the pickups and the black hole; the bot plays to what it
+   * publishes. Synergies first:
    *
-   * - **Smite → Flares**: a smitten target crawls, and cannot step off the plus, the X or (E+)
-   *   the ring — the flares go the moment the kit says they will land.
-   * - **Smite's aim**: only cast while the target is the highest body on the screen; the seek
-   *   keeps the bot a touch below its row, and (R+) the kit fires the second bolt itself once the
-   *   target is the lowest.
-   * - **Warp → Smite**: swapping with a target below the bot puts the bot underneath them.
-   * - **Star mode → Warp**: steal when two or more of their abilities are ready (F+: any time).
-   * - **Trial → damage**: in the trial nothing else matters; the kit lets go of its Q+ hold and
-   *   fires the slap itself (to finish, or before the star sets).
+   * - **Mass → Singularity**: a full bar is collapsed at once — nothing else is worth more.
+   * - **Body → Fusion**: the furnace only burns what is inside the hitbox and only eats shots that
+   *   enter it, so it is lit when the kit says one or the other is true.
+   * - **Mass → Supernova**: thrown when the target is inside the blast the current mass would make
+   *   (never at a full bar — that mass is the Singularity's).
+   * - **Comet → catch → swing → throw**: the comet is called onto the target, the seek point walks
+   *   the bot over it, and the kit swings and throws it once it burns and its orbit lines up.
+   * - **Dust → mass**: the seek point gathers nearby clouds and shards between exchanges.
    *
-   * Then the rotation: level shots whenever the row lines up.
+   * Then the rotation: antimatter at the target, whose photons circle wherever it is aimed. In
+   * the Singularity the kit plays the whole form itself (`npcAstraBusy`).
    */
   private doAstraAbilities(
     target: Fighter,
@@ -2069,42 +2064,45 @@ export class NpcOpponent extends Fighter {
     aimY: number,
     aiState: NpcAiState,
   ): string | null {
-    void target;
     void time;
     void hpRatio;
     if (aiState.npcAstraBusy) return null;
     const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
-    const trial = !!aiState.npcAstraInTrial;
 
-    if (aiState.npcAstraFlareShot) {
-      if (this.castAbility('astra-solar-flares', buildContext(aimX, aimY))) return 'astra-solar-flares';
+    if (!skipSpecials && aiState.npcAstraSingReady) {
+      if (this.castAbility('astra-singularity', buildContext(aimX, aimY))) return 'astra-singularity';
     }
-    if ((trial || !skipSpecials) && aiState.npcAstraSmiteSafe) {
-      if (this.castAbility('astra-smite', buildContext(aimX, aimY))) return 'astra-smite';
+    if (!skipSpecials && aiState.npcAstraFusionShot) {
+      if (this.castAbility('astra-fusion', buildContext(aimX, aimY))) return 'astra-fusion';
     }
-    if (!skipSpecials && aiState.npcAstraWarpShot) {
-      if (this.castAbility('astra-worm-warp', buildContext(aimX, aimY))) return 'astra-worm-warp';
+    if (!skipSpecials && aiState.npcAstraNovaShot) {
+      if (this.castAbility('astra-supernova', buildContext(aimX, aimY))) return 'astra-supernova';
     }
-    if (!skipSpecials && aiState.npcAstraTrialReady) {
-      if (this.castAbility('astra-true-self', buildContext(aimX, aimY))) return 'astra-true-self';
+    if (!skipSpecials && aiState.npcAstraCometShot) {
+      // Onto the body itself: the comet lands where they stand.
+      if (this.castAbility('astra-comet', buildContext(target.x, target.y))) return 'astra-comet';
     }
 
     // ── Rotation ──
-    if (aiState.npcAstraLanedUp && dist < 700) {
-      if (this.castAbility('astra-starstruck', buildContext(aimX, aimY))) return 'astra-starstruck';
+    if (dist < 650) {
+      if (this.castAbility('astra-antimatter', buildContext(aimX, aimY))) return 'astra-antimatter';
     }
     return null;
   }
 
   /**
-   * Pressure. Every key is a hold, and the kit holds it: `castAbility` starts the charge, the kit
+   * Gas (id `pressure`). Every key is a hold, and the kit holds it: `castAbility` starts the charge, the kit
    * plans the pressure (it knows the breakpoints and the synergies) and lets go when the target is
    * in reach. While it does, the bot's hands are full (`npcPressureCharging`). Synergies first:
    *
+   * - **Gas clouds → sparks → the chain** (`npcPressureIgnite`): Release's jet (and E+ vents)
+   *   leave clouds; when one is in reach of the bot's sparks and the chain from it ends on the
+   *   target, it holds the punch to 100 with its back to the cloud (the kit turns it and pins it
+   *   there, `pressureStandPoint`), the sparks light the chain, and the 100 goes into the target.
    * - **Slam 100 / punch 100 / vent blast → a pinned target**: wind a punch up on it — the kit
-   *   plans as much pressure as the pin leaves time for, or (E+) a quick 30+ to Shell-Shock it.
-   * - **Release bank**: vent it only when it is not worth more kept (a full bank speeds every
-   *   key; F+ turns 75+ into damage), unless it finishes them or peels them off.
+   *   plans as much pressure as the pin leaves time for.
+   * - **Release bank**: the jet is where the gas comes from, so it is vented whenever it will
+   *   land — held back only while F+ makes a 75+ bank worth more kept (harder hits, puddles).
    * - **Pressure Point → Compression** (R+): walk into its own orb (the seek above).
    * - **Exceed → everything at 100**: the kit plans full charges while it runs.
    *
@@ -2126,6 +2124,9 @@ export class NpcOpponent extends Fighter {
     if (aiState.npcPressureCharging) return null;
     const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
 
+    if (!skipSpecials && aiState.npcPressureIgnite) {
+      if (this.castAbility('pressure-punch', buildContext(aimX, aimY))) return 'pressure-punch';
+    }
     if (aiState.npcPressureTargetPinned && dist < 300) {
       if (this.castAbility('pressure-punch', buildContext(aimX, aimY))) return 'pressure-punch';
     }
@@ -3450,17 +3451,15 @@ export class NpcOpponent extends Fighter {
   }
 
   /**
-   * Magma. The element's economy is that its own volcano is charged by its own attacks, so this
-   * AI has a second aim point: `npcMagmaChargeTarget`. Whenever there is a vessel with room left
-   * in it, the cheap abilities fire at *that* instead of at the player, which is how a volcano
-   * ever reaches 100.
+   * Magma. A shotgun brawler with a burst window and a fort.
    *
-   * The pirate half has three synergies the kit publishes and this routine spends first: a
-   * broadside into its own volcano next to the player (`npcMagmaCannonVolcano`), a Blunder-Boil
-   * fired while the gauge is hot enough that the recoil flight is itself a hit, and an
-   * overpressured gun that is only ever vented point blank, so the 35 it costs the bot lands on
-   * somebody too. At the helm the click is cannons and nothing else is pressed — F would throw
-   * it off its own ship.
+   * The kit publishes four synergies and this routine spends them first, in this order:
+   *  - a deck gun worth lighting (`npcMagmaCannonAim`) — the click goes on the gun, not the player;
+   *  - the anchor lined up on the player (`npcMagmaAnchorAim`) — a blast into it is a tetherball;
+   *  - Unstable Core → burst: once a core is holding (`npcMagmaCoreHolding`) the flintlocks come
+   *    out and everything is emptied into the host, because that is what cracks it;
+   *  - Nice Hot Drink → core: numb, it walks in to arm's reach (`npcMagmaSeekPoint`) and clamps.
+   * The roll-shot is the kit's: a point-blank blast kicks the bot back on a clock of its own.
    */
   private doMagmaAbilities(
     target: Fighter,
@@ -3474,78 +3473,48 @@ export class NpcOpponent extends Fighter {
   ): string | null {
     void target;
     void time;
+    if (aiState.npcMagmaBusy) return null;
     const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
-    const charge = aiState.npcMagmaChargeTarget;
-    // Magma Mastery: the saw is cast by the kit off a private timer (enhancement ids are not in
-    // `element.abilities`, so there is nothing here for `castAbility` to find). All this routine
-    // owes it is the slot it took, and the good sense not to pile casts on top of a live saw.
-    const sawSlot = aiState.npcMagmaSawSlot;
-    if (aiState.npcMagmaSawOut) return null;
+    const charges = aiState.npcMagmaBlunderCharges ?? 0;
+    const pistols = (aiState.npcMagmaHotRounds ?? 0) > 0;
+    const holding = !!aiState.npcMagmaCoreHolding;
 
-    // ── At the helm ──
-    if (aiState.npcMagmaMounted) {
-      // Synergy: a volcano of its own beside the player goes critical on the first round.
-      const lit = aiState.npcMagmaCannonVolcano;
-      if (lit && this.castAbility('magma-plume', buildContext(lit.x, lit.y))) return 'magma-plume';
-      if (dist < 440 && this.castAbility('magma-plume', buildContext(aimX, aimY))) return 'magma-plume';
-      // A volcano placed under the player from the deck is the next broadside's fuse.
-      if (!skipSpecials && sawSlot !== 'e' && (aiState.npcMagmaVolcanoes ?? 0) < 2 && dist < 380) {
-        if (this.castAbility('magma-volcano', buildContext(aimX + (Math.random() - 0.5) * 40, aimY + (Math.random() - 0.5) * 40))) return 'magma-volcano';
-      }
+    // ── Synergy: a gun worth lighting. The click lands on the gun. ──
+    const gun = aiState.npcMagmaCannonAim;
+    if (gun && this.castAbility('magma-blunder', buildContext(gun.x, gun.y))) return 'magma-blunder';
+
+    // ── Synergy: the anchor is lined up on them. Pistols cannot move it, so only with those away. ──
+    const anchor = aiState.npcMagmaAnchorAim;
+    if (anchor && !pistols && charges > 0
+      && this.castAbility('magma-blunder', buildContext(anchor.x, anchor.y))) return 'magma-blunder';
+
+    // ── The ship: raised while there is still a fight to use it in ──
+    if (!skipSpecials && !aiState.npcMagmaShip && hpRatio > 0.25) {
+      if (this.castAbility('magma-limoncello', buildContext(this.x, this.y))) return 'magma-limoncello';
+    }
+
+    // ── The drink: before the damage, not after — it only helps with what has not landed yet ──
+    if (!skipSpecials && !aiState.npcMagmaNumb && dist < 260 && hpRatio < 0.75) {
+      if (this.castAbility('magma-drink', buildContext(this.x, this.y))) return 'magma-drink';
+    }
+
+    // ── The core: on anybody it can reach ──
+    if (!skipSpecials && aiState.npcMagmaCoreInReach) {
+      if (this.castAbility('magma-core', buildContext(aimX, aimY))) return 'magma-core';
+    }
+
+    // ── Synergy: a holding core is a damage race. Pistols out, and empty them into the host. ──
+    if (!skipSpecials && !pistols && (holding || dist > 300) && dist < 620) {
+      if (this.castAbility('magma-hotshot', buildContext(aimX, aimY))) return 'magma-hotshot';
+    }
+    if (pistols) {
+      if (this.castAbility('magma-blunder', buildContext(aimX, aimY))) return 'magma-blunder';
       return null;
     }
 
-    // ── The pendant: on early, while there is a whole fight to pay for the ship with ──
-    if (!skipSpecials && sawSlot !== 'q' && !aiState.npcMagmaPendant && !aiState.npcMagmaShip && hpRatio > 0.3) {
-      if (this.castAbility('magma-mutiny', buildContext(this.x, this.y))) return 'magma-mutiny';
-    }
-
-    // ── Blunder-Boil ──
-    const charges = aiState.npcMagmaBlunderCharges ?? 0;
-    const pressure = aiState.npcMagmaGaugePressure ?? 0;
-    if (sawSlot !== 'f' && charges > 0) {
-      if (aiState.npcMagmaGaugeOver) {
-        // Synergy: an overpressured gun bursts on the bot as well, so it is only ever vented
-        // with the player inside the same 120px.
-        if (dist < 110 && this.castAbility('magma-blunder', buildContext(aimX, aimY))) return 'magma-blunder';
-      } else if (pressure >= 0.6 && dist < 150) {
-        // Synergy: hot enough that the recoil is a second hit. Aim *away* from the player, so
-        // the flight goes through them.
-        const ax = this.x - (aimX - this.x);
-        const ay = this.y - (aimY - this.y);
-        if (this.castAbility('magma-blunder', buildContext(ax, ay))) return 'magma-blunder';
-      } else if (!skipSpecials && (dist < 140 || (hpRatio < 0.4 && dist < 200))) {
-        // Point blank, or hurt and close: the cone hits them and the recoil leaves.
-        if (this.castAbility('magma-blunder', buildContext(aimX, aimY))) return 'magma-blunder';
-      } else if (!skipSpecials && charge && pressure < 0.6 && charges >= 2
-        && Phaser.Math.Distance.Between(this.x, this.y, charge.x, charge.y) < 130) {
-        // A spare charge across its own volcano is 15 pressure and a free step back.
-        if (this.castAbility('magma-blunder', buildContext(charge.x, charge.y))) return 'magma-blunder';
-      }
-    }
-
-    // A free block is worth having up before it is needed, not after.
-    if (!skipSpecials && sawSlot !== 'r' && !aiState.npcMagmaBloat && (dist < 300 || hpRatio < 0.7)) {
-      if (this.castAbility('magma-bloat', buildContext(aimX, aimY))) return 'magma-bloat';
-    }
-
-    // Volcanoes go between us: close enough to the player that the lava is in the way, close
-    // enough to the AI that its own plumes and cones can still reach up and charge it.
-    if (!skipSpecials && sawSlot !== 'e' && (aiState.npcMagmaVolcanoes ?? 0) < 2) {
-      const toX = aimX - this.x;
-      const toY = aimY - this.y;
-      const len = Math.hypot(toX, toY) || 1;
-      const reach = Math.min(110, len * 0.5);
-      const vx = this.x + (toX / len) * reach + (Math.random() - 0.5) * 50;
-      const vy = this.y + (toY / len) * reach + (Math.random() - 0.5) * 50;
-      if (this.castAbility('magma-volcano', buildContext(vx, vy))) return 'magma-volcano';
-    }
-
-    // Plume: at the vessel if there is one with room in it, otherwise at the player.
-    const px = charge ? charge.x : aimX;
-    const py = charge ? charge.y : aimY;
-    if (charge || dist < 380) {
-      if (this.castAbility('magma-plume', buildContext(px, py))) return 'magma-plume';
+    // ── Blunderblast: inside the spread's reach. Point blank, the kit turns it into a roll-shot. ──
+    if (charges > 0 && dist < (holding ? 290 : 250)) {
+      if (this.castAbility('magma-blunder', buildContext(aimX, aimY))) return 'magma-blunder';
     }
     return null;
   }
@@ -5233,26 +5202,31 @@ export class NpcOpponent extends Fighter {
     hpRatio: number,
     aimX: number,
     aimY: number,
-    _aiState: NpcAiState,
+    aiState: NpcAiState,
   ): string | null {
     const skip = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
+    const cast = (id: string): boolean => this.castAbility(id, buildContext(aimX, aimY));
 
     if (!skip) {
-      // Q: Admin Console when hurt
-      if (hpRatio < 0.6 && Math.random() < 0.4) {
-        if (this.castAbility('tech-admin', buildContext(aimX, aimY))) return 'tech-admin';
+      // Synergies first — each is something the kit already put on the field.
+      // Ban: the target is in range of the instant kill, so the console is the finisher.
+      if (aiState.npcTechBanLive && cast('tech-admin')) return 'tech-admin';
+      // Zip Bomb → Web Drag: the file is slow on its own; drag mode carries it into them.
+      if (aiState.npcTechZipAdrift && cast('tech-webdrag')) return 'tech-webdrag';
+      // A caged, rebooting or frozen target cannot walk away from the file.
+      if (aiState.npcTechTargetPinned && cast('tech-zip')) return 'tech-zip';
+
+      // Q: the console — whenever it is charged and not already up.
+      if (!aiState.npcTechConsoleOpen && (hpRatio < 0.7 || Math.random() < 0.3)) {
+        if (cast('tech-admin')) return 'tech-admin';
       }
-      // R: Upload toward the enemy
-      if (Math.random() < 0.35) {
-        if (this.castAbility('tech-upload', buildContext(aimX, aimY))) return 'tech-upload';
+      // E: popups, more eagerly up close where the target is likelier to walk into one.
+      if (Math.random() < (dist < 300 ? 0.35 : 0.2)) {
+        if (cast('tech-ads')) return 'tech-ads';
       }
-      // E: Overt Advertisement
-      if (Math.random() < 0.25) {
-        if (this.castAbility('tech-ads', buildContext(aimX, aimY))) return 'tech-ads';
-      }
-      // F: Web Drag (rarely — a bot gets little value from the manual grab)
-      if (Math.random() < 0.05) {
-        if (this.castAbility('tech-webdrag', buildContext(aimX, aimY))) return 'tech-webdrag';
+      // R: Zip Bomb toward the enemy (Web Drag follows it up next tick via npcTechZipAdrift).
+      if (Math.random() < 0.3) {
+        if (cast('tech-zip')) return 'tech-zip';
       }
     }
 
@@ -5443,16 +5417,22 @@ export class NpcOpponent extends Fighter {
     const lackeys = aiState.subLackeys ?? 0;
 
     if (!skip) {
+      // Synergy — Bribe a recruit of its own: a promotion under F+, or a refill for one about
+      // to walk. The kit picks the man; this only aims the note at him.
+      const promote = aiState.subBribeAim;
+      if (promote && Math.random() < 0.08) {
+        if (this.castAbility('sub-bribe', buildContext(promote.x, promote.y))) return 'sub-bribe';
+      }
       // Q: Dark Treachery — steal the player's ultimate once things get serious
       if (hpRatio < 0.85 && Math.random() < 0.04) {
         if (this.castAbility('sub-treachery', buildContext(aimX, aimY))) return 'sub-treachery';
       }
-      // R: Recruit — keep a couple of lackeys on the payroll
-      if (money >= 1 && lackeys < 2 && Math.random() < 0.05) {
+      // R: Recruit — recruits stand where they are hired, so hire them in range of the fight
+      if (aiState.subCanRecruit && lackeys < 3 && dist < 480 && Math.random() < 0.05) {
         if (this.castAbility('sub-recruit', buildContext(aimX, aimY))) return 'sub-recruit';
       }
-      // F: Bribe — occasionally, and only with money to spare
-      if (money >= 2 && Math.random() < 0.02) {
+      // F: Bribe the enemy — occasionally, and only with money to spare
+      if (!promote && money >= 2 && Math.random() < 0.02) {
         if (this.castAbility('sub-bribe', buildContext(aimX, aimY))) return 'sub-bribe';
       }
       // E: Spray — burst fire at mid range; also buys a reload when dry

@@ -24,6 +24,8 @@ export interface InvasionCoopArenaApi {
   addEnemy(h: Husk): void;
   removeEnemy(h: Husk): void;
   buildNpcContext(tx: number, ty: number): CastContext;
+  /** Hand an ally's kit-private relay (see `isCoopRelayId`) to the kit that owns it. */
+  replayNpcMastery(enhId: string, tx: number, ty: number): void;
   aim(): { x: number; y: number };
   spawnDamageNumber(x: number, y: number, amount: number): void;
   showFloatingText(x: number, y: number, text: string, color: string): void;
@@ -105,6 +107,15 @@ interface GhostShot {
   vy: number;
   expiresAt: number;
   room: number;
+}
+
+/**
+ * Kit-private relays (pseudo-casts) that are also sent between co-op allies. Most of a kit's
+ * online relays were written for a mirrored duel against an enemy; only the ones checked
+ * against a shared, unmirrored arena belong here. `emx-`: Emotion's army.
+ */
+export function isCoopRelayId(id: string): boolean {
+  return id.startsWith('emx-');
 }
 
 /**
@@ -454,6 +465,11 @@ export class InvasionCoopKit {
     this.onRevived();
   }
 
+  /** A kit's own news for the ally's machine, sent down the same pipe as a cast. */
+  sendMasteryCast(enhId: string): void {
+    this.onPlayerCast(enhId);
+  }
+
   /** Replays at most one queued ally cast through the NPC cast path. */
   consumeNpcCast(): string | null {
     if (this.matchEnded) return null;
@@ -465,7 +481,10 @@ export class InvasionCoopKit {
     if (!primary || primary.gone || primary.room !== this.myRoom()) return null;
     const npc = this.api.npc;
     const ability = npc.element.abilities.find((a) => a.id === cast.id);
-    if (!ability) return null;
+    if (!ability) {
+      if (isCoopRelayId(cast.id)) this.api.replayNpcMastery(cast.id, cast.tx, cast.ty);
+      return null;
+    }
     npc.startCooldown(cast.id);
     try {
       ability.cast(this.api.buildNpcContext(cast.tx, cast.ty));
@@ -1030,7 +1049,8 @@ export class InvasionCoopKit {
         break;
       case 'cast':
         if (!ally) break;
-        if (ally.light) this.playLightCast(ally, msg.tx, msg.ty);
+        // A light ally has no kit here to hand a relay to, and it is not a cast to act out.
+        if (ally.light) { if (!isCoopRelayId(msg.id)) this.playLightCast(ally, msg.tx, msg.ty); }
         else this.castQueue.push({ id: msg.id, tx: msg.tx, ty: msg.ty });
         break;
       case 'hit': {

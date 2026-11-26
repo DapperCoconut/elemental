@@ -24,7 +24,7 @@ const pierceTheSkies: Ability = {
 const knock: Ability = {
   id: 'air-knock',
   name: 'Knock',
-  description: 'A short blast of wind (10 dmg). Winded for 6s: they turn slowly, and walking drains their stamina',
+  description: 'A short blast of wind (10 dmg). Winded for 10s: they turn slowly, and walking drains their stamina',
   displayKey: 'E',
   cooldown: 9000,
   cast(ctx) {

@@ -236,7 +236,7 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   // ── Technology ──
   'tech-cruncher': 'glitch',
   'tech-ads': 'error-popup',
-  'tech-upload': 'upload',
+  'tech-zip': 'upload',
   'tech-webdrag': ['glitch', 0.8, 1.05],
   'tech-admin': ['robot-power', 0.9, 1.2],
 
@@ -273,11 +273,11 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   'paint-masterpiece': ['craft-complete', 1.1],
 
   // ── Magma ──
-  'magma-plume': ['sizzle', 0.85, 1.1],
-  'magma-volcano': ['stone-rise', 0.8, 1.2],
-  'magma-bloat': ['inferno', 0.85, 0.9],
   'magma-blunder': ['flame-burst', 0.85, 1.2],
-  'magma-mutiny': ['roar', 0.8, 0.9],
+  'magma-hotshot': ['sizzle', 0.85, 1.3],
+  'magma-drink': ['inferno', 0.8, 1.15],
+  'magma-core': ['stone-rise', 0.85, 1.35],
+  'magma-limoncello': ['roar', 0.8, 0.9],
 
   // ── Wax ──
   'wax-stinger-strikes': ['spear-throw', 1.35, 0.75],
@@ -347,11 +347,11 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
 
   // ── Astra ──
   // A crackle of solar shots, the flare's roar, a thunderclap, the wormhole and the star waking.
-  'astra-starstruck': ['beam-fire', 1.8, 0.4],
-  'astra-solar-flares': ['flame-burst', 1.2, 0.75],
-  'astra-smite': ['zap', 0.7, 0.85],
-  'astra-worm-warp': ['portal', 1.1, 0.7],
-  'astra-true-self': ['holy-chord', 0.8, 0.8],
+  'astra-antimatter': ['portal', 1.6, 0.45],
+  'astra-supernova': ['flame-burst', 0.8, 0.9],
+  'astra-fusion': ['flame-burst', 1.5, 0.7],
+  'astra-comet': ['beam-charge', 1.6, 0.6],
+  'astra-singularity': ['holy-chord', 0.5, 0.9],
 
   // ── Memory ──
   // A flicked shard, the static beam letting go, a white sweep, a recording and a pulse of dread.
@@ -545,7 +545,6 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   'natural-clot': 'status-regen',
   'springboard': ['boing', 1.1],
   'atom-nhilego': ['explosion-large', 1.2],
-  'byte-bomb': ['glitch', 0.8, 1.15],
   'overload': ['musket', 0.9, 1.15],
   'unstoppable': 'status-invincible',
   'vibration-detection': 'echo-ping',
@@ -585,7 +584,6 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   'unsatiable': ['land', 1.4, 0.7],
   'tempered-temptation': ['crystal-shatter', 0.7, 1.1],
   'obsidian-coat': ['crystal-shatter', 0.6, 0.7],
-  'magma-saw': ['engine', 0.7, 1.15],
   'inevitability': ['clock-tick', 0.8, 1.15],
   'delay-the-inevitable': ['clock-tick', 0.95, 0.42],
   // Yin-Yang voices itself in the kit when the bars open.

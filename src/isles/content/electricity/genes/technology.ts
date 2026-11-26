@@ -5,11 +5,11 @@ import { behavior, cast, cut, effect, enlightened, fade, flat, gain, gene, linea
  * Firmware — Technology's gene tree.
  *
  * Technology is a hacker: Addicting Cruncher from the hand (a triangle that gets faster and
- * deadlier on hits), Overt Advertisement (twelve popups for 3s — shelter for you, a virus for the
- * foe), Upload (a tethered cord that boxes the foe for 6s), Web Drag (6s of dragging the foe,
- * popups or the cord head around) and Admin Console (8s invincible at a typing test, then cash in
- * Admin Points). Three lines: **Adware** (the popups and the box — damage the foe walks into),
- * **Uplink** (the cord and the drag — cooldowns and moving data) and **Firewall** (backups,
+ * deadlier on hits), Overt Advertisement (twelve popups for 3s — shelter for you, virus critters for
+ * the foe), Zip Bomb (a slow file that lags the foe for 10s), Web Drag (6s of dragging the foe,
+ * popups or the file around) and Admin Console (a window of commands paid for in abuse). Three
+ * lines: **Adware** (the popups and the lag — damage the foe walks into),
+ * **Uplink** (the file and the drag — cooldowns and moving data) and **Firewall** (backups,
  * checksums and the console's privileges).
  *
  * Addicting Cruncher fires on its own private cooldown (500ms down to 150ms on a streak) and
@@ -33,15 +33,15 @@ export const TECHNOLOGY_GENE_TREE: GeneTree = {
         grant: behavior({ trigger: 'onHitDealt', chance: 0.1, cooldownSec: 3, action: 'sear', amount: 12, durationMs: 3000 }),
       },
     }),
-    /** Identity root: the cord goes out and the whole machine gets a faster handshake. */
+    /** Identity root: the file goes out and the whole machine gets a faster handshake. */
     gene({
       id: 'gene-tech-fast-handshake', name: 'Fast Handshake', tier: 0, col: 1,
-      text: 'Upload casts shave 300ms off every other cooldown',
+      text: 'Zip Bomb casts shave 300ms off every other cooldown',
       maxLevel: 4, cost: linear(8, 2),
       grant: cast('r', (lv) => ({ refundOthers: flat(300)(lv) })),
       mastery: {
         name: 'Packet Resend', cost: 18,
-        text: 'Upload casts have a 12% chance to come straight back — the packet was sent twice',
+        text: 'Zip Bomb casts have a 12% chance to come straight back — the packet was sent twice',
         grant: onCast('r', { refundSelfChance: 0.12 }),
       },
     }),
@@ -59,10 +59,10 @@ export const TECHNOLOGY_GENE_TREE: GeneTree = {
     }),
 
     // ── Tier 1 ────────────────────────────────────────────────────────
-    /** Cookie Tracking: a boxed foe is a foe whose every step is logged. */
+    /** Cookie Tracking: a lagging foe is a foe whose every step is logged. */
     gene({
       id: 'gene-tech-cookie-tracking', name: 'Cookie Tracking', tier: 1, col: 0, needs: ['gene-tech-clickbait'],
-      text: 'Upload casts make the foe take +4% damage for 6s — as long as the box holds',
+      text: 'Zip Bomb casts make the foe take +4% damage for 6s',
       maxLevel: 4, cost: linear(9, 3),
       grant: cast('r', (lv) => ({ damageMult: gain(0.04)(lv), ms: 6000 })),
       mastery: {
@@ -138,7 +138,7 @@ export const TECHNOLOGY_GENE_TREE: GeneTree = {
     /** Root Access: while the console runs, the foe's permissions are already being revoked. */
     gene({
       id: 'gene-tech-root-access', name: 'Root Access', tier: 3, col: 0, needs: ['gene-tech-overclocked'],
-      text: 'Admin Console casts make the foe take +8% damage for 14s — the console and the cash-in after',
+      text: 'Admin Console casts make the foe take +8% damage for 14s',
       maxLevel: 3, cost: linear(16, 4),
       grant: cast('q', (lv) => ({ damageMult: gain(0.08)(lv), ms: 14000 })),
       mastery: {

@@ -1,12 +1,11 @@
 import Phaser from 'phaser';
 import { Fighter } from '../../entities/Fighter';
 import { CastContext } from '../Ability';
-import { Projectile } from '../../combat/Projectile';
 import { ProjectileRegistry, RegisteredProjectile } from '../../combat/ProjectileRegistry';
 import { NetTechMsg } from '../../network/NetworkManager';
 import { CustomStatus } from './StatusHudKit';
 import {
-  ArmGesture, TECH, TechAuraStyle, TechColorFn, TechnologyAura, TechnologyAvatar, TechnologyFx,
+  AD_VARIANTS, ArmGesture, TECH, TechAuraStyle, TechColorFn, TechnologyAura, TechnologyAvatar, TechnologyFx,
   bitTileLayered, crtButton, crtWindow, windowPane,
 } from './TechnologyVisuals';
 import { FONT_MONO } from '../../ui/Theme';
@@ -42,34 +41,38 @@ const ADS_LIFETIME_MS = 3000;
 const ADS_W = 138;
 const ADS_H = 96;
 const ADS_SHELTER_DMG_MULT = 0.75;
-const VIRUS_DURATION_MS = 5000;
-const VIRUS_TICK_MS = 1000;
-const VIRUS_BASE_DMG = 3;
+// Each popup touched lets `BUGS_PER_POPUP` critters loose on the victim. They are harmless while
+// they incubate, then every one of them drains until it is squashed.
+const BUGS_PER_POPUP = 2;
+const BUG_INCUBATE_MS = 2500;
+const BUG_TICK_MS = 1000;
+const BUG_TICK_DMG = 2;
+const BUG_MAX_PER_VICTIM = 14;
+const BUG_UI_SPEED = 95;
+const BUG_BODY_SPEED = 42;
+const BUG_CLICK_RADIUS = 24;
+/** A bot swats a critter this long after it lands. A human has to click. */
+const BUG_BOT_CLEAR_MS: [number, number] = [4500, 7500];
 
-// ── Palware (E+) ────────────────────────────────────────────────────────────
-const MALWARE_LIFETIME_MS = 20000;
-const MALWARE_COOLDOWN_MS = 20000;
-const MALWARE_KINDS = ['goose', 'clippy', 'pong'] as const;
-type MalwareKind = (typeof MALWARE_KINDS)[number];
-const GOOSE_POKE_DMG = 12;
-const GOOSE_WANDER_SPEED = 130;
-const GOOSE_CHASE_SPEED = 190;
-const GOOSE_STEAL_SCAN_RADIUS = 260;
-const CLIPPY_QUIZ_INTERVAL_MS = 8000;
-const CLIPPY_QUIZ_TIME_MS = 5000;
-const CLIPPY_FAIL_DMG = 20;
-const CLIPPY_AI_PASS_CHANCE = 0.75;
-const PONG_DMG = 10;
-const PONG_SPEED = 260;
-const PONG_SPLIT_MS = 5000;
-const PONG_MAX_BALLS = 16;
-const PONG_HIT_CD_MS = 800;
+// ── Ransomware (E+) ─────────────────────────────────────────────────────────
+const RANSOM_POPUPS = 3;
+const RANSOM_CLICKS = 2;
+const RANSOM_UI_SPEED = 215;
+const RANSOM_BODY_SPEED = 80;
+const RANSOM_BOT_CLEAR_MS: [number, number] = [8500, 11500];
 
-// ── Upload (R) ────────────────────────────────────────────────────────────
-const UPLOAD_SPEED = 620;
-const UPLOAD_BOX_DURATION_MS = 6000;
-const UPLOAD_PARK_DURATION_MS = 5000;
-const UPLOAD_HIT_RADIUS = 22;
+// ── Zip Bomb (R) ──────────────────────────────────────────────────────────
+const ZIP_SPEED = 150;
+const ZIP_LIFETIME_MS = 9000;
+const ZIP_HIT_RADIUS = 30;
+/** The file skips backwards along its own path every so often — it is lagging too. */
+const ZIP_BAND_GAP_MS: [number, number] = [1100, 1900];
+const ZIP_BAND_BACK_MS = 420;
+/** How fast a bot hauls its own file at the target while its Web Drag is up. */
+const ZIP_BOT_DRAG_SPEED = 400;
+const ZIP_RESTART_STUN_MS = 3000;
+/** R+: the hit swells the victim's hitbox for as long as the lag lasts. */
+const ZIP_SWELL = 1.33;
 
 // ── Web Drag (F) ──────────────────────────────────────────────────────────
 const WEBDRAG_DURATION_MS = 6000;
@@ -99,13 +102,57 @@ const PAIN_UPGRADES = [
 type PainUpgradeId = (typeof PAIN_UPGRADES)[number]['id'];
 
 // ── Admin Console (Q) ─────────────────────────────────────────────────────
-const ADMIN_WINDOW_MS = 8000;
-const ADMIN_STRING_LEN = 6;
-const ADMIN_TIERS = [5, 10, 20, 35, 50] as const;
-
-// ── Security Breach (Q+) ──────────────────────────────────────────────────
-const BREACH_POINTS = 5;
-const BREACH_TEXTS = ['Git Haxxed!', 'H4X0R3D', '0wn3d', 'sudo rm -rf you', 'pwned by admin', '1337'];
+const ADMIN_ABUSE_MAX = 100;
+/** Q+ Admin Abuse: what a point of abuse costs in health once the bar is spent. */
+const ADMIN_HP_PER_ABUSE = 0.4;
+const ADMIN_OVERUSE_STEP = 0.1;
+const ADMIN_COMMANDS = [
+  { id: 'fling', cost: 10 },
+  { id: 'jail', cost: 20 },
+  { id: 'fly', cost: 20 },
+  { id: 'kill', cost: 25 },
+  { id: 'invis', cost: 25 },
+  { id: 'give', cost: 50 },
+  { id: 'speed', cost: 50 },
+  { id: 'invincible', cost: 100 },
+  { id: 'ban', cost: 100 },
+] as const;
+export type AdminCmd = (typeof ADMIN_COMMANDS)[number]['id'];
+const ADMIN_CHEAPEST = 10;
+const ADMIN_WIN_W = 330;
+const ADMIN_WIN_H = 226;
+const ADMIN_BAR_H = 22;
+const ADMIN_BTN_W = 98;
+const ADMIN_BTN_H = 38;
+const ADMIN_BTN_DX = [60, 165, 270];
+const ADMIN_BTN_DY = [82, 126, 170];
+const ADMIN_FLING_SPEED = 950;
+const ADMIN_FLING_MS = 300;
+const ADMIN_JAIL_SIZE = 150;
+const ADMIN_JAIL_MS = 3000;
+const ADMIN_FLY_MS = 5000;
+const ADMIN_FLY_SPEED = 1.4;
+const ADMIN_KILL_DMG = 20;
+const ADMIN_INVIS_MS = 5000;
+const ADMIN_GIVE_MS = 10000;
+const ADMIN_GUN_SPEED = 1.6;
+const ADMIN_GUN_DMG = 1.5;
+const ADMIN_SPEED_MS = 10000;
+const ADMIN_SPEED_BONUS = 1.33;
+const ADMIN_INVINCIBLE_MS = 5000;
+const ADMIN_BAN_HP = 0.15;
+/** The fake source each command scrolls into the corner. */
+const ADMIN_CODE: Record<AdminCmd, string[]> = {
+  fling: [';fling enemy', 'hrp.Velocity = Vector3.new(9e4, 9e4, 0)', '-- 1 player flung'],
+  jail: [';jail enemy', 'local cell = Instance.new("Part", workspace)', 'cell.Anchored = true -- 3s'],
+  fly: [';fly me', 'bodyGyro.P = 9e4; bodyVel.MaxForce = INF', '-- gravity: off'],
+  kill: [';kill enemy', 'humanoid:TakeDamage(20)', '-- smite.lua OK'],
+  invis: [';invis me', 'for _, p in parts do p.Transparency = 1 end', '-- nameplate hidden'],
+  give: [';give me phaser', 'tool.Parent = me.Backpack', '-- PacBlaster loaded, 10s'],
+  speed: [';speed me 1.33', 'humanoid.WalkSpeed *= 1.33', 'cooldownScale = 0.75'],
+  invincible: [';god me', 'humanoid.MaxHealth = math.huge', '-- 5s of god mode'],
+  ban: [';ban enemy', 'DataStore:SetAsync(uid, { banned = true })', 'enemy:Kick("Banned by admin")'],
+};
 
 // ── Technology Mastery — VPN (passive) ────────────────────────────────────
 /** Continuous movement time needed to reach the full speed boost. */
@@ -116,16 +163,17 @@ const VPN_MOVE_EPSILON = 0.35;
 const VPN_TRAIL_MAX_MS = 120;
 const VPN_TRAIL_MIN_MS = 34;
 
-// ── Technology Mastery — Byte-Bomb (bindable) ─────────────────────────────
-const BYTE_BOMB_COOLDOWN_MS = 15000;
-const BYTE_BOMB_FUSE_MS = 8000;
-const BYTE_BOMB_CLICK_CUT_MS = 500;
-const BYTE_BOMB_TRAVEL_SPEED = 780;
-const BYTE_BOMB_RADIUS = 26;
-const BYTE_BOMB_BLAST_RADIUS = 120;
-const BYTE_BOMB_DAMAGE = 10;
+// ── Technology Mastery — Glitch Abuse (passive) ───────────────────────────
+/** How long you have to grind against a wall before the collision gives up. */
+const GLITCH_RUB_MS = 450;
+const GLITCH_WINDUP_MS = 520;
+const GLITCH_LAUNCH_SPEED = 1500;
+const GLITCH_LAUNCH_MAX_MS = 1100;
+const GLITCH_COOLDOWN_MS = 3500;
+const GLITCH_DAMAGE = 15;
+const GLITCH_HIT_RADIUS = 38;
 
-// ── Lag (Byte-Bomb debuff) ────────────────────────────────────────────────
+// ── Lag (Zip Bomb debuff) ─────────────────────────────────────────────────
 const LAG_DURATION_MS = 10000;
 /** How far back in time a rubber-band snaps you. */
 const LAG_REWIND_MS = 1000;
@@ -134,130 +182,99 @@ const LAG_FREEZE_MS = 1000;
 const LAG_EVENT_MIN_GAP_MS = 1600;
 const LAG_EVENT_MAX_GAP_MS = 2600;
 
-function randomBinaryString(len: number): string {
-  let s = '';
-  for (let i = 0; i < len; i++) s += Math.random() < 0.5 ? '0' : '1';
-  return s;
-}
-
-interface CordState {
-  owner: Owner;
-  state: 'traveling' | 'parked';
-  x: number; y: number; vx: number; vy: number;
-  parkX: number; parkY: number;
-  expiresAt: number;
-}
-
 interface AdBox {
+  id: number;
   owner: Owner;
   x: number; y: number; w: number; h: number;
+  /** Which fake advert this window is running. */
+  variant: number;
   bornAt: number;
   expiresAt: number;
 }
 
+/** A virus critter (or the Ransomware bug) loose on one fighter. */
+interface Bug {
+  id: number;
+  victim: Fighter;
+  /** Whose popup it came out of. */
+  owner: Owner;
+  kind: 'virus' | 'ransom';
+  /** Screen position on the local human's HUD; an offset from the body on anyone else. */
+  x: number; y: number;
+  tx: number; ty: number;
+  heading: number;
+  pauseUntil: number;
+  bornAt: number;
+  clicksLeft: number;
+  hitAt: number;
+  /** Bots swat theirs on a timer; 0 means somebody has to click it. */
+  autoClearAt: number;
+  phase: number;
+}
+
+interface ZipBomb {
+  owner: Owner;
+  x: number; y: number; vx: number; vy: number;
+  bornAt: number;
+  expiresAt: number;
+  nextBandAt: number;
+  history: Array<{ x: number; y: number; t: number }>;
+  sampleAccum: number;
+  /** When and where it last rubber-banded from, for the afterimage. */
+  bandAt: number; bandX: number; bandY: number;
+  /** Online: the remote caster's file — drawn here, resolved on their machine. */
+  replica: boolean;
+  syncAccum: number;
+}
+
 interface JailBox {
+  f: Fighter;
+  /** Who locked them up. */
+  owner: Owner;
   x: number; y: number; w: number; h: number;
   lastDmgAt: number;
   expiresAt: number;
 }
 
 interface AdminState {
-  active: boolean;
-  endAt: number;
-  points: number;
-  target: string;
-  cursor: number;
-  box: Phaser.GameObjects.Graphics | null;
-  text: Phaser.GameObjects.Text | null;
-  keyListener: ((e: KeyboardEvent) => void) | null;
-  nextTypeAt: number;
-  typeRate: number;
+  open: boolean;
+  abuse: number;
+  /** Q+ Admin Abuse: commands paid for in health so far this console. */
+  overuse: number;
+  closeAt: number;
+  nextBotCmdAt: number;
 }
 
 function freshAdminState(): AdminState {
-  return {
-    active: false, endAt: 0, points: 0, target: '', cursor: 0,
-    box: null, text: null, keyListener: null, nextTypeAt: 0, typeRate: 350,
-  };
+  return { open: false, abuse: 0, overuse: 0, closeAt: 0, nextBotCmdAt: 0 };
 }
 
-type DragGrab = { kind: 'fighter'; ref: Fighter } | { kind: 'cord'; ref: CordState } | { kind: 'ad'; ref: AdBox }
-  | { kind: 'window'; offX: number; offY: number };
-
-// ── Palware state ─────────────────────────────────────────────────────────
-
-interface GooseState {
-  kind: 'goose';
-  facing: number;
-  x: number; y: number;
-  targetX: number; targetY: number;
-  mode: 'wander' | 'poke' | 'carry' | 'steal' | 'throw';
-  modeUntil: number;
-  nextActionAt: number;
-  carried: Fighter | null;
-  stolenDamage: number;
-  bulletIcon: Phaser.GameObjects.Text | null;
-}
-
-interface ClippyState {
-  kind: 'clippy';
-  objs: Phaser.GameObjects.GameObject[];
-  qText: Phaser.GameObjects.Text;
-  inputText: Phaser.GameObjects.Text;
-  timerBar: Phaser.GameObjects.Rectangle;
-  nextQuizAt: number;
-  quiz: { answer: number; endsAt: number; input: string } | null;
-  keyListener: ((e: KeyboardEvent) => void) | null;
-}
-
-interface PongBall {
-  x: number; y: number; vx: number; vy: number;
-  lastHitAt: Map<Fighter, number>;
-}
-
-interface PongState {
-  kind: 'pong';
-  balls: PongBall[];
-  nextSplitAt: number;
-}
-
-type MalwareState = (GooseState | ClippyState | PongState) & { owner: Owner; expiresAt: number };
-
-interface ThrownBullet {
-  owner: Owner;
-  x: number; y: number; vx: number; vy: number;
-  damage: number;
-}
-
-interface TrojanState {
-  victim: Fighter;
-  until: number;
-  dir: { x: number; y: number };
-}
-
-interface BoxedHusk {
-  f: Fighter;
-  until: number;
-}
-
-interface HuskVirus {
-  f: Fighter;
-  until: number;
-  nextTickAt: number;
-}
-
-// ── Technology Mastery state ──────────────────────────────────────────────
-
-interface ByteBomb {
+/** A command's set-piece: the smite beam, the ban hammer. */
+interface AdminStrike {
+  kind: 'kill' | 'ban';
   owner: Owner;
   x: number; y: number;
-  vx: number; vy: number;
-  /** Cursor point it is flying toward; once reached it parks and ticks down. */
-  destX: number; destY: number;
-  flying: boolean;
-  /** Milliseconds left on the fuse. */
-  fuse: number;
+  bornAt: number;
 }
+
+interface GlitchState {
+  phase: 'idle' | 'glitch' | 'launch';
+  rubMs: number;
+  startedAt: number;
+  readyAt: number;
+  /** Inward normal of the wall being abused. */
+  nx: number; ny: number;
+  baseX: number; baseY: number;
+  dx: number; dy: number;
+  hit: Set<Fighter>;
+}
+
+function freshGlitchState(): GlitchState {
+  return { phase: 'idle', rubMs: 0, startedAt: 0, readyAt: 0, nx: 0, ny: 0, baseX: 0, baseY: 0, dx: 0, dy: 0, hit: new Set() };
+}
+
+type DragGrab = { kind: 'fighter'; ref: Fighter } | { kind: 'zip'; ref: ZipBomb } | { kind: 'ad'; ref: AdBox }
+  | { kind: 'window'; offX: number; offY: number } | { kind: 'console'; offX: number; offY: number };
 
 interface LagState {
   until: number;
@@ -288,8 +305,6 @@ export interface TechArenaApi {
   readonly fKey: Phaser.Input.Keyboard.Key;
   readonly qKey: Phaser.Input.Keyboard.Key;
   readonly nukeChanneling: boolean;
-  /** ArenaScene's shared generic projectile physics group (steal targets for the goose). */
-  readonly projGroup: Phaser.Physics.Arcade.Group;
   /** Shared registry of kit-local projectiles. */
   readonly projReg: ProjectileRegistry;
   hasUpgrade(owner: Owner, slot: string): boolean;
@@ -322,15 +337,16 @@ export interface TechArenaApi {
 const CAST_GESTURES: Record<string, ArmGesture> = {
   'tech-cruncher': 'punch',
   'tech-ads': 'sweep',
-  'tech-upload': 'punch',
+  'tech-zip': 'punch',
   'tech-webdrag': 'flex',
   'tech-admin': 'raise',
 };
 
 /** Depths for the kit's shared paint layers. */
 const D_FLOOR = 6;    // grids, burn-ins, firewall border
-const D_WORLD = 13;   // crunchers, cords, bombs, malware, coins
-const D_UI = 19;      // popups and boxes that sit over the fighters
+const D_WORLD = 13;   // crunchers, the zip file, the phaser
+const D_UI = 19;      // popups, cells and critters that sit over the fighters
+const D_HUD = 60;     // critters crawling the local player's HUD
 
 export class TechnologyKit {
   // ── Visuals ───────────────────────────────────────────────────────────────
@@ -357,7 +373,7 @@ export class TechnologyKit {
   private adrenalineIndicatorShown = false;
   private crunchers: Array<{
     x: number; y: number; vx: number; vy: number;
-    owner: Owner; damage: number; traveled: number; trailAccum: number;
+    owner: Owner; damage: number; traveled: number; trailAccum: number; gun: boolean;
     reg: RegisteredProjectile;
   }> = [];
 
@@ -370,24 +386,32 @@ export class TechnologyKit {
 
   // Overt Advertisement
   private ads: AdBox[] = [];
-  private virusUntil: Record<Owner, number> = { player: 0, npc: 0 };
-  private virusNextTickAt: Record<Owner, number> = { player: 0, npc: 0 };
-  private huskViruses: HuskVirus[] = [];
+  private adSeq = 1;
+  /** One headline and one button label per live popup; pooled, because a cast opens twelve. */
+  private adTexts = new Map<AdBox, { head: Phaser.GameObjects.Text; btn: Phaser.GameObjects.Text }>();
+  private adTextPool: Array<{ head: Phaser.GameObjects.Text; btn: Phaser.GameObjects.Text }> = [];
   private wasSheltered: Record<Owner, boolean> = { player: false, npc: false };
 
-  // Palware (E+)
-  private malware: Record<Owner, MalwareState | null> = { player: null, npc: null };
-  private malwareCdUntil: Record<Owner, number> = { player: 0, npc: 0 };
-  private thrownBullets: ThrownBullet[] = [];
+  // Virus critters + Ransomware (E / E+)
+  private bugs: Bug[] = [];
+  private bugSeq = 1;
+  private popupsTouched = new Map<Fighter, number>();
+  private bugDrainAt = new Map<Fighter, number>();
+  private bugPointerWasDown = false;
+  private bugGfx: Phaser.GameObjects.Graphics | null = null;
+  private ransomNote: Phaser.GameObjects.Text | null = null;
 
-  // Upload
-  private cords: Record<Owner, CordState | null> = { player: null, npc: null };
-  private boxedUntil: Record<Owner, number> = { player: 0, npc: 0 };
-  private boxedHusks: BoxedHusk[] = [];
-
-  // Trojan Takeover (R+) — keyed by the CASTER owner
-  private trojan: Record<Owner, TrojanState | null> = { player: null, npc: null };
-  private arrowKeys: { up: Phaser.Input.Keyboard.Key; down: Phaser.Input.Keyboard.Key; left: Phaser.Input.Keyboard.Key; right: Phaser.Input.Keyboard.Key } | null = null;
+  // Zip Bomb (R)
+  private zips: ZipBomb[] = [];
+  /** R+: fighters whose `hitboxMult` currently carries the swell, and until when. */
+  private swollen = new Map<Fighter, number>();
+  /** Fighters sitting out a restart, held still until this time. */
+  private rebooting = new Map<Fighter, number>();
+  private botRestartAt = new Map<Fighter, number>();
+  private lagClearedAt = new Map<Fighter, number>();
+  private restartPromptObjs: Phaser.GameObjects.GameObject[] = [];
+  private restartPromptBounds: { x: number; y: number; w: number; h: number } | null = null;
+  private rebootObjs: Phaser.GameObjects.GameObject[] = [];
 
   // Web Drag
   private dragActive: Record<Owner, boolean> = { player: false, npc: false };
@@ -417,10 +441,27 @@ export class TechnologyKit {
 
   // Admin Console
   private admin: Record<Owner, AdminState> = { player: freshAdminState(), npc: freshAdminState() };
+  private adminObjs: Phaser.GameObjects.GameObject[] = [];
+  private adminAnchors: Array<{ o: Phaser.GameObjects.Text | Phaser.GameObjects.Rectangle; dx: number; dy: number }> = [];
+  private adminX = 0;
+  private adminY = 0;
+  private adminBtnLabels = new Map<AdminCmd, Phaser.GameObjects.Text>();
+  private adminAbuseText: Phaser.GameObjects.Text | null = null;
+  private adminRefreshAt = 0;
   private adminInvisibleUntil: Record<Owner, number> = { player: 0, npc: 0 };
   private wasAdminInvisible: Record<Owner, boolean> = { player: false, npc: false };
-  private jail: Record<Owner, JailBox | null> = { player: null, npc: null };
-  private consoleLogTexts: Phaser.GameObjects.Text[] = [];
+  private flyUntil: Record<Owner, number> = { player: 0, npc: 0 };
+  private wasFlying: Record<Owner, boolean> = { player: false, npc: false };
+  private gunUntil: Record<Owner, number> = { player: 0, npc: 0 };
+  private speedUntil: Record<Owner, number> = { player: 0, npc: 0 };
+  private wasSped: Record<Owner, boolean> = { player: false, npc: false };
+  private invincibleUntil: Record<Owner, number> = { player: 0, npc: 0 };
+  private wasInvincible: Record<Owner, boolean> = { player: false, npc: false };
+  private flings: Array<{ f: Fighter; vx: number; vy: number; until: number }> = [];
+  private strikes: AdminStrike[] = [];
+  private jails: JailBox[] = [];
+  /** The fake source scrolling up the bottom-right corner, typed out a character at a time. */
+  private consoleLines: Array<{ text: Phaser.GameObjects.Text; full: string; startAt: number }> = [];
   /** Terminal backing plate behind the admin console log, repainted per frame. */
   private consoleGfx: Phaser.GameObjects.Graphics | null = null;
   /**
@@ -430,9 +471,6 @@ export class TechnologyKit {
    * dropped here on the next paint.
    */
   private chrome: { g: Phaser.GameObjects.Graphics; draw: (g: Phaser.GameObjects.Graphics, t: number) => void }[] = [];
-
-  // Security Breach (Q+)
-  private breachTimes: Record<Owner, number[]> = { player: [], npc: [] };
 
   // Mastery requirement tracking
   private cruncherStreak = 0;
@@ -445,14 +483,10 @@ export class TechnologyKit {
   private vpnHasLastPos = false;
   private vpnIndicatorShown = false;
 
-  // Technology Mastery — Byte-Bomb (bindable)
-  // First match runs the constructor, not reset(), and readiness compares against the
-  // absolute scene clock — so start fully off-cooldown rather than at 0.
-  private byteBombLastCastAt = -BYTE_BOMB_COOLDOWN_MS;
-  private byteBombs: ByteBomb[] = [];
-  private byteBombPointerWasDown = false;
+  // Technology Mastery — Glitch Abuse (passive)
+  private glitch = freshGlitchState();
 
-  // Lag (Byte-Bomb debuff)
+  // Lag (Zip Bomb debuff)
   private lagged: Map<Fighter, LagState> = new Map();
 
   constructor(private arena: TechArenaApi) {
@@ -544,30 +578,92 @@ export class TechnologyKit {
     return this.dragActive.player;
   }
 
-  /** Remote tech event from the online peer, routed via OnlineKit → ArenaScene. */
+  /** Fly and Speed from the admin console — read in ArenaScene's npc speed chain. */
+  getNpcSpeedMult(): number {
+    return this.adminSpeedMult('npc', this.arena.scene.time.now);
+  }
+
+  // ── Bot reads (side-effect-free; see the bot synergy contract in CLAUDE.md) ──
+
+  /** The bot's console is already up — a second Q would only burn the charge. */
+  npcConsoleOpen(): boolean { return this.admin.npc.open; }
+
+  /** The target is inside ban range: opening the console now ends the match. */
+  npcBanLive(): boolean {
+    const p = this.arena.player;
+    return !this.admin.npc.open && p.active && p.hp > 0 && p.hp / p.maxHp < ADMIN_BAN_HP;
+  }
+
+  /** The bot's own file is crawling across the arena and nothing is hauling it: Web Drag will. */
+  npcZipAdrift(): boolean {
+    return !this.dragActive.npc && this.zips.some((z) => z.owner === 'npc' && !z.replica);
+  }
+
+  /** The target cannot walk away right now (caged, rebooting, frozen by lag): a slow file lands. */
+  npcTargetPinned(): boolean {
+    const p = this.arena.player;
+    const time = this.arena.scene.time.now;
+    if (this.jails.some((j) => j.f === p)) return true;
+    if ((this.rebooting.get(p) ?? 0) > time) return true;
+    return (this.lagged.get(p)?.freezeUntil ?? 0) > time;
+  }
+
+  /** Remote tech event from the online peer, routed via OnlineKit → ArenaScene (x already un-mirrored). */
   handleNetMsg(msg: NetTechMsg): void {
+    const time = this.arena.scene.time.now;
     switch (msg.k) {
-      case 'malware':
-        this.spawnMalware('npc', msg.kind);
+      case 'ads':
+        // The remote caster's popups, where they actually are on their screen.
+        for (let i = 0; i + 1 < msg.p.length; i += 2) this.spawnAd('npc', msg.p[i], msg.p[i + 1], time, msg.id0 + i / 2);
         break;
-      case 'steer': {
-        const t = this.trojan.npc;
-        if (t) t.dir = this.steerDir(msg.d);
+      case 'adx': {
+        const i = this.ads.findIndex((a) => a.owner === 'npc' && a.id === msg.id);
+        if (i >= 0) this.popAd(i, true);
         break;
       }
-      case 'quiz': {
-        const m = this.malware.player;
-        if (m?.kind === 'clippy') {
-          this.arena.showFloatingText(this.arena.npc.x, this.arena.npc.y - 40, msg.pass ? '📎 Quiz passed' : '📎 Quiz failed! -20', msg.pass ? '#aaaaff' : '#cc66ff');
+      case 'mv': {
+        if (msg.o === 'zip') {
+          const z = this.zips.find((q) => q.owner === 'npc');
+          if (z) { z.x = msg.x; z.y = msg.y; }
+        } else {
+          const ad = this.ads.find((a) => a.owner === 'npc' && a.id === msg.id);
+          if (ad) { ad.x = msg.x; ad.y = msg.y; }
         }
         break;
       }
-      case 'bytefuse': {
-        // The remote caster clicked their bomb — trim our replica's fuse to match.
-        const bomb = this.byteBombs.find((b) => b.owner === 'npc');
-        if (bomb) bomb.fuse = Math.max(0, bomb.fuse - BYTE_BOMB_CLICK_CUT_MS);
+      case 'bugs':
+        // Their popup caught us: the critters crawl OUR screen, and only we can click them.
+        for (const id of msg.ids) this.spawnBug(this.arena.player, 'npc', 'virus', time, id);
+        if (msg.ransom >= 0) this.spawnBug(this.arena.player, 'npc', 'ransom', time, msg.ransom);
+        break;
+      case 'bugx': {
+        // The remote victim clicked one of the critters we put on them.
+        const i = this.bugs.findIndex((b) => b.owner === 'player' && b.id === msg.id);
+        if (i >= 0) this.hitBug(i, time);
         break;
       }
+      case 'zipx': {
+        const i = this.zips.findIndex((z) => z.owner === 'npc');
+        if (i >= 0) {
+          const z = this.zips[i];
+          this.zips.splice(i, 1);
+          if (msg.hit) this.zipLand('npc', this.arena.player, z.x, z.y, time, msg.big);
+          else this.nfx.bits(z.x, z.y, 5, { speed: 110, size: 8, life: 320, depth: D_WORLD });
+        }
+        break;
+      }
+      case 'restart':
+        // The remote victim took the restart: their lag is gone on our replica too.
+        this.clearLag(this.arena.npc, time);
+        this.rebooting.set(this.arena.npc, time + ZIP_RESTART_STUN_MS);
+        this.rebootFx(this.arena.npc);
+        break;
+      case 'cmd':
+        this.runAdminCommand('npc', msg.c);
+        break;
+      case 'console':
+        this.admin.npc.open = msg.open;
+        break;
     }
   }
 
@@ -589,13 +685,18 @@ export class TechnologyKit {
     return best;
   }
 
-  private steerDir(d: 'up' | 'down' | 'left' | 'right'): { x: number; y: number } {
-    switch (d) {
-      case 'up': return { x: 0, y: -1 };
-      case 'down': return { x: 0, y: 1 };
-      case 'left': return { x: -1, y: 0 };
-      case 'right': return { x: 1, y: 0 };
-    }
+  private fighterOf(owner: Owner): Fighter {
+    return owner === 'player' ? this.arena.player : this.arena.npc;
+  }
+
+  /** 'player' / 'npc' for the two duellists, null for a husk. */
+  private ownerOf(f: Fighter): Owner | null {
+    return f === this.arena.player ? 'player' : f === this.arena.npc ? 'npc' : null;
+  }
+
+  /** A fighter driven by the AI on this machine — not the local human, not a remote one. */
+  private isBot(f: Fighter): boolean {
+    return f !== this.arena.player && !(this.arena.isOnline && f === this.arena.npc);
   }
 
   private rectContains(rect: { x: number; y: number; w: number; h: number }, x: number, y: number): boolean {
@@ -625,26 +726,32 @@ export class TechnologyKit {
     this.firewallShownCharges = -1;
 
     this.ads = [];
-    this.virusUntil = { player: 0, npc: 0 };
-    this.virusNextTickAt = { player: 0, npc: 0 };
-    this.huskViruses = [];
+    this.releaseAdTexts(true);
     this.wasSheltered = { player: false, npc: false };
     this.arena.player.incomingDamageMultiplier = 1;
     this.arena.npc.incomingDamageMultiplier = 1;
 
-    for (const o of OWNERS) this.destroyMalware(o);
-    this.malwareCdUntil = { player: 0, npc: 0 };
-    this.thrownBullets = [];
+    this.bugs = [];
+    this.popupsTouched.clear();
+    this.bugDrainAt.clear();
+    this.bugPointerWasDown = false;
+    if (this.bugGfx?.active) this.bugGfx.destroy();
+    this.bugGfx = null;
+    if (this.ransomNote?.active) this.ransomNote.destroy();
+    this.ransomNote = null;
 
-    this.destroyCord('player');
-    this.destroyCord('npc');
-    this.boxedUntil = { player: 0, npc: 0 };
-    for (const o of OWNERS) {
-      const f = o === 'player' ? this.arena.player : this.arena.npc;
-      f.clearTint();
+    this.zips = [];
+    for (const f of this.swollen.keys()) {
+      f.hitboxMult /= ZIP_SWELL;
+      if (f.active && f.body) f.applySizeMult();
     }
-    this.boxedHusks = [];
-    for (const o of OWNERS) this.trojan[o] = null;
+    this.swollen.clear();
+    this.rebooting.clear();
+    this.botRestartAt.clear();
+    this.lagClearedAt.clear();
+    this.closeRestartPrompt();
+    for (const o of this.rebootObjs) o.destroy();
+    this.rebootObjs = [];
     this.dragActive = { player: false, npc: false };
     this.dragExpiresAt = { player: 0, npc: 0 };
     this.dragGrabbed = null;
@@ -658,25 +765,33 @@ export class TechnologyKit {
     this.painOwned.clear();
     this.painAutoAccum = 0;
 
+    this.destroyAdminWindow();
     for (const o of OWNERS) {
-      const st = this.admin[o];
-      if (st.keyListener) window.removeEventListener('keydown', st.keyListener);
-      st.box?.destroy();
-      st.text?.destroy();
       this.admin[o] = freshAdminState();
+      const f = this.fighterOf(o);
+      if (this.wasInvincible[o]) f.isInvincible = false;
+      if (this.wasFlying[o]) { f.airborne = false; f.levitating = false; }
+      f.techCooldownMult = 1;
     }
     this.adminInvisibleUntil = { player: 0, npc: 0 };
     this.wasAdminInvisible = { player: false, npc: false };
-    for (const o of OWNERS) this.jail[o] = null;
+    this.flyUntil = { player: 0, npc: 0 };
+    this.wasFlying = { player: false, npc: false };
+    this.gunUntil = { player: 0, npc: 0 };
+    this.speedUntil = { player: 0, npc: 0 };
+    this.wasSped = { player: false, npc: false };
+    this.invincibleUntil = { player: 0, npc: 0 };
+    this.wasInvincible = { player: false, npc: false };
+    this.flings = [];
+    this.strikes = [];
+    this.jails = [];
 
-    for (const t of this.consoleLogTexts) t.destroy();
-    this.consoleLogTexts = [];
+    for (const l of this.consoleLines) l.text.destroy();
+    this.consoleLines = [];
     if (this.consoleGfx?.active) this.consoleGfx.destroy();
     this.consoleGfx = null;
     for (const c of this.chrome) if (c.g.active) c.g.destroy();
     this.chrome = [];
-
-    this.breachTimes = { player: [], npc: [] };
 
     this.cruncherStreak = 0;
 
@@ -688,9 +803,7 @@ export class TechnologyKit {
       this.vpnIndicatorShown = false;
     }
 
-    this.byteBombLastCastAt = -BYTE_BOMB_COOLDOWN_MS;
-    this.byteBombs = [];
-    this.byteBombPointerWasDown = false;
+    this.glitch = freshGlitchState();
 
     for (const [f, st] of this.lagged) {
       st.spinner?.destroy();
@@ -706,68 +819,32 @@ export class TechnologyKit {
     const player = this.arena.player;
     const ctx = this.arena.buildPlayerContext(mouseX, mouseY);
 
-    // Technology Mastery — Byte-Bomb may be bound over any of E/R/F/Q, suppressing that slot's base ability.
-    const bbSlot = this.arena.masteryActive ? this.byteBombSlot() : null;
-
-    if (Phaser.Input.Keyboard.JustDown(this.arena.eKey)) {
-      if (bbSlot === 'e') this.tryCastByteBomb(mouseX, mouseY);
-      else player.castAbility('tech-ads', ctx);
-    }
-    if (Phaser.Input.Keyboard.JustDown(this.arena.rKey)) {
-      if (bbSlot === 'r') this.tryCastByteBomb(mouseX, mouseY);
-      else player.castAbility('tech-upload', ctx);
-    }
-    if (Phaser.Input.Keyboard.JustDown(this.arena.fKey)) {
-      if (bbSlot === 'f') this.tryCastByteBomb(mouseX, mouseY);
-      else player.castAbility('tech-webdrag', ctx);
-    }
-    if (Phaser.Input.Keyboard.JustDown(this.arena.qKey)) {
-      if (bbSlot === 'q') this.tryCastByteBomb(mouseX, mouseY);
-      else player.castAbility('tech-admin', ctx);
-    }
-
-    this.handleTrojanSteering();
+    if (Phaser.Input.Keyboard.JustDown(this.arena.eKey)) player.castAbility('tech-ads', ctx);
+    if (Phaser.Input.Keyboard.JustDown(this.arena.rKey)) player.castAbility('tech-zip', ctx);
+    if (Phaser.Input.Keyboard.JustDown(this.arena.fKey)) player.castAbility('tech-webdrag', ctx);
+    // A console that is already up is not paid for twice.
+    if (Phaser.Input.Keyboard.JustDown(this.arena.qKey) && !this.admin.player.open) player.castAbility('tech-admin', ctx);
 
     if (this.dragActive.player) {
       this.handleWebDragPointer(pointer, mouseX, mouseY);
-      this.byteBombPointerWasDown = pointer.leftButtonDown();
     } else {
       const disarmed = Date.now() < player.disarmedUntil;
-      // The window is small and you keep fighting round it: only a click ON it stays out of the arena.
-      const overUi = this.isPointerOverBrowser(mouseX, mouseY) || this.isPointerOverSurfPopup(mouseX, mouseY);
-      // A click that lands on your own Byte-Bomb trims its fuse instead of firing a cruncher.
-      const trimmedFuse = !overUi && this.handleByteBombClick(pointer, mouseX, mouseY);
-      if (!disarmed && !overUi && !trimmedFuse && pointer.leftButtonDown()) this.doTechCruncherFire('player', mouseX, mouseY);
-    }
-  }
-
-  private handleTrojanSteering(): void {
-    const t = this.trojan.player;
-    if (!t) return;
-    if (!this.arrowKeys) {
-      const kb = this.arena.scene.input.keyboard;
-      if (!kb) return;
-      this.arrowKeys = {
-        up: kb.addKey(Phaser.Input.Keyboard.KeyCodes.UP),
-        down: kb.addKey(Phaser.Input.Keyboard.KeyCodes.DOWN),
-        left: kb.addKey(Phaser.Input.Keyboard.KeyCodes.LEFT),
-        right: kb.addKey(Phaser.Input.Keyboard.KeyCodes.RIGHT),
-      };
-    }
-    const dirs: Array<['up' | 'down' | 'left' | 'right', Phaser.Input.Keyboard.Key]> = [
-      ['up', this.arrowKeys.up], ['down', this.arrowKeys.down],
-      ['left', this.arrowKeys.left], ['right', this.arrowKeys.right],
-    ];
-    for (const [name, key] of dirs) {
-      if (Phaser.Input.Keyboard.JustDown(key)) {
-        t.dir = this.steerDir(name);
-        if (this.arena.isOnline) this.arena.sendTechMsg({ t: 'tech', k: 'steer', d: name });
-      }
+      // The windows are small and you keep fighting round them: only a click ON one stays out of
+      // the arena. Same for a critter — squashing it is the click.
+      const overUi = this.isPointerOverBrowser(mouseX, mouseY) || this.isPointerOverSurfPopup(mouseX, mouseY)
+        || this.isPointerOverAdmin(mouseX, mouseY) || this.isPointerOverRestartPrompt(mouseX, mouseY)
+        || this.uiBugAt(mouseX, mouseY) >= 0;
+      if (!disarmed && !overUi && pointer.leftButtonDown()) this.doTechCruncherFire('player', mouseX, mouseY);
     }
   }
 
   private isPointerOverSurfPopup(x: number, y: number): boolean {
     const b = this.surfPopupBounds;
+    return !!b && x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h;
+  }
+
+  private isPointerOverRestartPrompt(x: number, y: number): boolean {
+    const b = this.restartPromptBounds;
     return !!b && x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h;
   }
 
@@ -777,19 +854,18 @@ export class TechnologyKit {
     this.updateCrunchers(time, delta);
     this.updateAdrenalineHud(time);
     this.updateFirewall(time);
-    this.updateAds(time);
-    this.updateCords(time, delta);
-    this.updateBoxed(time);
-    this.updateTrojan(time);
+    this.updateAds(time, delta);
+    this.updateBugs(time, delta);
+    this.updateZips(time, delta);
+    this.updateSwell(time);
     this.updateWebDrag(time);
-    this.updateMalware(time, delta);
-    this.updateThrownBullets(time, delta);
     this.updateBrowser(delta);
     this.updateAdmin(time);
     this.updateJail(time);
     this.updateVpn(time, delta);
-    this.updateByteBombs(time, delta);
     this.updateLag(time, delta);
+    this.updateRestart(time);
+    this.updateGlitchAbuse(time, delta);
     this.paintChrome(time);
 
     if (this.arena.elementId === 'technology') this.updateShelter('player');
@@ -831,7 +907,20 @@ export class TechnologyKit {
     }
 
     // Admin console log: a dark terminal plate behind whichever lines are still on screen.
-    const live = this.consoleLogTexts.filter((tx) => tx.active && tx.text !== '');
+    const now = this.arena.scene.time.now;
+    for (let i = this.consoleLines.length - 1; i >= 0; i--) {
+      const l = this.consoleLines[i];
+      if (!l.text.active) { this.consoleLines.splice(i, 1); continue; }
+      const age = now - l.startAt;
+      // Typed, not printed: a character every 14ms, then it sits, then it scrolls out.
+      const shown = Phaser.Math.Clamp(Math.floor(age / 14), 0, l.full.length);
+      const typing = shown < l.full.length;
+      l.text.setText(l.full.slice(0, shown) + (typing && shown > 0 ? '█' : ''));
+      const done = age - l.full.length * 14;
+      if (done > 4200) { l.text.destroy(); this.consoleLines.splice(i, 1); continue; }
+      l.text.setAlpha(done > 3600 ? 1 - (done - 3600) / 600 : 1);
+    }
+    const live = this.consoleLines.map((l) => l.text).filter((tx) => tx.active && tx.text !== '');
     if (live.length > 0) {
       if (!this.consoleGfx || !this.consoleGfx.active) {
         this.consoleGfx = this.arena.scene.add.graphics().setDepth(49).setScrollFactor(0);
@@ -845,7 +934,7 @@ export class TechnologyKit {
         x1 = Math.max(x1, b.right); y1 = Math.max(y1, b.bottom);
         al = Math.max(al, tx.alpha);
       }
-      const px = x0 - 8, py = y0 - 6, pw = x1 - x0 + 16, ph = y1 - y0 + 12;
+      const px = x0 - 8, py = y0 - 6, pw = Math.max(x1 - x0 + 16, 300), ph = y1 - y0 + 12;
       g.fillStyle(this.pcol(TECH.night), 0.82 * al);
       g.fillRoundedRect(px, py, pw, ph, 4);
       g.fillStyle(this.pcol(TECH.alert), 0.06 * al);
@@ -878,28 +967,13 @@ export class TechnologyKit {
 
     this.paintFirewall(floor, t);
     this.paintCrunchers(world, t);
-    this.paintCords(world, t);
-    this.paintByteBombs(world, floor, time);
-    this.paintMalware(world, t);
+    this.paintZips(world, floor, time, t);
+    this.paintGuns(world, t);
     this.paintAds(ui, time, t);
-    this.paintBoxed(ui, t);
-    this.paintLoose(world);
+    this.paintSwell(ui, t);
     this.paintJail(ui, time, t);
-  }
-
-  /** The odds and ends: stolen rounds the goose is throwing back. */
-  private paintLoose(g: Phaser.GameObjects.Graphics): void {
-    for (const b of this.thrownBullets) {
-      const ang = Math.atan2(b.vy, b.vx);
-      const tint = this.col(b.owner);
-      // A stolen round, still wearing the trail it had when it was taken.
-      g.fillStyle(tint(TECH.amber), 0.3);
-      g.fillCircle(b.x - Math.cos(ang) * 7, b.y - Math.sin(ang) * 7, 4);
-      g.fillStyle(tint(TECH.amber), 1);
-      g.fillCircle(b.x, b.y, 5);
-      g.fillStyle(tint(TECH.white), 0.85);
-      g.fillCircle(b.x - 1.4, b.y - 1.6, 1.8);
-    }
+    this.paintStrikes(ui, time, t);
+    this.paintBugs(ui, time, t);
   }
 
   /** The colour a cruncher wears. */
@@ -909,77 +983,122 @@ export class TechnologyKit {
 
   private paintCrunchers(g: Phaser.GameObjects.Graphics, t: number): void {
     for (const c of this.crunchers) {
-      TechnologyFx.drawCruncher(g, this.col(c.owner), c.x, c.y, Math.atan2(c.vy, c.vx), t,
-        this.cruncherColor(c.owner), 1);
+      const ang = Math.atan2(c.vy, c.vx);
+      if (c.gun) TechnologyFx.drawPacman(g, this.col(c.owner), c.x, c.y, ang, t, 1);
+      else TechnologyFx.drawCruncher(g, this.col(c.owner), c.x, c.y, ang, t, this.cruncherColor(c.owner), 1);
     }
   }
 
-  private paintCords(g: Phaser.GameObjects.Graphics, t: number): void {
+  /** ;give — the phaser sits in the caster's hand for as long as the command lasts. */
+  private paintGuns(g: Phaser.GameObjects.Graphics, t: number): void {
+    const time = this.arena.scene.time.now;
     for (const owner of OWNERS) {
-      const cord = this.cords[owner];
-      if (cord) {
-        const caster = owner === 'player' ? this.arena.player : this.arena.npc;
-        TechnologyFx.drawCord(g, this.col(owner), caster.x, caster.y, cord.x, cord.y, t, 1,
-          cord.state === 'parked');
-      }
-      // R+ Trojan Takeover: the caster stays plugged into the body they boxed.
-      const tr = this.trojan[owner];
-      if (!tr || !tr.victim.active) continue;
-      const caster = owner === 'player' ? this.arena.player : this.arena.npc;
-      TechnologyFx.drawCord(g, this.col(owner), caster.x, caster.y, tr.victim.x, tr.victim.y, t, 0.85, false);
+      if (time >= this.gunUntil[owner]) continue;
+      const f = this.fighterOf(owner);
+      if (!f.active || f.hp <= 0 || f.forceInvisible) continue;
+      const foe = this.nearestEnemyOf(owner, f.x, f.y);
+      const p = this.arena.scene.input.activePointer;
+      const ang = owner === 'player'
+        ? Math.atan2(p.worldY - f.y, p.worldX - f.x)
+        : foe ? Math.atan2(foe.y - f.y, foe.x - f.x) : 0;
+      const kick = Phaser.Math.Clamp(1 - (time - this.cruncherLastFireAt[owner]) / 110, 0, 1);
+      TechnologyFx.drawPhaser(g, this.col(owner), f.x, f.y, ang, t, kick, Math.max(f.alpha, 0.3));
     }
   }
 
-  private paintByteBombs(
-    world: Phaser.GameObjects.Graphics, floor: Phaser.GameObjects.Graphics, time: number,
-  ): void {
-    for (const b of this.byteBombs) this.drawByteBombFace(world, floor, b, time);
+  private paintZips(g: Phaser.GameObjects.Graphics, floor: Phaser.GameObjects.Graphics, time: number, t: number): void {
+    for (const z of this.zips) {
+      const tint = this.col(z.owner);
+      const grow = Phaser.Math.Clamp((time - z.bornAt) / 220, 0, 1);
+      // A rubber-band leaves the file where it *was* for a moment, torn and fading.
+      const band = 1 - Phaser.Math.Clamp((time - z.bandAt) / 320, 0, 1);
+      if (band > 0) TechnologyFx.drawZip(g, tint, z.bandX, z.bandY, t, 0.45 * band, 1, true);
+      floor.fillStyle(tint(TECH.night), 0.3);
+      floor.fillEllipse(z.x, z.y + 24, 34 * grow, 9 * grow);
+      const held = this.dragGrabbed?.kind === 'zip' && this.dragGrabbed.ref === z;
+      TechnologyFx.drawZip(g, tint, z.x, z.y + Math.sin(t * 3 + z.bornAt) * 2.5, t, 1, grow * (held ? 1.12 : 1), band > 0.5);
+    }
   }
 
-  private paintMalware(g: Phaser.GameObjects.Graphics, t: number): void {
-    for (const owner of OWNERS) {
-      const m = this.malware[owner];
-      if (!m) continue;
-      if (m.kind === 'goose') {
-        TechnologyFx.drawGoose(g, this.col(owner), m.x, m.y, m.facing, t, 1);
-      } else if (m.kind === 'pong') {
-        // Pong balls: a bright square with a trail, because this is a 1972 video game.
-        for (const b of m.balls) {
-          const ang = Math.atan2(b.vy, b.vx);
-          for (let i = 3; i >= 1; i--) {
-            bitTileLayered(g, this.col(owner), b.x - Math.cos(ang) * i * 6, b.y - Math.sin(ang) * i * 6,
-              0, 12 - i * 1.5, i % 2 === 0, TECH.white, 0.16 * (4 - i), false);
-          }
-          g.fillStyle(this.col(owner)(TECH.white), 1);
-          g.fillRect(b.x - 6, b.y - 6, 12, 12);
-          g.lineStyle(2, this.col(owner)(TECH.alert), 0.9);
-          g.strokeRect(b.x - 6, b.y - 6, 12, 12);
+  /** R+: the selection marquee round a fighter whose hitbox has been unzipped a third bigger. */
+  private paintSwell(g: Phaser.GameObjects.Graphics, t: number): void {
+    for (const f of this.swollen.keys()) {
+      if (!f.active || f.hp <= 0) continue;
+      const tint = this.col(f === this.arena.player ? 'npc' : 'player');
+      const r = 24 * ZIP_SWELL + 2 * Math.sin(t * 5);
+      g.fillStyle(tint(TECH.gold), 0.08);
+      g.fillRect(f.x - r, f.y - r, r * 2, r * 2);
+      // marching ants
+      const dash = 7, per = r * 8, off = (t * 26) % (dash * 2);
+      g.fillStyle(tint(TECH.amber), 0.9);
+      for (let d = -off; d < per; d += dash * 2) {
+        for (let k = 0; k < dash; k += 2.5) {
+          const q = d + k;
+          if (q < 0 || q >= per) continue;
+          const side = Math.floor(q / (r * 2)), u = q % (r * 2);
+          const px = side === 0 ? f.x - r + u : side === 1 ? f.x + r : side === 2 ? f.x + r - u : f.x - r;
+          const py = side === 0 ? f.y - r : side === 1 ? f.y - r + u : side === 2 ? f.y + r : f.y + r - u;
+          g.fillRect(px - 1, py - 1, 2, 2);
         }
       }
+      // the four resize handles
+      for (const [hx, hy] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+        g.fillStyle(tint(TECH.white), 0.95);
+        g.fillRect(f.x + hx * r - 3, f.y + hy * r - 3, 6, 6);
+        g.lineStyle(1, tint(TECH.night), 0.9);
+        g.strokeRect(f.x + hx * r - 3, f.y + hy * r - 3, 6, 6);
+      }
     }
   }
 
+  /** Popups are painted as windows; their two lines of copy are real text riding on top. */
   private paintAds(g: Phaser.GameObjects.Graphics, time: number, t: number): void {
     for (const ad of this.ads) {
       // Yours is a see-through overlay; the enemy's is opaque and squarely in the way.
       const mine = ad.owner === 'player';
       const pop = Phaser.Math.Clamp((time - ad.bornAt) / 160, 0, 1);
-      TechnologyFx.drawAd(g, this.col(ad.owner), ad.x, ad.y,
-        ad.w * (0.4 + pop * 0.6), ad.h * (0.4 + pop * 0.6), t, mine ? 0.5 : 1, mine);
+      const k = 0.4 + pop * 0.6;
+      const alpha = mine ? 0.5 : 1;
+      const lay = TechnologyFx.drawAd(g, this.col(ad.owner), ad.x, ad.y, ad.w * k, ad.h * k, t, alpha, mine, ad.variant);
+      const v = AD_VARIANTS[ad.variant % AD_VARIANTS.length];
+      let tx = this.adTexts.get(ad);
+      if (!tx) {
+        tx = this.adTextPool.pop() ?? this.makeAdTexts();
+        tx.head.setText(v.head + '\n' + v.sub).setColor(v.ink).setVisible(true);
+        tx.btn.setText(v.btn).setVisible(true);
+        this.adTexts.set(ad, tx);
+      }
+      tx.head.setPosition(lay.headX, lay.headY).setScale(k).setAlpha(alpha * pop);
+      tx.btn.setPosition(lay.btnX, lay.btnY).setScale(k).setAlpha(alpha * pop);
     }
+    this.releaseAdTexts(false);
   }
 
-  private paintBoxed(g: Phaser.GameObjects.Graphics, t: number): void {
-    const now = this.arena.scene.time.now;
-    for (const owner of OWNERS) {
-      if (now >= this.boxedUntil[owner]) continue;
-      const f = owner === 'player' ? this.arena.player : this.arena.npc;
-      if (!f.active) continue;
-      TechnologyFx.drawBoxed(g, this.col(opposite(owner)), f.x, f.y, 16, t, 1);
+  private makeAdTexts(): { head: Phaser.GameObjects.Text; btn: Phaser.GameObjects.Text } {
+    const scene = this.arena.scene;
+    const head = scene.add.text(0, 0, '', {
+      fontSize: '10px', fontFamily: 'Arial, Helvetica, sans-serif', fontStyle: 'bold', align: 'center',
+      color: '#111111', wordWrap: { width: 86 }, lineSpacing: -1,
+    }).setOrigin(0.5).setDepth(D_UI + 0.2);
+    const btn = scene.add.text(0, 0, '', {
+      fontSize: '9px', fontFamily: 'Arial, Helvetica, sans-serif', fontStyle: 'bold', color: '#ffffff',
+    }).setOrigin(0.5).setDepth(D_UI + 0.2);
+    return { head, btn };
+  }
+
+  /** Hand back the copy of every popup that has closed (or all of it, for a reset). */
+  private releaseAdTexts(all: boolean): void {
+    for (const [ad, tx] of this.adTexts) {
+      if (!all && this.ads.includes(ad)) continue;
+      this.adTexts.delete(ad);
+      if (all || !tx.head.active) { tx.head.destroy(); tx.btn.destroy(); continue; }
+      tx.head.setVisible(false);
+      tx.btn.setVisible(false);
+      this.adTextPool.push(tx);
     }
-    for (const b of this.boxedHusks) {
-      if (!b.f.active) continue;
-      TechnologyFx.drawBoxed(g, this.pcol, b.f.x, b.f.y, 16, t, 1);
+    if (all) {
+      for (const tx of this.adTextPool) { tx.head.destroy(); tx.btn.destroy(); }
+      this.adTextPool = [];
     }
   }
 
@@ -1031,16 +1150,11 @@ export class TechnologyKit {
     for (const owner of OWNERS) {
       const f = owner === 'player' ? this.arena.player : this.arena.npc;
       const foe = this.col(opposite(owner));
-      if (time < this.virusUntil[owner]) run(`${owner}-virus`, 'virus', f, foe, 22, D_UI, 1, 0);
-      if (time < this.boxedUntil[owner]) run(`${owner}-boxed`, 'boxed', f, foe, 22, D_FLOOR + 1, 1, 0);
-      if (time < this.adminInvisibleUntil[owner]) {
+      if (time < this.invincibleUntil[owner]) {
         run(`${owner}-admin`, 'invincible', f, this.col(owner), 26, D_UI, 1, 0);
       }
       const sheltered = owner === 'player' ? this.isPlayerSheltered() : this.isNpcSheltered();
       if (sheltered) run(`${owner}-shelter`, 'shelter', f, this.col(owner), 22, D_UI, 1, 0);
-    }
-    for (const v of this.huskViruses) {
-      run(`husk-virus-${v.until}`, 'virus', v.f, this.pcol, 20, D_UI, 1, 0);
     }
     for (const [f, st] of this.lagged) {
       if (time >= st.until) continue;
@@ -1068,10 +1182,9 @@ export class TechnologyKit {
       av.setFacing(Math.atan2(pointer.worldY - player.y, pointer.worldX - player.x));
       av.setMastered(this.arena.masteryActive);
       av.setVpn(this.vpnRamp);
-      // The admin console visibly swells the rig — you are inside the machine while it runs.
-      av.setIntensity(this.admin.player.active ? 1.35 : 1);
-      av.setHold(this.admin.player.active ? 'brace' : null);
-      av.update(delta, player.x, player.y, player.forceInvisible ? 0 : player.alpha);
+      // The console visibly swells the rig — you are inside the machine while it is open.
+      av.setIntensity(this.admin.player.open ? 1.25 : 1);
+      av.update(delta, player.x, player.y - this.flyLift('player'), player.forceInvisible ? 0 : player.alpha);
     } else if (this.playerAvatar) {
       this.playerAvatar.destroy();
       this.playerAvatar = null;
@@ -1081,20 +1194,32 @@ export class TechnologyKit {
       if (!this.npcAvatar) this.npcAvatar = new TechnologyAvatar(scene, this.ncol, 'npc');
       const av = this.npcAvatar;
       av.setFacing(Math.atan2(player.y - npc.y, player.x - npc.x));
-      av.setIntensity(this.admin.npc.active ? 1.35 : 1);
-      av.setHold(this.admin.npc.active ? 'brace' : null);
-      av.update(delta, npc.x, npc.y, npc.forceInvisible ? 0 : npc.alpha);
+      av.setIntensity(this.admin.npc.open ? 1.25 : 1);
+      av.update(delta, npc.x, npc.y - this.flyLift('npc'), npc.forceInvisible ? 0 : npc.alpha);
     } else if (this.npcAvatar) {
       this.npcAvatar.destroy();
       this.npcAvatar = null;
     }
   }
 
-  /** The VPN mastery ramp + the Adrenaline dose — read in ArenaScene's speed-mult block. */
+  /** The VPN mastery ramp, the Adrenaline dose and the console's Fly / Speed — read in ArenaScene's speed-mult block. */
   getPlayerSpeedMult(): number {
     const time = this.arena.scene.time.now;
     const adrenaline = 1 + this.adrenalineStacksFor('player', time) * ADRENALINE_SPEED_PER_STACK;
-    return (1 + this.vpnRamp * VPN_MAX_BONUS) * adrenaline;
+    return (1 + this.vpnRamp * VPN_MAX_BONUS) * adrenaline * this.adminSpeedMult('player', time);
+  }
+
+  private adminSpeedMult(owner: Owner, time: number): number {
+    return (time < this.flyUntil[owner] ? ADMIN_FLY_SPEED : 1) * (time < this.speedUntil[owner] ? ADMIN_SPEED_BONUS : 1);
+  }
+
+  /** How far off the floor ;fly is holding this side's rig. */
+  private flyLift(owner: Owner): number {
+    const time = this.arena.scene.time.now;
+    const left = this.flyUntil[owner] - time;
+    if (left <= 0) return 0;
+    const ease = Math.min(1, left / 300, (ADMIN_FLY_MS - left) / 300);
+    return (14 + 3 * Math.sin(time / 180)) * Math.max(0, ease);
   }
 
   private updateShelter(owner: Owner): void {
@@ -1115,20 +1240,24 @@ export class TechnologyKit {
     const wired = this.adrenalineStacksFor(owner, time) >= ADRENALINE_MAX_STACKS;
     const floor = wired ? CRUNCHER_MIN_COOLDOWN * ADRENALINE_WIRED_CD_MULT : CRUNCHER_MIN_COOLDOWN;
     const effectiveCd = Math.max(floor,
-      CRUNCHER_BASE_COOLDOWN * (1 - this.cruncherCd[owner] / 100) * (wired ? ADRENALINE_WIRED_CD_MULT : 1));
+      CRUNCHER_BASE_COOLDOWN * (1 - this.cruncherCd[owner] / 100) * (wired ? ADRENALINE_WIRED_CD_MULT : 1))
+      // ;speed — a third more shots a second.
+      / (time < this.speedUntil[owner] ? ADMIN_SPEED_BONUS : 1);
     if (time - this.cruncherLastFireAt[owner] < effectiveCd) return;
     this.cruncherLastFireAt[owner] = time;
 
     const caster = owner === 'player' ? this.arena.player : this.arena.npc;
     caster.onKitCast?.('tech-cruncher');
     const angle = Math.atan2(ty - caster.y, tx - caster.x);
-    const speed = CRUNCHER_BASE_SPEED * (1 + this.cruncherSpeed[owner] / 100);
-    const damage = CRUNCHER_BASE_DAMAGE * (1 + this.cruncherDmg[owner] / 100);
+    // ;give — the phaser throws faster, angrier, harder-hitting red pac-men.
+    const gun = time < this.gunUntil[owner];
+    const speed = CRUNCHER_BASE_SPEED * (1 + this.cruncherSpeed[owner] / 100) * (gun ? ADMIN_GUN_SPEED : 1);
+    const damage = CRUNCHER_BASE_DAMAGE * (1 + this.cruncherDmg[owner] / 100) * (gun ? ADMIN_GUN_DMG : 1);
     this.gesture(owner, 'tech-cruncher', angle);
     const entry = {
       x: caster.x, y: caster.y,
       vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
-      owner, damage, traveled: 0, trailAccum: 0,
+      owner, damage, traveled: 0, trailAccum: 0, gun,
       reg: null as unknown as RegisteredProjectile,
     };
     entry.reg = {
@@ -1248,12 +1377,12 @@ export class TechnologyKit {
         // Emitted out of the back of the shot, not off its centre.
         const back = Math.atan2(-c.vy, -c.vx);
         this.spawnBinaryTrail(c.owner, c.x + Math.cos(back) * 12, c.y + Math.sin(back) * 12,
-          this.cruncherColor(c.owner));
+          c.gun ? TECH.alert : this.cruncherColor(c.owner));
       }
 
       let hitTarget: Fighter | null = null;
       for (const t of this.enemiesOf(c.owner)) {
-        if (Phaser.Math.Distance.Between(c.x, c.y, t.x, t.y) <= CRUNCHER_HIT_RADIUS) { hitTarget = t; break; }
+        if (Phaser.Math.Distance.Between(c.x, c.y, t.x, t.y) <= CRUNCHER_HIT_RADIUS * t.hitboxMult) { hitTarget = t; break; }
       }
       const outOfBounds = c.x < -20 || c.x > W + 20 || c.y < -20 || c.y > H + 20;
 
@@ -1370,668 +1499,543 @@ export class TechnologyKit {
   // ── Overt Advertisement (E) ──────────────────────────────────────────────
 
   doTechAdsCast(owner: Owner): void {
+    this.gesture(owner, 'tech-ads');
+    // Online, the remote caster's popups arrive by message with their real positions — rolling
+    // them again here would put twelve windows where the other screen has none.
+    if (owner === 'npc' && this.arena.isOnline) return;
     const { width: W, height: H } = this.arena.scene.scale;
     const now = this.arena.scene.time.now;
-    const translucent = owner === 'player';
+    const id0 = this.adSeq;
+    const pts: number[] = [];
     for (let i = 0; i < ADS_COUNT; i++) {
-      const x = Phaser.Math.Between(50, W - 50);
-      const y = Phaser.Math.Between(50, H - 50);
-      this.ads.push({ owner, x, y, w: ADS_W, h: ADS_H, bornAt: now, expiresAt: now + ADS_LIFETIME_MS });
+      const x = Phaser.Math.Between(70, W - 70);
+      const y = Phaser.Math.Between(60, H - 60);
+      this.spawnAd(owner, x, y, now, this.adSeq++);
+      pts.push(x, y);
     }
-    void translucent;
-    this.gesture(owner, 'tech-ads');
-
-    // Palware (E+): caster also summons a malware. Only the local player rolls;
-    // the remote sim mirrors it via the 'malware' net message.
-    if (owner === 'player' && this.arena.hasUpgrade('player', 'e')
-        && !this.malware.player && now >= this.malwareCdUntil.player) {
-      const kind = MALWARE_KINDS[Phaser.Math.Between(0, MALWARE_KINDS.length - 1)];
-      this.spawnMalware('player', kind);
-      if (this.arena.isOnline) this.arena.sendTechMsg({ t: 'tech', k: 'malware', kind });
-    }
+    if (owner === 'player' && this.arena.isOnline) this.arena.sendTechMsg({ t: 'tech', k: 'ads', id0, p: pts });
   }
 
-  private applyVirus(fighter: Fighter, owner: Owner | null, time: number): void {
-    this.arena.spawnFloatingText(fighter.x, fighter.y - 40, 'VIRUS!', '#55dd55');
-    if (owner) {
-      this.virusUntil[owner] = time + VIRUS_DURATION_MS;
-      this.virusNextTickAt[owner] = time + VIRUS_TICK_MS;
+  private spawnAd(owner: Owner, x: number, y: number, now: number, id: number): void {
+    this.ads.push({
+      id, owner, x, y, w: ADS_W, h: ADS_H, variant: id % AD_VARIANTS.length,
+      bornAt: now, expiresAt: now + ADS_LIFETIME_MS,
+    });
+  }
+
+  /** Close one popup. `caught` is the close that happens because somebody walked into it. */
+  private popAd(i: number, caught: boolean): void {
+    const ad = this.ads[i];
+    this.ads.splice(i, 1);
+    if (caught) {
+      this.fx(ad.owner).crash(ad.x, ad.y, 46, { bits: 8, rings: 1, duration: 420, color: TECH.plague, mark: false });
     } else {
-      const existing = this.huskViruses.find((v) => v.f === fighter);
-      if (existing) {
-        existing.until = time + VIRUS_DURATION_MS;
-      } else {
-        this.huskViruses.push({
-          f: fighter,
-          until: time + VIRUS_DURATION_MS,
-          nextTickAt: time + VIRUS_TICK_MS,
-        });
-      }
+      // Popups do not fade — they close.
+      this.fx(ad.owner).bits(ad.x, ad.y, 5, { speed: 130, size: 9, life: 380, depth: D_UI, color: TECH.white });
     }
-    // Infection lands as a burst of corrupted cells and a tear across the victim.
-    const fx = owner === 'npc' ? this.pfx : this.nfx;
-    fx.bits(fighter.x, fighter.y, 8, { speed: 150, size: 9, life: 620, depth: D_UI, color: TECH.plague });
-    fx.glitch(fighter.x, fighter.y, 60, 48, TECH.plague, 420, D_UI);
   }
 
-  private virusTick(fighter: Fighter): number {
-    const body = fighter.body as Phaser.Physics.Arcade.Body;
-    const speed = Math.hypot(body.velocity.x, body.velocity.y);
-    const speedMult = Math.max(1, speed / (fighter.speed || 200));
-    const dmg = Math.round(VIRUS_BASE_DMG * speedMult);
-    fighter.takeDamage(dmg);
-    this.arena.showFloatingText(fighter.x, fighter.y - 30, `🦠 -${dmg}`, '#55dd55');
-    return dmg;
-  }
-
-  private updateAds(time: number): void {
+  private updateAds(time: number, _delta: number): void {
     for (let i = this.ads.length - 1; i >= 0; i--) {
       const ad = this.ads[i];
-      if (time >= ad.expiresAt) {
-        // Popups do not fade — they close.
-        this.fx(ad.owner).bits(ad.x, ad.y, 5, {
-          speed: 130, size: 9, life: 380, depth: D_UI, color: TECH.white,
-        });
-        this.ads.splice(i, 1);
-        continue;
-      }
+      if (time >= ad.expiresAt) { this.popAd(i, false); continue; }
+      // Online, a remote caster's popup is resolved on their machine against their replica of us.
+      if (ad.owner === 'npc' && this.arena.isOnline) continue;
       const toucher = this.enemiesOf(ad.owner).find((f) => this.rectContains(ad, f.x, f.y));
-      if (toucher) {
-        const toucherOwner: Owner | null =
-          toucher === this.arena.player ? 'player' : toucher === this.arena.npc ? 'npc' : null;
-        this.applyVirus(toucher, toucherOwner, time);
-        this.fx(ad.owner).crash(ad.x, ad.y, 46, {
-          bits: 8, rings: 1, duration: 420, color: TECH.plague, mark: false,
-        });
-        this.ads.splice(i, 1);
-      }
-    }
-
-    for (const owner of OWNERS) {
-      const fighter = owner === 'player' ? this.arena.player : this.arena.npc;
-      // The crawling cells are the 'virus' aura's job; this is only the damage tick.
-      if (time < this.virusUntil[owner] && time >= this.virusNextTickAt[owner]) {
-        this.virusNextTickAt[owner] = time + VIRUS_TICK_MS;
-        this.virusTick(fighter);
-      }
-    }
-
-    for (let i = this.huskViruses.length - 1; i >= 0; i--) {
-      const v = this.huskViruses[i];
-      if (time >= v.until || !v.f.active || v.f.hp <= 0) {
-        this.huskViruses.splice(i, 1);
-        continue;
-      }
-      if (time >= v.nextTickAt) {
-        v.nextTickAt = time + VIRUS_TICK_MS;
-        this.virusTick(v.f);
-      }
+      if (!toucher) continue;
+      this.infect(toucher, ad.owner, time);
+      if (ad.owner === 'player' && this.arena.isOnline) this.arena.sendTechMsg({ t: 'tech', k: 'adx', id: ad.id });
+      this.popAd(i, true);
     }
   }
 
-  // ── Palware (E+) ─────────────────────────────────────────────────────────
+  // ── Virus critters + Ransomware (E / E+) ─────────────────────────────────
+  //
+  // A touched popup lets critters loose. On the human at this keyboard they crawl the HUD and
+  // have to be clicked; on a bot or a husk they crawl the body and get swatted on a timer; on a
+  // remote human they crawl the replica until that player's own clicks come back over the wire.
 
-  private spawnMalware(owner: Owner, kind: MalwareKind): void {
-    if (this.malware[owner]) return;
-    const now = this.arena.scene.time.now;
-    const scene = this.arena.scene;
-    const { width: W, height: H } = scene.scale;
-    const expiresAt = now + MALWARE_LIFETIME_MS;
+  private bugOnUi(b: Bug): boolean { return b.victim === this.arena.player; }
 
-    if (kind === 'goose') {
-      const x = Phaser.Math.Between(80, W - 80);
-      const y = Phaser.Math.Between(80, H - 80);
-      this.malware[owner] = {
-        kind: 'goose', owner, expiresAt,
-        facing: 0, x, y,
-        targetX: Phaser.Math.Between(60, W - 60), targetY: Phaser.Math.Between(60, H - 60),
-        mode: 'wander', modeUntil: 0, nextActionAt: now + 2500,
-        carried: null, stolenDamage: 0, bulletIcon: null,
-      };
-      this.arena.spawnFloatingText(x, y - 30, 'HONK!', '#eeeecc');
-    } else if (kind === 'clippy') {
-      const cx = W - 128, cy = 96;
-      const objs: Phaser.GameObjects.GameObject[] = [];
-      // A violet assistant window: CRT chrome, a drawn paperclip mascot peeking off the left
-      // edge, and the quiz timer as a segmented progress strip along the bottom.
-      const col = this.col(owner);
-      const timerBar = scene.add.rectangle(cx, cy + 44, 196, 7, 0xbb88ff, 0).setDepth(45).setScrollFactor(0);
-      timerBar.setVisible(false);
-      const box = this.addChrome(44, (cg, ct) => {
-        crtWindow(cg, col, cx - 108, cy - 59, 216, 118, ct, {
-          bezel: TECH.plum, bar: TECH.violet, screen: 0x1a0a2a, glow: TECH.violet,
-        });
-        // paperclip mascot
-        const px = cx - 112, py = cy + 6 + Math.sin(ct * 3) * 2;
-        cg.lineStyle(3, col(TECH.wire), 1);
-        cg.beginPath();
-        cg.arc(px, py - 14, 6, Math.PI, 0, false);
-        cg.lineTo(px + 6, py + 12);
-        cg.arc(px + 1.5, py + 12, 4.5, 0, Math.PI, false);
-        cg.lineTo(px - 3, py - 10);
-        cg.strokePath();
-        cg.fillStyle(col(TECH.white), 1);
-        cg.fillCircle(px - 2.5, py - 4, 2.6);
-        cg.fillCircle(px + 4, py - 4, 2.6);
-        cg.fillStyle(col(TECH.night), 1);
-        cg.fillCircle(px - 2, py - 3.6, 1.2);
-        cg.fillCircle(px + 4.5, py - 3.6, 1.2);
-        if (timerBar.visible) {
-          const frac = Phaser.Math.Clamp(timerBar.width / 196, 0, 1);
-          const bx = cx - 98, by = cy + 41, segs = 14, sw = 196 / segs;
-          cg.fillStyle(col(TECH.night), 0.9);
-          cg.fillRect(bx - 2, by - 2, 200, 10);
-          for (let k = 0; k < segs; k++) {
-            if ((k + 1) / segs > frac + 1e-3) break;
-            cg.fillStyle(col(frac < 0.3 ? TECH.alert : TECH.violet), 0.95);
-            cg.fillRect(bx + k * sw + 1, by, sw - 2, 6);
-          }
-        }
-      });
-      const title = scene.add.text(cx - 100, cy - 46, '📎 Clippy.exe', { fontSize: '12px', color: '#f4e8ff', fontFamily: FONT_MONO, fontStyle: 'bold', stroke: '#2a1040', strokeThickness: 2 }).setOrigin(0, 0.5).setDepth(45).setScrollFactor(0);
-      const qText = scene.add.text(cx, cy - 12, 'Hi! I\'m Clippy!', { fontSize: '16px', color: '#ffffff', fontFamily: FONT_MONO, fontStyle: 'bold', stroke: '#1a0a2a', strokeThickness: 3 }).setOrigin(0.5).setDepth(45).setScrollFactor(0);
-      const inputText = scene.add.text(cx, cy + 14, '', { fontSize: '15px', color: '#ffff88', fontFamily: FONT_MONO, stroke: '#1a0a2a', strokeThickness: 3 }).setOrigin(0.5).setDepth(45).setScrollFactor(0);
-      objs.push(box, title, qText, inputText, timerBar);
-      this.malware[owner] = {
-        kind: 'clippy', owner, expiresAt,
-        objs, qText, inputText, timerBar,
-        // First quiz after 3s, then every 8s — two quizzes fit in the 20s lifetime.
-        nextQuizAt: now + 3000,
-        quiz: null, keyListener: null,
-      };
+  /** A popup was touched: a couple of critters, and with E+ every third popup a Ransomware bug. */
+  private infect(victim: Fighter, casterOwner: Owner, time: number): void {
+    const touched = (this.popupsTouched.get(victim) ?? 0) + 1;
+    this.popupsTouched.set(victim, touched);
+    const ids: number[] = [];
+    for (let i = 0; i < BUGS_PER_POPUP; i++) {
+      const b = this.spawnBug(victim, casterOwner, 'virus', time);
+      if (b) ids.push(b.id);
+    }
+    let ransom = -1;
+    if (this.arena.hasUpgrade(casterOwner, 'e') && touched % RANSOM_POPUPS === 0) {
+      ransom = this.spawnBug(victim, casterOwner, 'ransom', time)?.id ?? -1;
+    }
+    if (this.arena.isOnline && casterOwner === 'player' && victim === this.arena.npc) {
+      this.arena.sendTechMsg({ t: 'tech', k: 'bugs', ids, ransom });
+    }
+    // Infection lands as a burst of corrupted cells and a tear across the victim.
+    const fx = this.fx(casterOwner);
+    fx.bits(victim.x, victim.y, 8, { speed: 150, size: 9, life: 620, depth: D_UI, color: ransom >= 0 ? TECH.alert : TECH.plague });
+    fx.glitch(victim.x, victim.y, 60, 48, ransom >= 0 ? TECH.alert : TECH.plague, 420, D_UI);
+  }
+
+  private spawnBug(victim: Fighter, casterOwner: Owner, kind: Bug['kind'], time: number, id?: number): Bug | null {
+    if (kind === 'virus'
+      && this.bugs.filter((b) => b.victim === victim && b.kind === 'virus').length >= BUG_MAX_PER_VICTIM) return null;
+    const onUi = victim === this.arena.player;
+    const { width: W, height: H } = this.arena.scene.scale;
+    let x: number, y: number;
+    if (onUi) {
+      // They walk in off the edge of the monitor.
+      const edge = Phaser.Math.Between(0, 3);
+      x = edge === 0 ? -14 : edge === 1 ? W + 14 : Phaser.Math.Between(20, W - 20);
+      y = edge === 2 ? -14 : edge === 3 ? H + 14 : Phaser.Math.Between(20, H - 20);
     } else {
-      const ball = this.makePongBall(W / 2, H / 2, Math.random() * Math.PI * 2);
-      this.malware[owner] = { kind: 'pong', owner, expiresAt, balls: [ball], nextSplitAt: now + PONG_SPLIT_MS };
-      this.arena.spawnFloatingText(W / 2, H / 2 - 24, 'MAD PONG!', '#ffffff');
+      x = Phaser.Math.Between(-18, 18);
+      y = Phaser.Math.Between(-18, 18);
     }
-  }
-
-  private makePongBall(x: number, y: number, angle: number): PongBall {
-    return {
-      x, y,
-      vx: Math.cos(angle) * PONG_SPEED,
-      vy: Math.sin(angle) * PONG_SPEED,
-      lastHitAt: new Map(),
+    const clear = kind === 'ransom' ? RANSOM_BOT_CLEAR_MS : BUG_BOT_CLEAR_MS;
+    const bug: Bug = {
+      id: id ?? this.bugSeq++, victim, owner: casterOwner, kind,
+      x, y, tx: x, ty: y, heading: Math.random() * Math.PI * 2, pauseUntil: 0,
+      bornAt: time, clicksLeft: kind === 'ransom' ? RANSOM_CLICKS : 1, hitAt: -9999,
+      autoClearAt: this.isBot(victim) ? time + Phaser.Math.Between(clear[0], clear[1]) : 0,
+      phase: Math.random() * 10,
     };
+    this.pickBugWaypoint(bug);
+    this.bugs.push(bug);
+    return bug;
   }
 
-  private destroyMalware(owner: Owner): void {
-    const m = this.malware[owner];
-    if (!m) return;
-    if (m.kind === 'goose') {
-      m.bulletIcon?.destroy();
-    } else if (m.kind === 'clippy') {
-      if (m.keyListener) window.removeEventListener('keydown', m.keyListener);
-      for (const o of m.objs) o.destroy();
+  private pickBugWaypoint(b: Bug): void {
+    if (!this.bugOnUi(b)) {
+      const r = b.kind === 'ransom' ? 30 : 24;
+      const a = Math.random() * Math.PI * 2, d = Math.random() * r;
+      b.tx = Math.cos(a) * d;
+      b.ty = Math.sin(a) * d;
+      return;
     }
-    // Pong holds nothing but data — its balls are painted from `m.balls` each frame.
-    this.malware[owner] = null;
-  }
-
-  private updateMalware(time: number, delta: number): void {
-    for (const owner of OWNERS) {
-      const m = this.malware[owner];
-      if (!m) continue;
-      if (time >= m.expiresAt) {
-        if (owner === 'player') {
-          this.arena.spawnFloatingText(this.arena.player.x, this.arena.player.y - 44, 'Malware expired', '#aaaacc');
-        }
-        this.destroyMalware(owner);
-        this.malwareCdUntil[owner] = time + MALWARE_COOLDOWN_MS;
-        continue;
-      }
-      if (m.kind === 'goose') this.updateGoose(m, time, delta);
-      else if (m.kind === 'clippy') this.updateClippy(m, time);
-      else this.updatePong(m, time, delta);
+    const { width: W, height: H } = this.arena.scene.scale;
+    const roll = Math.random();
+    // The ordinary ones keep to the furniture — the ability tray, the bars along the top — which
+    // is what makes them a nuisance to pick off. Ransomware goes wherever it likes.
+    if (b.kind === 'ransom' || roll > 0.72) {
+      b.tx = Phaser.Math.Between(30, W - 30);
+      b.ty = Phaser.Math.Between(30, H - 30);
+    } else if (roll < 0.45) {
+      b.tx = Phaser.Math.Between(40, W - 40);
+      b.ty = Phaser.Math.Between(H - 84, H - 14);
+    } else {
+      b.tx = Phaser.Math.Between(40, W - 40);
+      b.ty = Phaser.Math.Between(12, 72);
     }
   }
 
-  // ── Goose ──
-
-  private gooseMoveToward(g: GooseState, tx: number, ty: number, speed: number, delta: number): number {
-    const d = Phaser.Math.Distance.Between(g.x, g.y, tx, ty);
-    if (d > 1) {
-      const step = Math.min(d, speed * delta / 1000);
-      g.x += ((tx - g.x) / d) * step;
-      g.y += ((ty - g.y) / d) * step;
-      g.facing = Math.atan2(ty - g.y, tx - g.x);
-    }
-    return d;
-  }
-
-  private findStealableBullet(owner: Owner, x: number, y: number, radius: number):
-      { x: number; y: number; damage: number; take: () => void } | null {
-    const enemyOwner = opposite(owner);
-    let best: { x: number; y: number; damage: number; take: () => void } | null = null;
-    let bestD = radius;
-
-    const regHit = this.arena.projReg.nearest(enemyOwner, x, y, radius);
-    if (regHit) {
-      const d = Math.hypot(regHit.getX() - x, regHit.getY() - y);
-      if (d <= bestD) {
-        bestD = d;
-        best = { x: regHit.getX(), y: regHit.getY(), damage: regHit.damage, take: () => this.arena.projReg.steal(regHit) };
-      }
-    }
-
-    const enemyIsPlayer = enemyOwner === 'player';
-    for (const go of this.arena.projGroup.getChildren() as Projectile[]) {
-      if (!go.active || go.isFromPlayer !== enemyIsPlayer || go.isHeal) continue;
-      const d = Math.hypot(go.x - x, go.y - y);
-      if (d <= bestD) {
-        bestD = d;
-        best = { x: go.x, y: go.y, damage: go.damage, take: () => go.destroy() };
-      }
+  /** Index of the HUD critter under a screen point, or -1. Ransomware is checked first. */
+  private uiBugAt(x: number, y: number): number {
+    let best = -1, bestD = Infinity;
+    for (let i = 0; i < this.bugs.length; i++) {
+      const b = this.bugs[i];
+      if (!this.bugOnUi(b)) continue;
+      const d = Phaser.Math.Distance.Between(x, y, b.x, b.y) - (b.kind === 'ransom' ? 12 : 0);
+      if (d <= BUG_CLICK_RADIUS && d < bestD) { best = i; bestD = d; }
     }
     return best;
   }
 
-  private updateGoose(g: GooseState & { owner: Owner }, time: number, delta: number): void {
-    const scene = this.arena.scene;
-    const { width: W, height: H } = scene.scale;
-    const enemy = this.nearestEnemyOf(g.owner, g.x, g.y);
-
-    switch (g.mode) {
-      case 'wander': {
-        const d = this.gooseMoveToward(g, g.targetX, g.targetY, GOOSE_WANDER_SPEED, delta);
-        if (d < 8) {
-          g.targetX = Phaser.Math.Between(60, W - 60);
-          g.targetY = Phaser.Math.Between(60, H - 60);
-        }
-        if (time >= g.nextActionAt) {
-          const actions: Array<GooseState['mode']> = [];
-          if (enemy) actions.push('poke');
-          if (enemy && !enemy.netGhost) actions.push('carry');
-          if (this.findStealableBullet(g.owner, g.x, g.y, GOOSE_STEAL_SCAN_RADIUS)) actions.push('steal');
-          if (actions.length > 0) {
-            g.mode = actions[Phaser.Math.Between(0, actions.length - 1)];
-            g.modeUntil = time + 4000;
-          } else {
-            g.nextActionAt = time + 1500;
-          }
-        }
-        break;
-      }
-      case 'poke': {
-        if (!enemy || time >= g.modeUntil) { this.gooseBackToWander(g, time); break; }
-        const d = this.gooseMoveToward(g, enemy.x, enemy.y, GOOSE_CHASE_SPEED, delta);
-        if (d < 34) {
-          enemy.takeDamage(GOOSE_POKE_DMG);
-          this.arena.spawnHitFlash(enemy.x, enemy.y, this.col(g.owner)(0xeeeecc));
-          this.arena.spawnFloatingText(enemy.x, enemy.y - 44, '🪿 HONK!', '#eeeecc');
-          this.gooseBackToWander(g, time);
-        }
-        break;
-      }
-      case 'carry': {
-        if (g.carried) {
-          if (time >= g.modeUntil || !g.carried.active || g.carried.hp <= 0) {
-            g.carried = null;
-            this.gooseBackToWander(g, time);
-            break;
-          }
-          const d = this.gooseMoveToward(g, g.targetX, g.targetY, GOOSE_WANDER_SPEED, delta);
-          if (d < 8) {
-            g.targetX = Phaser.Math.Between(60, W - 60);
-            g.targetY = Phaser.Math.Between(60, H - 60);
-          }
-          g.carried.setPosition(g.x, g.y - 22);
-          (g.carried.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
-        } else {
-          if (!enemy || enemy.netGhost || time >= g.modeUntil) { this.gooseBackToWander(g, time); break; }
-          const d = this.gooseMoveToward(g, enemy.x, enemy.y, GOOSE_CHASE_SPEED, delta);
-          if (d < 34) {
-            g.carried = enemy;
-            g.modeUntil = time + Phaser.Math.Between(1500, 2000);
-            g.targetX = Phaser.Math.Between(60, W - 60);
-            g.targetY = Phaser.Math.Between(60, H - 60);
-            this.arena.spawnFloatingText(enemy.x, enemy.y - 44, '🪿 grabbed!', '#eeeecc');
-          }
-        }
-        break;
-      }
-      case 'steal': {
-        const bullet = this.findStealableBullet(g.owner, g.x, g.y, GOOSE_STEAL_SCAN_RADIUS + 100);
-        if (!bullet || time >= g.modeUntil) { this.gooseBackToWander(g, time); break; }
-        const d = this.gooseMoveToward(g, bullet.x, bullet.y, GOOSE_CHASE_SPEED, delta);
-        if (d < 30) {
-          bullet.take();
-          g.stolenDamage = bullet.damage;
-          g.bulletIcon = scene.add.text(g.x, g.y - 24, '•', { fontSize: '20px', color: '#ffee66' }).setOrigin(0.5).setDepth(16);
-          g.mode = 'throw';
-          g.modeUntil = time + 1200;
-          this.arena.spawnFloatingText(g.x, g.y - 40, '🪿 yoink!', '#ffee66');
-        }
-        break;
-      }
-      case 'throw': {
-        const d = this.gooseMoveToward(g, g.targetX, g.targetY, GOOSE_WANDER_SPEED, delta);
-        if (d < 8) {
-          g.targetX = Phaser.Math.Between(60, W - 60);
-          g.targetY = Phaser.Math.Between(60, H - 60);
-        }
-        g.bulletIcon?.setPosition(g.x, g.y - 24);
-        if (time >= g.modeUntil) {
-          const target = this.nearestEnemyOf(g.owner, g.x, g.y);
-          if (target) {
-            const angle = Math.atan2(target.y - g.y, target.x - g.x);
-            this.thrownBullets.push({
-              owner: g.owner,
-              x: g.x, y: g.y,
-              vx: Math.cos(angle) * 380, vy: Math.sin(angle) * 380,
-              damage: Math.max(1, g.stolenDamage),
-            });
-          }
-          g.bulletIcon?.destroy();
-          g.bulletIcon = null;
-          g.stolenDamage = 0;
-          this.gooseBackToWander(g, time);
-        }
-        break;
-      }
-    }
-  }
-
-  private gooseBackToWander(g: GooseState, time: number): void {
-    if (g.carried) g.carried = null;
-    g.mode = 'wander';
-    g.nextActionAt = time + Phaser.Math.Between(3000, 5000);
-  }
-
-  private updateThrownBullets(time: number, delta: number): void {
-    void time;
-    const { width: W, height: H } = this.arena.scene.scale;
-    for (let i = this.thrownBullets.length - 1; i >= 0; i--) {
-      const b = this.thrownBullets[i];
-      b.x += b.vx * delta / 1000;
-      b.y += b.vy * delta / 1000;
-      const hit = this.enemiesOf(b.owner).find((f) => Phaser.Math.Distance.Between(b.x, b.y, f.x, f.y) <= 22);
-      if (hit) {
-        hit.takeDamage(b.damage);
-        this.arena.spawnHitFlash(hit.x, hit.y, this.col(b.owner)(0xffee66));
-        this.thrownBullets.splice(i, 1);
-      } else if (b.x < -20 || b.x > W + 20 || b.y < -20 || b.y > H + 20) {
-        this.thrownBullets.splice(i, 1);
-      }
-    }
-  }
-
-  // ── Clippy ──
-
-  private updateClippy(m: ClippyState & { owner: Owner; expiresAt: number }, time: number): void {
-    // The local human answers when they are the target (npc-owned malware);
-    // AI targets (NPC opponent, husks) roll instead. A player-owned Clippy in an
-    // online match is display-only — the victim's sim runs the real quiz.
-    const interactive = m.owner === 'npc';
-    const displayOnly = m.owner === 'player' && this.arena.isOnline;
-
-    if (!m.quiz) {
-      if (time >= m.nextQuizAt && time + CLIPPY_QUIZ_TIME_MS < m.expiresAt) {
-        const a = Phaser.Math.Between(2, 9);
-        const b = Phaser.Math.Between(2, 9);
-        const useAdd = Math.random() < 0.6 || a < b;
-        m.quiz = { answer: useAdd ? a + b : a - b, endsAt: time + CLIPPY_QUIZ_TIME_MS, input: '' };
-        m.qText.setText(`${a} ${useAdd ? '+' : '-'} ${b} = ?`);
-        m.inputText.setText(interactive ? '> _' : displayOnly ? '(enemy answering…)' : '(thinking…)');
-        m.timerBar.setVisible(true);
-        if (interactive && !m.keyListener) {
-          const listener = (e: KeyboardEvent) => {
-            const quiz = m.quiz;
-            if (!quiz) return;
-            if (/^[0-9]$/.test(e.key) && quiz.input.length < 3) quiz.input += e.key;
-            else if (e.key === 'Backspace') quiz.input = quiz.input.slice(0, -1);
-            else if (e.key === 'Enter') { this.resolveClippyQuiz(m, parseInt(quiz.input, 10) === quiz.answer); return; }
-            m.inputText.setText(`> ${quiz.input}_`);
-          };
-          m.keyListener = listener;
-          window.addEventListener('keydown', listener);
-        }
-      }
+  /** One click (or one swat) on a critter. Ransomware takes two. */
+  private hitBug(i: number, time: number): void {
+    const b = this.bugs[i];
+    b.clicksLeft--;
+    b.hitAt = time;
+    const onUi = this.bugOnUi(b);
+    const wx = onUi ? b.x : b.victim.x + b.x;
+    const wy = onUi ? b.y : b.victim.y + b.y;
+    const color = b.kind === 'ransom' ? TECH.alert : TECH.plague;
+    const fx = this.fx(b.owner);
+    if (b.clicksLeft > 0) {
+      // Cracked, not dead: it bolts.
+      fx.bits(wx, wy, 3, { speed: 120, size: 7, life: 260, depth: onUi ? D_HUD : D_UI, color });
+      this.pickBugWaypoint(b);
+      b.pauseUntil = 0;
       return;
     }
-
-    const remaining = Math.max(0, m.quiz.endsAt - time);
-    m.timerBar.width = 196 * (remaining / CLIPPY_QUIZ_TIME_MS);
-    if (remaining <= 0) {
-      if (displayOnly) {
-        this.clearClippyQuiz(m, time);
-      } else if (interactive) {
-        this.resolveClippyQuiz(m, parseInt(m.quiz.input, 10) === m.quiz.answer);
-      } else {
-        this.resolveClippyQuiz(m, Math.random() < CLIPPY_AI_PASS_CHANCE);
-      }
-    }
+    fx.bits(wx, wy, 7, { speed: 170, size: 8, life: 420, depth: onUi ? D_HUD : D_UI, color });
+    fx.ring(wx, wy, 4, 22, color, 240, onUi ? D_HUD : D_UI, 2);
+    this.bugs.splice(i, 1);
   }
 
-  private resolveClippyQuiz(m: ClippyState & { owner: Owner }, pass: boolean): void {
-    const time = this.arena.scene.time.now;
-    if (!m.quiz) return;
-    if (pass) {
-      m.qText.setText('Correct! :)');
-    } else {
-      m.qText.setText('WRONG. >:(');
-      for (const f of this.enemiesOf(m.owner)) {
-        f.takeDamage(CLIPPY_FAIL_DMG);
-        this.arena.spawnHitFlash(f.x, f.y, this.col(m.owner)(0xbb88ff));
-        this.arena.spawnFloatingText(f.x, f.y - 44, '📎 -20', '#cc66ff');
-      }
-    }
-    if (m.owner === 'npc' && this.arena.isOnline) {
-      this.arena.sendTechMsg({ t: 'tech', k: 'quiz', pass });
-    }
-    this.clearClippyQuiz(m, time);
-  }
-
-  private clearClippyQuiz(m: ClippyState, time: number): void {
-    m.quiz = null;
-    if (m.keyListener) { window.removeEventListener('keydown', m.keyListener); m.keyListener = null; }
-    m.inputText.setText('');
-    m.timerBar.setVisible(false);
-    m.nextQuizAt = time + CLIPPY_QUIZ_INTERVAL_MS - CLIPPY_QUIZ_TIME_MS;
-  }
-
-  // ── Mad Pong ──
-
-  private updatePong(m: PongState & { owner: Owner }, time: number, delta: number): void {
-    const { width: W, height: H } = this.arena.scene.scale;
-
-    if (time >= m.nextSplitAt) {
-      m.nextSplitAt = time + PONG_SPLIT_MS;
-      const existing = [...m.balls];
-      for (const b of existing) {
-        if (m.balls.length >= PONG_MAX_BALLS) break;
-        const angle = Math.atan2(b.vy, b.vx) + Phaser.Math.FloatBetween(0.4, 0.9);
-        m.balls.push(this.makePongBall(b.x, b.y, angle));
+  private updateBugs(time: number, delta: number): void {
+    // Clicks are read here rather than in handleInput: the victim is usually NOT the Technology
+    // player, and their kit's input never comes through this one.
+    const pointer = this.arena.scene.input.activePointer;
+    const down = pointer.leftButtonDown();
+    const rising = down && !this.bugPointerWasDown;
+    this.bugPointerWasDown = down;
+    if (rising && this.bugs.length > 0) {
+      const i = this.uiBugAt(pointer.worldX, pointer.worldY);
+      if (i >= 0) {
+        const b = this.bugs[i];
+        if (this.arena.isOnline && b.owner === 'npc') this.arena.sendTechMsg({ t: 'tech', k: 'bugx', id: b.id });
+        this.hitBug(i, time);
       }
     }
 
-    const enemies = this.enemiesOf(m.owner);
-    for (const b of m.balls) {
-      b.x += b.vx * delta / 1000;
-      b.y += b.vy * delta / 1000;
-      if (b.x < 10 && b.vx < 0) b.vx = -b.vx;
-      if (b.x > W - 10 && b.vx > 0) b.vx = -b.vx;
-      if (b.y < 10 && b.vy < 0) b.vy = -b.vy;
-      if (b.y > H - 10 && b.vy > 0) b.vy = -b.vy;
-
-      for (const f of enemies) {
-        if (Phaser.Math.Distance.Between(b.x, b.y, f.x, f.y) > 26) continue;
-        const last = b.lastHitAt.get(f) ?? 0;
-        if (time - last < PONG_HIT_CD_MS) continue;
-        b.lastHitAt.set(f, time);
-        f.takeDamage(PONG_DMG);
-        this.arena.spawnHitFlash(f.x, f.y, this.col(m.owner)(0xffffff));
-        this.arena.spawnFloatingText(f.x, f.y - 44, '🏓 -10', '#ffffff');
+    const draining = new Map<Fighter, number>();
+    const wall = Date.now();
+    for (let i = this.bugs.length - 1; i >= 0; i--) {
+      const b = this.bugs[i];
+      if (!b.victim.active || b.victim.hp <= 0) { this.bugs.splice(i, 1); continue; }
+      if (b.autoClearAt > 0 && time >= b.autoClearAt) {
+        // A bot's second swat at Ransomware comes a beat after the first.
+        if (b.clicksLeft > 1) b.autoClearAt = time + 700;
+        this.hitBug(i, time);
+        continue;
       }
+
+      const onUi = this.bugOnUi(b);
+      const speed = b.kind === 'ransom'
+        ? (onUi ? RANSOM_UI_SPEED : RANSOM_BODY_SPEED)
+        : (onUi ? BUG_UI_SPEED : BUG_BODY_SPEED);
+      if (time >= b.pauseUntil) {
+        const dx = b.tx - b.x, dy = b.ty - b.y;
+        const d = Math.hypot(dx, dy);
+        if (d < 3) {
+          this.pickBugWaypoint(b);
+          // Scuttle, stop, scuttle — an insect, not a cursor.
+          if (b.kind === 'virus') b.pauseUntil = time + Phaser.Math.Between(120, 700);
+        } else {
+          const want = Math.atan2(dy, dx) + Math.sin(time / 130 + b.phase) * 0.5;
+          b.heading = Phaser.Math.Angle.RotateTo(b.heading, want, delta * 0.012);
+          const step = Math.min(d, speed * delta / 1000);
+          b.x += Math.cos(b.heading) * step;
+          b.y += Math.sin(b.heading) * step;
+        }
+      }
+
+      if (b.kind === 'ransom') {
+        // Files encrypted: nothing but the click works while it lives.
+        b.victim.silencedUntil = Math.max(b.victim.silencedUntil, wall + 250);
+      } else if (time - b.bornAt >= BUG_INCUBATE_MS) {
+        draining.set(b.victim, (draining.get(b.victim) ?? 0) + 1);
+      }
+    }
+
+    // One bite a second for the whole swarm, so six critters are one number and not six.
+    for (const [f, n] of draining) {
+      const next = this.bugDrainAt.get(f);
+      if (next === undefined) { this.bugDrainAt.set(f, time + BUG_TICK_MS); continue; }
+      if (time < next) continue;
+      this.bugDrainAt.set(f, time + BUG_TICK_MS);
+      f.takeDamage(n * BUG_TICK_DMG);
+    }
+    for (const f of [...this.bugDrainAt.keys()]) if (!draining.has(f)) this.bugDrainAt.delete(f);
+  }
+
+  private paintBugs(world: Phaser.GameObjects.Graphics, time: number, t: number): void {
+    const hasUi = this.bugs.some((b) => this.bugOnUi(b));
+    if (hasUi && (!this.bugGfx || !this.bugGfx.active)) {
+      this.bugGfx = this.arena.scene.add.graphics().setDepth(D_HUD).setScrollFactor(0);
+    }
+    const hud = this.bugGfx?.active ? this.bugGfx : null;
+    hud?.clear();
+    let ransomOnUi = false;
+    for (const b of this.bugs) {
+      const onUi = this.bugOnUi(b);
+      const g = onUi ? hud : world;
+      if (!g) continue;
+      const x = onUi ? b.x : b.victim.x + b.x;
+      const y = onUi ? b.y : b.victim.y + b.y;
+      const hungry = b.kind === 'virus' && time - b.bornAt >= BUG_INCUBATE_MS;
+      const flinch = Phaser.Math.Clamp(1 - (time - b.hitAt) / 160, 0, 1);
+      const moving = time >= b.pauseUntil;
+      const scale = (onUi ? 1 : 0.62) * (b.kind === 'ransom' ? 1.5 : 1) * (1 + 0.25 * flinch);
+      TechnologyFx.drawBug(g, this.col(b.owner), x, y, b.heading, t + b.phase, scale,
+        b.kind === 'ransom', hungry, moving, b.kind === 'ransom' && b.clicksLeft < RANSOM_CLICKS);
+      if (onUi && b.kind === 'ransom') ransomOnUi = true;
+    }
+
+    // The ransom note: the one piece of text, because it is the instruction.
+    if (ransomOnUi) {
+      const { width: W, height: H } = this.arena.scene.scale;
+      if (!this.ransomNote || !this.ransomNote.active) {
+        this.ransomNote = this.arena.scene.add.text(W / 2, H - 118, '🔒 ABILITIES ENCRYPTED — click the red bug twice', {
+          fontSize: '13px', color: '#ffd0d0', fontFamily: FONT_MONO, fontStyle: 'bold',
+          stroke: '#1a0006', strokeThickness: 3,
+        }).setOrigin(0.5).setDepth(D_HUD + 1).setScrollFactor(0);
+      }
+      const b = this.ransomNote.getBounds();
+      if (hud) {
+        hud.fillStyle(0x1a0006, 0.82);
+        hud.fillRoundedRect(b.x - 10, b.y - 5, b.width + 20, b.height + 10, 4);
+        hud.lineStyle(1.5, TECH.alert, 0.6 + 0.35 * Math.sin(t * 7));
+        hud.strokeRoundedRect(b.x - 10, b.y - 5, b.width + 20, b.height + 10, 4);
+      }
+    } else if (this.ransomNote) {
+      this.ransomNote.destroy();
+      this.ransomNote = null;
     }
   }
 
-  // ── Upload (R) ────────────────────────────────────────────────────────
+  // ── Zip Bomb (R) ──────────────────────────────────────────────────────
 
-  doTechUploadCast(owner: Owner, tx: number, ty: number): void {
-    if (this.cords[owner]) return;
-    const caster = owner === 'player' ? this.arena.player : this.arena.npc;
+  doTechZipCast(owner: Owner, tx: number, ty: number): void {
+    const caster = this.fighterOf(owner);
+    const now = this.arena.scene.time.now;
     const angle = Math.atan2(ty - caster.y, tx - caster.x);
-    this.gesture(owner, 'tech-upload', angle);
-    this.cords[owner] = {
-      owner,
-      state: 'traveling', x: caster.x, y: caster.y,
-      vx: Math.cos(angle) * UPLOAD_SPEED, vy: Math.sin(angle) * UPLOAD_SPEED,
-      parkX: tx, parkY: ty, expiresAt: 0,
-    };
+    this.gesture(owner, 'tech-zip', angle);
+    // One file per caster: a second cast replaces whatever is still crawling.
+    this.zips = this.zips.filter((z) => z.owner !== owner);
+    const x = caster.x + Math.cos(angle) * 24, y = caster.y + Math.sin(angle) * 24;
+    this.zips.push({
+      owner, x, y,
+      vx: Math.cos(angle) * ZIP_SPEED, vy: Math.sin(angle) * ZIP_SPEED,
+      bornAt: now, expiresAt: now + ZIP_LIFETIME_MS,
+      nextBandAt: now + Phaser.Math.Between(ZIP_BAND_GAP_MS[0], ZIP_BAND_GAP_MS[1]),
+      history: [], sampleAccum: 0,
+      bandAt: -9999, bandX: x, bandY: y,
+      replica: owner === 'npc' && this.arena.isOnline,
+      syncAccum: 0,
+    });
     this.fx(owner).bits(caster.x, caster.y, 4, {
-      angle, spread: 0.5, speed: 140, size: 8, life: 300, depth: D_WORLD, drift: 0,
+      angle, spread: 0.5, speed: 140, size: 8, life: 300, depth: D_WORLD, drift: 0, color: TECH.amber,
     });
   }
 
-  private destroyCord(owner: Owner): void {
-    const cord = this.cords[owner];
-    if (!cord) return;
-    // The plug is yanked and the connection drops.
-    this.fx(owner).bits(cord.x, cord.y, 4, { speed: 110, size: 8, life: 300, depth: D_WORLD });
-    this.cords[owner] = null;
-  }
+  private updateZips(time: number, delta: number): void {
+    const { width: W, height: H } = this.arena.scene.scale;
+    for (let i = this.zips.length - 1; i >= 0; i--) {
+      const z = this.zips[i];
+      const held = this.dragGrabbed?.kind === 'zip' && this.dragGrabbed.ref === z;
+      const gone = time >= z.expiresAt || z.x < -30 || z.x > W + 30 || z.y < -30 || z.y > H + 30;
+      if (gone) {
+        this.fx(z.owner).bits(z.x, z.y, 5, { speed: 110, size: 8, life: 320, depth: D_WORLD, color: TECH.amber });
+        if (z.owner === 'player' && this.arena.isOnline) this.arena.sendTechMsg({ t: 'tech', k: 'zipx', hit: false, big: false });
+        if (held) this.dragGrabbed = null;
+        this.zips.splice(i, 1);
+        continue;
+      }
 
-  private applyBoxed(victim: Fighter, casterOwner: Owner, time: number): void {
-    if (casterOwner === 'player') this.arena.recordMasteryStat('cordHits', 1);
-    const victimOwner: Owner | null =
-      victim === this.arena.player ? 'player' : victim === this.arena.npc ? 'npc' : null;
+      // A bot with Web Drag up hauls its own file straight at the target — the same play a human
+      // makes with the mouse.
+      const hauled = !z.replica && z.owner === 'npc' && this.dragActive.npc;
+      if (hauled) {
+        const foe = this.nearestEnemyOf('npc', z.x, z.y);
+        if (foe) {
+          const a = Math.atan2(foe.y - z.y, foe.x - z.x);
+          z.vx = Math.cos(a) * ZIP_SPEED;
+          z.vy = Math.sin(a) * ZIP_SPEED;
+          z.x += Math.cos(a) * ZIP_BOT_DRAG_SPEED * delta / 1000;
+          z.y += Math.sin(a) * ZIP_BOT_DRAG_SPEED * delta / 1000;
+        }
+      } else if (!held) {
+        z.x += z.vx * delta / 1000;
+        z.y += z.vy * delta / 1000;
+      }
 
-    if (victimOwner) {
-      this.boxedUntil[victimOwner] = time + UPLOAD_BOX_DURATION_MS;
-      victim.setTint(0xcc8844);
-    } else {
-      victim.setTint(0xcc8844);
-      const existing = this.boxedHusks.find((b) => b.f === victim);
-      if (existing) {
-        existing.until = time + UPLOAD_BOX_DURATION_MS;
+      if (z.replica) continue;
+
+      // The file is on a bad connection of its own: every so often it snaps back up its path.
+      if (held || hauled) {
+        z.history.length = 0;
+        z.nextBandAt = Math.max(z.nextBandAt, time + 500);
       } else {
-        this.boxedHusks.push({
-          f: victim,
-          until: time + UPLOAD_BOX_DURATION_MS,
-        });
+        z.sampleAccum += delta;
+        if (z.sampleAccum >= 70) {
+          z.sampleAccum = 0;
+          z.history.push({ x: z.x, y: z.y, t: time });
+          while (z.history.length > 0 && time - z.history[0].t > 1200) z.history.shift();
+        }
+        if (time >= z.nextBandAt) {
+          z.nextBandAt = time + Phaser.Math.Between(ZIP_BAND_GAP_MS[0], ZIP_BAND_GAP_MS[1]);
+          let back: { x: number; y: number; t: number } | null = null;
+          for (const h of z.history) if (time - h.t >= ZIP_BAND_BACK_MS) back = h;
+          if (back) {
+            z.bandAt = time; z.bandX = z.x; z.bandY = z.y;
+            this.fx(z.owner).glitch(z.x, z.y, 40, 36, TECH.amber, 260, D_WORLD);
+            z.x = back.x; z.y = back.y;
+            z.history.length = 0;
+          }
+        }
+      }
+
+      const hit = this.enemiesOf(z.owner).find((f) =>
+        Phaser.Math.Distance.Between(z.x, z.y, f.x, f.y) <= ZIP_HIT_RADIUS * f.hitboxMult);
+      if (hit) {
+        if (z.owner === 'player') this.arena.recordMasteryStat('cordHits', 1);
+        const big = this.arena.hasUpgrade(z.owner, 'r');
+        if (z.owner === 'player' && this.arena.isOnline) {
+          this.arena.sendTechMsg({ t: 'tech', k: 'zipx', hit: hit === this.arena.npc, big });
+        }
+        if (held) this.dragGrabbed = null;
+        this.zips.splice(i, 1);
+        this.zipLand(z.owner, hit, z.x, z.y, time, big);
+        continue;
+      }
+
+      if (z.owner === 'player' && this.arena.isOnline) {
+        z.syncAccum += delta;
+        if (z.syncAccum >= 100) {
+          z.syncAccum = 0;
+          this.arena.sendTechMsg({ t: 'tech', k: 'mv', o: 'zip', id: 0, x: z.x, y: z.y });
+        }
       }
     }
-    // The crate slams shut round them and the grid snaps on underneath.
+  }
+
+  /** The archive opens on somebody: ten seconds of lag, the restart offer, and with R+ the swell. */
+  private zipLand(casterOwner: Owner, target: Fighter, x: number, y: number, time: number, big: boolean): void {
     const fx = this.fx(casterOwner);
-    fx.crash(victim.x, victim.y, 54, { bits: 7, rings: 2, duration: 460, color: TECH.gold, mark: false });
-    fx.ring(victim.x, victim.y, 60, 20, TECH.cyan, 320, D_UI, 2.4);
-    this.arena.spawnFloatingText(victim.x, victim.y - 46, 'BOXED!', '#cc8844');
+    // It decompresses: far more comes out than could ever have fitted in.
+    fx.crash(target.x, target.y, 70, { bits: 18, rings: 2, duration: 520, color: TECH.amber, mark: false });
+    fx.packet(x, y, target.x, target.y, { count: 6, duration: 220, depth: D_UI, color: TECH.gold });
+    this.arena.spawnHitFlash(target.x, target.y, this.col(casterOwner)(TECH.amber));
+    this.applyLag(target, time);
+    if (big) this.swell(target, time + LAG_DURATION_MS);
 
-    // Trojan Takeover (R+): the caster stays wired in and steers the victim.
-    if (this.arena.hasUpgrade(casterOwner, 'r')) {
-      const body = victim.body as Phaser.Physics.Arcade.Body | null;
-      const dir = body && Math.abs(body.velocity.x) + Math.abs(body.velocity.y) > 1
-        ? (Math.abs(body.velocity.x) >= Math.abs(body.velocity.y)
-          ? { x: Math.sign(body.velocity.x), y: 0 }
-          : { x: 0, y: Math.sign(body.velocity.y) })
-        : { x: casterOwner === 'player' ? 1 : -1, y: 0 };
-      this.trojan[casterOwner] = {
-        victim,
-        until: time + UPLOAD_BOX_DURATION_MS,
-        dir,
-      };
-      if (casterOwner === 'player') {
-        this.arena.spawnFloatingText(this.arena.player.x, this.arena.player.y - 40, '🔌 TROJAN — arrow keys!', '#66eecc');
-      }
+    if (target === this.arena.player) {
+      this.showRestartPrompt();
+    } else if (target === this.arena.npc && this.isBot(target)) {
+      // A bot weighs it up for a moment, and takes the restart about half the time.
+      if (Math.random() < 0.5) this.botRestartAt.set(target, time + Phaser.Math.Between(1500, 3500));
     }
   }
 
-  private updateCords(time: number, delta: number): void {
-    for (const owner of OWNERS) {
-      const cord = this.cords[owner];
-      if (!cord) continue;
-      const caster = owner === 'player' ? this.arena.player : this.arena.npc;
-      const hitTarget = (): Fighter | undefined =>
-        this.enemiesOf(owner).find((f) => Phaser.Math.Distance.Between(cord.x, cord.y, f.x, f.y) <= UPLOAD_HIT_RADIUS);
+  private swell(f: Fighter, until: number): void {
+    const cur = this.swollen.get(f);
+    if (cur === undefined) {
+      f.hitboxMult *= ZIP_SWELL;
+      f.applySizeMult();
+    }
+    this.swollen.set(f, Math.max(cur ?? 0, until));
+  }
 
-      if (cord.state === 'traveling') {
-        const prevX = cord.x, prevY = cord.y;
-        cord.x += cord.vx * delta / 1000;
-        cord.y += cord.vy * delta / 1000;
-        const toParkPrev = (cord.parkX - prevX) * cord.vx + (cord.parkY - prevY) * cord.vy;
-        const toParkNow = (cord.parkX - cord.x) * cord.vx + (cord.parkY - cord.y) * cord.vy;
-        const reachedTarget = toParkPrev >= 0 && toParkNow < 0;
-        const hit = hitTarget();
-        if (hit) {
-          this.applyBoxed(hit, owner, time);
-          this.arena.spawnHitFlash(hit.x, hit.y, this.col(owner)(0xff3355));
-          this.destroyCord(owner);
-          continue;
-        }
-        if (reachedTarget) {
-          cord.x = cord.parkX; cord.y = cord.parkY;
-          cord.state = 'parked';
-          cord.expiresAt = time + UPLOAD_PARK_DURATION_MS;
-        }
-      } else {
-        const hit = hitTarget();
-        if (hit) {
-          this.applyBoxed(hit, owner, time);
-          this.arena.spawnHitFlash(hit.x, hit.y, this.col(owner)(0xff3355));
-          this.destroyCord(owner);
-          continue;
-        }
-        if (time >= cord.expiresAt) {
-          this.destroyCord(owner);
-          continue;
-        }
-      }
-
-      void caster;
+  private updateSwell(time: number): void {
+    for (const [f, until] of this.swollen) {
+      if (f.active && f.hp > 0 && time < until) continue;
+      f.hitboxMult /= ZIP_SWELL;
+      if (f.active && f.body) f.applySizeMult();
+      this.swollen.delete(f);
     }
   }
 
-  private updateBoxed(time: number): void {
-    for (const owner of OWNERS) {
-      const fighter = owner === 'player' ? this.arena.player : this.arena.npc;
-      if (time < this.boxedUntil[owner]) {
-        const body = fighter.body as Phaser.Physics.Arcade.Body;
-        if (Math.abs(body.velocity.x) > 0.01 && Math.abs(body.velocity.y) > 0.01) {
-          if (Math.abs(body.velocity.x) >= Math.abs(body.velocity.y)) body.setVelocityY(0);
-          else body.setVelocityX(0);
-        }
-      } else if (fighter.isTinted) {
-        fighter.clearTint();
-      }
-    }
+  // ── "Restart your computer?" ─────────────────────────────────────────
 
-    for (let i = this.boxedHusks.length - 1; i >= 0; i--) {
-      const b = this.boxedHusks[i];
-      if (time >= b.until || !b.f.active || b.f.hp <= 0) {
-        if (b.f.active) b.f.clearTint();
-        this.boxedHusks.splice(i, 1);
+  /** The dialog a lagging human gets. Yes is three seconds stunned with everything on cooldown. */
+  private showRestartPrompt(): void {
+    if (this.restartPromptObjs.length > 0) return;
+    const scene = this.arena.scene;
+    const { width: W } = scene.scale;
+    const cx = W / 2, cy = 132;
+    const w = 340, h = 92;
+    this.restartPromptBounds = { x: cx - w / 2, y: cy - h / 2 - 6, w, h: h + 12 };
+    const yes = this.hitRect(cx - 70, cy + 24, 116, 26, 62);
+    const no = this.hitRect(cx + 70, cy + 24, 116, 26, 62);
+    const box = this.addChrome(D_HUD + 1, (cg, ct) => {
+      crtWindow(cg, this.ncol, cx - w / 2, cy - h / 2 - 6, w, h + 12, ct, {
+        bezel: TECH.steel, bar: TECH.adBlue, screen: TECH.board, glow: TECH.cyan, barH: 16,
+      });
+      // the warning triangle
+      const tx = cx - w / 2 + 34, ty = cy - 8;
+      cg.fillStyle(TECH.amber, 1);
+      cg.fillTriangle(tx, ty - 13, tx - 13, ty + 10, tx + 13, ty + 10);
+      cg.fillStyle(TECH.night, 1);
+      cg.fillRect(tx - 1.5, ty - 5, 3, 8);
+      cg.fillRect(tx - 1.5, ty + 5, 3, 3);
+      crtButton(cg, this.ncol, cx - 70, cy + 24, 116, 26, 0x226644, !!yes.getData('hover'), ct);
+      crtButton(cg, this.ncol, cx + 70, cy + 24, 116, 26, 0x663333, !!no.getData('hover'), ct);
+    });
+    const style = { fontFamily: FONT_MONO, fontStyle: 'bold', stroke: '#0a1218', strokeThickness: 3 };
+    const label = scene.add.text(cx + 18, cy - 10, 'System is not responding.\nRestart your computer?', {
+      ...style, fontSize: '13px', color: '#ddeeff', align: 'center',
+    }).setOrigin(0.5).setDepth(D_HUD + 2).setScrollFactor(0);
+    const yesLbl = scene.add.text(cx - 70, cy + 24, 'Restart (3s)', { ...style, fontSize: '12px', color: '#ccffdd', strokeThickness: 2 })
+      .setOrigin(0.5).setDepth(D_HUD + 3).setScrollFactor(0);
+    const noLbl = scene.add.text(cx + 70, cy + 24, 'Not now', { ...style, fontSize: '12px', color: '#ffcccc', strokeThickness: 2 })
+      .setOrigin(0.5).setDepth(D_HUD + 3).setScrollFactor(0);
+    yes.on('pointerdown', () => {
+      this.closeRestartPrompt();
+      this.restartComputer(this.arena.player, scene.time.now);
+      if (this.arena.isOnline) this.arena.sendTechMsg({ t: 'tech', k: 'restart' });
+    });
+    no.on('pointerdown', () => this.closeRestartPrompt());
+    this.restartPromptObjs = [box, label, yes, yesLbl, no, noLbl];
+  }
+
+  private closeRestartPrompt(): void {
+    for (const o of this.restartPromptObjs) o.destroy();
+    this.restartPromptObjs = [];
+    this.restartPromptBounds = null;
+  }
+
+  /** Turn it off and on again: the lag is gone, and so are three seconds and every cooldown. */
+  private restartComputer(f: Fighter, time: number): void {
+    this.clearLag(f, time);
+    f.restartCooldowns();
+    f.applyDisarm(ZIP_RESTART_STUN_MS);
+    f.stunnedUntil = Math.max(f.stunnedUntil, Date.now() + ZIP_RESTART_STUN_MS);
+    if (f !== this.arena.player) f.earthStunnedUntil = Math.max(f.earthStunnedUntil, time + ZIP_RESTART_STUN_MS);
+    this.rebooting.set(f, time + ZIP_RESTART_STUN_MS);
+    this.rebootFx(f);
+    if (f === this.arena.player) this.showRebootScreen(time);
+  }
+
+  private rebootFx(f: Fighter): void {
+    const fx = this.fx(f === this.arena.player ? 'npc' : 'player');
+    fx.loading(f.x, f.y, 34, ZIP_RESTART_STUN_MS, { color: TECH.ice, depth: D_UI, follow: () => ({ x: f.x, y: f.y }) });
+    fx.glitch(f.x, f.y, 60, 54, TECH.ice, 420, D_UI);
+  }
+
+  /** The local player's own monitor going down and coming back up. */
+  private showRebootScreen(time: number): void {
+    for (const o of this.rebootObjs) o.destroy();
+    const scene = this.arena.scene;
+    const { width: W, height: H } = scene.scale;
+    const until = time + ZIP_RESTART_STUN_MS;
+    const g = this.addChrome(D_HUD + 4, (cg, ct) => {
+      const left = Phaser.Math.Clamp((until - scene.time.now) / ZIP_RESTART_STUN_MS, 0, 1);
+      // A dimmed desktop rather than a black one: you still get to watch what happens to you.
+      cg.fillStyle(0x061426, 0.62);
+      cg.fillRect(0, 0, W, H);
+      const cx = W / 2, cy = H / 2 - 20;
+      for (let i = 0; i < 8; i++) {
+        const a = ct * 5 + (i / 8) * Math.PI * 2;
+        cg.fillStyle(TECH.ice, 0.25 + 0.75 * (i / 8));
+        cg.fillCircle(cx + Math.cos(a) * 22, cy + Math.sin(a) * 22, 2.2 + 2.2 * (i / 8));
+      }
+      cg.fillStyle(TECH.night, 0.9);
+      cg.fillRoundedRect(cx - 122, cy + 62, 244, 12, 3);
+      cg.fillStyle(TECH.ice, 0.95);
+      cg.fillRoundedRect(cx - 120, cy + 64, 240 * (1 - left), 8, 2);
+    });
+    const label = scene.add.text(W / 2, H / 2 + 22, 'Restarting…', {
+      fontSize: '20px', color: '#ddeeff', fontFamily: FONT_MONO, fontStyle: 'bold', stroke: '#061426', strokeThickness: 4,
+    }).setOrigin(0.5).setDepth(D_HUD + 5).setScrollFactor(0);
+    this.rebootObjs = [g, label];
+  }
+
+  private updateRestart(time: number): void {
+    for (const [f, until] of this.rebooting) {
+      if (!f.active || f.hp <= 0 || time >= until) {
+        this.rebooting.delete(f);
+        if (f === this.arena.player) {
+          for (const o of this.rebootObjs) o.destroy();
+          this.rebootObjs = [];
+        }
         continue;
       }
-      const body = b.f.body as Phaser.Physics.Arcade.Body;
-      if (Math.abs(body.velocity.x) > 0.01 && Math.abs(body.velocity.y) > 0.01) {
-        if (Math.abs(body.velocity.x) >= Math.abs(body.velocity.y)) body.setVelocityY(0);
-        else body.setVelocityX(0);
-      }
+      if (!f.netGhost) (f.body as Phaser.Physics.Arcade.Body | null)?.setVelocity(0, 0);
     }
+    for (const [f, at] of this.botRestartAt) {
+      if (!this.lagged.has(f)) { this.botRestartAt.delete(f); continue; }
+      if (time < at) continue;
+      this.botRestartAt.delete(f);
+      this.restartComputer(f, time);
+    }
+    // The offer only stands while there is lag to get rid of.
+    if (this.restartPromptObjs.length > 0 && !this.lagged.has(this.arena.player)) this.closeRestartPrompt();
   }
 
-  // ── Trojan Takeover (R+) ──────────────────────────────────────────────
-
-  private updateTrojan(time: number): void {
-    for (const casterOwner of OWNERS) {
-      const t = this.trojan[casterOwner];
-      if (!t) continue;
-      if (time >= t.until || !t.victim.active || t.victim.hp <= 0) {
-        this.trojan[casterOwner] = null;
-        continue;
-      }
-      // The wire itself is painted by paintCords off this same state.
-
-      // Force movement on the victim (their own sim is authoritative — a net
-      // ghost keeps interpolating instead; the real steering happens peer-side).
-      if (!t.victim.netGhost) {
-        const body = t.victim.body as Phaser.Physics.Arcade.Body | null;
-        const speed = t.victim.speed || 200;
-        body?.setVelocity(t.dir.x * speed, t.dir.y * speed);
-      }
-    }
-  }
 
   // ── Web Drag (F) ──────────────────────────────────────────────────────
 
@@ -2047,7 +2051,6 @@ export class TechnologyKit {
       speed: 130, size: 8, life: 460, depth: D_WORLD, color: TECH.mint,
     });
     if (owner === 'player') {
-      this.arena.showFloatingText(this.arena.player.x, this.arena.player.y - 36, 'Drag mode!', '#66eecc');
       // Surf the web! (F+): also offer the browser (caster-local UI).
       if (this.arena.hasUpgrade('player', 'f') && !this.browserOpen && this.surfPopupObjs.length === 0) {
         this.showSurfPopup(now);
@@ -2061,14 +2064,20 @@ export class TechnologyKit {
     const justUp = !isDown && this.dragPointerWasDown;
     this.dragPointerWasDown = isDown;
 
-    if (justDown && !this.dragGrabbed && this.isPointerOverBrowserGrip(mouseX, mouseY)) {
+    if (justDown && !this.dragGrabbed && this.isPointerOverAdminGrip(mouseX, mouseY)) {
+      this.dragGrabbed = { kind: 'console', offX: mouseX - this.adminX, offY: mouseY - this.adminY };
+    } else if (justDown && !this.dragGrabbed && this.isPointerOverBrowserGrip(mouseX, mouseY)) {
       // Surf the web! (F+): the PainClicker window is draggable by its title bar.
       this.dragGrabbed = { kind: 'window', offX: mouseX - this.browserX, offY: mouseY - this.browserY };
-    } else if (justDown && !this.dragGrabbed && !this.isPointerOverBrowser(mouseX, mouseY) && !this.isPointerOverSurfPopup(mouseX, mouseY)) {
-      if (Phaser.Math.Distance.Between(mouseX, mouseY, this.arena.npc.x, this.arena.npc.y) <= WEBDRAG_GRAB_RADIUS) {
+    } else if (justDown && !this.dragGrabbed && !this.isPointerOverBrowser(mouseX, mouseY)
+        && !this.isPointerOverSurfPopup(mouseX, mouseY) && !this.isPointerOverAdmin(mouseX, mouseY)) {
+      const zip = this.zips.find((z) => z.owner === 'player'
+        && Phaser.Math.Distance.Between(mouseX, mouseY, z.x, z.y) <= WEBDRAG_GRAB_RADIUS);
+      if (zip) {
+        // The slow file is the best thing in the arena to pick up: carry it into somebody.
+        this.dragGrabbed = { kind: 'zip', ref: zip };
+      } else if (Phaser.Math.Distance.Between(mouseX, mouseY, this.arena.npc.x, this.arena.npc.y) <= WEBDRAG_GRAB_RADIUS) {
         this.dragGrabbed = { kind: 'fighter', ref: this.arena.npc };
-      } else if (this.cords.player && Phaser.Math.Distance.Between(mouseX, mouseY, this.cords.player.x, this.cords.player.y) <= WEBDRAG_GRAB_RADIUS) {
-        this.dragGrabbed = { kind: 'cord', ref: this.cords.player };
       } else {
         const ad = this.ads.find((a) => Phaser.Math.Distance.Between(mouseX, mouseY, a.x, a.y) <= WEBDRAG_GRAB_RADIUS);
         if (ad) this.dragGrabbed = { kind: 'ad', ref: ad };
@@ -2081,12 +2090,15 @@ export class TechnologyKit {
         (this.dragGrabbed.ref.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
       } else if (this.dragGrabbed.kind === 'window') {
         this.moveBrowser(mouseX - this.dragGrabbed.offX, mouseY - this.dragGrabbed.offY);
-      } else if (this.dragGrabbed.kind === 'cord') {
+      } else if (this.dragGrabbed.kind === 'console') {
+        this.moveAdminWindow(mouseX - this.dragGrabbed.offX, mouseY - this.dragGrabbed.offY);
+      } else if (this.dragGrabbed.kind === 'zip') {
         this.dragGrabbed.ref.x = mouseX;
         this.dragGrabbed.ref.y = mouseY;
       } else {
         const ad = this.dragGrabbed.ref;
         ad.x = mouseX; ad.y = mouseY;
+        if (this.arena.isOnline) this.arena.sendTechMsg({ t: 'tech', k: 'mv', o: 'ad', id: ad.id, x: ad.x, y: ad.y });
       }
     }
 
@@ -2376,264 +2388,429 @@ export class TechnologyKit {
   }
 
   // ── Admin Console (Q) ────────────────────────────────────────────────
-
-  private renderAdminString(st: AdminState): string {
-    const chars = st.target.split('').map((c, i) => (i === st.cursor ? `[${c}]` : c)).join('');
-    return `${chars}  pts:${st.points}`;
-  }
+  //
+  // A small window of commands and a red abuse bar. Every command adds abuse; when the bar is
+  // spent the console leaves. Q+ Admin Abuse keeps it open and takes the difference in health.
 
   doTechAdminCast(owner: Owner): void {
-    const now = this.arena.scene.time.now;
     const st = this.admin[owner];
     this.gesture(owner, 'tech-admin');
-    // Dropping to a console: the caster is visibly taken out of the simulation for 8s.
-    const caster = owner === 'player' ? this.arena.player : this.arena.npc;
-    this.fx(owner).loading(caster.x, caster.y, 40, ADMIN_WINDOW_MS, {
-      color: TECH.amber, depth: D_UI, follow: () => ({ x: caster.x, y: caster.y }),
-    });
-    this.fx(owner).glitch(caster.x, caster.y, 70, 60, TECH.amber, 520, D_UI);
-    st.active = true;
-    st.endAt = now + ADMIN_WINDOW_MS;
-    st.points = 0;
-    st.target = randomBinaryString(ADMIN_STRING_LEN);
-    st.cursor = 0;
-    st.nextTypeAt = now + Phaser.Math.Between(250, 450);
-    st.typeRate = Phaser.Math.Between(250, 450);
-
-    // Security Breach (Q+): schedule 3–4 glitches inside the console window.
-    if (this.arena.hasUpgrade(owner, 'q')) {
-      const count = Phaser.Math.Between(3, 4);
-      const times: number[] = [];
-      for (let i = 0; i < count; i++) times.push(now + Phaser.Math.Between(800, ADMIN_WINDOW_MS - 500));
-      times.sort((a, b) => a - b);
-      this.breachTimes[owner] = times;
-    } else {
-      this.breachTimes[owner] = [];
-    }
-
-    const fighter = owner === 'player' ? this.arena.player : this.arena.npc;
-    // The console is a menu, not a bunker: hits land at 5% for the 8 seconds of typing
-    // (Fighter.menuGuards) instead of the old outright invincibility. Cleared in closeAdmin.
-    fighter.setMenuGuard('tech-admin', true);
-    fighter.applyDisarm(ADMIN_WINDOW_MS);
-
-    const { width: SW, height: SH } = this.arena.scene.scale;
-    // Root-access takeover: the whole screen goes to a red-alert terminal — dim crimson wash,
-    // crawling scanlines, hazard bands top and bottom, and a central console window whose
-    // bottom strip drains with the typing window.
-    const acol = this.col(owner);
-    st.box = this.addChrome(25, (cg, ct) => {
-      cg.fillStyle(acol(0x220011), 0.85);
-      cg.fillRect(0, 0, SW, SH);
-      cg.fillStyle(acol(TECH.night), 0.25);
-      for (let ly = (ct * 30) % 4; ly < SH; ly += 4) cg.fillRect(0, ly, SW, 1.5);
-      const roll = ((ct * 0.25) % 1) * SH;
-      cg.fillStyle(acol(TECH.alert), 0.05);
-      cg.fillRect(0, roll - 30, SW, 60);
-      // hazard bands
-      for (const by of [44, SH - 70]) {
-        cg.fillStyle(acol(TECH.night), 0.9);
-        cg.fillRect(0, by, SW, 14);
-        cg.fillStyle(acol(TECH.alert), 0.55 + 0.25 * Math.sin(ct * 6));
-        for (let k = -1; k < SW / 24 + 1; k++) {
-          const hx = k * 24 + ((ct * 30) % 24);
-          cg.fillTriangle(hx, by + 14, hx + 10, by, hx + 18, by);
-          cg.fillTriangle(hx, by + 14, hx + 18, by, hx + 8, by + 14);
-        }
-      }
-      const ww = Math.min(SW - 80, 760), wh = 150;
-      const scr = crtWindow(cg, acol, SW / 2 - ww / 2, SH / 2 - wh / 2 - 10, ww, wh, ct, {
-        bezel: 0x3a0a14, bar: 0x881122, screen: 0x140006, glow: TECH.alert,
-      });
-      const left = st.active ? Phaser.Math.Clamp((st.endAt - this.arena.scene.time.now) / ADMIN_WINDOW_MS, 0, 1) : 0;
-      cg.fillStyle(acol(TECH.night), 0.9);
-      cg.fillRect(scr.sx + 10, scr.sy + scr.sh - 12, scr.sw - 20, 6);
-      cg.fillStyle(acol(left < 0.25 ? TECH.amber : TECH.alert), 0.95);
-      cg.fillRect(scr.sx + 10, scr.sy + scr.sh - 12, (scr.sw - 20) * left, 6);
-      // blinking block cursor in the corner of the console
-      if (Math.sin(ct * 8) > 0) {
-        cg.fillStyle(acol(TECH.alert), 0.9);
-        cg.fillRect(scr.sx + 10, scr.sy + 8, 9, 14);
-      }
-    });
-    st.text = this.arena.scene.add.text(SW / 2, SH / 2 - 6, this.renderAdminString(st), {
-      fontSize: '44px', color: '#ff6666', fontFamily: FONT_MONO, fontStyle: 'bold',
-      stroke: '#140006', strokeThickness: 5,
-    }).setOrigin(0.5).setDepth(26).setScrollFactor(0);
-
+    const caster = this.fighterOf(owner);
+    this.fx(owner).glitch(caster.x, caster.y, 70, 60, TECH.alert, 520, D_UI);
+    this.fx(owner).ring(caster.x, caster.y, 12, 64, TECH.alert, 420, D_UI, 2.6);
+    // A remote caster's console is theirs to drive: its commands arrive one message at a time.
+    if (owner === 'npc' && this.arena.isOnline) { st.open = true; return; }
+    st.open = true;
+    st.abuse = 0;
+    st.overuse = 0;
+    st.closeAt = 0;
+    st.nextBotCmdAt = this.arena.scene.time.now + Phaser.Math.Between(500, 900);
+    this.logConsole(owner, ['-- admin console attached', 'require(script.Admin).elevate(me)']);
     if (owner === 'player') {
-      const listener = (e: KeyboardEvent) => {
-        if (!st.active) return;
-        if (e.key !== '0' && e.key !== '1') return;
-        if (e.key === st.target[st.cursor]) {
-          st.points++;
-          st.cursor++;
-          if (st.cursor >= st.target.length) { st.target = randomBinaryString(ADMIN_STRING_LEN); st.cursor = 0; }
-        } else {
-          st.points = Math.max(0, st.points - 1);
-        }
-        st.text?.setText(this.renderAdminString(st));
-      };
-      st.keyListener = listener;
-      window.addEventListener('keydown', listener);
+      this.openAdminWindow();
+      if (this.arena.isOnline) this.arena.sendTechMsg({ t: 'tech', k: 'console', open: true });
     }
   }
 
-  private closeAdmin(owner: Owner): void {
-    const st = this.admin[owner];
-    st.active = false;
-    (owner === 'player' ? this.arena.player : this.arena.npc).setMenuGuard('tech-admin', false);
-    if (st.keyListener) { window.removeEventListener('keydown', st.keyListener); st.keyListener = null; }
-    st.box?.destroy(); st.box = null;
-    st.text?.destroy(); st.text = null;
-    this.breachTimes[owner] = [];
-    this.applyAdminRewards(owner, st.points);
+  /** The one target a single-target command acts on. */
+  private adminTarget(owner: Owner): Fighter | null {
+    const c = this.fighterOf(owner);
+    return this.nearestEnemyOf(owner, c.x, c.y);
   }
 
-  private applyJail(targetOwner: Owner, now: number): void {
-    const fighter = targetOwner === 'player' ? this.arena.player : this.arena.npc;
-    const w = 240, h = 240;
-    this.jail[targetOwner] = { x: fighter.x, y: fighter.y, w, h, lastDmgAt: 0, expiresAt: now + 5000 };
-    // A window slams open around them — the cell is a dialog box they cannot close.
-    this.fx(opposite(targetOwner)).crash(fighter.x, fighter.y, 70, {
-      bits: 10, rings: 2, duration: 520, color: TECH.alert, mark: false,
+  /** What a command would be paid with right now — abuse, health (Q+), or nothing (cannot run). */
+  private adminPrice(owner: Owner, cmd: AdminCmd): { pay: 'abuse' | 'hp'; hp: number } | null {
+    const st = this.admin[owner];
+    if (!st.open) return null;
+    const def = ADMIN_COMMANDS.find((c) => c.id === cmd);
+    if (!def) return null;
+    if (cmd === 'ban') {
+      const t = this.adminTarget(owner);
+      if (!t || t.hp / t.maxHp >= ADMIN_BAN_HP) return null;
+    }
+    if (st.abuse + def.cost <= ADMIN_ABUSE_MAX) return { pay: 'abuse', hp: 0 };
+    if (!this.arena.hasUpgrade(owner, 'q')) return null;
+    const hp = Math.ceil(def.cost * ADMIN_HP_PER_ABUSE * (1 + ADMIN_OVERUSE_STEP * st.overuse));
+    return this.fighterOf(owner).hp > hp ? { pay: 'hp', hp } : null;
+  }
+
+  /** Pay for a command and run it. The local player's clicks and the bot's picks both come here. */
+  private useAdminCommand(owner: Owner, cmd: AdminCmd): boolean {
+    const st = this.admin[owner];
+    const price = this.adminPrice(owner, cmd);
+    if (!price) return false;
+    const def = ADMIN_COMMANDS.find((c) => c.id === cmd)!;
+    if (price.pay === 'abuse') {
+      st.abuse += def.cost;
+    } else {
+      st.overuse++;
+      this.fighterOf(owner).applySelfDamage(price.hp);
+    }
+    this.runAdminCommand(owner, cmd);
+    if (owner === 'player' && this.arena.isOnline) this.arena.sendTechMsg({ t: 'tech', k: 'cmd', c: cmd });
+    // Bar spent and no Admin Abuse to lean on: the console leaves, a beat after its last line.
+    if (!this.arena.hasUpgrade(owner, 'q') && ADMIN_ABUSE_MAX - st.abuse < ADMIN_CHEAPEST) {
+      st.closeAt = this.arena.scene.time.now + 650;
+    }
+    if (owner === 'player') this.refreshAdminTexts();
+    return true;
+  }
+
+  /** What a command does. Unpaid and unconditional — also the online replay of a remote command. */
+  private runAdminCommand(owner: Owner, cmd: AdminCmd): void {
+    const scene = this.arena.scene;
+    const now = scene.time.now;
+    const caster = this.fighterOf(owner);
+    const fx = this.fx(owner);
+    // A remote caster's hits are resolved on their own machine; here they are only shown.
+    const remote = owner === 'npc' && this.arena.isOnline;
+    const target = this.adminTarget(owner);
+    this.logConsole(owner, ADMIN_CODE[cmd]);
+    this.gesture(owner, 'tech-admin');
+
+    switch (cmd) {
+      case 'fling':
+        for (const f of this.enemiesOf(owner)) {
+          if (f !== target && Phaser.Math.Distance.Between(caster.x, caster.y, f.x, f.y) > 320) continue;
+          const a = Math.atan2(f.y - caster.y, f.x - caster.x);
+          if (!remote) {
+            this.flings.push({ f, vx: Math.cos(a) * ADMIN_FLING_SPEED, vy: Math.sin(a) * ADMIN_FLING_SPEED, until: now + ADMIN_FLING_MS });
+          }
+          fx.ring(f.x, f.y, 10, 54, TECH.white, 300, D_UI, 3);
+          fx.bits(f.x, f.y, 8, { angle: a, spread: 0.7, speed: 260, size: 9, life: 420, depth: D_UI, color: TECH.ice });
+        }
+        break;
+      case 'jail':
+        if (target) this.applyJail(target, owner, now);
+        break;
+      case 'fly':
+        this.flyUntil[owner] = now + ADMIN_FLY_MS;
+        fx.ring(caster.x, caster.y, 8, 46, TECH.ice, 360, D_UI, 2.4);
+        fx.bits(caster.x, caster.y + 10, 8, { angle: Math.PI / 2, spread: 0.9, speed: 160, size: 8, life: 420, depth: D_WORLD, color: TECH.ice });
+        break;
+      case 'kill':
+        if (!target) break;
+        this.strikes.push({ kind: 'kill', owner, x: target.x, y: target.y, bornAt: now });
+        fx.crash(target.x, target.y, 80, { bits: 16, rings: 3, duration: 560, color: TECH.alert });
+        scene.cameras.main.shake(200, 0.006);
+        if (!remote) {
+          target.takeDamage(ADMIN_KILL_DMG, { sourceX: caster.x, sourceY: caster.y });
+          this.arena.spawnHitFlash(target.x, target.y, this.col(owner)(TECH.alert));
+        }
+        break;
+      case 'invis':
+        this.adminInvisibleUntil[owner] = now + ADMIN_INVIS_MS;
+        fx.glitch(caster.x, caster.y, 56, 56, TECH.wire, 360, D_UI);
+        break;
+      case 'give':
+        this.gunUntil[owner] = now + ADMIN_GIVE_MS;
+        fx.ring(caster.x, caster.y, 6, 40, TECH.alert, 320, D_UI, 2.4);
+        fx.bits(caster.x, caster.y, 6, { speed: 150, size: 8, life: 380, depth: D_WORLD, color: TECH.alert });
+        break;
+      case 'speed':
+        this.speedUntil[owner] = now + ADMIN_SPEED_MS;
+        fx.ring(caster.x, caster.y, 6, 48, TECH.phosphor, 320, D_UI, 2.4);
+        fx.bits(caster.x, caster.y, 8, { speed: 220, size: 8, life: 360, depth: D_WORLD, color: TECH.phosphor });
+        break;
+      case 'invincible':
+        this.invincibleUntil[owner] = now + ADMIN_INVINCIBLE_MS;
+        fx.ring(caster.x, caster.y, 10, 60, TECH.amber, 420, D_UI, 3);
+        break;
+      case 'ban':
+        if (!target) break;
+        this.strikes.push({ kind: 'ban', owner, x: target.x, y: target.y, bornAt: now });
+        scene.cameras.main.shake(320, 0.01);
+        fx.crash(target.x, target.y, 120, { bits: 24, rings: 4, duration: 760, color: TECH.alert });
+        if (!remote && target.hp / target.maxHp < ADMIN_BAN_HP) {
+          target.takeDamage(9999, { pierce: true });
+          if (owner === 'player') this.arena.recordMasteryStat('adminBans', 1);
+        }
+        break;
+    }
+  }
+
+  private applyJail(target: Fighter, owner: Owner, now: number): void {
+    this.jails = this.jails.filter((j) => j.f !== target);
+    this.jails.push({
+      f: target, owner, x: target.x, y: target.y, w: ADMIN_JAIL_SIZE, h: ADMIN_JAIL_SIZE,
+      lastDmgAt: 0, expiresAt: now + ADMIN_JAIL_MS,
     });
-    this.arena.spawnFloatingText(fighter.x, fighter.y - 40, 'JAILED', '#ff4444');
+    // A window slams open around them — the cell is a dialog box they cannot close.
+    this.fx(owner).crash(target.x, target.y, 70, { bits: 10, rings: 2, duration: 520, color: TECH.alert, mark: false });
   }
 
   /**
-   * The jail cell: a full-size error dialog with the victim inside it. Painted per frame so the
+   * The jail cell: an error dialog with the victim inside it. Painted per frame so the
    * scanlines crawl and the walls flash on each contact — a static stroked rectangle read as
    * arena furniture rather than as something holding you.
    */
   private paintJail(g: Phaser.GameObjects.Graphics, time: number, t: number): void {
-    for (const owner of OWNERS) {
-      const box = this.jail[owner];
-      if (!box) continue;
+    for (const box of this.jails) {
+      const tint = this.col(box.owner);
       const hot = time - box.lastDmgAt < 220;
-      windowPane(g, this.col(opposite(owner)), box.x, box.y, box.w, box.h, t,
-        hot ? 0.55 : 0.32, {
-          body: TECH.night, bar: TECH.alert, accent: hot ? TECH.white : TECH.alert, lines: 0,
-        });
+      windowPane(g, tint, box.x, box.y, box.w, box.h, t, hot ? 0.55 : 0.32, {
+        body: TECH.night, bar: TECH.alert, accent: hot ? TECH.white : TECH.alert, lines: 0,
+      });
       // Bars across the opening, so it reads as a cell and not just a window.
-      g.lineStyle(2.4, this.col(opposite(owner))(TECH.alert), hot ? 0.95 : 0.6);
-      for (let i = 1; i < 7; i++) {
-        const bx = box.x - box.w / 2 + (i / 7) * box.w;
-        g.lineBetween(bx, box.y - box.h / 2 + 18, bx, box.y + box.h / 2);
+      g.lineStyle(2.4, tint(TECH.alert), hot ? 0.95 : 0.6);
+      for (let i = 1; i < 6; i++) {
+        const bx = box.x - box.w / 2 + (i / 6) * box.w;
+        g.lineBetween(bx, box.y - box.h / 2 + 16, bx, box.y + box.h / 2);
+      }
+      // The sentence, draining along the sill.
+      const left = Phaser.Math.Clamp((box.expiresAt - time) / ADMIN_JAIL_MS, 0, 1);
+      g.fillStyle(tint(TECH.alert), 0.9);
+      g.fillRect(box.x - box.w / 2, box.y + box.h / 2 - 3, box.w * left, 3);
+    }
+  }
+
+  /** ;kill's smite and ;ban's hammer — short set-pieces drawn over everything in the arena. */
+  private paintStrikes(g: Phaser.GameObjects.Graphics, time: number, t: number): void {
+    for (let i = this.strikes.length - 1; i >= 0; i--) {
+      const sk = this.strikes[i];
+      const life = sk.kind === 'ban' ? 900 : 520;
+      const k = (time - sk.bornAt) / life;
+      if (k >= 1) { this.strikes.splice(i, 1); continue; }
+      const tint = this.col(sk.owner);
+      if (sk.kind === 'kill') {
+        // A column of red from the top of the screen, fat then gone, with a bright core.
+        const w = 46 * (1 - k) * (0.8 + 0.2 * Math.sin(t * 60));
+        g.fillStyle(tint(TECH.alert), 0.35 * (1 - k));
+        g.fillRect(sk.x - w, -10, w * 2, sk.y + 10);
+        g.fillStyle(tint(TECH.alert), 0.85 * (1 - k));
+        g.fillRect(sk.x - w / 2, -10, w, sk.y + 10);
+        g.fillStyle(tint(TECH.white), 0.95 * (1 - k));
+        g.fillRect(sk.x - w / 6, -10, w / 3, sk.y + 10);
+        // error boxes cascading off the impact
+        for (let j = 0; j < 5; j++) {
+          const a = (j / 5) * Math.PI * 2 + sk.bornAt;
+          const d = 20 + 90 * k;
+          windowPane(g, tint, sk.x + Math.cos(a) * d, sk.y + Math.sin(a) * d * 0.7, 34, 22, t, 0.8 * (1 - k), {
+            body: TECH.night, bar: TECH.alert, accent: TECH.alert, lines: 1, scan: false,
+          });
+        }
+      } else {
+        // The ban hammer: falls for the first third, sits in its crater for the rest.
+        const fall = Math.min(1, k / 0.3);
+        const hy = sk.y - 300 * (1 - fall * fall);
+        const a = 1 - Math.max(0, (k - 0.7) / 0.3);
+        g.fillStyle(tint(TECH.night), 0.4 * a * fall);
+        g.fillEllipse(sk.x, sk.y + 20, 110 * fall, 26 * fall);
+        // handle
+        g.fillStyle(tint(TECH.steel), a);
+        g.fillRect(sk.x - 6, hy - 96, 12, 80);
+        g.lineStyle(1.5, tint(TECH.wire), a);
+        g.strokeRect(sk.x - 6, hy - 96, 12, 80);
+        // head
+        g.fillStyle(tint(0x881122), a);
+        g.fillRoundedRect(sk.x - 54, hy - 30, 108, 54, 6);
+        g.fillStyle(tint(TECH.alert), a);
+        g.fillRoundedRect(sk.x - 50, hy - 26, 100, 22, 4);
+        g.lineStyle(2.5, tint(TECH.white), a * 0.9);
+        g.strokeRoundedRect(sk.x - 54, hy - 30, 108, 54, 6);
+        // the no-entry sign on its face
+        g.lineStyle(4, tint(TECH.white), a);
+        g.strokeCircle(sk.x, hy - 3, 15);
+        g.lineBetween(sk.x - 10, hy - 13, sk.x + 10, hy + 7);
+        if (fall >= 1) {
+          const ring = (k - 0.3) / 0.7;
+          g.lineStyle(5 * (1 - ring), tint(TECH.alert), 1 - ring);
+          g.strokeEllipse(sk.x, sk.y + 18, 120 + 260 * ring, 30 + 70 * ring);
+        }
       }
     }
   }
 
-  private applyAdminRewards(owner: Owner, points: number): void {
-    const now = this.arena.scene.time.now;
-    const fighter = owner === 'player' ? this.arena.player : this.arena.npc;
-    const enemy = owner === 'player' ? this.arena.npc : this.arena.player;
-    const lines: string[] = [];
-
-    if (points >= ADMIN_TIERS[0]) {
-      fighter.isInvincible = true;
-      this.arena.scene.time.delayedCall(5000, () => { if (fighter.active) fighter.isInvincible = false; });
-      lines.push(';Invincible');
-    }
-    if (points >= ADMIN_TIERS[1]) {
-      this.adminInvisibleUntil[owner] = now + 8000;
-      fighter.setAlpha(0.2);
-      this.arena.scene.time.delayedCall(8000, () => {
-        if (fighter.active && this.adminInvisibleUntil[owner] <= this.arena.scene.time.now) fighter.setAlpha(1);
-      });
-      lines.push(';Invisible');
-    }
-    if (points >= ADMIN_TIERS[2]) {
-      enemy.takeDamage(35);
-      this.arena.spawnHitFlash(enemy.x, enemy.y, this.col(owner)(0xff4444));
-      lines.push(';kill');
-    }
-    if (points >= ADMIN_TIERS[3]) {
-      this.applyJail(owner === 'player' ? 'npc' : 'player', now);
-      lines.push(';Jail');
-    }
-    if (points >= ADMIN_TIERS[4]) {
-      if (enemy.hp / enemy.maxHp < 0.15) enemy.takeDamage(9999, { pierce: true });
-      if (owner === 'player') this.arena.recordMasteryStat('adminBans', 1);
-      lines.push(';ban');
-    }
-    if (lines.length === 0) lines.push(';No admin privileges obtained');
-
-    this.playConsoleLog(owner, lines);
-  }
-
-  private playConsoleLog(owner: Owner, lines: string[]): void {
-    const prefix = owner === 'npc' ? 'enemy@admin:~$ ' : 'you@admin:~$ ';
-    const { height: H } = this.arena.scene.scale;
-    const baseX = 16;
-    const baseY = H - 24 - lines.length * 16;
-    lines.forEach((line, i) => {
-      const text = this.arena.scene.add.text(baseX, baseY + i * 16, '', {
-        fontSize: '12px', color: '#ff4a4a', fontFamily: FONT_MONO, fontStyle: 'bold',
-      }).setOrigin(0, 0.5).setDepth(50).setScrollFactor(0);
-      this.consoleLogTexts.push(text);
-      this.arena.scene.time.delayedCall(i * 220, () => { if (text.active) text.setText(prefix + line); });
-      this.arena.scene.time.delayedCall(i * 220 + 3200, () => {
-        if (!text.active) return;
-        this.arena.scene.tweens.add({ targets: text, alpha: 0, duration: 400, onComplete: () => text.destroy() });
-      });
-    });
-  }
-
-  // ── Security Breach (Q+) ──────────────────────────────────────────────
-
-  private applyBreachGlitch(owner: Owner, st: AdminState): void {
+  /** Queue lines of fake source into the bottom-right corner, typed one after another. */
+  private logConsole(owner: Owner, lines: string[]): void {
     const scene = this.arena.scene;
-    st.points += BREACH_POINTS;
-    st.text?.setText(this.renderAdminString(st));
-    scene.cameras.main.shake(160, 0.004);
-
-    if (st.text) {
-      const text = st.text;
-      text.setColor('#00ffcc');
-      scene.time.delayedCall(80, () => { if (text.active) text.setColor('#111111'); });
-      scene.time.delayedCall(160, () => { if (text.active) text.setColor('#ff6666'); });
-    }
-
     const { width: W, height: H } = scene.scale;
-    const count = Phaser.Math.Between(3, 5);
-    for (let i = 0; i < count; i++) {
-      const msg = BREACH_TEXTS[Phaser.Math.Between(0, BREACH_TEXTS.length - 1)];
-      const t = scene.add.text(Phaser.Math.Between(60, W - 60), Phaser.Math.Between(60, H - 60), msg, {
-        fontSize: `${Phaser.Math.Between(16, 30)}px`, color: '#000000', fontFamily: 'monospace',
-      }).setStroke('#33ff66', 3).setOrigin(0.5).setDepth(27).setScrollFactor(0)
-        .setAngle(Phaser.Math.Between(-18, 18));
-      scene.tweens.add({ targets: t, alpha: 0, duration: 1200, delay: 200, onComplete: () => t.destroy() });
+    const now = scene.time.now;
+    // Start after whatever is still being typed, so two commands never interleave.
+    let at = now;
+    for (const l of this.consoleLines) at = Math.max(at, l.startAt + l.full.length * 14 + 60);
+    lines.forEach((line, i) => {
+      const full = i === 0 ? `${owner === 'npc' ? 'enemy' : 'you'}@admin> ${line}` : `  ${line}`;
+      const text = scene.add.text(W - 306, 0, '', {
+        fontSize: '11px', color: owner === 'npc' ? '#ff9a4a' : '#ff4a4a', fontFamily: FONT_MONO, fontStyle: 'bold',
+      }).setOrigin(0, 0.5).setDepth(50).setScrollFactor(0);
+      this.consoleLines.push({ text, full, startAt: at });
+      at += full.length * 14 + 60;
+    });
+    while (this.consoleLines.length > 9) this.consoleLines.shift()!.text.destroy();
+    // Newest line sits on the bottom edge; everything older scrolls up a row.
+    const n = this.consoleLines.length;
+    this.consoleLines.forEach((l, i) => l.text.setY(H - 96 - (n - 1 - i) * 14));
+  }
+
+  // ── The console window (local player only) ───────────────────────────
+
+  private isPointerOverAdmin(x: number, y: number): boolean {
+    return this.adminObjs.length > 0
+      && x >= this.adminX && x <= this.adminX + ADMIN_WIN_W
+      && y >= this.adminY && y <= this.adminY + ADMIN_WIN_H;
+  }
+
+  private isPointerOverAdminGrip(x: number, y: number): boolean {
+    return this.isPointerOverAdmin(x, y) && y <= this.adminY + ADMIN_BAR_H + 2 && x < this.adminX + ADMIN_WIN_W - 24;
+  }
+
+  private anchorToAdmin<T extends Phaser.GameObjects.Text | Phaser.GameObjects.Rectangle>(o: T, dx: number, dy: number): T {
+    o.setPosition(this.adminX + dx, this.adminY + dy);
+    this.adminAnchors.push({ o, dx, dy });
+    this.adminObjs.push(o);
+    return o;
+  }
+
+  private moveAdminWindow(x: number, y: number): void {
+    const { width: W, height: H } = this.arena.scene.scale;
+    this.adminX = Phaser.Math.Clamp(x, 0, W - ADMIN_WIN_W);
+    this.adminY = Phaser.Math.Clamp(y, 0, H - ADMIN_WIN_H);
+    for (const a of this.adminAnchors) a.o.setPosition(this.adminX + a.dx, this.adminY + a.dy);
+  }
+
+  private openAdminWindow(): void {
+    this.destroyAdminWindow();
+    const scene = this.arena.scene;
+    const { height: H } = scene.scale;
+    this.adminX = 16;
+    this.adminY = H / 2 - ADMIN_WIN_H / 2 - 30;
+    const st = this.admin.player;
+
+    const close = this.anchorToAdmin(this.hitRect(0, 0, 18, 18, 47), ADMIN_WIN_W - 13, 14);
+    close.on('pointerdown', () => this.closeAdmin('player'));
+    const rects = ADMIN_COMMANDS.map((c, i) => {
+      const r = this.anchorToAdmin(this.hitRect(0, 0, ADMIN_BTN_W, ADMIN_BTN_H), ADMIN_BTN_DX[i % 3], ADMIN_BTN_DY[Math.floor(i / 3)]);
+      r.on('pointerdown', () => { this.useAdminCommand('player', c.id); });
+      return r;
+    });
+
+    const frame = this.addChrome(44, (cg, ct) => {
+      const x0 = this.adminX, y0 = this.adminY;
+      crtWindow(cg, this.pcol, x0, y0, ADMIN_WIN_W, ADMIN_WIN_H, ct, {
+        bezel: 0x3a0a14, bar: 0x881122, screen: 0x140006, glow: TECH.alert, barH: ADMIN_BAR_H,
+      });
+      if (this.dragActive.player) {
+        cg.lineStyle(1.6, this.pcol(TECH.mint), 0.5 + 0.35 * Math.sin(ct * 6));
+        cg.strokeRoundedRect(x0 + 3, y0 + 3, ADMIN_WIN_W - 6, ADMIN_BAR_H, 3);
+      }
+      if (close.getData('hover')) {
+        cg.lineStyle(1.5, this.pcol(TECH.white), 0.8);
+        cg.strokeRect(x0 + ADMIN_WIN_W - 22, y0 + 5, 18, 18);
+      }
+      // The abuse bar: ten notches, filling red, throbbing once it is nearly spent.
+      const bx = x0 + 14, by = y0 + ADMIN_BAR_H + 12, bw = ADMIN_WIN_W - 28, bh = 14;
+      const frac = Phaser.Math.Clamp(st.abuse / ADMIN_ABUSE_MAX, 0, 1);
+      cg.fillStyle(this.pcol(TECH.night), 0.95);
+      cg.fillRect(bx - 2, by - 2, bw + 4, bh + 4);
+      cg.fillStyle(this.pcol(0x441018), 1);
+      cg.fillRect(bx, by, bw, bh);
+      cg.fillStyle(this.pcol(TECH.alert), frac > 0.8 ? 0.75 + 0.25 * Math.sin(ct * 12) : 0.95);
+      cg.fillRect(bx, by, bw * frac, bh);
+      cg.fillStyle(this.pcol(TECH.white), 0.22);
+      cg.fillRect(bx, by, bw * frac, bh / 2.4);
+      cg.lineStyle(1, this.pcol(TECH.night), 0.7);
+      for (let k = 1; k < 10; k++) cg.lineBetween(bx + (bw * k) / 10, by, bx + (bw * k) / 10, by + bh);
+      cg.lineStyle(1.2, this.pcol(TECH.alert), 0.8);
+      cg.strokeRect(bx, by, bw, bh);
+
+      ADMIN_COMMANDS.forEach((c, i) => {
+        const price = this.adminPrice('player', c.id);
+        const color = !price ? 0x2e2228 : price.pay === 'hp' ? 0x6a1f6a : 0x8a1f2e;
+        crtButton(cg, this.pcol, x0 + ADMIN_BTN_DX[i % 3], y0 + ADMIN_BTN_DY[Math.floor(i / 3)], ADMIN_BTN_W, ADMIN_BTN_H,
+          color, !!price && !!rects[i].getData('hover'), ct);
+      });
+      // prompt line along the bottom of the screen
+      if (Math.sin(ct * 8) > 0) {
+        cg.fillStyle(this.pcol(TECH.alert), 0.9);
+        cg.fillRect(x0 + 14, y0 + ADMIN_WIN_H - 22, 7, 11);
+      }
+    });
+    this.adminObjs.push(frame);
+
+    const txt = (str: string, size: number, color: string): Phaser.GameObjects.Text =>
+      scene.add.text(0, 0, str, { fontSize: `${size}px`, color, fontFamily: FONT_MONO, fontStyle: 'bold', align: 'center', stroke: '#140006', strokeThickness: 2 })
+        .setDepth(46).setScrollFactor(0);
+    this.anchorToAdmin(txt('⌨ admin_console.exe', 12, '#ffd6d6').setOrigin(0, 0.5), 10, 14);
+    this.adminAbuseText = this.anchorToAdmin(txt('', 10, '#ffffff').setOrigin(0.5), ADMIN_WIN_W / 2, ADMIN_BAR_H + 19);
+    this.anchorToAdmin(txt(this.arena.hasUpgrade('player', 'q') ? 'ADMIN ABUSE: past the bar it costs HP' : 'console closes when the bar is spent', 10, '#cc8888').setOrigin(0, 0.5), 26, ADMIN_WIN_H - 16);
+    this.adminBtnLabels.clear();
+    ADMIN_COMMANDS.forEach((c, i) => {
+      const lbl = this.anchorToAdmin(txt('', 11, '#ffffff').setOrigin(0.5), ADMIN_BTN_DX[i % 3], ADMIN_BTN_DY[Math.floor(i / 3)]);
+      this.adminBtnLabels.set(c.id, lbl);
+    });
+    this.refreshAdminTexts();
+  }
+
+  private refreshAdminTexts(): void {
+    const st = this.admin.player;
+    this.adminAbuseText?.setText(`ABUSE ${Math.min(st.abuse, ADMIN_ABUSE_MAX)} / ${ADMIN_ABUSE_MAX}`);
+    for (const c of ADMIN_COMMANDS) {
+      const lbl = this.adminBtnLabels.get(c.id);
+      if (!lbl) continue;
+      const price = this.adminPrice('player', c.id);
+      const cost = price?.pay === 'hp' ? `-${price.hp} HP` : `${c.cost} abuse`;
+      lbl.setText(`;${c.id}\n${cost}`).setAlpha(price ? 1 : 0.4);
     }
+  }
+
+  private destroyAdminWindow(): void {
+    for (const o of this.adminObjs) o.destroy();
+    this.adminObjs = [];
+    this.adminAnchors = [];
+    this.adminBtnLabels.clear();
+    this.adminAbuseText = null;
+    if (this.dragGrabbed?.kind === 'console') this.dragGrabbed = null;
+  }
+
+  private closeAdmin(owner: Owner): void {
+    const st = this.admin[owner];
+    if (!st.open) return;
+    st.open = false;
+    st.closeAt = 0;
+    this.logConsole(owner, ['exit', '-- session closed']);
     if (owner === 'player') {
-      this.arena.spawnFloatingText(this.arena.player.x, this.arena.player.y - 44, '⚡ +5 pts', '#33ff66');
+      this.destroyAdminWindow();
+      if (this.arena.isOnline) this.arena.sendTechMsg({ t: 'tech', k: 'console', open: false });
     }
+  }
+
+  /** The bot at its own console: the best command it can afford, a little under one a second. */
+  private botAdminPick(time: number): void {
+    const st = this.admin.npc;
+    st.nextBotCmdAt = time + Phaser.Math.Between(650, 1100);
+    const npc = this.arena.npc;
+    const target = this.adminTarget('npc');
+    if (!target) return;
+    const can = (c: AdminCmd): boolean => !!this.adminPrice('npc', c);
+    const dist = Phaser.Math.Distance.Between(npc.x, npc.y, target.x, target.y);
+    const caged = this.jails.some((j) => j.f === target);
+    const order: AdminCmd[] = [];
+    if (can('ban')) order.push('ban');
+    // Cornered and fresh at the console: the whole bar on five seconds of god mode.
+    if (npc.hp / npc.maxHp < 0.3 && st.abuse === 0) order.push('invincible');
+    if (dist < 130) order.push('fling');
+    if (time >= this.gunUntil.npc && st.abuse <= 50) order.push('give');
+    // Cage first, then smite what cannot dodge.
+    if (!caged) order.push('jail');
+    order.push('kill');
+    if (time >= this.speedUntil.npc) order.push('speed');
+    if (npc.hp / npc.maxHp < 0.5 && time >= this.adminInvisibleUntil.npc) order.push('invis');
+    order.push('fling', 'fly');
+    for (const c of order) if (can(c) && this.useAdminCommand('npc', c)) return;
+    // Nothing left it can pay for.
+    this.closeAdmin('npc');
   }
 
   private updateAdmin(time: number): void {
     for (const owner of OWNERS) {
       const st = this.admin[owner];
-      const fighter = owner === 'player' ? this.arena.player : this.arena.npc;
+      const fighter = this.fighterOf(owner);
+      const remote = owner === 'npc' && this.arena.isOnline;
 
-      if (st.active) {
-        if (owner === 'npc' && time >= st.nextTypeAt) {
-          st.nextTypeAt = time + st.typeRate;
-          if (Math.random() < 0.82) {
-            st.points++;
-            st.cursor++;
-            if (st.cursor >= st.target.length) { st.target = randomBinaryString(ADMIN_STRING_LEN); st.cursor = 0; }
-          } else {
-            st.points = Math.max(0, st.points - 1);
-          }
-        }
-
-        const times = this.breachTimes[owner];
-        while (times.length > 0 && time >= times[0]) {
-          times.shift();
-          this.applyBreachGlitch(owner, st);
-        }
-
-        if (time >= st.endAt) this.closeAdmin(owner);
+      if (st.open && !remote) {
+        if (!fighter.active || fighter.hp <= 0 || (st.closeAt > 0 && time >= st.closeAt)) this.closeAdmin(owner);
+        else if (owner === 'npc' && st.closeAt === 0 && time >= st.nextBotCmdAt) this.botAdminPick(time);
       }
 
       if (this.adminInvisibleUntil[owner] > time) {
@@ -2642,8 +2819,38 @@ export class TechnologyKit {
         this.wasAdminInvisible[owner] = false;
         fighter.setAlpha(1);
       }
+
+      // ;fly — off the floor: melee and ground hazards pass underneath.
+      const flying = time < this.flyUntil[owner];
+      if (flying) { fighter.airborne = true; fighter.levitating = true; }
+      else if (this.wasFlying[owner]) { fighter.airborne = false; fighter.levitating = false; }
+      this.wasFlying[owner] = flying;
+
+      const sped = time < this.speedUntil[owner];
+      if (sped) fighter.techCooldownMult = 1 / ADMIN_SPEED_BONUS;
+      else if (this.wasSped[owner]) fighter.techCooldownMult = 1;
+      this.wasSped[owner] = sped;
+
+      const god = time < this.invincibleUntil[owner];
+      if (god) fighter.isInvincible = true;
+      else if (this.wasInvincible[owner]) fighter.isInvincible = false;
+      this.wasInvincible[owner] = god;
+    }
+
+    if (this.adminObjs.length > 0 && time >= this.adminRefreshAt) {
+      // Prices move with your health and the enemy's: keep the buttons honest.
+      this.adminRefreshAt = time + 200;
+      this.refreshAdminTexts();
+    }
+
+    // ;fling — the launch is held for a few frames, after movement, so it actually carries.
+    for (let i = this.flings.length - 1; i >= 0; i--) {
+      const fl = this.flings[i];
+      if (time >= fl.until || !fl.f.active || fl.f.hp <= 0) { this.flings.splice(i, 1); continue; }
+      (fl.f.body as Phaser.Physics.Arcade.Body | null)?.setVelocity(fl.vx, fl.vy);
     }
   }
+
 
   // ── Technology Mastery — VPN (passive) ────────────────────────────────
 
@@ -2717,199 +2924,98 @@ export class TechnologyKit {
     void scene;
   }
 
-  // ── Technology Mastery — Byte-Bomb (bindable) ─────────────────────────
-
-  /** The slot Byte-Bomb is bound over this match, or null when it isn't bound anywhere. */
-  private byteBombSlot(): 'e' | 'r' | 'f' | 'q' | null {
-    for (const s of ['e', 'r', 'f', 'q'] as const) {
-      if (this.arena.masteryBindFor(s) === 'byte-bomb') return s;
-    }
-    return null;
-  }
-
-  /** 0 = just cast, 1 = ready. Drives the HUD bar when Byte-Bomb is bound to a slot. */
-  getByteBombCooldownRatio(time: number): number {
-    return Math.min(1, (time - this.byteBombLastCastAt) / BYTE_BOMB_COOLDOWN_MS);
-  }
-
-  private tryCastByteBomb(tx: number, ty: number): void {
-    const time = this.arena.scene.time.now;
-    if (time - this.byteBombLastCastAt < BYTE_BOMB_COOLDOWN_MS) return;
-    if (Date.now() < this.arena.player.disarmedUntil) return;
-    this.byteBombLastCastAt = time;
-    this.spawnByteBomb('player', tx, ty);
-    this.arena.showFloatingText(this.arena.player.x, this.arena.player.y - 34, '💣 BYTE-BOMB', '#66ddff');
-    // Online: the opponent's sim owns their HP, so replay the bomb there too.
-    this.arena.broadcastMasteryCast('byte-bomb');
-  }
-
-  /** Online replay: the remote technology player lobbed a Byte-Bomb — it must hurt the local player. */
-  doNpcByteBomb(tx: number, ty: number): void {
-    this.spawnByteBomb('npc', tx, ty);
-  }
-
-  private spawnByteBomb(owner: Owner, tx: number, ty: number): void {
-    const scene = this.arena.scene;
-    const caster = owner === 'player' ? this.arena.player : this.arena.npc;
-    const angle = Math.atan2(ty - caster.y, tx - caster.x);
-    void scene;
-    this.byteBombs.push({
-      owner,
-      x: caster.x, y: caster.y,
-      vx: Math.cos(angle) * BYTE_BOMB_TRAVEL_SPEED,
-      vy: Math.sin(angle) * BYTE_BOMB_TRAVEL_SPEED,
-      destX: tx, destY: ty,
-      flying: true,
-      fuse: BYTE_BOMB_FUSE_MS,
-    });
-    this.fx(owner).bits(caster.x, caster.y, 4, {
-      angle, spread: 0.5, speed: 150, size: 8, life: 320, depth: D_WORLD, drift: 0,
-    });
-  }
+  // ── Technology Mastery — Glitch Abuse (passive) ───────────────────────
 
   /**
-   * Rising-edge click on one of the player's own bombs — trims half a second off its fuse.
-   * Returns true when the click was consumed so it doesn't also fire a cruncher.
+   * Grind against a wall and the collision gives up: you flicker in and out of it, then get
+   * spat across the arena toward the cursor, clipping through anybody in the way. Caster-local
+   * — online the opponent just sees the position do it.
    */
-  private handleByteBombClick(pointer: Phaser.Input.Pointer, mouseX: number, mouseY: number): boolean {
-    const down = pointer.leftButtonDown();
-    const rising = down && !this.byteBombPointerWasDown;
-    this.byteBombPointerWasDown = down;
-    if (!rising) return false;
-
-    for (const b of this.byteBombs) {
-      if (b.owner !== 'player') continue;
-      if (Phaser.Math.Distance.Between(mouseX, mouseY, b.x, b.y) > BYTE_BOMB_RADIUS) continue;
-      b.fuse = Math.max(0, b.fuse - BYTE_BOMB_CLICK_CUT_MS);
-      this.arena.spawnFloatingText(b.x, b.y - 26, '-0.5s', '#66ddff');
-      // Clicking the chip visibly knocks bits loose out of it.
-      this.pfx.bits(b.x, b.y, 3, { speed: 90, size: 7, life: 260, depth: D_WORLD + 1, color: TECH.ice });
-      if (this.arena.isOnline) this.arena.sendTechMsg({ t: 'tech', k: 'bytefuse' });
-      return true;
+  private updateGlitchAbuse(time: number, delta: number): void {
+    const g = this.glitch;
+    const p = this.arena.player;
+    const body = p?.body as Phaser.Physics.Arcade.Body | null;
+    if (!this.arena.masteryActive || !p?.active || p.hp <= 0 || !body) {
+      if (g.phase !== 'idle' || g.rubMs > 0) this.glitch = freshGlitchState();
+      return;
     }
-    return false;
-  }
+    const wb = this.arena.scene.physics.world.bounds;
 
-  private updateByteBombs(time: number, delta: number): void {
-    for (let i = this.byteBombs.length - 1; i >= 0; i--) {
-      const b = this.byteBombs[i];
-
-      if (b.flying) {
-        const prevX = b.x, prevY = b.y;
-        b.x += b.vx * delta / 1000;
-        b.y += b.vy * delta / 1000;
-        // Overshoot test against the destination along the travel axis.
-        const before = (b.destX - prevX) * b.vx + (b.destY - prevY) * b.vy;
-        const after = (b.destX - b.x) * b.vx + (b.destY - b.y) * b.vy;
-        if (before >= 0 && after < 0) {
-          b.x = b.destX; b.y = b.destY;
-          b.flying = false;
-        }
-      } else {
-        b.fuse -= delta;
+    if (g.phase === 'launch') {
+      body.setVelocity(g.dx * GLITCH_LAUNCH_SPEED, g.dy * GLITCH_LAUNCH_SPEED);
+      this.pfx.bit(p.x + Phaser.Math.Between(-10, 10), p.y + Phaser.Math.Between(-10, 10), TECH.ice, D_WORLD - 1, 12, 420);
+      if (Math.random() < 0.35) this.pfx.glitch(p.x, p.y, 50, 40, TECH.cyan, 200, D_WORLD);
+      for (const f of this.enemiesOf('player')) {
+        if (g.hit.has(f)) continue;
+        if (Phaser.Math.Distance.Between(p.x, p.y, f.x, f.y) > GLITCH_HIT_RADIUS * f.hitboxMult) continue;
+        g.hit.add(f);
+        f.takeDamage(GLITCH_DAMAGE, { sourceX: p.x, sourceY: p.y });
+        this.arena.spawnHitFlash(f.x, f.y, this.pcol(TECH.ice));
+        this.pfx.crash(f.x, f.y, 50, { bits: 8, rings: 1, duration: 320, color: TECH.ice, mark: false });
       }
-
-      if (!b.flying && b.fuse <= 0) {
-        this.detonateByteBomb(b, time);
-        this.byteBombs.splice(i, 1);
+      const age = time - g.startedAt;
+      const landed = age > 90 && (
+        (g.dx < -0.2 && body.x <= wb.x + 2) || (g.dx > 0.2 && body.right >= wb.right - 2)
+        || (g.dy < -0.2 && body.y <= wb.y + 2) || (g.dy > 0.2 && body.bottom >= wb.bottom - 2));
+      if (landed || age > GLITCH_LAUNCH_MAX_MS) {
+        body.setVelocity(0, 0);
+        this.pfx.crash(p.x, p.y, 60, { bits: 10, rings: 2, duration: 380, color: TECH.cyan, mark: false });
+        this.arena.scene.cameras.main.shake(120, 0.004);
+        this.glitch = freshGlitchState();
+        this.glitch.readyAt = time + GLITCH_COOLDOWN_MS;
       }
+      return;
     }
+
+    if (g.phase === 'glitch') {
+      body.setVelocity(0, 0);
+      // In and out of the wall, on a ragged clock: the physics step drags the body back inside
+      // every frame, which is exactly the flicker a real clip looks like.
+      const tick = Math.floor(time / 46);
+      const into = tick % 2 === 0 ? 20 + (tick * 7) % 9 : -8 + (tick * 5) % 7;
+      const slide = ((tick * 13) % 11) - 5;
+      p.setPosition(g.baseX - g.nx * into - g.ny * slide, g.baseY - g.ny * into + g.nx * slide);
+      if (tick % 2 === 0) this.pfx.glitch(g.baseX, g.baseY, 54, 48, tick % 4 === 0 ? TECH.cyan : TECH.alert, 90, D_UI);
+      if (time - g.startedAt >= GLITCH_WINDUP_MS) {
+        p.setPosition(g.baseX, g.baseY);
+        const ptr = this.arena.scene.input.activePointer;
+        let dx = ptr.worldX - p.x, dy = ptr.worldY - p.y;
+        const len = Math.hypot(dx, dy) || 1;
+        dx /= len; dy /= len;
+        // Aimed into the wall you are stuck in? Then straight out of it, which is across the arena.
+        if (dx * g.nx + dy * g.ny < 0.15) { dx = g.nx; dy = g.ny; }
+        g.dx = dx; g.dy = dy;
+        g.phase = 'launch';
+        g.startedAt = time;
+        g.hit.clear();
+        this.pfx.ring(p.x, p.y, 10, 70, TECH.ice, 300, D_UI, 3);
+      }
+      return;
+    }
+
+    // idle — is the player leaning on a wall?
+    let nx = 0, ny = 0;
+    if (time >= g.readyAt && Date.now() >= p.stunnedUntil && !this.rebooting.has(p)) {
+      const v = body.velocity;
+      if (body.x <= wb.x + 3 && v.x < -20) nx = 1;
+      else if (body.right >= wb.right - 3 && v.x > 20) nx = -1;
+      else if (body.y <= wb.y + 3 && v.y < -20) ny = 1;
+      else if (body.bottom >= wb.bottom - 3 && v.y > 20) ny = -1;
+    }
+    if (nx === 0 && ny === 0) { g.rubMs = Math.max(0, g.rubMs - delta * 2); return; }
+    g.rubMs += delta;
+    // Sparks off the wall while the rub builds, so it reads as "something is about to give".
+    if (Math.random() < 0.3) this.pfx.bit(p.x - nx * 18, p.y - ny * 18, TECH.cyan, D_WORLD, 8, 260);
+    if (g.rubMs < GLITCH_RUB_MS) return;
+    g.phase = 'glitch';
+    g.startedAt = time;
+    g.nx = nx; g.ny = ny;
+    g.baseX = p.x; g.baseY = p.y;
+    g.rubMs = 0;
   }
 
-  /**
-   * The bomb is a fat surface-mount chip: soldered legs down both sides, a plated face with
-   * a scanline sweeping across it, a status LED, and the fuse ring draining around the whole
-   * package. Everything blinks harder the closer the countdown gets to zero.
-   */
-  private drawByteBombFace(
-    g: Phaser.GameObjects.Graphics, shadowG: Phaser.GameObjects.Graphics, b: ByteBomb, time: number,
-  ): void {
-    const tint = this.col(b.owner);
-    const secs = Math.max(0, b.fuse / 1000);
-    const frac = Phaser.Math.Clamp(b.fuse / BYTE_BOMB_FUSE_MS, 0, 1);
-    // Blink rate climbs under 3s, then goes frantic under 1s.
-    const rate = secs > 3 ? 500 : secs > 1 ? 220 : 100;
-    const hot = Math.floor(time / rate) % 2 === 0;
-    const danger = secs <= 3;
-    const ringColor = tint(danger && hot ? TECH.alert : TECH.cyan);
 
-    // Ground shadow — squashed while the packet is still in the air.
-    shadowG.fillStyle(tint(TECH.night), b.flying ? 0.18 : 0.32);
-    shadowG.fillEllipse(b.x, b.y + 20, b.flying ? 20 : 28, b.flying ? 5 : 8);
-
-    // The package itself: a dark chip body under everything else.
-    g.fillStyle(tint(secs <= 1 && hot ? TECH.plum : TECH.board), 0.95);
-    g.fillCircle(b.x, b.y, 16);
-    g.lineStyle(2, tint(TECH.cyan), 0.95);
-    g.strokeCircle(b.x, b.y, 16);
-
-    // Chip legs: three solder pins down each side, long enough to clear the fuse ring.
-    g.lineStyle(2, tint(TECH.wire), 0.85);
-    for (let i = -1; i <= 1; i++) {
-      const ly = b.y + i * 8;
-      g.lineBetween(b.x - 15, ly, b.x - 28, ly);
-      g.lineBetween(b.x + 15, ly, b.x + 28, ly);
-    }
-
-    // Face plating: etched traces, plus a bright scanline sweeping top to bottom.
-    g.lineStyle(1, tint(TECH.ice), 0.45);
-    g.lineBetween(b.x - 12, b.y - 8, b.x + 12, b.y - 8);
-    g.lineBetween(b.x - 12, b.y + 8, b.x + 12, b.y + 8);
-    g.lineBetween(b.x - 12, b.y - 8, b.x - 12, b.y + 8);
-    const sweepY = b.y - 11 + ((time / 6) % 22);
-    g.lineStyle(2, tint(TECH.ice), 0.55);
-    g.lineBetween(b.x - 11, sweepY, b.x + 11, sweepY);
-
-    // Status LED, tucked into the top-left corner of the package away from the countdown.
-    g.fillStyle(tint(hot ? (danger ? TECH.alert : TECH.phosphor) : TECH.steel), hot ? 1 : 0.7);
-    g.fillCircle(b.x - 9, b.y - 11, 3);
-
-    // The countdown, drawn as lit cells rather than typed — one per tenth still to run.
-    const tenths = Math.min(10, Math.ceil(secs * 10) % 10 || (secs > 0 ? 10 : 0));
-    g.fillStyle(tint(danger && hot ? TECH.alert : TECH.ice), 0.95);
-    for (let d = 0; d < tenths; d++) {
-      g.fillRect(b.x - 9 + (d % 5) * 4, b.y + (d < 5 ? 0 : 4.4), 2.6, 3);
-    }
-    // …and the whole seconds as bigger blocks above them.
-    const whole = Math.min(8, Math.floor(secs));
-    g.fillStyle(tint(danger && hot ? TECH.alert : TECH.phosphor), 0.95);
-    for (let d = 0; d < whole; d++) {
-      g.fillRect(b.x - 9 + (d % 4) * 5, b.y - 6 + (d < 4 ? 0 : 3), 3.4, 2.2);
-    }
-
-    // Fuse ring draining around the package.
-    g.lineStyle(3, tint(TECH.night), 0.55);
-    g.strokeCircle(b.x, b.y, 21);
-    g.lineStyle(3, ringColor, 0.95);
-    g.beginPath();
-    g.arc(b.x, b.y, 21, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * frac, false);
-    g.strokePath();
-
-    // Danger pulse: a faint ring breathing outward once the countdown goes red.
-    if (danger) {
-      const pulse = 24 + 7 * (1 - ((time % rate) / rate));
-      g.lineStyle(2, tint(TECH.alert), 0.3);
-      g.strokeCircle(b.x, b.y, pulse);
-    }
-  }
-
-  private detonateByteBomb(b: ByteBomb, time: number): void {
-    // A full crash: core, stepped shockwaves, the chip's own bits thrown clear, torn signal
-    // and a burned-in rectangle where the package was.
-    this.fx(b.owner).crash(b.x, b.y, BYTE_BOMB_BLAST_RADIUS, {
-      bits: 16, rings: 3, duration: 620, color: TECH.cyan,
-    });
-    this.arena.scene.cameras.main.shake(180, 0.004);
-
-    for (const target of this.enemiesOf(b.owner)) {
-      if (Phaser.Math.Distance.Between(b.x, b.y, target.x, target.y) > BYTE_BOMB_BLAST_RADIUS) continue;
-      target.takeDamage(BYTE_BOMB_DAMAGE, { source: b, sourceX: b.x, sourceY: b.y });
-      this.arena.spawnHitFlash(target.x, target.y, this.col(b.owner)(0x33aaee));
-      this.applyLag(target, time);
-    }
-  }
-
-  // ── Lag (Byte-Bomb debuff) ────────────────────────────────────────────
+  // ── Lag (Zip Bomb debuff) ─────────────────────────────────────────────
 
   private applyLag(target: Fighter, time: number): void {
     const until = time + LAG_DURATION_MS;
@@ -2933,7 +3039,22 @@ export class TechnologyKit {
     this.arena.spawnFloatingText(target.x, target.y - 84, '📶 LAG', '#66ddff');
   }
 
+  /** Drop a fighter's lag outright (the restart). */
+  private clearLag(f: Fighter, time: number): void {
+    const st = this.lagged.get(f);
+    st?.spinner?.destroy();
+    this.lagged.delete(f);
+    if (f.active) f.laggedUntil = 0;
+    this.lagClearedAt.set(f, time);
+  }
+
   private updateLag(time: number, delta: number): void {
+    // Online the opponent's status mirror can hand the timer back for a tick or two after a
+    // restart cleared it; hold it at zero until their side has caught up.
+    for (const [f, at] of this.lagClearedAt) {
+      if (time - at > 1500) { this.lagClearedAt.delete(f); continue; }
+      if (f.active && !this.lagged.has(f)) f.laggedUntil = 0;
+    }
     if (this.lagged.size === 0) return;
     for (const [f, st] of this.lagged) {
       if (!f.active || f.hp <= 0 || time >= st.until) {
@@ -3035,20 +3156,19 @@ export class TechnologyKit {
   }
 
   private updateJail(time: number): void {
-    for (const owner of OWNERS) {
-      const box = this.jail[owner];
-      if (!box) continue;
-      const fighter = owner === 'player' ? this.arena.player : this.arena.npc;
-      if (time >= box.expiresAt) {
+    for (let i = this.jails.length - 1; i >= 0; i--) {
+      const box = this.jails[i];
+      const fighter = box.f;
+      if (time >= box.expiresAt || !fighter.active || fighter.hp <= 0) {
         // The dialog closes and the bits go with it.
-        this.fx(opposite(owner)).bits(box.x, box.y, 8, {
-          speed: 200, size: 9, life: 420, depth: D_UI, color: TECH.alert,
-        });
-        this.jail[owner] = null;
+        this.fx(box.owner).bits(box.x, box.y, 8, { speed: 200, size: 9, life: 420, depth: D_UI, color: TECH.alert });
+        this.jails.splice(i, 1);
         continue;
       }
-      const minX = box.x - box.w / 2, maxX = box.x + box.w / 2;
-      const minY = box.y - box.h / 2, maxY = box.y + box.h / 2;
+      // A replica is placed by its own machine, which is running this same cell.
+      if (fighter.netGhost) continue;
+      const minX = box.x - box.w / 2 + 14, maxX = box.x + box.w / 2 - 14;
+      const minY = box.y - box.h / 2 + 22, maxY = box.y + box.h / 2 - 14;
       const outX = fighter.x < minX || fighter.x > maxX;
       const outY = fighter.y < minY || fighter.y > maxY;
       if (outX || outY) {

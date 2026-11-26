@@ -42,7 +42,7 @@ const KNOCK_HALF = 0.62;
 const KNOCK_DAMAGE = 10;
 const KNOCK_SHOVE = 380;
 const KNOCK_SHOVE_MS = 170;
-const WINDED_MS = 6000;
+const WINDED_MS = 10000;
 const STAMINA_DRAIN_S = 2.2;
 const STAMINA_REFILL_S = 1.6;
 const EXHAUSTED_SPEED = 0.3;
@@ -290,7 +290,7 @@ export const pierce: PreviewScript = {
 
 export const knock: PreviewScript = {
   duration: 7000,
-  caption: `E — a ${KNOCK_RANGE}px fist of air for ${KNOCK_DAMAGE} that shoves them back and leaves them winded for 6s: walking drains their stamina, and run dry they crawl at 30% until it refills`,
+  caption: `E — a ${KNOCK_RANGE}px fist of air for ${KNOCK_DAMAGE} that shoves them back and leaves them winded for 10s: walking drains their stamina, and run dry they crawl at 30% until it refills`,
   run(ctx) {
     const fx = fxOf(ctx);
     const { av } = stand(ctx);

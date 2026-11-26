@@ -1,7 +1,7 @@
 import { ElementCodex } from '../AbilityCodex';
 
 /**
- * Pressure — the boiler-robot with the giant gauntlet.
+ * Gas (id `pressure`) — the smog-filled robot with the giant gauntlet.
  *
  * Verified against `src/elements/pressure.ts` and `kits/PressureKit.ts`. Every number below is a
  * constant at the top of the kit; the five shop upgrades sit in the same blocks as the abilities
@@ -9,9 +9,10 @@ import { ElementCodex } from '../AbilityCodex';
  */
 const pressure: ElementCodex = {
   identity:
-    'A riveted steel boiler-robot with one giant gauntlet. Every key is held to build pressure and '
-    + 'let go to spend it, and every ability gets something extra at 50 and again at 100. Slam a '
-    + 'target into the floor, then wind up the punch they cannot walk away from.',
+    'A riveted steel robot full of purple smog, with one giant gauntlet. Every key is held to build '
+    + 'pressure and let go to spend it, and every ability gets something extra at 50 and again at '
+    + '100. Flood the floor with gas, then hold a key at full charge: the sparks off your back set '
+    + 'the whole lot off, cloud after cloud.',
 
   passives: [
     {
@@ -29,6 +30,27 @@ const pressure: ElementCodex = {
       ],
       notes: [
         'Each ability states its 50 and 100 breakpoints. Above 100 (Q+ Overcharge) the scaling simply continues.',
+      ],
+    },
+    {
+      emoji: '☁️',
+      name: 'Gas',
+      basics:
+        'Release leaves clouds of gas along its jet. An enemy who stands in your gas for 1.5 seconds '
+        + 'panics: they run about at random for 1.6 seconds and take 5 damage a second while they do. '
+        + 'Keep holding Click, E or R once it reaches 100 and sparks fly out behind you — any gas cloud '
+        + 'they touch explodes, and every cloud that explodes lights the clouds beside it.',
+      effects: [
+        { tag: 'area', label: 'Gas cloud', detail: '44px radius, hangs for 14s. Up to 36 at once.' },
+        { tag: 'control', label: 'Panic', detail: 'After 1.5s stood in gas: running at random for 1.6s. Time out of the gas wears the count back down.' },
+        { tag: 'dot', label: 'Choking', detail: '5 damage a second while panicking (2 every 0.4s).' },
+        { tag: 'damage', label: 'Sparks', detail: 'While a key is held at 100: 1 damage every 0.2s in a cone 96px behind you — opposite your aim.' },
+        { tag: 'damage', label: 'Explosion', detail: 'A lit cloud blows for 18 within 210px and lights every cloud inside the blast, 0.11s later.' },
+        { tag: 'damage', label: 'Chain', detail: 'One chain on one enemy: 18 for the first blast, 6 for each one after, 60 at most.' },
+      ],
+      notes: [
+        'Sparks come out of your back: turn away from the gas you want to light.',
+        'Your own gas and your own explosions never hurt you.',
       ],
     },
   ],
@@ -71,10 +93,11 @@ const pressure: ElementCodex = {
       ],
       upgrade: {
         basics:
-          'Shell-Shock: a grounded enemy hit by one of your abilities charged to 30 or more is knocked '
-          + 'loose as usual — and then stunned for 5 seconds.',
+          'Gas Vents: the slam splits the floor where the gauntlet comes down. The vent lasts 20 '
+          + 'seconds and breathes out a fresh gas cloud every 1.3 seconds, each drifting a little way '
+          + 'off. Up to three vents at once.',
         effects: [
-          { tag: 'control', label: 'Shell-Shock', detail: '5s stun when a 30+ Pressure hit frees a grounded enemy.', requiresUpgrade: 'e' },
+          { tag: 'summon', label: 'Gas vent', detail: 'Lasts 20s. One gas cloud every 1.3s. Three at most — a fourth closes the oldest.', requiresUpgrade: 'e' },
         ],
       },
     },
@@ -108,13 +131,15 @@ const pressure: ElementCodex = {
     'pressure-release': {
       basics:
         'Hold F to bank pressure, three times slower than the other keys; it keeps what it has when you '
-        + 'let go. Tap F to vent it: a jet of steam along your aim for 1.5s plus 0.025s per point (4s '
-        + 'at 100), doing 4 damage a second plus 0.08 per point (12 at 100). Anyone in the jet cannot '
-        + 'use abilities, though they can still move. At 50+ it also slows them 15%. At 100 the jet '
-        + 'ends in a blast for 30 that stuns for 1 second.',
+        + 'let go. Tap F to vent it: a jet of gas along your aim for 1.5s plus 0.025s per point (4s '
+        + 'at 100), doing 4 damage a second plus 0.08 per point (12 at 100), and leaving a gas cloud '
+        + 'somewhere along it every 0.23 seconds. Anyone in the jet cannot use abilities, though they '
+        + 'can still move. At 50+ it also slows them 15%. At 100 the jet ends in a blast for 30 that '
+        + 'stuns for 1 second.',
       cast: 'Hold F to bank (18s to fill), tap F to vent toward the cursor. 9s cooldown.',
       effects: [
-        { tag: 'dot', label: 'Steam jet', detail: '4 + 0.08 × pressure per second, ticking every 0.25s. 230px long (260 at 100), widening to 70px.' },
+        { tag: 'dot', label: 'Gas jet', detail: '4 + 0.08 × pressure per second, ticking every 0.25s. 230px long (260 at 100), widening to 70px.' },
+        { tag: 'area', label: 'Gas clouds', detail: 'One every 0.23s the jet runs: about 6 from a short jet, 17 from a full one. Each hangs for 14s.' },
         { tag: 'control', label: 'Disarm', detail: 'Abilities locked while inside the jet.' },
         { tag: 'control', label: 'Slow (50+)', detail: '15% slower while inside.' },
         { tag: 'damage', label: 'Blast (100)', detail: '30 damage and a 1s stun to everyone in the jet as it ends.' },
@@ -122,19 +147,23 @@ const pressure: ElementCodex = {
       ],
       upgrade: {
         basics:
-          'Depressurize: while 75 or more is banked, every Pressure hit does 20% more damage and bursts '
-          + 'a puff of steam off its target — 6 damage and a 25% slow for 1.5s to everyone within 60px.',
+          'Depressurize: while 75 or more is banked, every hit of yours does 20% more damage and '
+          + 'leaves a gas puddle under its target. Puddles are see-through and never fade, and standing '
+          + 'in one counts as standing in gas.',
         effects: [
-          { tag: 'buff', label: 'Pressurized hits', detail: '+20% damage on every Pressure hit at 75+ banked.', requiresUpgrade: 'f' },
-          { tag: 'damage', label: 'Steam puff', detail: '6 damage and 25% slow for 1.5s within 60px of each target.', requiresUpgrade: 'f' },
+          { tag: 'buff', label: 'Pressurized hits', detail: '+20% damage on every hit of yours at 75+ banked.', requiresUpgrade: 'f' },
+          { tag: 'area', label: 'Gas puddle', detail: '52px radius, permanent. Up to 12 — a thirteenth replaces the oldest. Never closer than 36px to another.', requiresUpgrade: 'f' },
         ],
       },
-      notes: ['Venting spends the whole bank, and with it the full-bank charge bonus and Depressurize.'],
+      notes: [
+        'Venting spends the whole bank, and with it the full-bank charge bonus and Depressurize.',
+        'Puddles cannot be lit. Only clouds explode.',
+      ],
     },
 
     'pressure-exceed': {
       basics:
-        'Run the boiler past its limit for 15 seconds: you glow red and pour steam, and every ability '
+        'Run the boiler past its limit for 15 seconds: you glow red and pour smog, and every ability '
         + 'charges twice as fast. When it ends you are stunned for 3 seconds.',
       cast: 'Q, instantly. An ultimate: paid for in charge.',
       effects: [

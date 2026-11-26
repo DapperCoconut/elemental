@@ -3,8 +3,8 @@ import type { InvasionFx, HuskStatus } from '../invasion/InvasionKit';
 import type { NetStatusEntry } from './NetStatusSync';
 import type { IslesMsg } from '../isles/net/IslesMsg';
 
-/** Bump when the wire protocol or gameplay sync changes incompatibly. (61: Savor replaces Slime — `savor-*` relays. 64: Venom rework — new cast ids, `venom-*` status timers, `acid-pick/bomb-hold/cluster` relays.) */
-export const NET_PROTOCOL_VERSION = 67;
+/** Bump when the wire protocol or gameplay sync changes incompatibly. (61: Savor replaces Slime — `savor-*` relays. 64: Venom rework — new cast ids, `venom-*` status timers, `acid-pick/bomb-hold/cluster` relays. 68: Gas — `pressure-gc/gx/gp` relays, `gas-panic` status timer. 69: Magma rework — new cast ids, the click replays cannons/flintlocks. 70: Astra mass rework — new cast ids, `astra-m/pk/eat/boom/cg/cs/cl/cx/out/zap/aura/doom/wind/drag/snap/parry/kneel` relays. 72: Technology rework — `tech-zip` cast id, NetTechMsg rewritten (`ads/adx/mv/bugs/bugx/zipx/restart/console/cmd`).) */
+export const NET_PROTOCOL_VERSION = 72;
 
 /** A co-op room holds the host plus up to three guests. PvP still needs exactly two. */
 export const MAX_PLAYERS = 4;
@@ -34,11 +34,23 @@ export interface NetSelection {
 
 /** Technology element events that the cast relay can't carry. */
 export type NetTechMsg =
-  | { t: 'tech'; k: 'malware'; kind: 'goose' | 'clippy' | 'pong' }
-  | { t: 'tech'; k: 'steer'; d: 'up' | 'down' | 'left' | 'right' }
-  | { t: 'tech'; k: 'quiz'; pass: boolean }
-  // Technology Mastery — the caster clicked their Byte-Bomb; shorten the replica's fuse too.
-  | { t: 'tech'; k: 'bytefuse' };
+  /** The caster's twelve popups, where they really are (x, y pairs; ids run up from `id0`). */
+  | { t: 'tech'; k: 'ads'; id0: number; p: number[] }
+  /** One of the caster's popups was walked into and closed. */
+  | { t: 'tech'; k: 'adx'; id: number }
+  /** A web-dragged popup, or the Zip Bomb's file (which rubber-bands), moved. */
+  | { t: 'tech'; k: 'mv'; o: 'ad' | 'zip'; id: number; x: number; y: number }
+  /** Critters let loose on the receiver (`ransom` is the Ransomware bug's id, or -1). */
+  | { t: 'tech'; k: 'bugs'; ids: number[]; ransom: number }
+  /** The victim clicked one of the sender's critters. */
+  | { t: 'tech'; k: 'bugx'; id: number }
+  /** The caster's Zip Bomb is gone — into the receiver (`hit`), or into nothing. */
+  | { t: 'tech'; k: 'zipx'; hit: boolean; big: boolean }
+  /** The victim took the restart: lag cleared, three seconds stunned. */
+  | { t: 'tech'; k: 'restart' }
+  /** Admin console opened / closed, and each command run from it. */
+  | { t: 'tech'; k: 'console'; open: boolean }
+  | { t: 'tech'; k: 'cmd'; c: 'fling' | 'jail' | 'fly' | 'kill' | 'invis' | 'give' | 'speed' | 'invincible' | 'ban' };
 
 /** Silence upgrade events that the cast relay / state stream can't carry. */
 export type NetSilenceMsg =

@@ -210,7 +210,7 @@ export interface CastContext {
   // Technology (abstract combined: sound + light)
   techCruncherFire: (tx: number, ty: number) => void;
   techAdsCast: () => void;
-  techUploadCast: (tx: number, ty: number) => void;
+  techZipCast: (tx: number, ty: number) => void;
   techWebDragCast: () => void;
   techAdminCast: () => void;
   // Fear (element id `silence`)
@@ -273,11 +273,11 @@ export interface CastContext {
   paintStillLife: () => void;
   paintMasterpiece: () => void;
   // Magma
-  magmaPlume: (tx: number, ty: number) => void;
-  magmaVolcano: (tx: number, ty: number) => void;
-  magmaBloat: () => void;
   magmaBlunder: (tx: number, ty: number) => void;
-  magmaMutiny: () => void;
+  magmaHotshot: () => void;
+  magmaDrink: () => void;
+  magmaCore: () => void;
+  magmaLimoncello: () => void;
   // Illusion (test element: cheat mode only for now)
   illusionCrackShot: (tx: number, ty: number) => void;
   illusionVeil: (tx: number, ty: number) => void;
@@ -423,11 +423,11 @@ export interface CastContext {
   pressureRelease: (tx: number, ty: number) => void;
   pressureExceed: () => void;
   // Astra (test element: cheat mode only for now). Star mode, the trial and the Q+ hold are the kit's.
-  astraStarstruck: (tx: number, ty: number) => void;
-  astraSolarFlares: (tx: number, ty: number) => void;
-  astraSmite: (tx: number, ty: number) => void;
-  astraWormWarp: (tx: number, ty: number) => void;
-  astraTrueSelf: () => void;
+  astraAntimatter: (tx: number, ty: number) => void;
+  astraSupernova: () => void;
+  astraFusion: () => void;
+  astraComet: (tx: number, ty: number) => void;
+  astraSingularity: () => void;
   // Memory (test element: cheat mode only for now). The shards, the beam, Rebirth's sweep, the
   // recording and the wound are all the kit's.
   memoryForget: (tx: number, ty: number) => void;

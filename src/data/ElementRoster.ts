@@ -313,11 +313,12 @@ export const TEST_ELEMENTS: ElementDef[] = [
   { id: 'tempest', name: 'Tempest', emoji: '🌪️', color: 0x7fb4ff, available: true },
   // The ultimate element. Its obtainment is undecided, so it waits here with the others.
   { id: 'myth', name: 'Myth', emoji: '🌠', color: 0x7d5cff, available: true },
-  // A steam robot with a giant gauntlet; every key is held to build pressure.
-  { id: 'pressure', name: 'Pressure', emoji: '🔩', color: 0xc7462e, available: true },
+  // Gas (id `pressure`): a smog-filled robot with a giant gauntlet; every key is held to build
+  // pressure, and the gas it vents can be lit.
+  { id: 'pressure', name: 'Gas', emoji: '🏭', color: 0xa35be0, available: true },
   // A black-and-white rubber-hose cartoon: finger guns, banana peels and a six-ton anvil.
   { id: 'ink', name: 'Ink', emoji: '🖋️', color: 0x1a1a1a, available: true },
-  // A cracked shell of deep space with a dwarf star inside; locked aim until it passes its Star Trial.
+  // A cracked shell of deep space with a dwarf star inside; gathers mass from space dust, and at full mass becomes a black hole.
   { id: 'astra', name: 'Astra', emoji: '🌟', color: 0x6a4cff, available: true },
   // A gentleman in a top hat with a cane, and a face of static. Every hit makes them guiltier.
   { id: 'memory', name: 'Memory', emoji: '🎩', color: 0x4a4458, available: true },

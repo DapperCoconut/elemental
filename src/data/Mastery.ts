@@ -140,7 +140,7 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
       {
         key: 'puddleIgnites',
         label: 'Arsonist Rig',
-        howTo: 'Set your own oil puddles alight — drone lasers, click-detonated barrels, and Coal Overload all count',
+        howTo: 'Set your own oil puddles alight — the Arm Laser, drone lasers, click-detonated barrels, and Coal Overload all count',
         target: 100,
       },
       {
@@ -889,13 +889,13 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
       {
         key: 'cordHits',
         label: 'Bandwidth Hog',
-        howTo: 'Box entities by hitting them with your Upload (R) cord',
+        howTo: 'Land your Zip Bomb (R) file on entities',
         target: 50,
       },
       {
         key: 'adminBans',
         label: 'Banhammer',
-        howTo: 'Reach 50 points in the Admin Console (Q) to run the ban command',
+        howTo: 'Kill an enemy with the Admin Console (Q) ban command — it only runs on a target below 15% HP',
         target: 1,
       },
       {
@@ -912,11 +912,9 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
         description: 'Passive: your connection tunnels through a private route — the longer you keep moving, the faster you get, ramping smoothly to +50% movement speed over 5 seconds. A binary datastream trails behind you, growing longer, brighter and wider as the boost climbs. The moment you stop moving the tunnel drops: the whole boost is gone and you start again from zero.',
       },
       {
-        id: 'byte-bomb',
-        name: 'Byte-Bomb',
-        bindable: true,
-        hudDescription: 'Timed packet charge that Lags everything in the blast',
-        description: 'Lob an explosive packet to your cursor with an 8 second fuse counting down on its shell. Click the bomb to burn half a second off the timer — click it fast to detonate on your terms. It bursts for 10 damage in a wide area, and everything caught in the blast gets Lag for 10 seconds: they rubber-band back to where they stood a second ago, freeze solid for a second at a time under a spinning loading circle, and their ability cooldowns stop ticking for 3–4 seconds at a stretch. 15 second cooldown.',
+        id: 'glitch-abuse',
+        name: 'Glitch Abuse',
+        description: 'Passive: keep walking into the arena wall for about half a second and the collision gives up — you flicker in and out of the wall like a real clip, then get launched across the arena in the direction of your cursor. Anyone you pass through on the way takes 15 damage. Aim into the wall and you are thrown straight out of it instead. 3.5 second cooldown between launches.',
       },
     ],
   },
@@ -1074,8 +1072,8 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
       {
         key: 'recruitBestLevel',
         label: 'Made Man',
-        howTo: 'Raise one recruit all the way to level V (needs the F+ Hardened Criminals upgrade)',
-        target: 5,
+        howTo: 'Bribe one recruit all the way to level 3 (needs the F+ Hardened Criminals upgrade)',
+        target: 3,
         isBest: true,
       },
       {
@@ -1096,14 +1094,14 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
       {
         id: 'big-pockets',
         name: 'Big Pockets',
-        description: 'Passive: you can hold 4 money at a time instead of 3, so a full wallet buys a Specialist and still leaves change.',
+        description: 'Passive: you can hold 4 money at a time instead of 3, so a full wallet can steal a tank.',
       },
       {
-        id: 'smoke-break',
-        name: 'Smoke Break',
+        id: 'hijack',
+        name: 'Hijack',
         bindable: true,
-        hudDescription: 'Light up for 25% less damage — press again to throw it as a smoke cloud',
-        description: 'Light a cigarette: you take 25% less damage for as long as it is lit. It burns for 25 seconds, but every hit you take burns a second off it. Press the key again while it is still in your mouth and you flick it at your cursor, where it bursts into a smoke cloud for 8 seconds. Standing in the cloud makes you invisible — attacking someone gives you away and exposes you for 3 seconds — and your recruits inside it lose loyalty at less than half the usual rate. The cloud blinds the enemy and only the enemy: on their screen it is a solid wall of smoke, on yours it is a thin haze. 20 second cooldown, counted from lighting up.',
+        hudDescription: 'Tap to steal a car, hold to pay for a better ride — Space gets in and out',
+        description: 'Steal a ride and leave it beside you. A tap costs 1 money and gets a car; hold the key and every step up costs one more: a motorcycle for 2, a sports car for 3, a tank for 4. Press Space next to it to get in and Space again to get out. W and S are the throttle, A and D steer, and it slides like a car. Ramming an enemy hurts them more the faster you are going. While you drive, hits land on the ride instead of you, and when it runs out of health it explodes without harming you; parked, it stops enemy shots while yours pass through. You can Spray (E) from the driver\'s seat and nothing else. Hire a recruit right beside a ride with a free seat and he climbs in and shoots as you drive. Car: 75 HP, one seat. Motorcycle: 50 HP, very fast, no seat, and a 35% chance for any hit to miss. Sports car: 150 HP, fast, sharp steering, two seats. Tank: 250 HP, two seats, very slow — but click to fire its gun for 35 damage in a wide blast, every 2.5 seconds. 15 second cooldown.',
       },
     ],
   },
@@ -1293,52 +1291,6 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
         excludeSlots: ['e', 'r'],
         hudDescription: 'Turn to glass for 16s: every course on the board goes cruel, your flintlock bursts, and a fall kills you',
         description: 'You temper. Your body goes to glass, and so does every course standing on the board — yours, theirs, all of it.\n\nA tempered course is a worse course. Flamethrowers open up across every gap between two pillars, burning for 13 a tick and cycling on and off on their own clock, so the only way past is to jump while they are down. Roughly half of the slabs become tempered glass that holds for two and a half seconds under your feet and then shatters out from under you — they come back four seconds later, and the grey starter block and the prize at the end never crumble. Every slab is a little narrower than it was.\n\nAnd while you are glass, a fall is not 20. It is the end of you.\n\nWhat you get for it: the flintlock fires a burst of three instead of one shot, each for half what the single would have hit for — five instead of three while the golden orb is on the barrel. And a Cursed Pyramid claimed while you are tempered leaves a mini idol behind, orbiting you with a 5-damage beam every 1.5 seconds, for the rest of the match.\n\nRe-cast to temper back down early. Casting Final Trail ends it too — that race clears the board, and it is not a course you built. 16 seconds, 34 second cooldown.',
-      },
-    ],
-  },
-  magma: {
-    elementId: 'magma',
-    name: 'Magma Mastery',
-    enhancedEmoji: '🪨',
-    enhancedColor: 0x2a1f2b,
-    requirements: [
-      {
-        key: 'bloatHits',
-        label: 'Pressure Release',
-        howTo: 'Catch entities in a popped Magma Bloat (R) — every body inside the burst counts one',
-        target: 15,
-      },
-      {
-        key: 'blunderHits',
-        label: 'Point Blank',
-        howTo: 'Catch entities in a Blunder-Boil (F) cone — every body inside the blast counts one',
-        target: 60,
-      },
-      {
-        key: 'eruptions',
-        label: 'Caldera',
-        howTo: 'Take a Volcano (E) all the way to 100 and let the cone collapse',
-        target: 50,
-      },
-      {
-        key: 'mutinies',
-        label: 'Raise The Colours',
-        howTo: 'Fill the Molten Mutiny (Q) pendant to 50 and wake the ship',
-        target: 5,
-      },
-    ],
-    enhancements: [
-      {
-        id: 'obsidian-coat',
-        name: 'Obsidian Coat',
-        description: 'Passive: a volcano of yours that has already gone critical will keep taking pressure instead of refusing it, banking every point past 100 as overfill — with or without the Supercritical upgrade. Stand inside the blast when that cone finally comes down and the glass it throws sets on you: black obsidian plates over your whole body for 15 seconds.\n\nHow good the coat is is decided entirely by how much overfill you forced in before it blew. A cone that barely crossed the line gives you a thin one — around 10% more damage dealt, 8% less taken, and one extra glob on your click. Beat 250 overfill into it first and the coat is armour: 45% more damage dealt, 30% less taken, and four extra globs on every Plume. Catching a second collapse refreshes the 15 seconds and keeps the better of the two coats.',
-      },
-      {
-        id: 'magma-saw',
-        name: 'Magma Saw',
-        bindable: true,
-        hudDescription: 'Hold to rev a molten chainsaw — 20 damage a second, hotter every second, and it explodes at 4',
-        description: 'Hold the bound key to rev a chainsaw of molten rock, then let go to start cutting. The charge buys nothing but time: a tap runs the saw 1.25 seconds, a full 1.6-second rev runs it the full 4.\n\nThe saw sits out at arm\'s length and follows your cursor. It bites for 1 damage every 0.05s — about 20 a second — and the longer it runs the harder it bites: 40 a second after two seconds, and the blade goes from gold to white-hot to a furious red as it does. It also charges anything of yours it is held against, at 30 pressure a second.\n\nAt 4 seconds it is too hot to hold and detonates: 35 damage inside 150px to everyone including you, throwing you backwards and everybody else a long way further. Press the key again at any point to cut the motor and walk away from that — which is the whole decision the ability asks.\n\n14 second cooldown, from the moment the saw starts.',
       },
     ],
   },

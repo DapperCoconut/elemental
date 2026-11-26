@@ -515,9 +515,15 @@ export const STATUS_DESCRIPTORS: StatusDescriptor[] = [
   },
   {
     id: 'pressure-slow', name: 'Pressurized', emoji: '♨️', color: 0xd9d4cc, priority: 46.84, kind: 'timer',
-    description: 'Battered by a Pressure punch or caught in its steam. You move slower until it wears off.',
+    description: 'Battered by a Pressure Punch or caught in the gas jet. You move slower until it wears off.',
     read: (f) => f.pressureSlowUntil,
     write: (f, t) => { f.pressureSlowUntil = t; },
+  },
+  {
+    id: 'gas-panic', name: 'Gassed', emoji: '😵', color: 0xa35be0, priority: 46.86, kind: 'timer',
+    description: 'You stood in the gas too long. You are running about at random and it is hurting you until it wears off.',
+    read: (f) => f.gasPanicUntil,
+    write: (f, t) => { f.gasPanicUntil = t; },
   },
   {
     id: 'astra-slow', name: 'Smitten', emoji: '🌩️', color: 0xb05cff, priority: 46.85, kind: 'timer',
@@ -533,7 +539,7 @@ export const STATUS_DESCRIPTORS: StatusDescriptor[] = [
   },
   {
     id: 'air-winded', name: 'Winded', emoji: '😮‍💨', color: 0xccddff, priority: 46.853, kind: 'timer',
-    description: 'Knocked breathless. You turn at a third of your speed, and walking drains a stamina gauge: stand still to refill it, or run it dry and crawl until it is full.',
+    description: 'Knocked breathless. You can barely turn — about 30° a second — and walking drains a stamina gauge: stand still to refill it, or run it dry and crawl until it is full.',
     read: (f) => f.airWindedUntil,
     write: (f, t) => { f.airWindedUntil = t; },
   },

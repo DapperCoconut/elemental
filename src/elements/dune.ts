@@ -36,7 +36,7 @@ const sandStriker: Ability = {
 const sandstoneRuins: Ability = {
   id: 'dune-ruins',
   name: 'Sandstone Ruins',
-  description: 'Raise a short course out of the floor: one low grey block you can reach from the ground, three or four tall sandstone pillars you can only reach from each other, and a platform with a golden orb on it. Fall off and it costs you 20. Take the orb and your flintlock reloads twice as fast for 8 seconds.',
+  description: 'Raise a short course out of the floor: one low grey block you can reach from the ground, three or four tall sandstone pillars you can only reach from each other, and a platform with a golden orb on it. The slab to jump to next is buried in golden dust, and one of them may carry a laser that burns for 8 if you stand in it. Fall off and it costs you 20. Take the orb and your flintlock reloads twice as fast for 8 seconds.',
   displayKey: 'E',
   cooldown: 15000,
   cast(ctx: CastContext) { ctx.duneRuins(); },
@@ -45,7 +45,7 @@ const sandstoneRuins: Ability = {
 const cursedPyramid: Ability = {
   id: 'dune-pyramid',
   name: 'Cursed Pyramid',
-  description: 'Raise a long, cruel course — more pillars, platforms that slide, and poison sunk into the floor across every gap between them. Step in one and it bites for 12 at once, then 9 a tick; jumping it is the only free way past. At the end sits a golden pyramid. Reach it and it wakes up: 15 seconds of lasers picking your enemies apart for 16 a shot.',
+  description: 'Raise a long, cruel course — more pillars, platforms that slide, laser spinners, laser blocks and blinking laser grids that burn for 8 a touch, and poison sunk into the floor across every gap between them. Step in one and it bites for 12 at once, then 9 a tick; jumping it is the only free way past. At the end sits a golden pyramid. Reach it and it wakes up: 15 seconds of lasers picking your enemies apart for 16 a shot.',
   displayKey: 'R',
   cooldown: 28000,
   cast(ctx: CastContext) { ctx.dunePyramid(); },
@@ -63,7 +63,7 @@ const sandwalk: Ability = {
 const finalTrail: Ability = {
   id: 'dune-final-trail',
   name: 'Final Trail',
-  description: 'You and the nearest enemy are thrown onto two different parkour courses up a pyramid with lava rising underneath. A golden crown sits at the top of each. First to their crown walks away clean; the other one takes 70 — and so does anyone who falls off their course or lets the lava reach them. Only the jump and Sandwalk work up there, for either of you. You can lose this.',
+  description: 'You and the nearest enemy are thrown onto two different parkour courses up a pyramid with lava rising underneath. Laser spinners and laser blocks stand on some of the slabs. A golden crown sits at the top of each. First to their crown walks away clean; the other one takes 70 — and so does anyone who falls off their course or lets the lava reach them. Only the jump and Sandwalk work up there, for either of you. You can lose this.',
   displayKey: 'Q',
   isUltimate: true,
   cooldown: 42000,

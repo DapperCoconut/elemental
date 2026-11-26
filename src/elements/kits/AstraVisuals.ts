@@ -912,6 +912,7 @@ export class AstraAvatar extends BaseAvatar {
   /** Q+ stars taken on, drawn over the head while holding. */
   private stars = 0;
   private holding = false;
+  private singular = false;
 
   constructor(scene: Phaser.Scene, tint: ColorFn, depth = 6) {
     super(scene, tint, depth, ASTRA_AVATAR);
@@ -920,6 +921,11 @@ export class AstraAvatar extends BaseAvatar {
   setBrightness(b: number): void { this.brightTarget = Phaser.Math.Clamp(b, 0, 1); }
   setStarMode(on: boolean): void { this.star = on; }
   setTrialStars(n: number, holding: boolean): void { this.stars = n; this.holding = holding; }
+  /**
+   * The Singularity: the body goes black inside a white rim, the eyes close, and the prominence
+   * goes out. The throne and the eclipse behind it are the kit's to draw — they sit under the rig.
+   */
+  setSingular(on: boolean): void { this.singular = on; this.eyesShut = on; }
 
   update(delta: number, x: number, y: number, alpha: number): void {
     const target = this.star ? 1 : this.brightTarget;
@@ -937,6 +943,16 @@ export class AstraAvatar extends BaseAvatar {
   /** Cracks of starlight, and the star through the widest of them. */
   protected drawBody(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
     void a;
+    if (this.singular) {
+      // An eclipse: nothing of the shell or the star shows — a disc of black with a blinding rim.
+      g.fillStyle(0x000000, alpha);
+      g.fillCircle(x, y, 23);
+      g.lineStyle(2.4, this.tint(ASTRA.white), alpha);
+      g.strokeCircle(x, y, 23);
+      g.lineStyle(1.2, this.tint(ASTRA.starHot), alpha * (0.6 + 0.4 * Math.sin(this.t * 7)));
+      g.strokeCircle(x, y, 25.5);
+      return;
+    }
     const b = this.bright;
     const flick = 0.85 + 0.15 * Math.sin(this.t * 11);
     crackLight(g, this.tint, x, y, 19, BODY_CRACKS, (0.25 + 0.95 * b) * flick, alpha);
@@ -993,6 +1009,7 @@ export class AstraAvatar extends BaseAvatar {
     void a;
     const t = this.t;
     const b = this.bright;
+    if (this.singular) return;
     if (this.star) {
       // A crown of flame tongues licking up off the head.
       for (let i = 0; i < 7; i++) {

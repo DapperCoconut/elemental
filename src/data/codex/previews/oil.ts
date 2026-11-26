@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { PreviewScript, PreviewCtx } from '../../../ui/AbilityPreview';
+import { OIL_PUDDLE_RADIUS, OIL_PUDDLE_MS } from '../../../elements/kits/OilKit';
 import { OilFx, OIL, OilAvatar, DroneArrayLattice, laserGun, laserGunMuzzle } from '../../../elements/kits/OilVisuals';
 
 /**
@@ -48,14 +49,14 @@ function puddle(
 ): { ignite: () => void } {
   const g = ctx.adopt(ctx.scene.add.graphics().setDepth(2));
   const seed = (o.x * 0.31 + o.y * 0.17) % 10;
-  const life = o.life ?? 12000;
+  const life = o.life ?? OIL_PUDDLE_MS;
   let lit = !!o.ignited;
   ctx.onFrame((_dt, elapsed) => {
     const age = elapsed - o.born;
     g.clear();
     if (age < 0 || age > life) return;
     const left = life - age;
-    OilFx.drawPuddle(g, ctx.tint, o.x, o.y, 30, elapsed / 1000,
+    OilFx.drawPuddle(g, ctx.tint, o.x, o.y, OIL_PUDDLE_RADIUS, elapsed / 1000,
       left < 600 ? left / 600 : 1, seed, lit);
   });
   return { ignite: () => { lit = true; } };

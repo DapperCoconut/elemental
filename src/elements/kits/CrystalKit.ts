@@ -188,6 +188,7 @@ export class CrystalKit {
     trailing: boolean;
     trailAccum: number;
     hadWallBounce?: boolean;     // spawned with a wall-bounce charge (Shredder upgrade) — lets Atune know it's eligible for a refresh
+    wallBounceCharge?: boolean;  // the ONE wall bounce this shard may still make; spent the instant it reflects
     frozenUntil?: number;        // Atune: stopped in place until this timestamp, then launches at attuneOwner's cursor/target
     attuneOwner?: 'player' | 'npc';
     bounceCount?: number;        // Mastery: how many times this shard has bounced off a wall or crystal
@@ -214,32 +215,6 @@ export class CrystalKit {
     this.ncol = (base) => arena.crystalColor('npc', base);
     this.pfx = new CrystalFx(arena.scene, this.pcol);
     this.nfx = new CrystalFx(arena.scene, this.ncol);
-    // Wall bounce (Crystal Realm / Shredder upgrade): a player-fired kite may bounce off
-    // the arena bounds exactly once (×1.5 dmg), then wall collision is disabled for it so
-    // it exits normally next time — mirror bounces stay unlimited, only the wall is capped.
-    // Registered once — the kit itself is only constructed once per ArenaScene lifetime
-    // (see wiring in ArenaScene.create()).
-    this.arena.scene.physics.world.on('worldbounds', (body: Phaser.Physics.Arcade.Body) => {
-      const go = body.gameObject;
-      if (go instanceof Projectile && go.active && go.texture.key === 'proj-crystal-kite' && go.isFromPlayer) {
-        go.damage = Math.round(go.damage * 1.5);
-        this.arena.spawnHitFlash(go.x, go.y, CRYSTAL.prism);
-        if (this.cyborg('player')) {
-          this.cyFx().ricochet(go.x, go.y);
-          this.arena.showFloatingText(go.x, go.y - 16, 'RICOCHET ×1.5', '#ffd34a');
-        } else {
-          // A wall bounce is a reflection, so it flares like one.
-          this.pfx.glint(go.x, go.y, 34, 9, CLEAR_TONES);
-          this.pfx.shards(go.x, go.y, 4, { speed: 120, size: 2.4, life: 340, fall: 20, depth: 8 });
-          this.arena.showFloatingText(go.x, go.y - 16, '💎 ×1.5', '#88eeff');
-        }
-        const st = this.kiteState.get(go);
-        if (st) st.bounceCount = (st.bounceCount ?? 0) + 1;
-        // One wall bounce only — disable further wall collision so the next time it
-        // reaches the bounds it exits the arena for good (mirror bounces stay unlimited).
-        body.setCollideWorldBounds(false);
-      }
-    });
   }
 
   // ── Public accessors ──────────────────────────────────────────────────
@@ -954,7 +929,7 @@ export class CrystalKit {
       body.setVelocity(0, 0);
       let st = this.kiteState.get(proj);
       if (!st) { st = { lastBounceObj: null, trailing: false, trailAccum: 0 }; this.kiteState.set(proj, st); }
-      if (st.hadWallBounce) body.setCollideWorldBounds(true); // refresh only if this shard ever had a wall-bounce charge
+      if (st.hadWallBounce) st.wallBounceCharge = true; // refresh only if this shard ever had a wall-bounce charge (a flag, so it can't stack)
       st.frozenUntil = now + 2000;
       st.attuneOwner = owner;
     }
@@ -1103,11 +1078,40 @@ export class CrystalKit {
     this.arena.projectiles.add(proj);
     proj.launch(vx, vy);
     if (wallBounce) {
-      const body = proj.body as Phaser.Physics.Arcade.Body;
-      body.setCollideWorldBounds(true);
-      body.setBounce(1, 1);
-      body.onWorldBounds = true;
-      this.kiteState.set(proj, { lastBounceObj: null, trailing: false, trailAccum: 0, hadWallBounce: true });
+      this.kiteState.set(proj, { lastBounceObj: null, trailing: false, trailAccum: 0, hadWallBounce: true, wallBounceCharge: true });
+    }
+  }
+
+  /**
+   * Wall bounce (Crystal Realm upgrade): a shard holding a charge reflects off the arena
+   * bounds once (×1.5 dmg) and the charge is spent on the spot, so the next wall it meets it
+   * simply leaves through. Done by hand here rather than with Arcade's collideWorldBounds:
+   * that relied on a 'worldbounds' listener to switch the collision back off, and the physics
+   * world (listener included) is rebuilt on every match start while the kit is not — so from
+   * the second match on nothing ever switched it off and shards bounced forever.
+   */
+  private bounceKiteOffWall(proj: Projectile, body: Phaser.Physics.Arcade.Body, st: { wallBounceCharge?: boolean; bounceCount?: number }): void {
+    if (!st.wallBounceCharge) return;
+    const b = this.arena.scene.physics.world.bounds;
+    const v = body.velocity;
+    let hit = false;
+    if (v.x < 0 && body.left <= b.left) { v.x = -v.x; proj.x += b.left - body.left; hit = true; }
+    else if (v.x > 0 && body.right >= b.right) { v.x = -v.x; proj.x -= body.right - b.right; hit = true; }
+    if (v.y < 0 && body.top <= b.top) { v.y = -v.y; proj.y += b.top - body.top; hit = true; }
+    else if (v.y > 0 && body.bottom >= b.bottom) { v.y = -v.y; proj.y -= body.bottom - b.bottom; hit = true; }
+    if (!hit) return;
+    st.wallBounceCharge = false; // one bounce, spent — a corner hit flips both axes but is still one bounce
+    st.bounceCount = (st.bounceCount ?? 0) + 1;
+    proj.damage = Math.round(proj.damage * 1.5);
+    this.arena.spawnHitFlash(proj.x, proj.y, CRYSTAL.prism);
+    if (this.cyborg('player')) {
+      this.cyFx().ricochet(proj.x, proj.y);
+      this.arena.showFloatingText(proj.x, proj.y - 16, 'RICOCHET ×1.5', '#ffd34a');
+    } else {
+      // A wall bounce is a reflection, so it flares like one.
+      this.pfx.glint(proj.x, proj.y, 34, 9, CLEAR_TONES);
+      this.pfx.shards(proj.x, proj.y, 4, { speed: 120, size: 2.4, life: 340, fall: 20, depth: 8 });
+      this.arena.showFloatingText(proj.x, proj.y - 16, '💎 ×1.5', '#88eeff');
     }
   }
 
@@ -1202,6 +1206,7 @@ export class CrystalKit {
         st.lastBounceObj = null;
       }
 
+      this.bounceKiteOffWall(proj, body, st);
       proj.setRotation(Math.atan2(body.velocity.y, body.velocity.x) + Math.PI / 2); // texture drawn pointing "up"
 
       const isFromPlayer = proj.isFromPlayer;

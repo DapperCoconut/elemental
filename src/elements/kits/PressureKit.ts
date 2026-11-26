@@ -4,7 +4,8 @@ import { CastContext } from '../Ability';
 import type { CustomStatus } from './StatusHudKit';
 import { Sfx } from '../../audio';
 import {
-  PRESSURE, PressureAvatar, PressureColorFn, PressureFx, groundedCrater, painLockMark, painOrb, pressureBar, ventJet,
+  PRESSURE, PressureAvatar, PressureColorFn, PressureFx, gasCloud, gasFissure, gasPuddle, gasWisps,
+  groundedCrater, painLockMark, painOrb, pressureBar, ventJet,
 } from './PressureVisuals';
 
 type Owner = 'player' | 'npc';
@@ -55,9 +56,10 @@ const SLAM_PER_P = 0.3;
 const SLAM_R = 110;
 const SLAM_R_50 = 160;
 const GROUND_MS = 3000;
-// E+ Shell-Shock.
-const SHELL_MIN_P = 30;
-const SHELL_STUN_MS = 5000;
+// E+ Gas Vents: the slam splits the floor, and the split breathes gas clouds.
+const FISSURE_LIFE_MS = 20000;
+const FISSURE_EVERY_MS = 1300;
+const FISSURE_CAP = 3;
 /** Victim side: a grounding mirrored back within this long of being knocked loose is stale. */
 const GROUND_REMIRROR_GUARD_MS = 1200;
 
@@ -100,13 +102,40 @@ const VENT_SLOW_MULT = 0.85;
 const VENT_BLAST = 30;
 const VENT_BLAST_PER_OVER = 1.2;
 const VENT_BLAST_STUN_MS = 1000;
-// F+ Depressurize.
+/** The jet leaves a cloud of gas somewhere along itself this often. */
+const JET_CLOUD_EVERY_MS = 230;
+// F+ Depressurize: hits leave a gas puddle under the target, for good.
 const DEPRESS_MIN = 75;
 const DEPRESS_DMG_MULT = 1.2;
-const DEPRESS_STEAM_R = 60;
-const DEPRESS_STEAM_DMG = 6;
-const DEPRESS_SLOW_MULT = 0.75;
-const DEPRESS_SLOW_MS = 1500;
+const PUDDLE_R = 52;
+const PUDDLE_CAP = 12;
+/** No new puddle this close to one already there. */
+const PUDDLE_MIN_GAP = 36;
+
+// ── Gas ──────────────────────────────────────────────────────────────────────
+const CLOUD_R = 44;
+const CLOUD_LIFE_MS = 14000;
+const CLOUD_FADE_MS = 1500;
+const CLOUD_CAP = 36;
+/** A cloud that blows hits everyone this close, and lights every cloud whose centre is within `CHAIN_R`. */
+const BLAST_R = 210;
+const CHAIN_R = 210;
+const CHAIN_DELAY_MS = 110;
+/** One chain on one body: the first blast in full, each further one a little, to a ceiling. */
+const BLAST_DMG = 18;
+const BLAST_CHAIN_DMG = 6;
+const BLAST_CHAIN_CAP = 60;
+/** Sparks: thrown out behind the robot while a key is held at 100. */
+const SPARK_RANGE = 96;
+const SPARK_HALF = 0.7;
+const SPARK_TICK_MS = 200;
+const SPARK_DMG = 1;
+/** Stand in gas this long and you panic: running about at random, and hurting. */
+const GAS_PANIC_AFTER_MS = 1500;
+const GAS_PANIC_MS = 1600;
+const GAS_PANIC_TICK_MS = 400;
+const GAS_PANIC_TICK_DMG = 2;
+const PANIC_SPEED = 190;
 
 // ── Q: Exceed ────────────────────────────────────────────────────────────────
 const EXCEED_MS = 15000;
@@ -148,6 +177,48 @@ interface Vent {
   start: number;
   until: number;
   nextTick: number;
+  nextCloud: number;
+}
+
+/** One chain of explosions, and what it has done to each body so far. */
+interface Chain {
+  dealt: Map<Fighter, number>;
+}
+
+interface Cloud {
+  id: number;
+  owner: Owner;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  r: number;
+  born: number;
+  seed: number;
+  /** Scene time it blows (0 = not lit), when the fuse was lit, and the chain it belongs to. */
+  fuse: number;
+  litAt: number;
+  chain: Chain | null;
+}
+
+/** E+: a split in the floor that breathes gas clouds. */
+interface Fissure {
+  owner: Owner;
+  x: number;
+  y: number;
+  until: number;
+  nextPuff: number;
+  puffedAt: number;
+  seed: number;
+}
+
+/** F+: gas settled on the floor. It never goes. */
+interface Puddle {
+  owner: Owner;
+  x: number;
+  y: number;
+  r: number;
+  seed: number;
 }
 
 interface Pin {
@@ -189,6 +260,12 @@ interface Side {
   /** Bot: the pressure it means to let go at, and when it gives up waiting for reach. */
   plan: number;
   planDeadline: number;
+  /** Bot: this hold is for the sparks — it stands at (`standX`, `standY`) with its back to its gas. */
+  igniteHold: boolean;
+  standX: number;
+  standY: number;
+  /** Scene time of the next spray of sparks. */
+  nextSpark: number;
   /** The fighter instance whose `cast` event this side listens to. */
   hooked: Fighter | null;
 }
@@ -198,7 +275,7 @@ function makeSide(): Side {
     aimX: 0, aimY: 0, charging: null, charge: 0, chargeStart: 0, pending: -1, store: 0, gear: 0,
     exceedUntil: 0, crashOwed: false, compressUntil: 0, compressCost: 0, compressBonus: 0,
     hurtBoostUntil: 0, lastHp: -1, lunge: null, wasLeft: false, wasE: false, wasR: false, wasF: false,
-    fDownAt: 0, plan: 0, planDeadline: 0, hooked: null,
+    fDownAt: 0, plan: 0, planDeadline: 0, igniteHold: false, standX: 0, standY: 0, nextSpark: 0, hooked: null,
   };
 }
 
@@ -236,7 +313,12 @@ export interface PressureArenaApi {
 // ── PressureKit ──────────────────────────────────────────────────────────────
 
 /**
- * Pressure — the boiler-robot with the giant gauntlet.
+ * Gas (id `pressure`, once the Pressure element) — the smog-filled robot with the giant gauntlet.
+ *
+ * The gas: Release leaves **clouds** of it along its jet (and E+ vents breathe them out, F+ hits
+ * settle it into permanent **puddles**). Anyone who stands in an enemy's gas for 1.5 seconds
+ * panics — runs about at random and takes damage. A key held at 100 throws **sparks** out behind
+ * the robot; sparks light clouds, a lit cloud explodes, and an explosion lights every cloud near it.
  *
  * Every key is held to build pressure (0–100 over six seconds; 125 under Q+ Overcharge) and let
  * go to spend it, so the cast happens on the release: the kit owns the hold and the player's
@@ -246,15 +328,19 @@ export interface PressureArenaApi {
  *
  * - **Pressure Punch** — a cone in front of the gauntlet. 50+ lunges and slows, 100 stuns.
  * - **Seismic Slam** — a ring round the robot. 50+ is wider, 100 drives everyone into the floor
- *   (`pressureGroundedUntil`): pinned, still able to attack, knocked loose by any hit.
+ *   (`pressureGroundedUntil`): pinned, still able to attack, knocked loose by any hit. E+ leaves a
+ *   gas vent where the gauntlet came down.
  * - **Pressure Point** — a slow pain orb that PainLocks (`painLockUntil` on Fighter, which bites in
  *   the victim's own cast stamp). R+ lets it hit its maker for a charge-rate buff.
- * - **Release** — banks pressure three times slower, keeps it, and vents on a tap: a steam jet
- *   that disarms and (50+) slows, with a stunning blast at 100. A full bank speeds every other key.
+ * - **Release** — banks pressure three times slower, keeps it, and vents on a tap: a jet of gas
+ *   that disarms and (50+) slows, with a stunning blast at 100, and leaves clouds all along itself.
+ *   A full bank speeds every other key.
  * - **Exceed** — every gauge charges twice as fast for 15 seconds, then a 3 second seizure.
  *
  * Online, the owner's sim decides everything; the level rides ahead of each cast as
- * `pressure-lvl:<n>`, and holds, banks and compressions are relayed as visuals.
+ * `pressure-lvl:<n>`, and holds, banks and compressions are relayed as visuals. Gas is the
+ * owner's too: each cloud (`pressure-gc`), each explosion (`pressure-gx`) and each puddle
+ * (`pressure-gp`) is relayed, and a replica's gas is only ever a picture.
  */
 export class PressureKit {
   private api: PressureArenaApi;
@@ -284,6 +370,17 @@ export class PressureKit {
   private joltSeen = new Map<Fighter, number>();
   /** Husks under PainLock: when each is next jolted. */
   private huskJoltAt = new Map<Fighter, number>();
+  private clouds: Cloud[] = [];
+  private fissures: Fissure[] = [];
+  private puddles: Puddle[] = [];
+  private cloudSeq = 0;
+  /** How long each body has stood in an enemy's gas, in ms. */
+  private exposure = new Map<Fighter, number>();
+  /** Bodies this sim gassed into a panic: whose gas it was and when it next hurts. */
+  private panicDot = new Map<Fighter, { owner: Owner; next: number }>();
+  /** Panicking bodies this sim moves: where each is running right now, and until when. */
+  private scramble = new Map<Fighter, { ang: number; until: number }>();
+  private lastBoomAt = 0;
 
   constructor(api: PressureArenaApi) {
     this.api = api;
@@ -418,30 +515,209 @@ export class PressureKit {
   }
 
   /**
-   * Every Pressure hit goes through here. E+ Shell-Shock turns a hard-enough hit on a grounded
-   * body into a long stun; F+ Depressurize adds damage and a puff of steam while Release is banked.
+   * Every hit of the robot's own goes through here. F+ Depressurize adds damage while Release is
+   * banked, and settles a gas puddle under whoever was hit.
    */
   private hit(owner: Owner, t: Fighter, dmg: number, p: number, opts?: DamageOpts): void {
+    void p;
     const f = this.fighter(owner);
     const s = this.side(owner);
     const depress = this.up(owner, 'f') && s.store >= DEPRESS_MIN;
     const wasGrounded = t.pressureGroundedUntil > Date.now();
     const amount = Math.round(dmg * (depress ? DEPRESS_DMG_MULT : 1));
     t.takeDamage(amount, { source: f, sourceX: f.x, sourceY: f.y, ...opts });
-    if (wasGrounded) {
-      this.loosen(t);
-      if (this.up(owner, 'e') && p >= SHELL_MIN_P) {
-        this.stun(t, SHELL_STUN_MS);
-        this.announce(t.x, t.y - 46, 'SHELL-SHOCKED', PRESSURE.amberLit, 12);
+    if (wasGrounded) this.loosen(t);
+    if (depress && !this.isReplica(owner)) this.dropPuddle(owner, t.x, t.y);
+  }
+
+  // ── Gas ────────────────────────────────────────────────────────────────────
+
+  private clampToArena(x: number, y: number): { x: number; y: number } {
+    const b = this.api.bounds;
+    return { x: Phaser.Math.Clamp(x, b.left + 12, b.right - 12), y: Phaser.Math.Clamp(y, b.top + 12, b.bottom - 12) };
+  }
+
+  /** A cloud of gas. The owner's sim makes them; a replica's arrive over the wire with their ids. */
+  private spawnCloud(owner: Owner, x: number, y: number, vx = 0, vy = 0, id = -1): void {
+    const at = this.clampToArena(x, y);
+    const cid = id >= 0 ? id : ++this.cloudSeq;
+    this.clouds.push({
+      id: cid, owner, x: at.x, y: at.y, vx, vy, r: CLOUD_R, born: this.now,
+      seed: Math.random() * 6, fuse: 0, litAt: 0, chain: null,
+    });
+    // Too many: the oldest unlit one thins out to nothing.
+    const mine = this.clouds.filter((c) => c.owner === owner);
+    if (mine.length > CLOUD_CAP) {
+      const old = mine.find((c) => c.fuse === 0);
+      if (old) this.clouds.splice(this.clouds.indexOf(old), 1);
+    }
+    if (id < 0) this.relay(owner, `pressure-gc:${cid},${Math.round(at.x)},${Math.round(at.y)},${Math.round(vx)},${Math.round(vy)}`);
+  }
+
+  /** F+: gas settles under a hit body and stays there. */
+  private dropPuddle(owner: Owner, x: number, y: number, relayed = false): void {
+    const at = this.clampToArena(x, y);
+    for (const p of this.puddles) {
+      if (p.owner === owner && Phaser.Math.Distance.Between(p.x, p.y, at.x, at.y) < PUDDLE_MIN_GAP) return;
+    }
+    this.puddles.push({ owner, x: at.x, y: at.y, r: PUDDLE_R, seed: Math.random() * 6 });
+    const mine = this.puddles.filter((p) => p.owner === owner);
+    if (mine.length > PUDDLE_CAP) this.puddles.splice(this.puddles.indexOf(mine[0]), 1);
+    this.fx(owner).puddleDrop(at.x, at.y, PUDDLE_R);
+    if (!relayed) this.relay(owner, `pressure-gp:${Math.round(at.x)},${Math.round(at.y)}`);
+  }
+
+  /** E+: the slam splits the floor. */
+  private openFissure(owner: Owner, x: number, y: number): void {
+    this.fissures.push({
+      owner, x, y, until: this.now + FISSURE_LIFE_MS, nextPuff: this.now + 250, puffedAt: 0, seed: Math.random() * 6,
+    });
+    const mine = this.fissures.filter((v) => v.owner === owner);
+    if (mine.length > FISSURE_CAP) this.fissures.splice(this.fissures.indexOf(mine[0]), 1);
+    this.fx(owner).fissureOpen(x, y);
+  }
+
+  /** Light a cloud: it blows when its fuse runs down. */
+  private ignite(c: Cloud, chain: Chain, delay: number): void {
+    if (c.fuse > 0) return;
+    c.fuse = this.now + delay;
+    c.litAt = this.now;
+    c.chain = chain;
+  }
+
+  /**
+   * Sparks out of the back of the robot — a key held at 100. Barely a scratch on a body, but any
+   * cloud of its own gas they touch goes up.
+   */
+  private sparks(owner: Owner): void {
+    const f = this.fighter(owner);
+    const s = this.side(owner);
+    const ang = Math.atan2(s.aimY - f.y, s.aimX - f.x) + Math.PI;
+    this.fx(owner).sparks(f.x + Math.cos(ang) * 16, f.y + Math.sin(ang) * 16, ang, SPARK_RANGE);
+    if (this.isReplica(owner)) return;
+    const inCone = (x: number, y: number, pad: number): boolean => {
+      const d = Phaser.Math.Distance.Between(f.x, f.y, x, y);
+      if (d <= pad) return true;
+      if (d > SPARK_RANGE + pad) return false;
+      const off = Math.abs(Phaser.Math.Angle.Wrap(Math.atan2(y - f.y, x - f.x) - ang));
+      return off <= SPARK_HALF + Math.atan2(pad, d);
+    };
+    for (const t of this.targetsOf(owner)) {
+      if (inCone(t.x, t.y, this.bodyR(t))) t.takeDamage(SPARK_DMG, { source: f, sourceX: f.x, sourceY: f.y });
+    }
+    const chain: Chain = { dealt: new Map() };
+    for (const c of this.clouds) {
+      if (c.owner === owner && c.fuse === 0 && inCone(c.x, c.y, c.r * 0.6)) this.ignite(c, chain, 60);
+    }
+  }
+
+  /** A lit cloud goes up: everyone near it is hit, and every cloud near it is lit. */
+  private explode(c: Cloud): void {
+    const i = this.clouds.indexOf(c);
+    if (i >= 0) this.clouds.splice(i, 1);
+    this.fx(c.owner).gasExplosion(c.x, c.y, BLAST_R);
+    if (this.now - this.lastBoomAt > 90) {
+      this.lastBoomAt = this.now;
+      Sfx.playAt('explosion-small', c.x, { rate: 0.85 + Math.random() * 0.25, volume: 0.8 });
+    }
+    if (this.isReplica(c.owner)) return;
+    this.relay(c.owner, `pressure-gx:${c.id}`);
+    const f = this.fighter(c.owner);
+    const chain = c.chain ?? { dealt: new Map<Fighter, number>() };
+    for (const t of this.targetsOf(c.owner)) {
+      if (Phaser.Math.Distance.Between(c.x, c.y, t.x, t.y) > BLAST_R + this.bodyR(t)) continue;
+      const dealt = chain.dealt.get(t) ?? 0;
+      const dmg = Math.min(dealt > 0 ? BLAST_CHAIN_DMG : BLAST_DMG, BLAST_CHAIN_CAP - dealt);
+      if (dmg <= 0) continue;
+      chain.dealt.set(t, dealt + dmg);
+      t.takeDamage(dmg, { source: f, sourceX: c.x, sourceY: c.y, aoe: true });
+      if (t.pressureGroundedUntil > Date.now()) this.loosen(t);
+    }
+    for (const o of this.clouds) {
+      if (o.owner !== c.owner || o.fuse > 0) continue;
+      if (Phaser.Math.Distance.Between(c.x, c.y, o.x, o.y) <= CHAIN_R) this.ignite(o, chain, CHAIN_DELAY_MS);
+    }
+  }
+
+  /** Clouds drift, thin out and blow; fissures breathe. */
+  private updateGas(dt: number): void {
+    const drag = Math.exp(-dt * 0.9);
+    const lit: Cloud[] = [];
+    this.clouds = this.clouds.filter((c) => {
+      c.x += c.vx * dt;
+      c.y += c.vy * dt;
+      c.vx *= drag;
+      c.vy *= drag;
+      if (c.fuse > 0) { if (this.now >= c.fuse) lit.push(c); return true; }
+      return this.now - c.born < CLOUD_LIFE_MS;
+    });
+    for (const c of lit) this.explode(c);
+
+    this.fissures = this.fissures.filter((v) => this.now < v.until);
+    for (const v of this.fissures) {
+      if (this.now < v.nextPuff) continue;
+      v.nextPuff = this.now + FISSURE_EVERY_MS;
+      v.puffedAt = this.now;
+      // A replica's clouds come over the wire.
+      if (this.isReplica(v.owner)) continue;
+      const a = Math.random() * Math.PI * 2;
+      const sp = 28 + Math.random() * 34;
+      this.spawnCloud(v.owner, v.x, v.y, Math.cos(a) * sp, Math.sin(a) * sp);
+    }
+  }
+
+  private inGas(owner: Owner, t: Fighter): boolean {
+    for (const c of this.clouds) {
+      if (c.owner === owner && Phaser.Math.Distance.Between(c.x, c.y, t.x, t.y) <= c.r) return true;
+    }
+    for (const p of this.puddles) {
+      if (p.owner === owner && Phaser.Math.Distance.Between(p.x, p.y, t.x, t.y) <= p.r) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Breathing it. A body that has stood in an enemy's gas for long enough panics — it runs about
+   * at random and the gas hurts it until the panic passes. Decided on the gas owner's sim; the
+   * panic itself (`gasPanicUntil`) is a mirrored status, so the victim's own sim does the running.
+   */
+  private updateExposure(dt: number): void {
+    const wall = Date.now();
+    for (const owner of BOTH) {
+      if (this.isReplica(owner)) continue;
+      const any = this.clouds.some((c) => c.owner === owner) || this.puddles.some((p) => p.owner === owner);
+      for (const t of this.targetsOf(owner)) {
+        const had = this.exposure.get(t) ?? 0;
+        if (!any && had <= 0) continue;
+        if (wall < t.gasPanicUntil) continue;
+        const e = this.inGas(owner, t) ? had + dt * 1000 : Math.max(0, had - dt * 500);
+        if (e < GAS_PANIC_AFTER_MS || t.unstoppable) { this.exposure.set(t, Math.min(e, GAS_PANIC_AFTER_MS)); continue; }
+        this.exposure.set(t, 0);
+        t.gasPanicUntil = wall + GAS_PANIC_MS;
+        this.panicDot.set(t, { owner, next: this.now + GAS_PANIC_TICK_MS });
+        this.fx(owner).panicStart(t.x, t.y);
       }
     }
-    if (depress) {
-      this.fx(owner).steamBurst(t.x, t.y, DEPRESS_STEAM_R);
-      for (const o of this.targetsOf(owner)) {
-        if (Phaser.Math.Distance.Between(o.x, o.y, t.x, t.y) > DEPRESS_STEAM_R + this.bodyR(o)) continue;
-        o.takeDamage(DEPRESS_STEAM_DMG, { source: f, sourceX: t.x, sourceY: t.y });
-        this.slow(o, DEPRESS_SLOW_MULT, DEPRESS_SLOW_MS);
+    for (const [t, d] of this.panicDot) {
+      if (!this.alive(t) || wall >= t.gasPanicUntil) { this.panicDot.delete(t); continue; }
+      if (this.now < d.next) continue;
+      d.next += GAS_PANIC_TICK_MS;
+      const f = this.fighter(d.owner);
+      t.takeDamage(GAS_PANIC_TICK_DMG, { source: f, sourceX: t.x, sourceY: t.y });
+    }
+  }
+
+  /** Panicking bodies this sim moves run about at random — the player's own included. */
+  private updatePanic(): void {
+    const wall = Date.now();
+    for (const f of this.allFighters()) {
+      if (!f.active || f.netGhost || f.unstoppable || f.hp <= 0 || wall >= f.gasPanicUntil) { this.scramble.delete(f); continue; }
+      let run = this.scramble.get(f);
+      if (!run || this.now >= run.until) {
+        run = { ang: Math.random() * Math.PI * 2, until: this.now + 220 + Math.random() * 240 };
+        this.scramble.set(f, run);
       }
+      (f.body as Phaser.Physics.Arcade.Body | null)?.setVelocity(Math.cos(run.ang) * PANIC_SPEED, Math.sin(run.ang) * PANIC_SPEED);
     }
   }
 
@@ -455,6 +731,13 @@ export class PressureKit {
     this.loosedAt.clear();
     this.joltSeen.clear();
     this.huskJoltAt.clear();
+    this.clouds = [];
+    this.fissures = [];
+    this.puddles = [];
+    this.cloudSeq = 0;
+    this.exposure.clear();
+    this.panicDot.clear();
+    this.scramble.clear();
     this.vizT = 0;
     // `reset()` runs before the new fighters exist: plain fields only on whatever is still here.
     for (const f of this.allFighters()) {
@@ -464,6 +747,7 @@ export class PressureKit {
       f.pressureSlowUntil = 0;
       f.pressureSlowFactor = 1;
       f.pressureGroundedUntil = 0;
+      f.gasPanicUntil = 0;
     }
     this.playerAvatar?.destroy(); this.playerAvatar = null;
     this.npcAvatar?.destroy(); this.npcAvatar = null;
@@ -560,6 +844,7 @@ export class PressureKit {
     s.charging = slot;
     s.chargeStart = this.now;
     s.charge = 0;
+    s.igniteHold = false;
     // Click+ Pressure-gear: the punch starts wherever the gear has wound it to, and spends it.
     if (slot === 'click' && this.up(owner, 'click')) {
       s.charge = s.gear;
@@ -574,6 +859,7 @@ export class PressureKit {
     if (!s.charging) return;
     s.charging = null;
     s.charge = 0;
+    s.igniteHold = false;
     this.avatar(owner)?.setHold(null);
     this.relay(owner, 'pressure-drop');
   }
@@ -636,6 +922,15 @@ export class PressureKit {
       const f = this.api.npc;
       s.compressUntil = this.now + COMPRESS_BASE_MS + COMPRESS_PER_P_MS * n;
       if (this.alive(f)) this.nfx.compress(f.x, f.y);
+    } else if (head === 'pressure-gc') {
+      const [cid, x, y, vx, vy] = (arg ?? '').split(',').map(Number);
+      if ([cid, x, y, vx, vy].every(Number.isFinite)) { this.ensureLayers(); this.spawnCloud('npc', x, y, vx, vy, cid); }
+    } else if (head === 'pressure-gx') {
+      const c = this.clouds.find((k) => k.owner === 'npc' && k.id === n);
+      if (c) this.explode(c);
+    } else if (head === 'pressure-gp') {
+      const [x, y] = (arg ?? '').split(',').map(Number);
+      if (Number.isFinite(x) && Number.isFinite(y)) { this.ensureLayers(); this.dropPuddle('npc', x, y, true); }
     }
   }
 
@@ -653,6 +948,15 @@ export class PressureKit {
     s.aimY = ty;
     this.startCharge(owner, slot);
     s.plan = this.botPlan(slot);
+    // Its own gas is in reach of its sparks and the chain reaches the target: this hold is for
+    // the sparks. All the way to 100, standing where it is with its back to the cloud.
+    if (slot === 'click' && this.ignitePlan(owner)) {
+      const f = this.fighter(owner);
+      s.igniteHold = true;
+      s.standX = f.x;
+      s.standY = f.y;
+      s.plan = MAX_PRESSURE;
+    }
     const toPlan = Math.max(0, s.plan - s.charge) / Math.max(1, this.rate(owner, slot));
     s.planDeadline = this.now + toPlan * 1000 + NPC_HOLD_GRACE_MS;
     return true;
@@ -780,6 +1084,8 @@ export class PressureKit {
       this.hit(owner, t, dmg, p, { aoe: true });
       if (p >= MAX_PRESSURE && this.alive(t)) this.ground(owner, t, GROUND_MS * (p / MAX_PRESSURE));
     }
+    // E+ Gas Vents: the floor splits where the gauntlet came down.
+    if (this.up(owner, 'e')) this.openFissure(owner, f.x, f.y + 6);
   }
 
   private resolvePoint(owner: Owner, p: number, tx: number, ty: number): void {
@@ -809,6 +1115,7 @@ export class PressureKit {
       start: this.now,
       until: this.now + VENT_BASE_MS + VENT_PER_P_MS * p,
       nextTick: this.now,
+      nextCloud: this.now + 120,
     });
     this.avatar(owner)?.setHold('spray', ang);
     if (owner === 'npc' && !this.isReplica(owner)) Sfx.playAt('sizzle', f.x, { rate: 1, volume: 0.7 });
@@ -821,7 +1128,10 @@ export class PressureKit {
     void time;
     const playerIs = this.isPressure('player');
     const npcIs = this.isPressure('npc');
-    const anyState = this.orbs.length || this.vents.length || this.pins.size || this.playerAvatar;
+    const wallNow = Date.now();
+    const anyState = this.orbs.length || this.vents.length || this.pins.size || this.playerAvatar
+      || this.clouds.length || this.fissures.length || this.puddles.length
+      || wallNow < this.api.player.gasPanicUntil || wallNow < this.api.npc.gasPanicUntil;
     if (!playerIs && !npcIs && !anyState) return;
     this.ensureLayers();
     this.ensureAvatars();
@@ -833,6 +1143,9 @@ export class PressureKit {
     this.updateBotHolds();
     this.updateOrbs(dt);
     this.updateVents();
+    this.updateGas(dt);
+    this.updateExposure(dt);
+    this.updatePanic();
     this.updateGrounded();
     this.updateHuskPain();
     this.updateHolds();
@@ -864,6 +1177,11 @@ export class PressureKit {
       }
       if (this.up(owner, 'click') && s.charging !== 'click') {
         s.gear = Math.min(MAX_PRESSURE, s.gear + GEAR_PER_SEC * dt);
+      }
+      // A key still held at 100: sparks fly out behind.
+      if (s.charging && s.charging !== 'f' && s.charge >= MAX_PRESSURE - 0.01 && this.now >= s.nextSpark) {
+        s.nextSpark = this.now + SPARK_TICK_MS;
+        this.sparks(owner);
       }
       // A gauge overcharged under Exceed settles back to 100 once it ends.
       if (!this.exceeding(owner)) {
@@ -918,6 +1236,19 @@ export class PressureKit {
     if (!slot || slot === 'f') return;
     if (!this.alive(f) || !this.canAct(f, slot)) { this.dropCharge(owner); return; }
     const t = this.targetsOf(owner)[0];
+    // Held for the sparks: back to the nearest of its own clouds until none is left unlit in
+    // reach (the chain is away), then it turns round and the 100 goes into the target.
+    if (s.igniteHold) {
+      const k = this.sparkable(owner);
+      if (k && this.now < s.planDeadline + 1500) {
+        if (Phaser.Math.Distance.Between(f.x, f.y, k.x, k.y) > 2) {
+          s.aimX = f.x + (f.x - k.x);
+          s.aimY = f.y + (f.y - k.y);
+        }
+        return;
+      }
+      s.igniteHold = false;
+    }
     if (t) { s.aimX = t.x; s.aimY = t.y; }
     const ready = s.charge >= Math.min(s.plan, this.maxCharge(owner)) - 0.01;
     const maxed = s.charge >= this.maxCharge(owner) - 0.01;
@@ -956,8 +1287,6 @@ export class PressureKit {
     if (slot === 'click') {
       // A body held in place can be wound up on: as much as the hold leaves time for.
       if (pinnedMs > 0) {
-        // E+: a quick 30+ on a grounded body turns three seconds into five more of stun.
-        if (t && t.pressureGroundedUntil > Date.now() && this.up(owner, 'e')) return SHELL_MIN_P + 5;
         const reachable = (pinnedMs / 1000 - 0.3) * rate;
         return Phaser.Math.Clamp(reachable, 50, max);
       }
@@ -1063,6 +1392,19 @@ export class PressureKit {
           if (t !== this.api.player && t !== this.api.npc) t.soundDanceUntil = Math.max(t.soundDanceUntil, wall + VENT_TICK_MS + 60);
           if (v.p >= 50) this.slow(t, VENT_SLOW_MULT, 400);
         }
+        // The jet leaves its gas hanging all along itself.
+        if (this.now >= v.nextCloud && !this.isReplica(v.owner)) {
+          v.nextCloud += JET_CLOUD_EVERY_MS;
+          const o = this.ventOrigin(v);
+          const u = 0.28 + Math.random() * 0.72;
+          const side = (Math.random() - 0.5) * v.width * 0.7 * u;
+          this.spawnCloud(
+            v.owner,
+            o.x + Math.cos(v.ang) * v.len * u - Math.sin(v.ang) * side,
+            o.y + Math.sin(v.ang) * v.len * u + Math.cos(v.ang) * side,
+            Math.cos(v.ang) * 14, Math.sin(v.ang) * 14,
+          );
+        }
         if (this.now >= v.nextTick) {
           v.nextTick += VENT_TICK_MS;
           const dmg = (VENT_DPS + VENT_DPS_PER_P * v.p) * (VENT_TICK_MS / 1000);
@@ -1164,6 +1506,21 @@ export class PressureKit {
       const left = f.pressureGroundedUntil - wall;
       groundedCrater(ground, this.pcol, pin.x, pin.y, pin.seed, Phaser.Math.Clamp(left / 400, 0, 1));
     }
+    // Gas on the floor: puddles (for good, and nearly see-through), fissures, and the clouds'
+    // bodies under everyone with their wisps over them.
+    for (const p of this.puddles) gasPuddle(ground, this.col(p.owner), p.x, p.y, p.r, p.seed, t, 1);
+    for (const v of this.fissures) {
+      const fade = Phaser.Math.Clamp((v.until - this.now) / 600, 0, 1);
+      const breath = Math.max(0, 1 - (this.now - v.puffedAt) / 500);
+      gasFissure(ground, this.col(v.owner), v.x, v.y, v.seed, t, fade, breath);
+    }
+    for (const c of this.clouds) {
+      const age = this.now - c.born;
+      const fade = Phaser.Math.Clamp(age / 350, 0, 1) * (c.fuse > 0 ? 1 : Phaser.Math.Clamp((CLOUD_LIFE_MS - age) / CLOUD_FADE_MS, 0, 1));
+      const primed = c.fuse > 0 ? Phaser.Math.Clamp((this.now - c.litAt) / Math.max(1, c.fuse - c.litAt), 0.15, 1) : 0;
+      gasCloud(ground, this.col(c.owner), c.x, c.y, c.r, c.seed, t, fade, primed);
+      gasWisps(veil, this.col(c.owner), c.x, c.y, c.r, c.seed, t, fade);
+    }
     // Vents.
     for (const v of this.vents) {
       const o = this.ventOrigin(v);
@@ -1174,6 +1531,14 @@ export class PressureKit {
     for (const f of this.allFighters()) {
       if (!f.active) continue;
       if (wall < f.painLockUntil) painLockMark(veil, this.pcol, f.x, f.y, t + f.x * 0.01, 0.9);
+      // Panicking in the gas: a purple fug round the head, coughing.
+      if (wall < f.gasPanicUntil) {
+        for (let i = 0; i < 3; i++) {
+          const a = t * 5 + i * 2.1;
+          veil.fillStyle(this.pcol(PRESSURE.gasLit), 0.55);
+          veil.fillCircle(f.x + Math.cos(a) * 15, f.y - 24 + Math.sin(a) * 5, 3.2);
+        }
+      }
       if (f.painLockFiredAt > 0 && this.joltSeen.get(f) !== f.painLockFiredAt) {
         this.joltSeen.set(f, f.painLockFiredAt);
         if (wall - f.painLockFiredAt < 500) {
@@ -1227,7 +1592,7 @@ export class PressureKit {
       name: 'Pressure', emoji: '🔩', color: PRESSURE.amber, priority: 150,
       description: s.charging === 'f'
         ? 'Banking Release. Let go to keep it; tap F to vent it.'
-        : 'Building pressure. Let go to spend it — 50 and 100 each add something.',
+        : 'Building pressure. Let go to spend it — 50 and 100 each add something. Keep holding at 100 and sparks fly out behind you.',
       count: Math.round(live),
     } : null);
     set('pressure-bank', playerIs && s.store >= 1 && s.charging !== 'f' ? {
@@ -1311,8 +1676,61 @@ export class PressureKit {
     if (d > (s.store >= MAX_PRESSURE ? VENT_LEN_100 : VENT_LEN) * 0.85) return false;
     const finisher = t.hp < t.maxHp * 0.3;
     const peel = f.hp < f.maxHp * 0.35 && d < 150;
-    const keep = s.store >= MAX_PRESSURE || (this.up('npc', 'f') && s.store >= DEPRESS_MIN);
+    // The jet is where the gas comes from, so a bank is only sat on when F+ makes it worth more
+    // kept (every hit harder, and a puddle under it).
+    const keep = this.up('npc', 'f') && s.store >= DEPRESS_MIN && s.store < MAX_PRESSURE;
     return !keep || finisher || peel || this.npcTargetPinned();
+  }
+
+  /** The nearest unlit cloud of this side's gas that sparks thrown from where it stands would reach. */
+  private sparkable(owner: Owner): Cloud | null {
+    const f = this.fighter(owner);
+    let best: Cloud | null = null;
+    let bestD = Infinity;
+    for (const c of this.clouds) {
+      if (c.owner !== owner || c.fuse > 0) continue;
+      const d = Phaser.Math.Distance.Between(f.x, f.y, c.x, c.y);
+      if (d <= SPARK_RANGE + c.r * 0.5 && d < bestD) { bestD = d; best = c; }
+    }
+    return best;
+  }
+
+  /**
+   * Is lighting its gas worth a hold right now? A cloud in reach of the sparks, and a chain from it
+   * (cloud to cloud, each within `CHAIN_R` of the last) that ends on the target. Returns the cloud
+   * to spark. Side-effect-free.
+   */
+  private ignitePlan(owner: Owner): Cloud | null {
+    if (this.isReplica(owner)) return null;
+    const start = this.sparkable(owner);
+    const t = this.targetsOf(owner)[0];
+    if (!start || !t) return null;
+    const mine = this.clouds.filter((c) => c.owner === owner && c.fuse === 0);
+    const seen = new Set<Cloud>([start]);
+    const queue = [start];
+    while (queue.length) {
+      const c = queue.pop()!;
+      if (Phaser.Math.Distance.Between(c.x, c.y, t.x, t.y) <= BLAST_R + this.bodyR(t) - 8) return start;
+      for (const o of mine) {
+        if (seen.has(o) || Phaser.Math.Distance.Between(c.x, c.y, o.x, o.y) > CHAIN_R) continue;
+        seen.add(o);
+        queue.push(o);
+      }
+    }
+    return null;
+  }
+
+  /** The bot's gas can be lit from where it stands and the chain reaches its target. */
+  npcIgniteReady(): boolean {
+    const s = this.sides.npc;
+    if (!this.isPressure('npc') || s.charging || !this.alive(this.api.npc)) return false;
+    return this.ignitePlan('npc') !== null;
+  }
+
+  /** The bot is holding for the sparks: where it should stay standing until they have caught. */
+  npcIgniteStand(): { x: number; y: number } | null {
+    const s = this.sides.npc;
+    return s.igniteHold && s.charging ? { x: s.standX, y: s.standY } : null;
   }
 
   /** R+: the bot's own orb, worth walking into while it has health to spend on it. */

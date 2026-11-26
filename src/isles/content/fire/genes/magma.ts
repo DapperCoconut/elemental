@@ -4,32 +4,35 @@ import { behavior, cast, cut, effect, enlightened, fade, flat, gain, gene, linea
 /**
  * Molten Keel — Magma's gene tree.
  *
- * Magma is a pirate with a volcano for a pet, so the tree reads like a ship's articles:
- * **Broadside** (Plume and Blunder-Boil as the guns, ending in Molten Mutiny's cursed pendant),
- * **Volcanism** (the Volcano at the centre — vents that feed cooldowns, eruptions that burst
- * around you) and **Crust** (Magma Bloat and a cooling shell that will not crack).
+ * Magma is a pirate made of the melt, so the tree reads like a ship's articles: **Broadside**
+ * (the Blunderblast and the Unstable Core, ending in Limoncello's galleon), **Powder** (the
+ * Hotshot flintlocks at the centre — draws that feed cooldowns and burst around you) and
+ * **Crust** (the Nice Hot Drink and a cooling shell that will not crack).
+ *
+ * Gene ids predate the 2026-11-25 pirate rework and are save keys, so they keep their old
+ * names (`plume-spread`, `bloat-lining`, `pendant-hunger`); only what the player reads changed.
  */
 export const MAGMA_GENE_TREE: GeneTree = {
   element: 'magma',
   name: 'Molten Keel',
   nodes: [
     // ── Tier 0 ────────────────────────────────────────────────────────
-    /** Plume pools leave the foe standing in something unpleasant. */
+    /** A faceful of shot leaves the foe open. */
     gene({
-      id: 'gene-magma-plume-spread', name: 'Plume Spread', tier: 0, col: 0,
-      text: 'Plume casts make the foe take +3% damage for 2s',
+      id: 'gene-magma-plume-spread', name: 'Scattershot', tier: 0, col: 0,
+      text: 'Blunderblast casts make the foe take +3% damage for 2s',
       maxLevel: 4, cost: linear(4, 2),
       grant: cast('click', (lv) => ({ damageMult: gain(0.03)(lv), ms: 2000 })),
       mastery: {
         name: 'Sulphur Reek', cost: 10,
-        text: 'The stink of the pools hangs on them: foes move 6% slower',
+        text: 'The stink of the powder hangs on them: foes move 6% slower',
         grant: effect({ enemySpeedMult: 0.94 }),
       },
     }),
-    /** Vent Pipes: raising a Volcano lets off steam everywhere else. */
+    /** Vent Pipes: drawing the flintlocks lets off steam everywhere else. */
     gene({
       id: 'gene-magma-vent-pipes', name: 'Vent Pipes', tier: 0, col: 1,
-      text: 'Volcano casts shave 250ms off every other cooldown',
+      text: 'Hotshot casts shave 250ms off every other cooldown',
       maxLevel: 4, cost: linear(4, 2),
       grant: cast('e', (lv) => ({ refundOthers: flat(250)(lv) })),
       mastery: {
@@ -52,15 +55,15 @@ export const MAGMA_GENE_TREE: GeneTree = {
     }),
 
     // ── Tier 1 ────────────────────────────────────────────────────────
-    /** Recoil Rigging: Blunder-Boil's kick carries you further. */
+    /** Core Clamps: setting the core, he is already leaving. */
     gene({
-      id: 'gene-magma-recoil-rigging', name: 'Recoil Rigging', tier: 1, col: 0, needs: ['gene-magma-plume-spread'],
-      text: 'Blunder-Boil casts give +5% move speed for 1s',
+      id: 'gene-magma-recoil-rigging', name: 'Core Clamps', tier: 1, col: 0, needs: ['gene-magma-plume-spread'],
+      text: 'Unstable Core casts give +5% move speed for 1s',
       maxLevel: 4, cost: linear(5, 3),
       grant: cast('f', (lv) => ({ speedMult: gain(0.05)(lv), ms: 1000 })),
       mastery: {
-        name: 'Grapeshot Boil', cost: 14,
-        text: 'Blunder-Boil casts make the foe take +8% damage for 1.5s',
+        name: 'Hairline Fracture', cost: 14,
+        text: 'Unstable Core casts make the foe take +8% damage for 1.5s',
         grant: onCast('f', { damageMult: 1.08, ms: 1500 }),
       },
     }),
@@ -72,32 +75,32 @@ export const MAGMA_GENE_TREE: GeneTree = {
       grant: stat((lv) => ({ cooldownMult: cut(0.03)(lv) })),
       mastery: {
         name: 'Fissure Sense', cost: 14,
-        text: 'Volcano casts have a 20% chance to come straight back off cooldown',
+        text: 'Hotshot casts have a 20% chance to come straight back off cooldown',
         grant: onCast('e', { refundSelfChance: 0.2 }),
       },
     }),
-    /** Bloat Lining: Magma Bloat swells over a shield. */
+    /** Tankard Lining: the drink leaves something behind. */
     gene({
-      id: 'gene-magma-bloat-lining', name: 'Bloat Lining', tier: 1, col: 2, needs: ['gene-magma-thick-crust'],
-      text: 'Magma Bloat casts grant 5 shield',
+      id: 'gene-magma-bloat-lining', name: 'Tankard Lining', tier: 1, col: 2, needs: ['gene-magma-thick-crust'],
+      text: 'Nice Hot Drink casts grant 5 shield',
       maxLevel: 4, cost: linear(5, 3),
       grant: cast('r', (lv) => ({ shield: flat(5)(lv) })),
       mastery: {
         name: 'Pressure Valve', cost: 14,
-        text: 'Magma Bloat casts also heal 10',
+        text: 'Nice Hot Drink casts also heal 10',
         grant: onCast('r', { heal: 10 }),
       },
     }),
 
     // ── Tier 2 ────────────────────────────────────────────────────────
-    /** Cannon Crew: the six guns, better served. */
+    /** Cannon Crew: the three guns, better served. */
     gene({
       id: 'gene-magma-cannon-crew', name: 'Cannon Crew', tier: 2, col: 0, needs: ['gene-magma-recoil-rigging'],
       text: '+3% damage dealt',
       maxLevel: 4, cost: linear(7, 3),
       grant: stat((lv) => ({ damageMult: gain(0.03)(lv) })),
       mastery: {
-        name: 'Six-Gun Broadside', cost: 18,
+        name: 'Full Broadside', cost: 18,
         text: '+6% crit chance, and crits deal at least 1.75× damage',
         grant: effect({ critChance: 0.06, critMult: 1.75 }),
       },
@@ -129,10 +132,10 @@ export const MAGMA_GENE_TREE: GeneTree = {
     }),
 
     // ── Tier 3 ────────────────────────────────────────────────────────
-    /** The Pendant's Hunger: donning Molten Mutiny marks the foe for plunder. */
+    /** Jolly Roger: the ship coming up marks the foe for plunder. */
     gene({
-      id: 'gene-magma-pendant-hunger', name: "Pendant's Hunger", tier: 3, col: 0, needs: ['gene-magma-cannon-crew'],
-      text: 'Molten Mutiny casts make the foe take +5% damage for 4s',
+      id: 'gene-magma-pendant-hunger', name: 'Jolly Roger', tier: 3, col: 0, needs: ['gene-magma-cannon-crew'],
+      text: 'Limoncello casts make the foe take +5% damage for 4s',
       maxLevel: 3, cost: linear(12, 4),
       grant: cast('q', (lv) => ({ damageMult: gain(0.05)(lv), ms: 4000 })),
       mastery: {
@@ -141,15 +144,15 @@ export const MAGMA_GENE_TREE: GeneTree = {
         grant: effect({ lifestealFrac: 0.04 }),
       },
     }),
-    /** Critical Mass: every Volcano you raise heaves the ground under your feet too. */
+    /** Critical Mass: every draw heaves the ground under your feet too. */
     gene({
       id: 'gene-magma-critical-mass', name: 'Critical Mass', tier: 3, col: 1, needs: ['gene-magma-lava-tide'],
-      text: 'Volcano casts hurl rock at everything within 160px of you for 6',
+      text: 'Hotshot casts hurl rock at everything within 160px of you for 6',
       maxLevel: 4, cost: linear(9, 4),
       grant: cast('e', (lv) => ({ burst: { damage: flat(6)(lv), radius: 160 } })),
       mastery: {
         name: 'Pyroclastic', cost: 26,
-        text: 'Volcano casts make the foe take +15% damage for 3s',
+        text: 'Hotshot casts make the foe take +15% damage for 3s',
         grant: onCast('e', { damageMult: 1.15, ms: 3000 }),
       },
     }),

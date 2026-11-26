@@ -104,22 +104,19 @@ fate, creation, growth, rubber, acid, hunt, time; then the remainder). For each 
   them; a bot carrying several trap perks picks a random trap per plant inside the kit
   (`trapKindFor`). The bot still never casts Black Hole.
 
-- **Magma (2026-08-12 mastery; 2026-10-13 F/Q rework), steps 2 and 4, part of 3.** Magma
-  Mastery shipped first: `npcMasteryActive` drives `setMastered` on the npc avatar, and
-  `MagmaKit.updateNpcSaw` is the kit-side cast path for Magma Saw (a private hold/release
-  timer, so nothing for `castAbility` to find) with `NPC_MASTERY_BINDS.magma` giving up the
-  R slot; `magmaObsidianPoint` is walked into with the soft perfume-style seek so the
-  collapse lands the Obsidian Coat. The F/Q rework (Blunder-Boil + Pressure Gauge, Molten
-  Mutiny + Pirate King) rewrote `doMagmaAbilities` around the kit's new synergy fields:
-  `npcMagmaCannonVolcano` (a volcano of its own beside the player → aim the broadside there,
-  one round lights it critical), `npcMagmaGaugePressure` ≥ 0.6 (fire F *away* from the
-  player so the hot recoil flight hits them for 18), `npcMagmaGaugeOver` (only vent an
-  overpressured gun inside 110px, so the 35 it costs the bot also lands), plus
-  `npcMagmaMounted` (click is cannons, nothing else is pressed — F would throw it
-  overboard) and `npcMagmaPendant`/`npcMagmaShip` (don the pendant early, once). The kit
-  steers the npc's ship itself in `advanceCursor` (holds 190px off the target). **Not done:**
-  the bot never dismounts, does not place the volcano-under-the-player deliberately before
-  mounting, and the movement profile (step 5) is untouched.
+- **Magma (2026-11-25 pirate rework — replaces everything before it), steps 3, 4 and 5.** The
+  whole kit changed (Blunderblast / Hotshot / Nice Hot Drink / Unstable Core / Limoncello), the
+  mastery and its saw are gone, and `doMagmaAbilities` was rewritten around the new kit's
+  synergy fields, checked first and in this order: `npcMagmaCannonAim` (a loaded deck gun the
+  bot is standing by whose third holds a target → the click goes on the gun),
+  `npcMagmaAnchorAim` (anchor at rest, in spread range, and a blast from here sends it down
+  the chain at the player), `npcMagmaCoreHolding` (a core with its shell still on → pistols
+  out and everything emptied into the host), and `npcMagmaSeekPoint` (movement: in to arm's
+  reach to clamp a core — from any distance while numb — or to the deck beside a live gun).
+  The roll-shot is kit-side: a bot cannot dodge, so a blast with the target inside 150px
+  kicks it back on a 3.5s clock (`kickArmed`). Movement profile is now a 130–240 skirmisher.
+  **Not done:** the bot never aims the anchor from the deck on purpose (only when the
+  geometry happens to line up), and never uses the drink to tank a telegraphed ult.
 
 - **Death (2026-08-12), step 2 only.** Death Mastery shipped, so the kit now has its npc
   half. `npcMasteryActive` already drove `setMastered` on the npc avatar;
@@ -539,16 +536,22 @@ fate, creation, growth, rubber, acid, hunt, time; then the remainder). For each 
   extra AI beyond the fields above. E+ Brewmaster is kit-played: the bot's Oakbrew puts the cup on
   and `GluttonyKit.updateCooking` drinks it after a random 1.2–3s boil, or spills it on a hit;
   `npcWoodCooking` keeps the rotation off E meanwhile. No mastery yet.
-- **Pressure (new test element, 2026-10-25), steps 3–5.** Every key is a hold, so the kit holds
+- **Gas (id `pressure`; was Pressure, renamed + gas added 2026-11-25), steps 3–5.** Every key is a hold, so the kit holds
   them for the bot: `castAbility` *starts* the charge (`PressureKit.botBegins`), the kit plans the
   pressure (`botPlan`) and lets go in `updateBotHolds` once the plan is reached and the target is
   in reach (or after a 2.5s grace). `npcPressureCharging` keeps the rotation off every key
   meanwhile. Release is banked in the background whenever its hands are free. Synergies, checked
   first: `npcPressureTargetPinned` (target grounded or stunned for >0.9s — slam 100, punch 100,
-  vent blast, Shell-Shock) → punch, which the kit plans to as much pressure as the pin leaves
-  time for, or (E+) a quick 35 on a grounded target to Shell-Shock it; `npcPressureVentShot`
-  (≥50 banked, target in the jet, and the bank not worth more kept — a full bank's +20% charge
-  rate, F+ at 75+ — unless it finishes them, peels them off, or they are pinned) → Release;
+  vent blast) → punch, which the kit plans to as much pressure as the pin leaves
+  time for; `npcPressureIgnite` (gas clouds → sparks → chain: an unlit cloud of its own within
+  spark reach and a cloud-to-cloud chain from it that ends on the target, `PressureKit.ignitePlan`)
+  → a punch hold the kit turns into an *ignite hold* — plan 100, pinned at `pressureStandPoint`
+  with its back to the nearest unlit cloud until the sparks have caught, then it turns and the
+  100 goes into the target; `npcPressureVentShot`
+  (≥50 banked and the target in the jet — the jet is where the clouds come from, so the bank is
+  only sat on while F+ makes 75–99 worth more kept, unless it finishes them, peels them off, or
+  they are pinned) → Release; E+ Gas Vents needs no AI (every slam opens one and its clouds feed
+  the ignite check);
   `npcPressureExceedReady` (inside 320px, above 35% health) → Exceed, after which `botPlan`
   asks for full charges. `pressureCompressPoint` (R+) walks it into its own orb above 50% health.
   Rotation: slam inside 170px, orb 130–460px, punch inside 300px. Movement profile: brawler
@@ -568,20 +571,21 @@ fate, creation, growth, rubber, acid, hunt, time; then the remainder). For each 
   following costs foam damage. A flattened bot's casts are remapped through `Fighter.inkSwap` in
   `NpcOpponent.castAbility`. Rotation: peel inside 150px, anvil 140–330px, bounce inside 420px,
   guns inside 520px. Movement profile: skirmisher 150–320px, retreat at 25%. No mastery yet.
-- **Astra (new test element, 2026-10-25), steps 3–5.** Everything is direction-locked until star
-  mode, so the kit owns the geometry. `astraSeekPoint` walks the bot onto the target's row, 14px
-  below it (the click only flies level, and the smite picks the highest body) — 240px off, 150px
-  during the trial; absent in star mode. Synergies, checked first: `npcAstraFlareShot` (target
-  smitten or stunned so it cannot leave an arm, or already on a plus/X arm; with E+ on the ring)
-  → E; `npcAstraSmiteSafe` (the target is the highest body, not the bot) → R, and (R+) the kit
-  fires the second bolt itself in `AstraKit.updateBot` once `npcAstraRecastSafe`;
-  `npcAstraWarpShot` (star mode with ≥2 of the target's abilities ready to steal; F+ any time;
-  otherwise a swap with a target below the bot, which puts the bot underneath for the smite) → F;
-  `npcAstraTrialReady` (inside 380px, above 45% health, Q not lost) → Q. A Q+ bot holds to 1–2
-  stars (`botStars`) and the kit lets go; the slap is kit-fired when it finishes the target or
-  with under 3s of star mode left. `npcAstraBusy` (holding, or the five-star finale) keeps the
-  rotation off every key. Rotation: Starstruck whenever `npcAstraLanedUp`. Movement profile:
-  zoner 200–340px, retreat at 25%. No mastery yet.
+- **Astra, mass rework (2026-11-25) — replaces the 2026-10-25 direction-locked bot.** The kit owns
+  the mass, the pickups and the whole black hole. `astraSeekPoint` walks the bot onto a comet lying
+  on the floor (covering it with the hitbox is how it is caught), else onto its own nearest dust
+  cloud or shard within 320px; absent at full mass, while swinging, and in the Singularity.
+  Synergies, checked first: `npcAstraSingReady` (mass 100) → Q; `npcAstraFusionShot` (a body inside
+  the hitbox to burn, or ≥2 player shots within 110px of it to eat) → R; `npcAstraNovaShot` (≥25
+  mass, never a full bar, target inside the blast that mass would make) → E; `npcAstraCometShot`
+  (no comet out, target inside 520px) → F aimed at the body. Kit-fired in `AstraKit.updateBot`:
+  the caught comet is swung at once and thrown when it burns (heat ≥ 0.7) and its tangent is within
+  0.2rad of the target — or after 4.5s; and the Singularity plays itself — Kneel on cooldown, Godfist
+  on a kneeling target, Snap only when the bot has 15+ less health than the target, the laser
+  otherwise, and after 10s it holds the aura for 3s and ends the world. It never Plays With Its
+  Food. `npcAstraBusy` (black hole, finale, or swinging) keeps the rotation off every key.
+  Rotation: Anti-Matter inside 650px (the photons circle wherever it aims). All four specials and
+  the Singularity respect `castSkipChance`. Movement profile unchanged (zoner). Untested.
 - **Memory (new test element, 2026-10-26), steps 3–5.** The kit owns the geometry: Snatch's
   release aims at the target when the 2s spin ends, and Rebirth's pivot is planted 90px off the
   target with the kit striking the moment the sweeping line lies across them. Synergies, checked
@@ -817,3 +821,37 @@ nothing tells it to *aim* at them. No mastery, upgrades or perks yet.
   Gotchas: a cloaked player sets `targetInvisible`; a bot is `isLocked` while `airKit.locksNpc()`
   (shoved by Knock, lunging, or spinning). Winded bots do not know to stand still — they run the
   gauge dry and crawl, which is the intended read of the debuff. No mastery, upgrades or element perks yet.
+
+## Subterfuge — reworked 2026-11-25 (stationary crew, money bars, Hijack)
+
+Recruits stand where they are hired (max 3), so the bot only hires with the player inside 480px.
+Synergies, all published or driven kit-side in `SubterfugeKit`:
+
+- **Bribe → promotion / retention** — `NpcAiState.subBribeAim` (`getNpcBribeAim`): an own recruit below
+  level 3 when the bot owns F+, or any recruit under 25% loyalty. `doSubterfugeAbilities` checks it first.
+- **Payroll room** — `subCanRecruit` (`getNpcCanRecruit`): money ≥ 1 and fewer than 3 on the payroll.
+- **Money bars** have no key, so the bot cannot `castAbility` them: `_tickNpcBrain` (600ms tick, never for
+  a `netGhost`) buys them only when their setup exists — air strike with ≥ 2 daggers planted (and
+  `doNpcCutter` refuses to recall while a strike is inbound), Thug reload with > 2s of reload left, Savior
+  under 35% HP, the helicopter to drop an out-of-range Enforcer beside the player, Laundering only at
+  range, Luxury Rounds when nearly dry, Full Set with blades already out.
+- **Not played:** Hijack. Bots do not cast mastery abilities and cannot drive; `NpcLoadout` has no
+  Subterfuge row. Online replicas replay rides through `replayNet` (`subx-ride*`).
+
+## Technology — reworked 2026-11-25 (critters, Zip Bomb, command console, Glitch Abuse)
+
+Synergies, all published by `TechnologyKit` and checked first in `doTechnologyAbilities`:
+
+- `npcTechBanLive` (`npcBanLive`) — target under 15% HP and the console closed: Q is the finisher.
+- `npcTechZipAdrift` (`npcZipAdrift`) — Zip Bomb → Web Drag: the bot's file is in flight and nothing is
+  hauling it. While the bot's drag is up, `updateZips` steers the file at the target at 400 px/s (the
+  bot's version of carrying it with the mouse).
+- `npcTechTargetPinned` (`npcTargetPinned`) — jail / restart stun / lag freeze → Zip Bomb.
+- `npcTechConsoleOpen` — the console is already up; never spend a second charge on it.
+
+The console has no keys, so the bot cannot `castAbility` its commands: `botAdminPick` (kit-side, one
+pick every 650–1100ms, never online) runs ban → invincible (under 30% HP, fresh bar) → fling (inside
+130px) → give → jail → kill → speed → invis, and closes the console when nothing is affordable.
+**As a victim** a bot swats virus critters 4.5–7.5s after they land and Ransomware after 8.5–11.5s
+(`Bug.autoClearAt`), and takes the Zip Bomb's restart half the time (`botRestartAt`).
+**Not played:** Glitch Abuse (mastery passive, player-only) and Q+ Admin Abuse (bots own no upgrades offline).

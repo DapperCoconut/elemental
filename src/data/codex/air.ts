@@ -59,13 +59,13 @@ const air: ElementCodex = {
     'air-knock': {
       basics:
         'A short, hard blast of wind right in front of you. Enemies it hits have the wind knocked '
-        + 'out of them for 6 seconds: they turn slowly, and they are on a stamina gauge that '
+        + 'out of them for 10 seconds: they turn very slowly, and they are on a stamina gauge that '
         + 'drains while they walk.',
       cast: 'E, aimed with the cursor. 9s cooldown.',
       effects: [
         { tag: 'damage', label: 'Blast', detail: '10 damage to every enemy in a 100px cone about 70° wide.' },
-        { tag: 'debuff', label: 'Winded', detail: '6s. A second Knock restarts it with a full gauge.' },
-        { tag: 'control', label: 'Slow to turn', detail: 'They turn 200% slower — about 90° a second — and everything they cast goes the way they are facing.' },
+        { tag: 'debuff', label: 'Winded', detail: '10s. A second Knock restarts it with a full gauge.' },
+        { tag: 'control', label: 'Slow to turn', detail: 'They can only turn about 30° a second, and everything they cast goes the way they are facing.' },
         { tag: 'control', label: 'Stamina', detail: 'Empties in 2.2s of walking, refills in 1.6s of standing still.' },
         { tag: 'control', label: 'Exhausted', detail: 'Run the gauge dry and they move at 30% speed until it has refilled completely.' },
         { tag: 'movement', label: 'Shove', detail: 'Bots and husks are thrown back at 380px a second for 0.17s.' },

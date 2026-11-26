@@ -1,11 +1,12 @@
 import Phaser from 'phaser';
 import { PreviewScript, PreviewCtx } from '../../../ui/AbilityPreview';
 import {
-  PRESSURE, PressureAvatar, PressureFx, groundedCrater, painLockMark, painOrb, pressureBar, ventJet,
+  PRESSURE, PressureAvatar, PressureFx, gasCloud, gasFissure, gasPuddle, gasWisps,
+  groundedCrater, painLockMark, painOrb, pressureBar, ventJet,
 } from '../../../elements/kits/PressureVisuals';
 
 /**
- * Pressure's showcases.
+ * Gas's showcases (id `pressure`).
  *
  * Each loop holds a key for real — the rig braces, the gauge on the gauntlet climbs, the bar under
  * the robot fills at the kit's rate — and lets go into the kit's own painters and `PressureFx`.
@@ -20,6 +21,11 @@ const ORB_SPEED = 85;
 const ORB_SPEED_100 = 150;
 const VENT_LEN = 230;
 const VENT_LEN_100 = 260;
+const CLOUD_R = 44;
+const BLAST_R = 210;
+const CHAIN_DELAY_MS = 110;
+const SPARK_RANGE = 96;
+const PUDDLE_R = 52;
 
 // ── Staging ───────────────────────────────────────────────────────────
 
@@ -105,7 +111,119 @@ function dummy(ctx: PreviewCtx, at: { x: number; y: number }, tells?: () => { lo
   });
 }
 
+// ── Gas staging ───────────────────────────────────────────────────────
+
+interface StageCloud { x: number; y: number; seed: number; born: number; litAt: number; blown: boolean }
+
+/**
+ * A field of gas clouds painted with the kit's painters. `light(i)` starts the chain at cloud `i`:
+ * it blows, and each cloud near enough is lit 0.11s after the one that lit it.
+ */
+function gasField(ctx: PreviewCtx, fx: PressureFx): {
+  add: (x: number, y: number) => void; light: (i: number) => void; count: () => number;
+} {
+  const under = ctx.adopt(ctx.scene.add.graphics().setDepth(3.2));
+  const over = ctx.adopt(ctx.scene.add.graphics().setDepth(5.6));
+  const clouds: StageCloud[] = [];
+  let now = 0;
+  const blow = (c: StageCloud): void => {
+    c.blown = true;
+    fx.gasExplosion(c.x, c.y, BLAST_R);
+    for (const o of clouds) {
+      if (o.blown || o.litAt > 0 || Math.hypot(o.x - c.x, o.y - c.y) > BLAST_R) continue;
+      o.litAt = now;
+    }
+  };
+  ctx.onFrame((_dt, e) => {
+    now = e;
+    under.clear();
+    over.clear();
+    for (const c of clouds) {
+      if (c.blown) continue;
+      if (c.litAt > 0 && e - c.litAt >= CHAIN_DELAY_MS) { blow(c); continue; }
+      const fade = Math.min(1, (e - c.born) / 350);
+      const primed = c.litAt > 0 ? Math.max(0.15, (e - c.litAt) / CHAIN_DELAY_MS) : 0;
+      gasCloud(under, ctx.tint, c.x, c.y, CLOUD_R, c.seed, e / 1000, fade, primed);
+      gasWisps(over, ctx.tint, c.x, c.y, CLOUD_R, c.seed, e / 1000, fade);
+    }
+  });
+  return {
+    add: (x, y) => { clouds.push({ x, y, seed: clouds.length * 1.37, born: now, litAt: 0, blown: false }); },
+    light: (i) => { const c = clouds[i]; if (c && !c.blown && c.litAt === 0) c.litAt = now; },
+    count: () => clouds.filter((c) => !c.blown).length,
+  };
+}
+
 // ══ PASSIVE ════════════════════════════════════════════════════════════
+
+export const gasPassive: PreviewScript = {
+  duration: 9000,
+  scale: 0.9,
+  caption: 'Gas — 1.5s stood in your gas and they panic: running at random, 5 damage a second. Hold a key at 100 and the sparks off your back blow the clouds up, one lighting the next',
+  run(ctx) {
+    const fx = fxOf(ctx);
+    const av = robot(ctx.useAvatar(() => new PressureAvatar(ctx.scene, ctx.tint)));
+    const readout = label(ctx, ctx.w * 0.5, 14, hex(PRESSURE.gasLit), 11);
+    // The gas lies behind the robot (to its left); it aims right, so its back is to it.
+    av?.setFacing(ctx.aim);
+    const c0 = { x: ctx.cx + 290, y: ctx.cy };
+    ctx.moveCaster(c0.x, c0.y);
+    const field = gasField(ctx, fx);
+    for (let i = 0; i < 4; i++) field.add(c0.x - 80 - i * 68, c0.y + (i % 2 ? 16 : -14));
+    // A dummy stood in the far cloud.
+    const home = { x: c0.x - 80 - 3 * 68, y: c0.y + 16 };
+    const victim = { x: home.x, y: home.y };
+    let panicUntil = 0;
+    let runAng = 0;
+    let runUntil = 0;
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(4));
+    ctx.onFrame((dt, e) => {
+      g.clear();
+      if (e < panicUntil) {
+        if (e >= runUntil) { runAng = Math.random() * Math.PI * 2; runUntil = e + 260; }
+        victim.x = Phaser.Math.Clamp(victim.x + Math.cos(runAng) * 150 * dt / 1000, home.x - 26, home.x + 60);
+        victim.y = Phaser.Math.Clamp(victim.y + Math.sin(runAng) * 150 * dt / 1000, home.y - 50, home.y + 40);
+        for (let i = 0; i < 3; i++) {
+          const a = e / 200 + i * 2.1;
+          g.fillStyle(ctx.tint(PRESSURE.gasLit), 0.55);
+          g.fillCircle(victim.x + Math.cos(a) * 15, victim.y - 24 + Math.sin(a) * 5, 3.2);
+        }
+      }
+      g.fillStyle(0x2b2f3d, 1); g.fillCircle(victim.x, victim.y, 17);
+      g.fillStyle(0x3c4254, 1); g.fillCircle(victim.x, victim.y, 13);
+      g.fillStyle(0x8e97ad, 0.9); g.fillCircle(victim.x - 5, victim.y - 4, 3.2); g.fillCircle(victim.x + 5, victim.y - 4, 3.2);
+    });
+    ctx.at(200, () => readout.setText('stood in the gas…'));
+    ctx.at(1700, () => {
+      panicUntil = 1700 + 1600;
+      fx.panicStart(victim.x, victim.y);
+      readout.setText('1.5s: panic — running at random, 5 damage a second');
+      for (let i = 0; i < 4; i++) ctx.at(1700 + 400 * (i + 1), () => float(ctx, victim.x, victim.y - 34, '-2', PRESSURE.gasLit));
+    });
+    // Then the robot holds a key to 100 and the sparks come out of its back.
+    let sparking = false;
+    let nextSpark = 0;
+    let lit = false;
+    holdKey(ctx, av, {
+      fromMs: 3600, target: 100, pose: 'brace', rate: CHARGE_PER_SEC * 3,
+      release: () => { sparking = true; av?.setHold('brace', ctx.aim); readout.setText('held at 100: sparks out of your back'); },
+    });
+    ctx.onFrame((_dt, e) => {
+      if (!sparking || e < nextSpark) return;
+      nextSpark = e + 200;
+      const c = ctx.casterAt();
+      const back = ctx.aim + Math.PI;
+      fx.sparks(c.x + Math.cos(back) * 16, c.y + Math.sin(back) * 16, back, SPARK_RANGE);
+      if (!lit && e > 6100) {
+        lit = true;
+        field.light(0);
+        readout.setText('one cloud lights the next: 18, then 6 a blast');
+        ctx.at(e + 500, () => float(ctx, victim.x, victim.y - 34, '-18', PRESSURE.fire, 12));
+        ctx.at(e + 1100, () => { sparking = false; av?.setHold(null); });
+      }
+    });
+  },
+};
 
 export const pressureGauge: PreviewScript = {
   duration: 7600,
@@ -165,6 +283,44 @@ export const punchUpgraded: PreviewScript = {
 
 // ══ E — Seismic Slam ═══════════════════════════════════════════════════
 
+function slamVentRun(ctx: PreviewCtx): void {
+  const fx = fxOf(ctx);
+  const av = robot(ctx.useAvatar(() => new PressureAvatar(ctx.scene, ctx.tint)));
+  av?.setFacing(ctx.aim);
+  const readout = label(ctx, ctx.w * 0.5, 14, hex(PRESSURE.gasLit), 11);
+  const floor = ctx.adopt(ctx.scene.add.graphics().setDepth(3.1));
+  const field = gasField(ctx, fx);
+  let vent: { x: number; y: number; puffedAt: number } | null = null;
+  let puffs = 0;
+  let nextPuff = 0;
+  holdKey(ctx, av, {
+    fromMs: 300, target: 60, rate: CHARGE_PER_SEC * 2.4,
+    release: (p) => {
+      av?.play('slam', Math.PI / 2);
+      const c = ctx.casterAt();
+      fx.slam(c.x, c.y + 6, p >= 50 ? SLAM_R_50 : SLAM_R, p);
+      fx.fissureOpen(c.x, c.y + 6);
+      vent = { x: c.x, y: c.y + 6, puffedAt: 0 };
+      readout.setText('Gas Vents: the slam splits the floor — a gas cloud every 1.3s for 20s');
+    },
+  });
+  // Step off the vent so it can be seen breathing.
+  ctx.at(2400, () => ctx.glideCaster({ to: { x: ctx.cx + 150, y: ctx.cy - 20 }, ms: 700, ease: 'out' }));
+  const offs = [[-62, -30], [58, 34], [-20, 62], [70, -44]];
+  ctx.onFrame((_dt, e) => {
+    floor.clear();
+    if (!vent) return;
+    if (nextPuff === 0) nextPuff = e + 500;
+    if (e >= nextPuff && puffs < offs.length) {
+      nextPuff = e + 1300;
+      vent.puffedAt = e;
+      field.add(vent.x + offs[puffs][0], vent.y + offs[puffs][1]);
+      puffs++;
+    }
+    gasFissure(floor, ctx.tint, vent.x, vent.y, 1.1, e / 1000, 1, Math.max(0, 1 - (e - vent.puffedAt) / 500));
+  });
+}
+
 function slamRun(ctx: PreviewCtx, shell: boolean): void {
   const fx = fxOf(ctx);
   const av = robot(ctx.useAvatar(() => new PressureAvatar(ctx.scene, ctx.tint)));
@@ -190,8 +346,8 @@ function slamRun(ctx: PreviewCtx, shell: boolean): void {
     fx.punchHit(victim.x - 12, victim.y, ctx.aim, 35);
     grounded = false;
     fx.groundBreak(victim.x, victim.y);
-    readout.setText(shell ? 'Shell-Shock: a 30+ hit frees them — and stuns them for 5s' : 'any hit knocks them loose');
-    if (shell) float(ctx, victim.x, victim.y - 46, 'SHELL-SHOCKED', PRESSURE.amberLit, 12);
+    void shell;
+    readout.setText('any hit knocks them loose');
   });
 }
 
@@ -203,10 +359,10 @@ export const slam: PreviewScript = {
 };
 
 export const slamUpgraded: PreviewScript = {
-  duration: 6400,
+  duration: 8800,
   scale: 0.9,
-  caption: 'E+ Shell-Shock — a grounded enemy hit by any 30+ Pressure ability is freed and stunned for 5 seconds',
-  run(ctx) { slamRun(ctx, true); },
+  caption: 'E+ Gas Vents — the slam splits the floor. The vent breathes out a gas cloud every 1.3s for 20 seconds; up to three vents at once',
+  run(ctx) { slamVentRun(ctx); },
 };
 
 // ══ R — Pressure Point ═════════════════════════════════════════════════
@@ -277,21 +433,27 @@ function releaseRun(ctx: PreviewCtx, depress: boolean): void {
   const victim = { x: ctx.cx + 170, y: ctx.cy };
   dummy(ctx, victim);
   const jet = ctx.adopt(ctx.scene.add.graphics().setDepth(5.8));
+  const floor = ctx.adopt(ctx.scene.add.graphics().setDepth(3.1));
   const readout = label(ctx, ctx.w * 0.5, 14, hex(PRESSURE.steam), 11);
+  const field = gasField(ctx, fx);
   let ventUntil = 0;
   let ventFrom = 0;
+  let nextCloud = 0;
+  let laid = 0;
+  let puddle = false;
   const h = holdKey(ctx, av, {
     fromMs: 300, target: 100, rate: CHARGE_PER_SEC * 2, pose: 'charge',
     release: () => {
       h.bank = 100;
-      readout.setText(depress ? 'Depressurize: 75+ banked — every hit +20% and a puff of steam' : 'a full bank: every other key charges 20% faster');
+      readout.setText(depress ? 'Depressurize: 75+ banked — every hit +20% and a gas puddle that never fades' : 'a full bank: every other key charges 20% faster');
     },
   });
   if (depress) {
     ctx.at(3400, () => {
       av?.punch(ctx.aim);
       fx.punchHit(victim.x - 12, victim.y, ctx.aim, 50);
-      fx.steamBurst(victim.x, victim.y, 60);
+      fx.puddleDrop(victim.x, victim.y, PUDDLE_R);
+      puddle = true;
       float(ctx, victim.x, victim.y - 34, '-24', PRESSURE.steam);
     });
   }
@@ -300,11 +462,21 @@ function releaseRun(ctx: PreviewCtx, depress: boolean): void {
     ventFrom = ctx.scene.time.now;
     ventUntil = ventFrom + 2400;
     av?.setHold('spray', ctx.aim);
-    readout.setText('tap F: the jet — no abilities inside it, 15% slow at 50+, a stunning blast at 100');
+    readout.setText('tap F: the jet — no abilities inside it, and gas clouds left hanging all along it');
   });
   ctx.onFrame((_dt, e) => {
     jet.clear();
+    floor.clear();
+    if (puddle) gasPuddle(floor, ctx.tint, victim.x, victim.y, PUDDLE_R, 0.7, e / 1000, 1);
     const now = ctx.scene.time.now;
+    if (now < ventUntil && e >= nextCloud) {
+      nextCloud = e + 230;
+      const c = ctx.casterAt();
+      const u = 0.28 + ((laid * 0.37) % 0.72);
+      const side = ((laid % 3) - 1) * 22 * u;
+      field.add(c.x + 18 + Math.cos(ctx.aim) * VENT_LEN_100 * u - Math.sin(ctx.aim) * side, c.y + Math.sin(ctx.aim) * VENT_LEN_100 * u + Math.cos(ctx.aim) * side);
+      laid++;
+    }
     if (now >= ventUntil) {
       if (ventUntil > 0) {
         const c = ctx.casterAt();
@@ -323,14 +495,14 @@ function releaseRun(ctx: PreviewCtx, depress: boolean): void {
 export const release: PreviewScript = {
   duration: 7600,
   scale: 0.9,
-  caption: 'F — hold to bank (3× slower; it keeps), tap to vent: steam that locks abilities, slows at 50+, and ends in a stunning blast at 100',
+  caption: 'F — hold to bank (3× slower; it keeps), tap to vent: a jet of gas that locks abilities, slows at 50+, ends in a stunning blast at 100 — and leaves clouds all along it',
   run(ctx) { releaseRun(ctx, false); },
 };
 
 export const releaseUpgraded: PreviewScript = {
   duration: 8400,
   scale: 0.9,
-  caption: 'F+ Depressurize — with 75+ banked, every Pressure hit does 20% more and bursts steam: 6 damage and a 25% slow within 60px',
+  caption: 'F+ Depressurize — with 75+ banked, every hit does 20% more and leaves a gas puddle under the target: see-through, and it never fades',
   run(ctx) { releaseRun(ctx, true); },
 };
 
@@ -369,7 +541,7 @@ function exceedRun(ctx: PreviewCtx, over: boolean): void {
 export const exceed: PreviewScript = {
   duration: 7000,
   scale: 0.9,
-  caption: 'Q — 15 seconds of double-speed charging, glowing red and pouring steam. Then the boiler seizes: 3 seconds stunned',
+  caption: 'Q — 15 seconds of double-speed charging, glowing red and pouring smog. Then the boiler seizes: 3 seconds stunned',
   run(ctx) { exceedRun(ctx, false); },
 };
 

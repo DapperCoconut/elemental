@@ -1498,6 +1498,8 @@ export class RubberKit {
     player.setPosition(player.x + (dx / d) * 5, player.y + (dy / d) * 5);
     body.setVelocity((dx / d) * spd, (dy / d) * spd);
     this.slingBouncesLeft--;
+    // Each wall bounce is a fresh pass — enemies already hit can be hit again.
+    this.slingHitThisFlight.clear();
     // The pad compresses and throws you back off it.
     this.pfx.boing(player.x, player.y, 8, 44, RUBBER.pink, 300, 7, 5);
     this.pfx.scuff(player.x, player.y, 16, 3);

@@ -533,7 +533,7 @@ export const ALL_UPGRADES: ElementUpgrades[] = [
         slot: 'click',
         displayKey: 'Click',
         name: 'Blade Split',
-        description: 'Daggers passing through a Create block cut it in half. Both halves keep the original block\'s HP. Only the first dagger registers the cut per block.',
+        description: 'Daggers passing through a Create block cut it in half. Both halves keep the original block\'s HP. Each throw cuts only one block, however many daggers it holds.',
         price: 20,
       },
       {
@@ -975,8 +975,8 @@ export const ALL_UPGRADES: ElementUpgrades[] = [
       {
         slot: 'click',
         displayKey: 'Click',
-        name: 'Blade Dance',
-        description: 'Every blade that makes it home has a 15% chance to start orbiting you. An orbiting dagger deals 12 damage on contact (0.5s per-blade cooldown), survives the hit, and only vanishes after 10s.',
+        name: 'Full Set',
+        description: 'A money bar appears above the Click card. Click it to spend 2💵 and carry 5 daggers instead of 3 for 10 seconds — the bar drains to show how long is left.',
         price: 100,
         currency: 'corrupt',
       },
@@ -984,7 +984,7 @@ export const ALL_UPGRADES: ElementUpgrades[] = [
         slot: 'e',
         displayKey: 'E',
         name: 'Steady Hands',
-        description: 'Spray holds 75 bullets instead of 50, and keeping the trigger down tightens the cone — after about 8s of continuous fire the weapon is perfectly accurate. Let off for half a second and the aim goes loose again.',
+        description: 'Keeping the trigger down tightens the cone — after about 8s of continuous fire the weapon is perfectly accurate; let off for half a second and the aim goes loose again. A money bar above the E card also sells Luxury Rounds: 2💵 for 35 rounds that deal 3 damage each, fire first and never stray.',
         price: 200,
         currency: 'corrupt',
       },
@@ -992,7 +992,7 @@ export const ALL_UPGRADES: ElementUpgrades[] = [
         slot: 'r',
         displayKey: 'R',
         name: 'The Rolodex',
-        description: 'Hold R for a hiring wheel of four recruits. Lackey (1💵). Money Runner (1💵): sprints around the arena, 12s loyalty, pays out 2💵 when it quits. Thug (2💵): 35s loyalty, bat swing for 12, a 2s stun and heavy knockback. Specialist (3💵): armored — projectiles cost it no loyalty — with a 5-pellet close-range shotgun (2 dmg each, 0.5s between shots, 5 shots then a reload).',
+        description: 'A money bar above the R card hires specialists for 2💵 each; like Thugs they stand where they are hired. Enforcer: a close-range shotgun (5 pellets of 2) and a shield — projectiles cost him no loyalty. Sniper: reaches the whole arena for 14, once every 3.5s. Medic: a weak pistol, but he heals you for 2 a second while you stand near him and slows the loyalty drain of recruits beside him by 15%.',
         price: 350,
         currency: 'corrupt',
       },
@@ -1000,7 +1000,7 @@ export const ALL_UPGRADES: ElementUpgrades[] = [
         slot: 'f',
         displayKey: 'F',
         name: 'Hardened Criminals',
-        description: 'Recruits earn XP (+1/s, +10 per bribe, +1 per 25 damage dealt) — 50 XP a level, up to a Roman-numeral V above their loyalty bar. Every level grants speed, damage, and slower loyalty loss. At V: Lackeys reload 50% faster, Money Runners pay 1💵 every 15s, Thugs double their stun and hit 1.5× harder on the knockback, Specialists fire 7 pellets — and all of them wear their colours inverted.',
+        description: 'Bribing a recruit also promotes him, up to level 3. Thug — 1 More Gun: faster, tighter fire. 2 Active Reload: throws a grenade when he reloads. 3 Suppressing Fire: 40-round drum, his target takes 15% more damage, and 1💵 on the bar over his head skips a reload. Enforcer — 1 Pump Action: fires faster. 2 Juggernaut: longer reach, slower loyalty drain. 3 Protector: his shield covers nearby recruits, pellets hit for 3, and 1💵 flies a helicopter in to move a recruit you pick to a spot you pick. Sniper — 1 High Caliber: 18 damage plus 4 true. 2 Professional: fires faster and pierces. 3 Bounty Hunter: 24 damage, 25% headshots for double, and 1💵 calls an air strike in 5s on your planted daggers (none: the whole arena; one: a loose scatter; two: the line between; three: the triangle). Medic — 1 More Supplies: heals 3 a second, shots deal 2. 2 Triage: recruits near him drain 30% slower and he heals faster the lower you are. 3 Savior: you move 20% faster while he heals you, and 2💵 makes you invincible for 5s. A money bar above the F card also launders: 1💵 sets a bag behind you, and if you take less than 50 damage in the next 3s it pays back 2💵.',
         price: 500,
         currency: 'corrupt',
       },
@@ -1008,7 +1008,7 @@ export const ALL_UPGRADES: ElementUpgrades[] = [
         slot: 'q',
         displayKey: 'Q',
         name: 'On Retainer',
-        description: 'The stolen ultimate stays on retainer for 8s after Dark Treachery resolves: tap Q again to recast the exact same effect for 2💵, with no second channel. Spray reloads and Bribes compete for the same wallet.',
+        description: 'The stolen ultimate stays on retainer for 8s after Dark Treachery resolves: a money bar above the Q card recasts the exact same effect for 2💵, with no second channel.',
         price: 750,
         currency: 'corrupt',
       },
@@ -1028,16 +1028,16 @@ export const ALL_UPGRADES: ElementUpgrades[] = [
       {
         slot: 'e',
         displayKey: 'E',
-        name: 'Palware',
-        description: 'Overt Advertisement also summons a random malware for 20s: an Annoying Goose (pokes, carries the enemy, steals their bullets), Clippy (5s math quiz every 8s — fail = 20 dmg to all enemies), or Mad Pong (DVD-bouncing ball, 10 dmg, splits every 5s). 20s cooldown between malwares.',
+        name: 'Ransomware',
+        description: 'Every 3rd popup an enemy touches also lets a Ransomware bug loose on them: a red critter that runs much faster and takes two clicks to squash. While it lives, every ability except their click is locked. Bots are slower to get rid of it than an ordinary critter.',
         price: 200,
         currency: 'corrupt',
       },
       {
         slot: 'r',
         displayKey: 'R',
-        name: 'Trojan Takeover',
-        description: 'While the Upload box lasts you stay wired to the victim and steer them with your arrow keys. They move continuously — no diagonals — but can still fight.',
+        name: 'Decompression',
+        description: 'Zip Bomb also unpacks its victim: their hitbox is 33% bigger for as long as the lag lasts.',
         price: 350,
         currency: 'corrupt',
       },
@@ -1052,8 +1052,8 @@ export const ALL_UPGRADES: ElementUpgrades[] = [
       {
         slot: 'q',
         displayKey: 'Q',
-        name: 'Security Breach',
-        description: 'The Admin Console glitches out 3–4 times per use — each glitch grants +5 Admin Points and scrawls "Git Haxxed!" across the screen.',
+        name: 'Admin Abuse',
+        description: 'The Admin Console no longer closes at max abuse. Past the bar you pay for commands in HP instead (0.4 HP per point of abuse) — and every command paid that way makes the next one cost 10% more.',
         price: 750,
         currency: 'corrupt',
       },
@@ -1966,51 +1966,8 @@ export const ALL_UPGRADES: ElementUpgrades[] = [
   },
   // Dream's five (Knocked Out, Pillow Fort, Good Dreams, Phobia, Night Terrors) were retired with
   // the 2026-10-17 sandman rework; new ones are owed.
-  {
-    elementId: 'magma',
-    upgrades: [
-      {
-        slot: 'click',
-        displayKey: 'Click',
-        name: 'Mag-Mortar',
-        description: 'The five globs become five artillery shells — finned, whistling, and coming down nose-first. Each one detonates on landing for 10 damage in a 44px blast before it settles, and it still leaves the pool behind afterwards, so the fan is now an opener as well as a floor.',
-        price: 100,
-        currency: 'corrupt',
-      },
-      {
-        slot: 'e',
-        displayKey: 'E',
-        name: 'Supercritical',
-        description: 'A volcano that has gone critical stops refusing pressure. Every point you force into it during those five screaming seconds is overfill, and overfill is paid back at the end: +0.7 damage and +0.9px of blast radius per point, up to 250 over. A volcano you never stop hitting collapses for well over three times what an ordinary one does.',
-        price: 200,
-        currency: 'corrupt',
-      },
-      {
-        slot: 'r',
-        displayKey: 'R',
-        name: 'Bloat Bomb',
-        description: 'Hold R and the bloat refuses to go off. Every hit that lands on you while it is held is still blocked outright — and every point of it is folded into the charge instead, at 1.5 damage a point. The window does not run down while you are holding, and letting go does not detonate it: it simply arms it again for the next thing that touches you.',
-        price: 350,
-        currency: 'corrupt',
-      },
-      {
-        slot: 'f',
-        displayKey: 'F',
-        name: 'Pressure Gauge',
-        description: 'Blunder-Boil holds a third charge — and while all three are banked the gun builds pressure. The F card turns darker and glows a deeper red as it climbs: a pressurised shot deals up to 35 instead of 15 and throws you up to 440px instead of 240, and past 60% you are the shot, hitting anyone you fly through for 18. Sit on a full gun for 15 seconds and the card goes smoky black: the next F does not fire, it bursts for 35 to you and everyone within 120px.',
-        price: 500,
-        currency: 'corrupt',
-      },
-      {
-        slot: 'q',
-        displayKey: 'Q',
-        name: 'Pirate King',
-        description: 'While the ship is up, flaming pirate spirits climb out of the hull every 4–5 seconds, up to three at a time. Each has 50 health and burns down 8 a second, hangs in the air over the deck, and every 2–3 seconds lunges through whoever is nearest for 20 — leaving the line it flew along on fire for a moment afterwards.',
-        price: 750,
-        currency: 'corrupt',
-      },
-    ],
-  },
+  // Magma's five (Mag-Mortar, Supercritical, Bloat Bomb, Pressure Gauge, Pirate King) were retired
+  // with the 2026-11-25 pirate rework; new ones are owed.
   {
     // Quantum owns exactly one upgrade, and it is not an ability upgrade at all: it makes
     // Quantum's *own* five abilities available to the loadout's slots. Everything they *do*
@@ -2167,7 +2124,7 @@ export const ALL_UPGRADES: ElementUpgrades[] = [
       },
     ],
   },
-  // Pressure (test element). Its first five, 2026-10-25.
+  // Gas (id `pressure`, test element). Its first five, 2026-10-25; E and F reworked with the gas, 2026-11-25.
   {
     elementId: 'pressure',
     upgrades: [
@@ -2182,8 +2139,8 @@ export const ALL_UPGRADES: ElementUpgrades[] = [
       {
         slot: 'e',
         displayKey: 'E',
-        name: 'Shell-Shock',
-        description: 'Anyone driven into the floor who is hit by one of your abilities charged to 30 or more is knocked loose as normal — and stunned for 5 more seconds.',
+        name: 'Gas Vents',
+        description: 'Seismic Slam splits the floor where the gauntlet comes down. The vent lasts 20 seconds and breathes out a fresh gas cloud every 1.3s — up to three vents at once. One spark sets off every cloud they have made.',
         price: 200,
         currency: 'corrupt',
       },
@@ -2199,7 +2156,7 @@ export const ALL_UPGRADES: ElementUpgrades[] = [
         slot: 'f',
         displayKey: 'F',
         name: 'Depressurize',
-        description: 'While Release has 75 or more pressure banked, every Pressure hit does 20% more damage and bursts a puff of steam off the target: 6 damage and a 25% slow for 1.5s to everyone within 60px of them.',
+        description: 'While Release has 75 or more pressure banked, every hit of yours does 20% more damage and leaves a gas puddle under the target. Puddles are see-through and never fade (up to 12 at once), and anyone who stands in one too long panics like in any other gas.',
         price: 500,
         currency: 'corrupt',
       },
@@ -2262,52 +2219,7 @@ export const ALL_UPGRADES: ElementUpgrades[] = [
       },
     ],
   },
-  // Astra (test element). Its first five, 2026-10-25.
-  {
-    elementId: 'astra',
-    upgrades: [
-      {
-        slot: 'click',
-        displayKey: 'Click',
-        name: 'Atomical Excitement',
-        description: 'Wherever Starstruck hits the arena wall, that section of wall becomes excited: it glows purple for 2 seconds, then fires a level beam back across the arena doing 4 damage for every shot that excited it. A wall\'s beam cannot excite another wall — except in star mode.',
-        price: 100,
-        currency: 'corrupt',
-      },
-      {
-        slot: 'e',
-        displayKey: 'E',
-        name: 'Cosmic Combo',
-        description: 'After the plus and the X, a third flare erupts: a ring of fire 150px out from where they did. It does 12 damage — or 42 to anyone the first two flares hit.',
-        price: 200,
-        currency: 'corrupt',
-      },
-      {
-        slot: 'r',
-        displayKey: 'R',
-        name: 'Never Strikes Twice',
-        description: 'For 4 seconds after Celestial Smite, press R again to call a second bolt — this one strikes whoever is closest to the bottom of the screen.',
-        price: 350,
-        currency: 'corrupt',
-      },
-      {
-        slot: 'f',
-        displayKey: 'F',
-        name: 'Superiority Complex',
-        description: 'A Worm Warp that hits steals: 3 seconds come off all your cooldowns and go onto all of theirs, and you take 20 of their ultimate charge. In star mode it steals more instead — 40% of their charge, and 20 of their health on top.',
-        price: 500,
-        currency: 'corrupt',
-      },
-      {
-        slot: 'q',
-        displayKey: 'Q',
-        name: 'Gods Do Not Fear Mortals',
-        description: 'Hold Q to take on a harder Star Trial: a star appears over your head for every second you hold, up to five. While holding you are invincible but cannot move or attack. Each star drains stability faster and makes hits cost more of it, and adds 3s of star mode. Beat a five-star trial and the giant star you truly are reaches into the arena and crushes your opponent — the match is yours.',
-        price: 750,
-        currency: 'corrupt',
-      },
-    ],
-  },
+  // Astra's first five (2026-10-25) went with the mass rework of 2026-11-25; it has no upgrades yet.
   // String (test element). Its first five, 2026-10-26.
   {
     elementId: 'string',

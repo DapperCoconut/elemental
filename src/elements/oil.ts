@@ -4,7 +4,7 @@ import { Ability, CastContext } from './Ability';
 const droneCommand: Ability = {
   id: 'drone-command',
   name: 'Arm Laser',
-  description: 'Hold Click to fire the laser strapped to your hand: rapid hitscan shots out to your cursor, 2 dmg each. It heats up while held and overheats after ~2.4s, locking it for 2.2s. Right-click: hold to build drones (first at 0.5s, then 1/s, max 6), tap to command all to fire lasers (3 dmg each). Right-click while a barrel is rolling → barrel explodes immediately + ignites puddles.',
+  description: 'Hold Click to fire the laser strapped to your hand: rapid hitscan shots out to your cursor, 2 dmg each, and the beam sets your own oil puddles alight. It heats up while held and overheats after ~2.4s, locking it for 2.2s. Right-click: hold to build drones (first at 0.5s, then 1/s, max 6), tap to command all to fire lasers (3 dmg each). Right-click while a barrel is rolling → barrel explodes immediately + ignites puddles.',
   displayKey: 'Click',
   cooldown: 1500,
   cast(ctx: CastContext) {
@@ -15,7 +15,7 @@ const droneCommand: Ability = {
 const barrelRoll: Ability = {
   id: 'barrel-roll',
   name: 'On a Roll',
-  description: 'Launch a barrel that rolls and drops oily puddles every 80px — enemies standing in one are Oily (8s slow). Shoot a puddle with Drone Command to set it alight, or hit an Oily enemy with it to burn the oil off them (5s burn). Explodes on enemy contact, wall contact, or when shot by an enemy projectile (20 dmg, 2 extra puddles).',
+  description: 'Launch a barrel that rolls and drops oily puddles every 80px — enemies standing in one are Oily (8s slow). Shoot a puddle with your Arm Laser or a drone to set it alight, or hit an Oily enemy with a drone laser to burn the oil off them (5s burn). Explodes on enemy contact, wall contact, or when shot by an enemy projectile (20 dmg, 2 extra puddles).',
   displayKey: 'E',
   cooldown: 3000,
   cast(ctx: CastContext) {

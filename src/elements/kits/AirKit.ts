@@ -74,9 +74,9 @@ const KNOCK_HALF = 0.62;
 const KNOCK_DAMAGE = 10;
 const KNOCK_SHOVE = 380;
 const KNOCK_SHOVE_MS = 170;
-const WINDED_MS = 6000;
-/** "200% slower": a third of an ordinary turn. An unwinded fighter turns instantly. */
-const WINDED_TURN_RAD_PER_S = 1.6;
+const WINDED_MS = 10000;
+/** How fast a winded fighter can swing round: a half turn takes about six seconds. An unwinded fighter turns instantly. */
+const WINDED_TURN_RAD_PER_S = 1.6 / 3;
 /** Stamina is 0–1: seconds of walking to empty it, seconds of standing to fill it. */
 const STAMINA_DRAIN_S = 2.2;
 const STAMINA_REFILL_S = 1.6;
@@ -846,7 +846,7 @@ export class AirKit {
    * Facing, and what being winded does to it. `Fighter.facingAngle` is what a backstab is judged
    * against, and — for somebody winded — the only way they can aim (`ArenaScene.scatterAim`), so
    * it is kept true here whenever an assassin is in the fight: the player faces the cursor, a bot
-   * faces where it is walking. Winded, either one only swings round at a third of a turn.
+   * faces where it is walking. Winded, either one only swings round at `WINDED_TURN_RAD_PER_S`.
    */
   private updateFacing(dt: number): void {
     const wall = Date.now();
@@ -1606,16 +1606,21 @@ export class AirKit {
     const zf = 1 + DRAMA_ZOOM * this.drama;
     cam.setZoom((cam.zoom / this.camZoomF) * zf);
     this.camZoomF = zf;
-    // Lean the view toward the pair, by as much as the zoom has room for.
+    // Put the pair in the middle of the view, as far as the zoom has room for without showing
+    // anything the unzoomed view did not. The zoom pivots on the middle of the *logical* view —
+    // `cam.midPoint` is canvas-based under the supersampling patch and reads the far corner.
     cam.scrollX -= this.camDX;
     cam.scrollY -= this.camDY;
+    const halfW = scene.scale.width / 2;
+    const halfH = scene.scale.height / 2;
+    const roomX = halfW * (1 - 1 / zf);
+    const roomY = halfH * (1 - 1 / zf);
     if (focus) {
-      const mid = cam.midPoint;
-      this.camDX = (focus.x - mid.x) * (1 - 1 / zf) * 2;
-      this.camDY = (focus.y - mid.y) * (1 - 1 / zf) * 2;
+      this.camDX = Phaser.Math.Clamp(focus.x - (cam.scrollX + halfW), -roomX, roomX);
+      this.camDY = Phaser.Math.Clamp(focus.y - (cam.scrollY + halfH), -roomY, roomY);
     } else {
-      this.camDX *= this.drama;
-      this.camDY *= this.drama;
+      this.camDX = Phaser.Math.Clamp(this.camDX, -roomX, roomX);
+      this.camDY = Phaser.Math.Clamp(this.camDY, -roomY, roomY);
     }
     cam.scrollX += this.camDX;
     cam.scrollY += this.camDY;

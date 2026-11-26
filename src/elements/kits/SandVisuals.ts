@@ -49,6 +49,10 @@ export const SND = {
   wood: 0x7a4a24,
   /** A timer about to run out — a bridge on its last second, a fall about to be charged for. */
   expire: 0xd9564a,
+  /** The obby's lasers: the one colour on a course that is never safe to touch. */
+  laser: 0xff2e3e,
+  laserHot: 0xffd9d9,
+  laserDeep: 0x7a0f1c,
   maw: 0x6b2a2a,
   /** The Final Trail's lava, from the cool crust at its edge to the white at its heart. */
   lava: 0xd4441c,
@@ -116,106 +120,129 @@ export function grains(
   }
 }
 
+/** Shorthand for the polygon calls below. */
+function P(x: number, y: number): Phaser.Geom.Point {
+  return new Phaser.Geom.Point(x, y);
+}
+
 /**
- * A chiselled block, seen from above with its body extruded toward the viewer.
+ * A cut block seen from straight above: a square top face `2r` on a side, with the wall facing
+ * the viewer dropped below it.
  *
- * Three parts, in the order they have to be painted: the footprint shadow (down at
- * `z * LIFT`, which *is* the height read), the column body between the top face and the
- * shadow, and finally the top face itself — a hexagon rather than a circle, because a cut
- * block should have corners and the corners are what sell "I can land on this".
+ * The square is not decoration — it is the landing area, exactly. `r` is the half-side the kit
+ * tests your feet against, so what is painted is what catches you, corner to corner.
+ *
+ * Depth, for a shape with no perspective of its own, comes from four things stacked in the
+ * order they are painted: the shadow thrown down-right onto the floor at `z * LIFT` (which *is*
+ * the height read), the front wall between the top face and the floor, darkening as it goes
+ * down, the bevel round the top face (lit top-left, dark bottom-right), and the bright lip
+ * where the face meets the wall.
  *
  * `grey` swaps the palette to the cold stone reserved for the one starter block per course.
- *
- * `glass` is Tempered Temptation's repaint of the same block: the shaft goes translucent and
- * loses its masonry for vertical facets, and the top face gains a cut-gem rosette. `crumble`
- * (0–1) is how far a tempered slab is through the two and a half seconds it will hold under
- * your feet — it opens cracks across the face and shivers, so the warning is on the block
- * rather than in the HUD.
+ * `glass` is Tempered Temptation's repaint; `crumble` (0–1) is how far a tempered slab is
+ * through the time it will hold under your feet. `lit` is "somebody is standing on this one",
+ * and `next` is "this is the one you jump to" — it buries the face in golden sand dust.
  */
 export function pillar(
   g: Phaser.GameObjects.Graphics,
   tint: SandColorFn,
   x: number, y: number, r: number, z: number, alpha: number,
-  { seed = 0, grey = false, lit = 0, t = 0, glass = false, crumble = 0 } = {},
+  { seed = 0, grey = false, lit = 0, t = 0, glass = false, crumble = 0, next = 0 } = {},
 ): void {
   const drop = z * LIFT;
   const face = glass ? SND.glass : grey ? SND.stoneGrey : SND.stoneWarm;
   const faceLit = glass ? SND.glassLit : grey ? SND.stoneGreyLit : SND.stoneWarmLit;
   // A slab about to go shivers on the spot. Half a pixel is plenty at this size.
   const sx = crumble > 0 ? x + Math.sin(t * 44 + seed) * crumble * 1.4 : x;
+  const x0 = sx - r;
+  const y0 = y - r;
+  const w = r * 2;
+  const wallTop = y + r;
 
-  // ── Footprint shadow ──
-  // Glass barely casts one: the light goes through it. That difference alone tells you which
-  // half of a tempered course is still sandstone.
-  g.fillStyle(tint(SND.shadow), alpha * (glass ? 0.15 : 0.34));
-  g.fillEllipse(sx, y + drop, r * 1.9, r * 0.78);
+  // ── Shadow ──
+  // The footprint, pushed down-right away from the light, longer the taller the block is.
+  // Glass barely casts one: the light goes through it.
+  const cast = 5 + drop * 0.2;
+  g.fillStyle(tint(SND.shadow), alpha * (glass ? 0.14 : 0.3));
+  g.fillRect(x0 + cast, y0 + drop + cast * 0.5, w, w);
+  // Contact shadow hugging the foot of the wall, so the block sits *on* the floor.
+  g.fillStyle(tint(SND.shadow), alpha * (glass ? 0.1 : 0.26));
+  g.fillRect(x0 - 3, wallTop + drop - 3, w + 6, 7);
 
-  // ── Column body ──
-  // Two quads: the lit half toward the light (up-left) and the dark half away from it, split
-  // down the middle so a tall pillar has a readable round-ness rather than being a flat slab.
-  const hx = r * 0.94;
-  const bodyA = alpha * (glass ? 0.6 : 1);
-  for (const side of [-1, 1] as const) {
-    g.fillStyle(shade(tint(face), side < 0 ? 0.72 : 0.48), bodyA);
-    g.fillPoints([
-      new Phaser.Geom.Point(sx + (side < 0 ? -hx : 0), y),
-      new Phaser.Geom.Point(sx + (side < 0 ? 0 : hx), y),
-      new Phaser.Geom.Point(sx + (side < 0 ? 0 : hx) * 0.86, y + drop),
-      new Phaser.Geom.Point(sx + (side < 0 ? -hx : 0) * 0.86, y + drop),
-    ], true);
+  // ── Front wall ──
+  const bodyA = alpha * (glass ? 0.55 : 1);
+  g.fillStyle(shade(tint(face), 0.62), bodyA);
+  g.fillRect(x0, wallTop, w, drop);
+  // It falls into its own shade toward the floor: three stacked washes, each starting lower.
+  for (let i = 1; i <= 3; i++) {
+    g.fillStyle(tint(SND.shadow), bodyA * 0.11);
+    g.fillRect(x0, wallTop + (drop * i) / 4, w, drop * (1 - i / 4));
   }
+  // The far edge of the wall is turned away from the light.
+  g.fillStyle(tint(SND.shadow), bodyA * 0.16);
+  g.fillRect(x0 + w * 0.82, wallTop, w * 0.18, drop);
+  g.fillStyle(tint(faceLit), bodyA * 0.3);
+  g.fillRect(x0, wallTop, 1.6, drop);
   if (glass) {
-    // Facets rather than strata: long vertical highlights down the shaft, because a glass
-    // column is read by what slides down it, not by what is stacked in it.
+    // Facets rather than masonry: long highlights sliding down the wall.
     for (let i = 0; i < 5; i++) {
-      const u = (i / 4 - 0.5) * 1.7;
-      const w = hx * (0.06 + jitter(seed, i + 3) * 0.09);
-      g.fillStyle(tint(i % 2 ? SND.glassLit : SND.glassDeep), alpha * 0.32);
-      g.fillPoints([
-        new Phaser.Geom.Point(sx + hx * u - w, y),
-        new Phaser.Geom.Point(sx + hx * u + w, y),
-        new Phaser.Geom.Point(sx + hx * u * 0.86 + w * 0.7, y + drop),
-        new Phaser.Geom.Point(sx + hx * u * 0.86 - w * 0.7, y + drop),
-      ], true);
+      const fx = x0 + w * (0.1 + i * 0.2) + jitter(seed, i + 3) * 4;
+      g.fillStyle(tint(i % 2 ? SND.glassLit : SND.glassDeep), alpha * 0.3);
+      g.fillRect(fx, wallTop, 1.5 + jitter(seed, i + 8) * 3, drop);
     }
   } else {
-    // Strata: horizontal courses of masonry down the shaft. Spaced by height so a 190-tall
-    // pillar genuinely looks taller than a 55 rather than just longer.
-    const bands = Math.max(1, Math.round(drop / 13));
-    g.fillStyle(shade(tint(face), 0.34), alpha * 0.7);
-    for (let i = 1; i <= bands; i++) {
-      const yy = y + (drop * i) / (bands + 1);
-      const w = hx * (1 - (i / (bands + 2)) * 0.14);
-      g.fillRect(sx - w, yy, w * 2, 1.6);
+    // Masonry: courses of block down the wall with staggered joints. Spaced by height, so a
+    // 190-tall pillar genuinely looks taller than a 55 rather than just longer.
+    const courses = Math.max(1, Math.round(drop / 13));
+    const rowH = drop / courses;
+    g.fillStyle(shade(tint(face), 0.36), alpha * 0.75);
+    for (let i = 1; i < courses; i++) g.fillRect(x0, wallTop + rowH * i, w, 1.5);
+    for (let i = 0; i < courses; i++) {
+      const joints = 2;
+      for (let j = 0; j < joints; j++) {
+        const jx = x0 + w * ((j + (i % 2 ? 0.75 : 0.25)) / joints);
+        g.fillRect(jx, wallTop + rowH * i, 1.3, rowH);
+      }
     }
   }
 
   // ── Top face ──
-  const pts: Phaser.Geom.Point[] = [];
-  for (let i = 0; i < 6; i++) {
-    const a = (i / 6) * TAU + 0.26;
-    const rr = r * (0.9 + jitter(seed, i) * 0.18);
-    pts.push(new Phaser.Geom.Point(sx + Math.cos(a) * rr, y + Math.sin(a) * rr * 0.62));
-  }
-  g.fillStyle(tint(face), alpha * (glass ? 0.8 : 1));
-  g.fillPoints(pts, true);
-  // Inner inset, so the block has a lip you can see your feet land on.
-  g.fillStyle(tint(faceLit), alpha * (0.5 + lit * 0.5));
-  g.fillPoints(pts.map((p) => new Phaser.Geom.Point(sx + (p.x - sx) * 0.7, y + (p.y - y) * 0.7)), true);
+  g.fillStyle(tint(face), alpha * (glass ? 0.82 : 1));
+  g.fillRect(x0, y0, w, w);
+  // A raised panel inset from the rim, so the block has a lip you can see your feet land on.
+  const inset = Math.max(3, r * 0.17);
+  g.fillStyle(tint(faceLit), alpha * (0.5 + lit * 0.3));
+  g.fillRect(x0 + inset, y0 + inset, w - inset * 2, w - inset * 2);
   if (glass) {
-    // Cut-gem rosette: every corner of the hexagon drawn back to the middle, so the face reads
-    // as one faceted stone rather than as a recoloured slab.
-    for (let i = 0; i < pts.length; i++) {
-      const p = pts[i];
-      const q = pts[(i + 1) % pts.length];
+    // Cut-gem facets: the four corners drawn back to the middle.
+    const corners = [P(x0, y0), P(x0 + w, y0), P(x0 + w, y0 + w), P(x0, y0 + w)];
+    for (let i = 0; i < 4; i++) {
       g.fillStyle(tint(i % 2 ? SND.glassLit : SND.glassDeep), alpha * (0.16 + 0.12 * Math.sin(t * 2 + i + seed)));
-      g.fillPoints([new Phaser.Geom.Point(sx, y), p, q], true);
+      g.fillPoints([P(sx, y), corners[i], corners[(i + 1) % 4]], true);
     }
     g.lineStyle(1, tint(SND.glassLit), alpha * 0.55);
-    g.strokePoints(pts, true, true);
-  } else if (!grey) {
-    grains(g, tint, sx, y, r * 0.6, 9, alpha * 0.5, { seed: seed + 7, color: SND.dark, size: 1.3 });
+    g.strokeRect(x0, y0, w, w);
+  } else {
+    // A chiselled groove round the panel and a few chips out of it — cut stone, not a tile.
+    g.lineStyle(1.2, shade(tint(face), 0.7), alpha * 0.6);
+    g.strokeRect(x0 + inset, y0 + inset, w - inset * 2, w - inset * 2);
+    if (!grey) grains(g, tint, sx, y, r * 0.62, 9, alpha * 0.5, { seed: seed + 7, color: SND.dark, size: 1.3 });
+    g.fillStyle(shade(tint(face), 0.6), alpha * 0.7);
+    for (let i = 0; i < 3; i++) {
+      const cx = x0 + inset + jitter(seed, i + 31) * (w - inset * 2 - 4);
+      const cy = y0 + inset + jitter(seed, i + 37) * (w - inset * 2 - 4);
+      g.fillRect(cx, cy, 2 + jitter(seed, i + 41) * 3, 1.4);
+    }
   }
+  // Bevel: lit along the top and left, dark along the right, and a bright lip along the front
+  // edge where the face turns down into the wall.
+  g.fillStyle(tint(faceLit), alpha * 0.85);
+  g.fillRect(x0, y0, w, 2);
+  g.fillRect(x0, y0, 2, w);
+  g.fillStyle(shade(tint(face), 0.66), alpha * 0.8);
+  g.fillRect(x0 + w - 2, y0, 2, w);
+  g.fillStyle(tint(faceLit), alpha);
+  g.fillRect(x0, wallTop - 1.5, w, 2.4);
 
   // ── About to shatter ──
   // Cracks walking out from the middle of the face, opening as the clock runs down.
@@ -224,17 +251,239 @@ export function pillar(
       const a = (i / 7) * TAU + jitter(seed, i + 11) * 0.7;
       const len = r * crumble * (0.7 + jitter(seed, i + 19) * 0.5);
       g.lineStyle(1.4 + crumble * 1.4, tint(SND.glassDeep), alpha * (0.35 + crumble * 0.5));
-      g.lineBetween(sx, y, sx + Math.cos(a) * len, y + Math.sin(a) * len * 0.62);
+      g.lineBetween(sx, y, sx + Math.cos(a) * len, y + Math.sin(a) * len);
     }
     g.lineStyle(2.6 * crumble, tint(SND.expire), alpha * crumble * (0.4 + 0.4 * Math.sin(t * 12)));
-    g.strokePoints(pts, true, true);
+    g.strokeRect(x0, y0, w, w);
   }
 
-  // Occupied rim: a bright ring lit from the inside while somebody is standing here. This is
-  // the second half of the height read — the shadow says how high, the rim says which one.
+  if (next > 0) goldDust(g, tint, sx, y, r, drop, t, alpha * next, seed);
+
+  // ── Occupied ──
+  // The whole face warms up, a heavy rim lights round it, and four brackets clamp its corners
+  // from outside — so "I am on this one" survives the fighter's own sprite covering the middle.
   if (lit > 0) {
-    g.lineStyle(2.4, tint(glass ? SND.glassLit : SND.goldHot), alpha * lit * (0.65 + 0.25 * Math.sin(t * 7)));
-    g.strokePoints(pts, true, true);
+    const pulse = 0.5 + 0.5 * Math.sin(t * 7);
+    const hot = tint(glass ? SND.glassLit : SND.goldHot);
+    g.fillStyle(hot, alpha * lit * (0.2 + pulse * 0.1));
+    g.fillRect(x0, y0, w, w);
+    g.lineStyle(3.2, hot, alpha * lit * (0.75 + pulse * 0.25));
+    g.strokeRect(x0, y0, w, w);
+    const o = 5 + pulse * 2.5;
+    const arm = Math.min(11, r * 0.42);
+    g.lineStyle(2.4, hot, alpha * lit);
+    for (const [cx, cy, dx, dy] of [
+      [x0 - o, y0 - o, 1, 1], [x0 + w + o, y0 - o, -1, 1],
+      [x0 + w + o, y0 + w + o, -1, -1], [x0 - o, y0 + w + o, 1, -1],
+    ]) {
+      g.lineBetween(cx, cy, cx + dx * arm, cy);
+      g.lineBetween(cx, cy, cx, cy + dy * arm);
+    }
+  }
+}
+
+/**
+ * Golden sand dust heaped over a slab's top face: the "this one next" marker.
+ *
+ * It has to win against every other colour a course can be — warm sandstone, cold grey, glass —
+ * so it is not a tint, it is a *covering*: a drift of gold that hides most of the stone, glints
+ * moving across it, a breathing gold rim, grains spilling over the front lip and down the wall,
+ * and a few motes lifting off the top.
+ */
+export function goldDust(
+  g: Phaser.GameObjects.Graphics,
+  tint: SandColorFn,
+  x: number, y: number, r: number, drop: number, t: number, alpha: number, seed = 0,
+): void {
+  const x0 = x - r;
+  const y0 = y - r;
+  const w = r * 2;
+  const pulse = 0.5 + 0.5 * Math.sin(t * 4.2);
+
+  // A halo on the floor round the block, so it is findable before you have read a single slab.
+  g.fillStyle(tint(SND.gold), alpha * (0.1 + pulse * 0.08));
+  g.fillRect(x0 - 7, y0 - 7, w + 14, w + 14);
+
+  // The drift itself, with a paler heap toward the middle.
+  g.fillStyle(tint(SND.gold), alpha * (0.72 + pulse * 0.12));
+  g.fillRect(x0, y0, w, w);
+  g.fillStyle(tint(SND.goldHot), alpha * 0.4);
+  g.fillEllipse(x - r * 0.12, y - r * 0.1, w * 0.78, w * 0.62);
+  g.fillStyle(tint(SND.deep), alpha * 0.35);
+  g.fillEllipse(x + r * 0.3, y + r * 0.42, w * 0.5, w * 0.2);
+
+  // Glints: grains that each catch the light on their own beat.
+  const n = Math.round(14 + r * 0.5);
+  for (let i = 0; i < n; i++) {
+    const gx = x0 + 2 + jitter(seed + 3, i * 2) * (w - 5);
+    const gy = y0 + 2 + jitter(seed + 3, i * 2 + 1) * (w - 5);
+    const tw = 0.5 + 0.5 * Math.sin(t * (3 + jitter(seed, i + 50) * 5) + i * 1.7);
+    g.fillStyle(tint(tw > 0.75 ? 0xffffff : SND.goldHot), alpha * (0.35 + tw * 0.65));
+    const s = 1.4 + tw * 1.6;
+    g.fillRect(gx, gy, s, s);
+  }
+
+  // Spilling over the front lip and down the wall.
+  const fall = Math.max(10, Math.min(drop, 46));
+  for (let i = 0; i < 9; i++) {
+    const gx = x0 + 3 + jitter(seed + 9, i) * (w - 6);
+    const k = (t * (0.55 + jitter(seed + 9, i + 20) * 0.5) + jitter(seed + 9, i + 40)) % 1;
+    g.fillStyle(tint(SND.gold), alpha * (1 - k) * 0.9);
+    g.fillRect(gx, y + r + k * fall, 1.8, 3.2);
+  }
+  // Motes lifting off the top.
+  for (let i = 0; i < 6; i++) {
+    const k = (t * (0.35 + jitter(seed + 5, i) * 0.3) + jitter(seed + 5, i + 12)) % 1;
+    const gx = x0 + jitter(seed + 5, i + 24) * w + Math.sin(t * 2 + i) * 3;
+    g.fillStyle(tint(SND.goldHot), alpha * (1 - k) * 0.85);
+    g.fillRect(gx, y0 + w * 0.6 - k * (r + 16), 2, 2);
+  }
+
+  g.lineStyle(2.6, tint(SND.goldHot), alpha * (0.6 + pulse * 0.4));
+  g.strokeRect(x0, y0, w, w);
+}
+
+// ── Laser hazards ─────────────────────────────────────────────────────────
+
+/** One laser line: a wide soft glow, the beam, and a white-hot core down the middle. */
+function laserLine(
+  g: Phaser.GameObjects.Graphics, tint: SandColorFn,
+  x1: number, y1: number, x2: number, y2: number, width: number, alpha: number,
+): void {
+  g.lineStyle(width * 2.6, tint(SND.laser), alpha * 0.2);
+  g.lineBetween(x1, y1, x2, y2);
+  g.lineStyle(width, tint(SND.laser), alpha * 0.9);
+  g.lineBetween(x1, y1, x2, y2);
+  g.lineStyle(Math.max(1, width * 0.34), tint(SND.laserHot), alpha);
+  g.lineBetween(x1, y1, x2, y2);
+}
+
+/**
+ * A laser spinner: an iron hub bolted to the middle of a slab, throwing a beam out both sides
+ * and turning. `reach` is the beam's half-length — it stops short of the square's corners on
+ * purpose, and those four corners are where you stand while it goes past. `dir` is which way
+ * it turns, so the afterimage trails behind the beam rather than ahead of it.
+ */
+export function laserSpinner(
+  g: Phaser.GameObjects.Graphics,
+  tint: SandColorFn,
+  x: number, y: number, reach: number, ang: number, dir: number, t: number, alpha: number,
+): void {
+  // The swept circle, scorched faintly into the stone: the beam's whole territory at a glance.
+  g.lineStyle(1.2, tint(SND.laserDeep), alpha * 0.45);
+  g.strokeCircle(x, y, reach);
+  // Afterimages.
+  for (let i = 4; i >= 1; i--) {
+    const a = ang - dir * i * 0.1;
+    g.lineStyle(4, tint(SND.laser), alpha * 0.11 * (5 - i) * 0.5);
+    g.lineBetween(x - Math.cos(a) * reach, y - Math.sin(a) * reach,
+      x + Math.cos(a) * reach, y + Math.sin(a) * reach);
+  }
+  const ca = Math.cos(ang);
+  const sa = Math.sin(ang);
+  const flick = 0.85 + 0.15 * Math.sin(t * 31);
+  laserLine(g, tint, x - ca * reach, y - sa * reach, x + ca * reach, y + sa * reach, 4.2, alpha * flick);
+  // Sparks where the beam ends.
+  for (const s of [-1, 1]) {
+    g.fillStyle(tint(SND.laserHot), alpha * flick);
+    g.fillCircle(x + ca * reach * s, y + sa * reach * s, 2.6);
+  }
+  // The hub: a short iron post seen from above, with the emitter lens glowing in it.
+  g.fillStyle(tint(SND.shadow), alpha * 0.4);
+  g.fillCircle(x + 2, y + 3, 8);
+  g.fillStyle(tint(SND.iron), alpha);
+  g.fillCircle(x, y, 7.5);
+  g.lineStyle(1.5, tint(SND.ironLit), alpha * 0.9);
+  g.strokeCircle(x, y, 7.5);
+  g.fillStyle(tint(SND.laser), alpha);
+  g.fillCircle(x, y, 4);
+  g.fillStyle(tint(SND.laserHot), alpha * flick);
+  g.fillCircle(x - 0.8, y - 0.8, 1.8);
+}
+
+/**
+ * A laser block: a bar of solid red light laid right across a slab, edge to edge. You land on
+ * one half and jump it to reach the other. Drawn raised off the stone — its own little front
+ * wall and a shadow — so it reads as a *thing in the way* rather than as a painted stripe.
+ */
+export function killBrick(
+  g: Phaser.GameObjects.Graphics,
+  tint: SandColorFn,
+  x: number, y: number, r: number, halfW: number, vertical: boolean, t: number, alpha: number,
+): void {
+  const pulse = 0.5 + 0.5 * Math.sin(t * 6);
+  const rise = 4;
+  const bx = vertical ? x - halfW : x - r + 2;
+  const by = vertical ? y - r + 2 : y - halfW;
+  const bw = vertical ? halfW * 2 : r * 2 - 4;
+  const bh = vertical ? r * 2 - 4 : halfW * 2;
+
+  g.fillStyle(tint(SND.laser), alpha * (0.14 + pulse * 0.1));
+  g.fillRect(bx - 5, by - rise - 5, bw + 10, bh + rise + 10);
+  g.fillStyle(tint(SND.shadow), alpha * 0.35);
+  g.fillRect(bx + 2, by + 2, bw, bh);
+  // Its front wall, then its top, lifted by `rise`.
+  g.fillStyle(tint(SND.laserDeep), alpha);
+  g.fillRect(bx, by + bh - rise, bw, rise);
+  g.fillStyle(tint(SND.laser), alpha);
+  g.fillRect(bx, by - rise, bw, bh);
+  g.fillStyle(tint(SND.laserHot), alpha * (0.7 + pulse * 0.3));
+  if (vertical) g.fillRect(x - halfW * 0.3, by - rise + 2, halfW * 0.6, bh - 4);
+  else g.fillRect(bx + 2, y - rise - halfW * 0.3, bw - 4, halfW * 0.6);
+  // Hazard chevrons crawling along it.
+  g.fillStyle(tint(SND.laserDeep), alpha * 0.55);
+  const len = vertical ? bh : bw;
+  for (let i = 0; i < len / 12; i++) {
+    const d = ((i * 12 + t * 14) % len);
+    if (vertical) g.fillRect(bx, by - rise + d, bw, 1.6);
+    else g.fillRect(bx + d, by - rise, 1.6, bh);
+  }
+}
+
+/**
+ * A blinking laser grid over a whole slab. Four emitter posts stand in its corners the whole
+ * time, so you know which slab it is while it is dark; `warm` (0–1) is the wind-up — thin
+ * lines stuttering on between the posts — and `on` is the grid itself, when nowhere on the
+ * face is safe to be stood.
+ */
+export function laserGrid(
+  g: Phaser.GameObjects.Graphics,
+  tint: SandColorFn,
+  x: number, y: number, r: number, warm: number, on: boolean, t: number, alpha: number,
+): void {
+  const e = r - 5;
+  const lanes = [-0.52, 0, 0.52];
+  if (on) {
+    g.fillStyle(tint(SND.laser), alpha * (0.2 + 0.08 * Math.sin(t * 26)));
+    g.fillRect(x - r, y - r, r * 2, r * 2);
+    for (const k of lanes) {
+      laserLine(g, tint, x - e, y + e * k, x + e, y + e * k, 3, alpha);
+      laserLine(g, tint, x + e * k, y - e, x + e * k, y + e, 3, alpha);
+    }
+  } else if (warm > 0) {
+    // The stutter speeds up as it gets close: the last third of the warning is nearly solid.
+    const a = Math.sin(t * (18 + warm * 40)) > -0.2 ? warm : warm * 0.25;
+    g.lineStyle(1.4, tint(SND.laser), alpha * (0.3 + a * 0.6));
+    for (const k of lanes) {
+      g.lineBetween(x - e, y + e * k, x + e, y + e * k);
+      g.lineBetween(x + e * k, y - e, x + e * k, y + e);
+    }
+    g.lineStyle(2, tint(SND.expire), alpha * warm * 0.8);
+    g.strokeRect(x - r, y - r, r * 2, r * 2);
+  } else {
+    // Dark, but not invisible: the grid's lines stay etched in the stone.
+    g.lineStyle(1, tint(SND.laserDeep), alpha * 0.4);
+    for (const k of lanes) {
+      g.lineBetween(x - e, y + e * k, x + e, y + e * k);
+      g.lineBetween(x + e * k, y - e, x + e * k, y + e);
+    }
+  }
+  const lens = on ? 1 : 0.35 + warm * 0.65;
+  for (const [cx, cy] of [[-e, -e], [e, -e], [e, e], [-e, e]]) {
+    g.fillStyle(tint(SND.iron), alpha);
+    g.fillRect(x + cx - 3.5, y + cy - 3.5, 7, 7);
+    g.fillStyle(tint(lens > 0.6 ? SND.laserHot : SND.laser), alpha * lens);
+    g.fillRect(x + cx - 1.6, y + cy - 1.6, 3.2, 3.2);
   }
 }
 
@@ -251,9 +500,10 @@ export function glassGhost(
   const drop = z * LIFT;
   // The outline hangs where the top face was, so it is still readable as a height.
   g.lineStyle(1.4, tint(SND.glassDeep), alpha * 0.4);
-  g.strokeEllipse(x, y, r * 1.8, r * 1.12);
+  g.strokeRect(x - r, y - r, r * 2, r * 2);
   g.lineStyle(1, tint(SND.glassDeep), alpha * 0.16);
-  g.lineBetween(x, y, x, y + drop);
+  g.lineBetween(x - r, y + r, x - r, y + r + drop);
+  g.lineBetween(x + r, y + r, x + r, y + r + drop);
 
   // The arc: an unclosed ring that sweeps shut as the four seconds run out.
   g.lineStyle(2.6, tint(SND.glassLit), alpha * (0.35 + 0.35 * Math.sin(t * 5)));
@@ -265,7 +515,7 @@ export function glassGhost(
     const a = jitter(r, i) * TAU;
     const d = r * (0.3 + jitter(r, i + 9) * 0.7);
     g.fillStyle(tint(SND.glass), alpha * (1 - k) * 0.5);
-    g.fillRect(x + Math.cos(a) * d, y + Math.sin(a) * d * 0.6 + (1 - k) * 10, 2.4, 2.4);
+    g.fillRect(x + Math.cos(a) * d, y + Math.sin(a) * d + (1 - k) * 10, 2.4, 2.4);
   }
 }
 
@@ -971,14 +1221,14 @@ export function cursedSlab(
 ): void {
   const pulse = 0.5 + 0.5 * Math.sin(t * 6);
   g.fillStyle(tint(0x5b1f8c), alpha * (0.5 + pulse * 0.2));
-  g.fillEllipse(x, y, r * 2, r * 1.32);
+  g.fillRect(x - r, y - r, r * 2, r * 2);
   g.lineStyle(2.5, tint(0x9b4dff), alpha * (0.55 + pulse * 0.35));
-  g.strokeEllipse(x, y, r * 2, r * 1.32);
+  g.strokeRect(x - r, y - r, r * 2, r * 2);
   // Veins of the curse crawling out to the rim.
   for (let i = 0; i < 7; i++) {
     const a = (i / 7) * TAU + t * 0.4;
     g.lineStyle(1.4, tint(0xc48bff), alpha * 0.4);
-    g.lineBetween(x, y, x + Math.cos(a) * r * 0.92, y + Math.sin(a) * r * 0.6);
+    g.lineBetween(x, y, x + Math.cos(a) * r * 0.92, y + Math.sin(a) * r * 0.92);
   }
   // The eye. Sclera, a yellow iris that widens with the pulse, and a slit pupil.
   const ex = x;
@@ -1028,7 +1278,9 @@ export class SandFx extends FxBase {
       const fall = t * z * LIFT;
       const a = 1 - t;
       g.fillStyle(this.tint(grey ? SND.stoneGrey : SND.stoneWarm), a * 0.85);
-      g.fillEllipse(x, y + fall, r * 2 * (1 + t * 0.5), r * 1.2 * (1 - t * 0.5));
+      const hw = r * (1 + t * 0.5);
+      const hh = r * (1 - t * 0.5);
+      g.fillRect(x - hw, y + fall - hh, hw * 2, hh * 2);
       grains(g, this.tint, x, y + fall, r * (1 + t * 2.6), 26, a * 0.9,
         { seed, color: grey ? SND.stoneGreyLit : SND.deep, size: 2.6 });
     });
@@ -1073,8 +1325,9 @@ export class SandFx extends FxBase {
     const seed = Math.random() * 999;
     this.anim(4, 420, (g, t) => {
       const a = 1 - t;
-      g.fillStyle(this.tint(grey ? SND.stoneGreyLit : SND.stoneWarmLit), a * 0.55);
-      g.strokeCircle(x, y + z * LIFT * (1 - t), r * (1 + t));
+      g.lineStyle(2, this.tint(grey ? SND.stoneGreyLit : SND.stoneWarmLit), a * 0.7);
+      const rr = r * (1 + t * 0.5);
+      g.strokeRect(x - rr, y + z * LIFT * (1 - t) - rr, rr * 2, rr * 2);
       grains(g, this.tint, x, y + z * LIFT * (1 - t) * 0.5, r * (1 + t * 1.8), 18, a * 0.8,
         { seed, color: SND.deep, size: 2.4 });
     });
@@ -1117,6 +1370,7 @@ const SAND_AVATAR: AvatarSpec = {
 export class SandAvatar extends BaseAvatar {
   /** Height above the floor, in the same units the kit's sim uses. */
   private elevation = 0;
+  private surface = 0;
   /** 0–1, non-zero while the golden orb's buff is up — lights the hat band. */
   private golden = 0;
   /** Kicks to 1 on a shot and decays; jolts the hat back off the aim. */
@@ -1130,6 +1384,12 @@ export class SandAvatar extends BaseAvatar {
   }
 
   setElevation(z: number): void { this.elevation = z; }
+  /**
+   * Height of whatever is directly underneath him — a slab, a deck, or 0 for the floor. The
+   * shadow falls onto *that*, not onto the floor a pillar is hiding: stood on a slab it sits at
+   * his feet, and mid-jump over one it is the spot he will land on.
+   */
+  setSurface(z: number): void { this.surface = z; }
   setGolden(on: boolean): void { this.golden = on ? 1 : 0; }
   setTempered(on: boolean): void { this.temperedWant = on ? 1 : 0; }
   fireRecoil(): void { this.recoil = 1; }
@@ -1183,8 +1443,9 @@ export class SandAvatar extends BaseAvatar {
    * rather than having to judge it.
    */
   protected drawGlow(g: Phaser.GameObjects.Graphics, x: number, y: number, a: number, alpha: number): void {
-    const drop = this.elevation * LIFT;
-    const k = Math.min(1, this.elevation / 190);
+    const gap = Math.max(0, this.elevation - this.surface);
+    const drop = gap * LIFT;
+    const k = Math.min(1, gap / 190);
 
     if (this.mastered) {
       g.fillStyle(this.tint(SND.gold), a * 0.16 * this.intensity);

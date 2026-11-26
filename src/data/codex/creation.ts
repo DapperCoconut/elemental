@@ -84,12 +84,12 @@ const creation: ElementCodex = {
         basics:
           'A dagger passing within 20px of a block splits it — top and bottom if the blade was travelling '
           + 'mostly horizontally, left and right otherwise — leaving a 6px kerf. Each half keeps the whole '
-          + 'original block\'s current HP, so cutting a 125 HP wall gives you two 125 HP walls. One dagger '
-          + 'can cut any number of different blocks but never the same block, or its own halves, twice.',
+          + 'original block\'s current HP, so cutting a 125 HP wall gives you two 125 HP walls. One throw '
+          + 'makes one cut: the first block any of its daggers reaches is split, and nothing else that fan crosses is.',
         effects: [
           { tag: 'utility', label: 'The cut', detail: 'A dagger within 20px of a block splits it top/bottom if it was travelling mostly horizontally, left/right otherwise, leaving a 6px kerf.', requiresUpgrade: 'click' },
           { tag: 'shield', label: 'Free health', detail: 'Each half keeps the whole original block\'s current HP. Cutting a 125 HP wall gives you two 125 HP walls.', requiresUpgrade: 'click' },
-          { tag: 'utility', label: 'One cut per block per blade', detail: 'A single dagger can cut any number of different blocks, but never the same block — or its own halves — twice.', requiresUpgrade: 'click' },
+          { tag: 'utility', label: 'One cut per throw', detail: 'A whole fan splits a single block — the first one any of its daggers reaches. The other daggers, and every other block in their path, cut nothing.', requiresUpgrade: 'click' },
         ],
       },
       notes: [

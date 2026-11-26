@@ -37,316 +37,316 @@ export const ELEMENT_PROFILES: Record<string, ElementProfile> = {
   },
   water: {
     archetype: 'All-Rounder',
-    blurb: 'Long slashes, slowing puddles and a speed pad. The clean place to learn the game from.',
+    blurb: 'All-rounder with reach, slows and speed — the clean place to learn the game.',
     complexity: 1,
   },
   life: {
     archetype: 'Gardener',
-    blurb: 'Plant a garden and fight from behind it. Your seeds take the hits so you never have to.',
+    blurb: 'Defensive summoner who fights from behind a garden that takes the hits for you.',
     complexity: 2,
   },
   air: {
     archetype: 'Assassin',
-    blurb: 'Hide in your own clouds to bank stealth, then spend it all on one stab. A timed combo and a spinning-top ultimate.',
+    blurb: 'Stealth assassin who hides, waits, and puts everything into one stab.',
     complexity: 3,
   },
   earth: {
     archetype: 'Worldshaper',
-    blurb: 'Charge the shield, launch the rocks, then carve the arena into four climates of your choosing.',
+    blurb: 'Sturdy zone mage who shields up and reshapes the arena to suit.',
     complexity: 3,
   },
 
   // ── Combined ────────────────────────────────────────────────────────
   oil: {
     archetype: 'Commander',
-    blurb: 'Steer a drone, drop shield generators, and end the round as a train. All setup, then all payoff.',
+    blurb: 'Setup commander who covers the field in drones and oil, then cashes it all in.',
     complexity: 3,
   },
   shadow: {
     archetype: 'Stalker',
-    blurb: 'Caltrops, tentacles, traps and a black hole, every one of them stacking Hopelessness on the same victim.',
+    blurb: 'Trap-laying stalker whose every hit stacks the same curse on one victim.',
     complexity: 2,
   },
   ice: {
     archetype: 'Controller',
-    blurb: 'Frost stacks that end in a full freeze. Turtle up, skate away, then lock them in place.',
+    blurb: 'Defensive controller who slows them by degrees until they freeze solid.',
     complexity: 2,
   },
   growth: {
     archetype: 'Spreader',
-    blurb: 'Infect them and let it do the work. Bacteria, viruses and spore walls that keep getting bigger.',
+    blurb: 'Damage-over-time spreader — infect them once and let it grow.',
     complexity: 3,
   },
   crystal: {
     archetype: 'Trickster',
-    blurb: 'Place crystals, bank your laser off them, and let two clones fire the same shot back.',
+    blurb: 'Trick-shot mage who banks lasers off crystals while clones copy the shot.',
     complexity: 3,
   },
   soul: {
     archetype: 'Necromancer',
-    blurb: 'Harvest corpses and raise them. An Amalgam holds the front while you keep well out of it.',
+    blurb: 'Backline necromancer who raises the dead to hold the front.',
     complexity: 3,
   },
   hunt: {
     archetype: 'Dual Form',
-    blurb: 'A hunter by choice and a beast by the clock. Two whole kits, and one of them takes the controls.',
+    blurb: 'Ranged hunter who turns into a melee beast on a timer, like it or not.',
     complexity: 4,
   },
   // The element id `sand` is Time; `dune` below is the actual sand element.
   sand: {
     archetype: 'Gunslinger',
-    blurb: 'Six chambered rounds, a lasso that drags them back through time, and a noon that stops it dead.',
+    blurb: 'Six-shot gunslinger with a habit of rewinding and stopping time.',
     complexity: 4,
   },
   gravity: {
     archetype: 'Siege',
-    blurb: 'Pull meteors out of the sky and slam them into the floor. Everything you throw lands late.',
+    blurb: 'Slow siege caster — huge hits that land late, so aim where they will be.',
     complexity: 3,
   },
   creation: {
     archetype: 'Artisan',
-    blurb: 'Fan daggers, wall the arena off, and turn the whole stage into your workshop for thirty seconds.',
+    blurb: 'Zoning artisan who walls the arena off and fights inside the workshop.',
     complexity: 4,
   },
 
   // ── Abstract ────────────────────────────────────────────────────────
   electricity: {
     archetype: 'Battery',
-    blurb: 'Hurt yourself to charge kinetic power, then spend the whole bar in one discharge.',
+    blurb: 'Risk-reward burst mage who hurts themselves to charge one huge discharge.',
     complexity: 3,
   },
   // `slime` is Venom (it was Acid) — the id kept the old name through both reworks.
   slime: {
     archetype: 'Plague Doctor',
-    blurb: 'A syringe gun and four poisons. Pick one, inject it, flood the floor with acid, and make every debuff outstay its welcome.',
+    blurb: 'Debuff specialist who picks a poison and makes it last far too long.',
     complexity: 4,
   },
   fate: {
     archetype: 'Gambler',
-    blurb: 'A three-card hand you never quite choose. Roll the die, curse the foe, and bet the hand.',
+    blurb: 'Luck-based gambler playing a hand of cards you never quite choose.',
     complexity: 3,
   },
   sound: {
     archetype: 'Drum Major',
-    blurb: 'Keep time to spin the baton, slam them out of tune, and close on a bugle solo.',
+    blurb: 'Rhythm fighter who hits harder the better you keep time.',
     complexity: 4,
   },
   light: {
     archetype: 'Racer',
-    blurb: 'Car mode. Steer, drift, take the ramps, and spear whatever is left on the racing line.',
+    blurb: 'High-speed racer who drives instead of walks and rams whatever is in the way.',
     complexity: 4,
   },
 
   // ── Abstract combined ───────────────────────────────────────────────
   magnet: {
     archetype: 'Scrapper',
-    blurb: 'Flip coins, nail them, drop spikes — then Repulse it all at once. Ends in a mech.',
+    blurb: 'Setup scrapper who litters the floor with metal, then launches it all at once.',
     complexity: 4,
   },
   metal: {
     archetype: 'Bleeder',
-    blurb: 'Blood is your ammunition and your health bar at once. Bleed them, then bleed yourself.',
+    blurb: 'Blood-fuelled bruiser whose health bar is also the ammunition.',
     complexity: 3,
   },
   plasma: {
     archetype: 'Wildcard',
-    blurb: 'Chaos with no favourites — every blade and every zone you make can kill you too.',
+    blurb: 'Chaotic wildcard — everything you make can kill you too.',
     complexity: 4,
   },
   gunpowder: {
     archetype: 'Arsenal',
-    blurb: 'An armoury that grows all match. Fire everything at once and get blown backwards doing it.',
+    blurb: 'Scaling gunner with an arsenal that grows all match, and the recoil to match.',
     complexity: 3,
   },
   echo: {
     archetype: 'Sonar',
-    blurb: 'Fight half blind. Bounce sound off the walls, guess where they are, and read what comes back.',
+    blurb: 'Half-blind tracker who finds the enemy by sound.',
     complexity: 4,
   },
   rubber: {
     archetype: 'Bouncer',
-    blurb: 'Sling yourself off the walls, reflect their shots home, and snap back on the band.',
+    blurb: 'Wall-bouncing skirmisher who reflects shots and never stops moving.',
     complexity: 3,
   },
   magic: {
     archetype: 'Scholar',
-    blurb: 'Type sums to stack pillars, rewrite a graph the size of the arena, then set them an exam.',
+    blurb: 'Brainy caster who fights with typed sums and graphs. Bring your arithmetic.',
     complexity: 5,
   },
   technology: {
     archetype: 'Saboteur',
-    blurb: 'Popups, uploads and a drag cursor — you fight their screen as much as their body.',
+    blurb: 'Disruptive saboteur who attacks the enemy’s screen as much as their body.',
     complexity: 4,
   },
   silence: {
     archetype: 'Slasher',
-    blurb: 'Phobias fill the enemy with fear; you drink it, then become the thing they were afraid of.',
+    blurb: 'Horror slasher who feeds on the enemy’s fear, then becomes it.',
     complexity: 5,
   },
   subterfuge: {
     archetype: 'Thief',
-    blurb: 'Recalled daggers, bought loyalty, and a stolen ultimate. You fight with their kit, not yours.',
+    blurb: 'Crooked boss who buys a crew with dirty money and steals the enemy’s ultimate.',
     complexity: 4,
   },
 
   // ── Divine ──────────────────────────────────────────────────────────
   justice: {
     archetype: 'Magistrate',
-    blurb: 'Two full trays — grounded and airborne — and one Willpower bar paying for both of them.',
+    blurb: 'Stance fighter with a ground kit and an air kit sharing one Willpower bar.',
     complexity: 5,
   },
   dream: {
     archetype: 'Sandman',
-    blurb: 'Two kicking little guns and a pillow. Put them to sleep, then step into their dream.',
+    blurb: 'Twin-pistol skirmisher who puts the enemy to sleep and fights in their dream.',
     complexity: 4,
   },
 
   // ── Finale ──────────────────────────────────────────────────────────
   quantum: {
     archetype: 'Entangled',
-    blurb: 'Five keys borrowed from five elements — any you have entangled — on one body.',
+    blurb: 'Mix-and-match hybrid built from five abilities of five other elements.',
     complexity: 5,
   },
 
   // ── Unstable ────────────────────────────────────────────────────────
   radiation: {
     archetype: 'Sniper',
-    blurb: 'Tag a body three times for a railgun, hold a closing sight on them, and duck into lead.',
+    blurb: 'Patient sniper who marks a target and waits for the one big shot.',
     complexity: 4,
   },
   depths: {
     archetype: 'Angler',
-    blurb: 'Piranhas, algae blooms and a shark. Stand still long enough and the sea hands you a weapon.',
+    blurb: 'Patient summoner — hold your ground and the sea hands you weapons.',
     complexity: 4,
   },
   psychic: {
     archetype: 'Grandmaster',
-    blurb: 'Stand chess pieces whose auras armour, hasten and empower you, then slide them through foes. You see their moves two seconds early.',
+    blurb: 'Positional strategist who buffs up with chess pieces and sees attacks early.',
     complexity: 5,
   },
   ruin: {
     archetype: 'Disabler',
-    blurb: 'Rust their kit shut. Locks, rot and skewers that take abilities off the board for good.',
+    blurb: 'Lockdown disabler who takes the enemy’s abilities away one by one.',
     complexity: 4,
   },
   tempest: {
     archetype: 'Storm Acrobat',
-    blurb: 'A knockback brawler that can leave the floor. Ride the currents, slam your own fronts, and make every wall a weapon.',
+    blurb: 'Airborne knockback brawler who throws the enemy into walls.',
     complexity: 5,
   },
   myth: {
     archetype: 'Legend',
-    blurb: 'The crowd pays in Echo Shards for a good show; every ability has a second act that costs one. The ultimate is a first-person shootout.',
+    blurb: 'Showman who wins over the crowd and spends its favour on bigger second acts.',
     complexity: 5,
   },
   marrow: {
     archetype: 'Immune System',
-    blurb: 'An immune response as a weapon — antibodies, white cells, and a bone bar paying for all of it.',
+    blurb: 'Resource-managing summoner whose immune system does the fighting.',
     complexity: 4,
   },
   cloth: {
     archetype: 'Tailor',
-    blurb: 'No legs — a scarf with a hand on the end hauls you around, throws needles, punches pincushions and sets it all on fire.',
+    blurb: 'Legless grappler who hauls around on a scarf and fights with needles.',
     complexity: 5,
   },
   magma: {
     archetype: 'Buccaneer',
-    blurb: 'Feed the volcano with your own attacks, fire the blunderbuss and ride the recoil, and let the cursed pendant raise your ship.',
+    blurb: 'Hard-drinking pirate gunner who puts off the damage taken and pays for it later.',
     complexity: 4,
   },
   chalk: {
     archetype: 'Painter',
-    blurb: 'Paint your own projectile, paint the enemy into a picture, and paint the floor with fuses, walls and a Masterpiece.',
+    blurb: 'Draw-it-yourself artist — you paint your attacks with the mouse.',
     complexity: 5,
   },
   wax: {
     archetype: 'Apiarist',
-    blurb: 'Fence with a wax foil, loose the swarm, and feed every bee you fire into a hive that pays it back fivefold.',
+    blurb: 'Fencing beekeeper who builds a hive that pays every bee back with interest.',
     complexity: 4,
   },
   clay: {
     archetype: 'Shaper',
-    blurb: 'Fight through an immortal golem on your cursor, sculpt a shield by hand, run the walls, then fuse into eight layers of clay.',
+    blurb: 'Puppeteer who fights through an unkillable golem on the cursor.',
     complexity: 5,
   },
   paper: {
     archetype: 'Storyteller',
-    blurb: 'Three storybooks, one open at a time, and a journal that remembers what happened last run.',
+    blurb: 'Stance-swapping storyteller with three spellbooks, one open at a time.',
     complexity: 4,
   },
   bind: {
     archetype: 'Soul Binder',
-    blurb: 'Born cursed. Chain the lost souls only you can see, drink them dry, and pay the god in what is left.',
+    blurb: 'Cursed drain-tank who feeds on lost souls only they can see.',
     complexity: 4,
   },
   // `dune` is Sand; `sand` above is Time.
   dune: {
     archetype: 'Terraformer',
-    blurb: 'The floor is a live sand simulation. Bury them, walk beneath it, then glass the whole arena.',
+    blurb: 'Terrain controller on a live sand floor — bury them or walk beneath it.',
     complexity: 4,
   },
 
   // ── The Vault ───────────────────────────────────────────────────────
   illusion: {
     archetype: 'Phantom',
-    blurb: 'Nothing is where it looks. Veils bend their shots and fill the air with fake ones of yours, and you blink between corners.',
+    blurb: 'Evasive trickster who fills the air with fakes and is never where they look.',
     complexity: 3,
   },
   conquest: {
     archetype: 'Standard-Bearer',
-    blurb: 'Rile knights out of the floor and drag them where you want them, make the enemy cry, and charge past your own army to send it ecstatic.',
+    blurb: 'Army commander who raises knights and wins by playing on everyone’s feelings.',
     complexity: 3,
   },
   passion: {
     archetype: 'Priest',
-    blurb: 'Deals no damage at all. Fill them with 200 faith and they are converted on the spot.',
+    blurb: 'Pacifist priest who deals no damage — fill them with faith and they convert.',
     complexity: 3,
   },
   death: {
     archetype: 'Duellist',
-    blurb: 'Disarm, riposte, amputate. A fencer’s kit built entirely out of their mistakes.',
+    blurb: 'Counter-fencer who wins entirely off the enemy’s mistakes.',
     complexity: 4,
   },
   // `fortune` is Gold — the alchemist replaced the shopkeeper and kept the id.
   fortune: {
     archetype: 'Alchemist',
-    blurb: 'Turn grass, blood and floor into gold, then spend it ten at a time on making yourself stronger.',
+    blurb: 'Economy scaler who turns the arena into gold and buys their own power.',
     complexity: 4,
   },
   // `gum` is Savor — Acid/Venom holds the `slime` id.
   gum: {
     archetype: 'Shapeshifter',
-    blurb: 'Dodge to flip between Sugar and Salt. Eat candies for permanent buffs, lend them out, then salt the wound.',
+    blurb: 'Two-form shapeshifter who flips between Sugar and Salt and snacks on buffs.',
     complexity: 5,
   },
   gluttony: {
     archetype: 'Juggernaut',
-    blurb: 'Stack sap on top of your health, step between the watching birches, and scythe down anyone you outlast.',
+    blurb: 'Slow juggernaut who stacks extra health and outlasts everyone.',
     complexity: 4,
   },
   ink: {
     archetype: 'Trickster',
-    blurb: 'Spam finger guns, leave banana peels everywhere, and drop a six-ton anvil on whoever slips.',
+    blurb: 'Slapstick prankster with finger guns, banana peels and a falling anvil.',
     complexity: 3,
   },
   pressure: {
     archetype: 'Charger',
-    blurb: 'Hold every key to build pressure, let go to spend it. Slam them into the floor, then wind up the punch they cannot walk away from.',
+    blurb: 'Charge fighter — hold keys to build pressure, release to spend it.',
     complexity: 3,
   },
   memory: {
     archetype: 'Haunter',
-    blurb: 'Every hit makes them guiltier. Latch shards to fill their screen with static, snatch back their idle cooldowns, and make them relive the worst three seconds of the match.',
+    blurb: 'Psychological haunter who piles on guilt and steals the enemy’s cooldowns.',
     complexity: 4,
   },
   string: {
     archetype: 'Weaver',
-    blurb: 'Hook them and the walls with strings that bite back when they snap. Set spiders walking the web, steer them with the arrow keys, then wrap them in silk in the middle of the arena.',
+    blurb: 'Web-building trapper who strings up the arena and sends spiders along it.',
     complexity: 4,
   },
   astra: {
     archetype: 'Ascendant',
-    blurb: 'Fire level, flare in a plus and an X, smite whoever stands highest — then survive the Star Trial and aim everything.',
+    blurb: 'Growing giant who gathers mass until they become a black hole.',
     complexity: 5,
   },
 };
@@ -360,7 +360,7 @@ export const ELEMENT_PROFILES: Record<string, ElementProfile> = {
 export function getElementProfile(id: string): ElementProfile {
   return ELEMENT_PROFILES[id] ?? {
     archetype: 'Unknown',
-    blurb: 'No dossier on file. Whatever this is, the codex has not caught up with it yet.',
+    blurb: 'Growing giant who gathers mass until they become a black hole.',
     complexity: 3,
   };
 }

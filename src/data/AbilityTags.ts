@@ -25,6 +25,9 @@ export const ABILITY_TAGS: Record<string, readonly AbilityTag[]> = {
   // Air: hold the click for the barrage; F is pressed again on each ring
   'pierce-the-skies': ['hold'],
   'air-combo': ['recast'],
+  // Astra: hold the click to keep firing; F again on a caught comet swings it, held, and release throws it
+  'astra-antimatter': ['hold'],
+  'astra-comet': ['hold', 'recast'],
   // Water
   'pressure-dagger': ['hold'],
   // Earth
@@ -91,7 +94,7 @@ export const ABILITY_TAGS: Record<string, readonly AbilityTag[]> = {
   'echo-lantern': ['recast'],
   // Subterfuge
   'sub-spray': ['hold'],
-  'sub-recruit': ['hold'],
+  hijack: ['hold', 'recast'],
   // Quantum
   'quantum-splicers': ['hold'],
   // Justice
@@ -104,8 +107,6 @@ export const ABILITY_TAGS: Record<string, readonly AbilityTag[]> = {
   'paint-splotch': ['rmb'],
   'paint-still-life': ['rmb'],
   'paint-masterpiece': ['rmb'],
-  // Magma
-  'magma-mutiny': ['recast'],
   // Wax
   'wax-hive-hearth': ['recast'],
   'wax-sticky-bombs': ['recast'],

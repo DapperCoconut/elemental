@@ -18,7 +18,7 @@ export interface OnlineArenaApi {
   playerStealth(): number;
   /** Silence: apply the remote silence player's stealth meter to the local replica sim. */
   setRemoteStealth(value: number): void;
-  /** Technology: remote tech event to replay on the local sim (steer already un-mirrored). */
+  /** Technology: remote tech event to replay on the local sim (positions already un-mirrored). */
   onTechMsg(msg: NetTechMsg): void;
   /** Silence upgrades: remote silence event (positions already un-mirrored). */
   onSilenceMsg(msg: NetSilenceMsg): void;
@@ -451,9 +451,11 @@ export class OnlineKit {
         this.api.endOnlineMatch(true);
         break;
       case 'tech':
-        // Positions are mirrored horizontally, so remote left/right steering flips.
-        if (msg.k === 'steer' && (msg.d === 'left' || msg.d === 'right')) {
-          this.api.onTechMsg({ t: 'tech', k: 'steer', d: msg.d === 'left' ? 'right' : 'left' });
+        // Positions are mirrored horizontally like every other coordinate.
+        if (msg.k === 'mv') {
+          this.api.onTechMsg({ ...msg, x: this.mirrorX(msg.x) });
+        } else if (msg.k === 'ads') {
+          this.api.onTechMsg({ ...msg, p: msg.p.map((v, i) => (i % 2 === 0 ? this.mirrorX(v) : v)) });
         } else {
           this.api.onTechMsg(msg);
         }

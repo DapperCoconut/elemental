@@ -54,6 +54,26 @@ export const TECH = {
 
 export interface Pt { x: number; y: number }
 
+/**
+ * The adverts a popup can be running. Each is a real-looking window: a light page, a coloured
+ * title bar, a picture, two lines of copy and one very clickable button.
+ */
+export interface AdVariant {
+  head: string; sub: string; btn: string;
+  /** Page, title bar and button colours; `ink` is the copy colour as a CSS string. */
+  page: number; bar: number; button: number; ink: string;
+  icon: 'prize' | 'warning' | 'ram' | 'tag' | 'play' | 'update';
+}
+
+export const AD_VARIANTS: AdVariant[] = [
+  { head: 'CONGRATULATIONS!', sub: 'You are visitor #1,000,000', btn: 'CLAIM PRIZE', page: 0xfff6c8, bar: 0xcc2222, button: 0x22aa44, ink: '#aa1111', icon: 'prize' },
+  { head: 'VIRUS DETECTED', sub: '37 threats on this PC', btn: 'SCAN NOW', page: 0xf2f2f2, bar: 0x1f3f9a, button: 0xcc2222, ink: '#aa1111', icon: 'warning' },
+  { head: 'FREE RAM', sub: 'Download 64GB today!', btn: 'DOWNLOAD', page: 0xe6ffe9, bar: 0x1c7a3a, button: 0x1c7a3a, ink: '#0d4a22', icon: 'ram' },
+  { head: 'HOT DEALS', sub: '90% OFF everything!!', btn: 'BUY NOW', page: 0xfff0e0, bar: 0xe06a10, button: 0xe02a10, ink: '#7a2a00', icon: 'tag' },
+  { head: 'You won\'t BELIEVE', sub: 'this one weird trick', btn: 'CLICK HERE', page: 0xf3e8ff, bar: 0x6a2aa8, button: 0x2266dd, ink: '#3a1466', icon: 'play' },
+  { head: 'Update required', sub: 'Your player is out of date', btn: 'INSTALL', page: 0xd8d8d8, bar: 0x000080, button: 0x555555, ink: '#111111', icon: 'update' },
+];
+
 // ── Path helpers ──────────────────────────────────────────────────────────
 
 function fillPts(g: Phaser.GameObjects.Graphics, pts: Pt[]): void {
@@ -595,35 +615,341 @@ export class TechnologyFx extends FxBase {
     cruncherHead(g, tint, x, y, angle, 11, chomp, color, alpha);
   }
 
-  /** One popup, fading out over its last moments. */
+  /**
+   * One popup, drawn as a real advert window: drop shadow, grey frame, coloured title bar with a
+   * square close box, a light page, a picture down the left and a fat button along the bottom.
+   * Returns where the caller's two pieces of text belong.
+   */
   static drawAd(
     g: Phaser.GameObjects.Graphics, tint: TechColorFn,
-    x: number, y: number, w: number, h: number, t: number, alpha: number, mine: boolean,
-  ): void {
-    // Yours is a translucent overlay you can see past; theirs is opaque and in the way.
-    windowPane(g, tint, x, y, w, h, t, alpha, {
-      body: mine ? TECH.board : TECH.adBlue,
-      bar: mine ? TECH.steel : TECH.slate,
-      accent: TECH.white,
-      lines: 2,
-    });
-    // The ad itself: a blaring cone and a couple of impact lines.
-    const cx = x, cy = y + h * 0.06;
-    const pulse = 1 + 0.08 * Math.sin(t * 9);
-    g.fillStyle(tint(TECH.amber), alpha);
-    fillPts(g, [
-      { x: cx - w * 0.16, y: cy - h * 0.1 }, { x: cx - w * 0.16, y: cy + h * 0.1 },
-      { x: cx + w * 0.2 * pulse, y: cy + h * 0.22 * pulse }, { x: cx + w * 0.2 * pulse, y: cy - h * 0.22 * pulse },
-    ]);
-    g.fillStyle(tint(TECH.gold), alpha);
-    g.fillRect(cx - w * 0.24, cy - h * 0.07, w * 0.09, h * 0.14);
-    g.lineStyle(2, tint(TECH.white), alpha * 0.8);
-    for (let i = 1; i <= 2; i++) {
-      const r = w * (0.24 + i * 0.06) * pulse;
-      g.beginPath();
-      g.arc(cx + w * 0.2, cy, r, -0.7, 0.7);
-      g.strokePath();
+    x: number, y: number, w: number, h: number, t: number, alpha: number, mine: boolean, variant: number,
+  ): { headX: number; headY: number; btnX: number; btnY: number } {
+    const v = AD_VARIANTS[variant % AD_VARIANTS.length];
+    const k = w / 138;
+    const x0 = x - w / 2, y0 = y - h / 2;
+    const barH = 14 * k;
+
+    g.fillStyle(tint(TECH.night), alpha * 0.4);
+    g.fillRect(x0 + 4 * k, y0 + 5 * k, w, h);
+    // frame + page
+    g.fillStyle(tint(0xc0c0c0), alpha);
+    g.fillRect(x0, y0, w, h);
+    g.fillStyle(tint(v.page), alpha);
+    g.fillRect(x0 + 2 * k, y0 + barH + 1 * k, w - 4 * k, h - barH - 3 * k);
+    // title bar, two-tone like every toolkit of the era
+    g.fillStyle(tint(v.bar), alpha);
+    g.fillRect(x0 + 2 * k, y0 + 2 * k, w - 4 * k, barH - 2 * k);
+    g.fillStyle(tint(TECH.white), alpha * 0.22);
+    g.fillRect(x0 + 2 * k, y0 + 2 * k, w - 4 * k, (barH - 2 * k) / 2);
+    // title text suggested by bars; a favicon dot before it
+    g.fillStyle(tint(TECH.white), alpha * 0.9);
+    g.fillCircle(x0 + 8 * k, y0 + barH / 2 + 1 * k, 2.6 * k);
+    g.fillRect(x0 + 14 * k, y0 + barH / 2 - 0.5 * k, 34 * k, 2.6 * k);
+    g.fillStyle(tint(TECH.white), alpha * 0.5);
+    g.fillRect(x0 + 51 * k, y0 + barH / 2 - 0.5 * k, 16 * k, 2.6 * k);
+    // min / max / close, square and raised
+    for (let i = 0; i < 3; i++) {
+      const bx = x0 + w - (13 + i * 12) * k, by = y0 + 3.5 * k, bs = 9 * k;
+      g.fillStyle(tint(i === 0 ? 0xdd3333 : 0xc0c0c0), alpha);
+      g.fillRect(bx, by, bs, bs);
+      g.fillStyle(tint(TECH.white), alpha * 0.55);
+      g.fillRect(bx, by, bs, 1.2 * k);
+      g.lineStyle(1.2 * k, tint(i === 0 ? TECH.white : TECH.night), alpha);
+      if (i === 0) {
+        g.lineBetween(bx + 2.2 * k, by + 2.2 * k, bx + bs - 2.2 * k, by + bs - 2.2 * k);
+        g.lineBetween(bx + bs - 2.2 * k, by + 2.2 * k, bx + 2.2 * k, by + bs - 2.2 * k);
+      } else if (i === 1) {
+        g.strokeRect(bx + 2.2 * k, by + 2.2 * k, bs - 4.4 * k, bs - 4.4 * k);
+      } else {
+        g.lineBetween(bx + 2.2 * k, by + bs - 2.6 * k, bx + bs - 2.2 * k, by + bs - 2.6 * k);
+      }
     }
+    // raised outer bevel
+    g.lineStyle(1.2 * k, tint(TECH.white), alpha * 0.9);
+    strokePts(g, [{ x: x0, y: y0 + h }, { x: x0, y: y0 }, { x: x0 + w, y: y0 }]);
+    g.lineStyle(1.2 * k, tint(0x555555), alpha * 0.9);
+    strokePts(g, [{ x: x0 + w, y: y0 }, { x: x0 + w, y: y0 + h }, { x: x0, y: y0 + h }]);
+    if (mine) {
+      // Yours carries a mint rim so you can tell cover from clutter at a glance.
+      g.lineStyle(1.6 * k, tint(TECH.mint), alpha * (0.7 + 0.3 * Math.sin(t * 5)));
+      g.strokeRect(x0 - 1.5 * k, y0 - 1.5 * k, w + 3 * k, h + 3 * k);
+    }
+
+    // the picture
+    const ix = x0 + 24 * k, iy = y0 + barH + 26 * k;
+    const beat = 1 + 0.07 * Math.sin(t * 8 + variant);
+    switch (v.icon) {
+      case 'prize': {
+        // a starburst rosette
+        const pts: Pt[] = [];
+        for (let i = 0; i < 20; i++) {
+          const a = (i / 20) * TAU + t * 0.8, r = (i % 2 ? 9 : 15) * k * beat;
+          pts.push({ x: ix + Math.cos(a) * r, y: iy + Math.sin(a) * r });
+        }
+        g.fillStyle(tint(0xffcc00), alpha);
+        fillPts(g, pts);
+        g.fillStyle(tint(0xcc2222), alpha);
+        g.fillCircle(ix, iy, 6.5 * k);
+        g.fillStyle(tint(TECH.white), alpha);
+        g.fillRect(ix - 1.2 * k, iy - 4 * k, 2.4 * k, 8 * k);
+        break;
+      }
+      case 'warning':
+        g.fillStyle(tint(0xffcc00), alpha);
+        g.fillTriangle(ix, iy - 14 * k * beat, ix - 15 * k * beat, iy + 11 * k, ix + 15 * k * beat, iy + 11 * k);
+        g.lineStyle(1.4 * k, tint(TECH.night), alpha);
+        g.strokeTriangle(ix, iy - 14 * k * beat, ix - 15 * k * beat, iy + 11 * k, ix + 15 * k * beat, iy + 11 * k);
+        g.fillStyle(tint(TECH.night), alpha);
+        g.fillRect(ix - 1.6 * k, iy - 6 * k, 3.2 * k, 9 * k);
+        g.fillRect(ix - 1.6 * k, iy + 5 * k, 3.2 * k, 3.2 * k);
+        break;
+      case 'ram':
+        g.fillStyle(tint(0x1c7a3a), alpha);
+        g.fillRect(ix - 16 * k, iy - 7 * k, 32 * k, 14 * k);
+        g.fillStyle(tint(TECH.night), alpha);
+        for (let i = 0; i < 4; i++) g.fillRect(ix - 13.5 * k + i * 7.4 * k, iy - 4.5 * k, 5 * k, 7 * k);
+        g.fillStyle(tint(0xffcc00), alpha);
+        for (let i = 0; i < 10; i++) g.fillRect(ix - 15 * k + i * 3.1 * k, iy + 7 * k, 1.8 * k, 3.4 * k);
+        g.fillStyle(tint(TECH.white), alpha * (0.5 + 0.5 * Math.sin(t * 9)));
+        g.fillRect(ix - 13.5 * k, iy - 4.5 * k, 5 * k, 1.4 * k);
+        break;
+      case 'tag': {
+        const f = frame(ix, iy, -0.5 + 0.12 * Math.sin(t * 4));
+        g.fillStyle(tint(0xe02a10), alpha);
+        fillPts(g, [f(-15 * k, 0), f(-6 * k, -9 * k), f(15 * k, -9 * k), f(15 * k, 9 * k), f(-6 * k, 9 * k)]);
+        g.fillStyle(tint(v.page), alpha);
+        const hole = f(-8 * k, 0);
+        g.fillCircle(hole.x, hole.y, 2.4 * k);
+        g.lineStyle(2 * k, tint(TECH.white), alpha);
+        const a1 = f(0, 5 * k), a2 = f(10 * k, -5 * k);
+        g.lineBetween(a1.x, a1.y, a2.x, a2.y);
+        const d1 = f(1.5 * k, -4 * k), d2 = f(9 * k, 4 * k);
+        g.fillStyle(tint(TECH.white), alpha);
+        g.fillCircle(d1.x, d1.y, 2 * k);
+        g.fillCircle(d2.x, d2.y, 2 * k);
+        break;
+      }
+      case 'play':
+        g.fillStyle(tint(TECH.night), alpha);
+        g.fillRect(ix - 16 * k, iy - 11 * k, 32 * k, 22 * k);
+        g.fillStyle(tint(0x6a2aa8), alpha * 0.8);
+        g.fillRect(ix - 14 * k, iy - 9 * k, 28 * k, 18 * k);
+        g.fillStyle(tint(TECH.white), alpha);
+        g.fillTriangle(ix - 5 * k * beat, iy - 6 * k * beat, ix - 5 * k * beat, iy + 6 * k * beat, ix + 7 * k * beat, iy);
+        g.fillStyle(tint(0xdd3333), alpha);
+        g.fillRect(ix - 14 * k, iy + 7 * k, 28 * k * ((t * 0.3) % 1), 2 * k);
+        break;
+      case 'update': {
+        g.lineStyle(3 * k, tint(0x000080), alpha);
+        g.beginPath();
+        g.arc(ix, iy, 10 * k, t * 3, t * 3 + 4.4, false);
+        g.strokePath();
+        const tip = { x: ix + Math.cos(t * 3 + 4.4) * 10 * k, y: iy + Math.sin(t * 3 + 4.4) * 10 * k };
+        g.fillStyle(tint(0x000080), alpha);
+        g.fillCircle(tip.x, tip.y, 3.4 * k);
+        g.fillRect(ix - 1.4 * k, iy - 5 * k, 2.8 * k, 6 * k);
+        g.fillTriangle(ix - 4.5 * k, iy + 1 * k, ix + 4.5 * k, iy + 1 * k, ix, iy + 6 * k);
+        break;
+      }
+    }
+
+    // the button: raised, glossy, and pulsing just enough to be annoying
+    const bw = 78 * k, bh = 17 * k;
+    const bcx = x, bcy = y0 + h - 14 * k;
+    g.fillStyle(tint(TECH.night), alpha * 0.35);
+    g.fillRoundedRect(bcx - bw / 2 + 1 * k, bcy - bh / 2 + 2 * k, bw, bh, 3 * k);
+    g.fillStyle(tint(v.button), alpha);
+    g.fillRoundedRect(bcx - bw / 2, bcy - bh / 2, bw, bh, 3 * k);
+    g.fillStyle(tint(TECH.white), alpha * (0.22 + 0.14 * Math.sin(t * 6 + variant)));
+    g.fillRoundedRect(bcx - bw / 2 + 1.5 * k, bcy - bh / 2 + 1.5 * k, bw - 3 * k, bh / 2 - 1 * k, 2 * k);
+    g.lineStyle(1 * k, tint(TECH.white), alpha * 0.8);
+    g.strokeRoundedRect(bcx - bw / 2, bcy - bh / 2, bw, bh, 3 * k);
+
+    return { headX: x + 20 * k, headY: y0 + barH + 25 * k, btnX: bcx, btnY: bcy };
+  }
+
+  /**
+   * A virus critter: a fat abdomen, a thorax, a head with two feelers and six legs that work in
+   * alternating tripods as it runs. Green while it incubates, bloodshot once it is feeding. The
+   * Ransomware bug is the same animal in red, half as big again, with a padlock on its back.
+   */
+  static drawBug(
+    g: Phaser.GameObjects.Graphics, tint: TechColorFn,
+    x: number, y: number, heading: number, t: number, s: number,
+    ransom: boolean, hungry: boolean, moving: boolean, cracked: boolean,
+  ): void {
+    const f = frame(x, y, heading);
+    const shell = ransom ? 0xcc1122 : hungry ? 0x99cc22 : TECH.plague;
+    const dark = ransom ? 0x550a12 : 0x2a5510;
+    const gait = moving ? Math.sin(t * (ransom ? 34 : 24)) : 0;
+
+    // shadow, so it sits ON the screen rather than in it
+    g.fillStyle(tint(TECH.night), 0.4);
+    g.fillEllipse(x + 1.5 * s, y + 2.5 * s, 22 * s, 14 * s);
+
+    // legs: three a side, each a two-bone hook; opposite tripods swing in opposite phase
+    g.lineStyle(1.6 * s, tint(dark), 1);
+    for (let i = 0; i < 3; i++) {
+      for (const side of [-1, 1]) {
+        const swing = gait * ((i + (side > 0 ? 1 : 0)) % 2 === 0 ? 1 : -1) * 2.6 * s;
+        const hip = f((3 - i * 4.2) * s, side * 3.6 * s);
+        const knee = f((4.5 - i * 4.6) * s + swing * 0.5, side * 8.5 * s);
+        const foot = f((6 - i * 5.6) * s + swing, side * 12.5 * s);
+        strokePts(g, [hip, knee, foot]);
+      }
+    }
+    // feelers
+    g.lineStyle(1.2 * s, tint(dark), 1);
+    for (const side of [-1, 1]) {
+      const wag = Math.sin(t * 9 + side) * 1.6 * s;
+      strokePts(g, [f(8.5 * s, side * 1.6 * s), f(12 * s, side * 3.6 * s + wag), f(14.5 * s, side * 2.6 * s + wag)]);
+    }
+    // abdomen, thorax, head
+    const ab = f(-5 * s, 0), th = f(2.4 * s, 0), hd = f(7.6 * s, 0);
+    g.fillStyle(tint(dark), 1);
+    g.fillCircle(ab.x, ab.y, 7.4 * s);
+    g.fillStyle(tint(shell), 1);
+    g.fillCircle(ab.x, ab.y, 6.2 * s);
+    g.fillCircle(th.x, th.y, 4.6 * s);
+    g.fillStyle(tint(dark), 1);
+    g.fillCircle(hd.x, hd.y, 3.4 * s);
+    // the wing-case seam and two bands across the abdomen
+    g.lineStyle(1.1 * s, tint(dark), 0.9);
+    const s1 = f(-11 * s, 0), s2 = f(-1 * s, 0);
+    g.lineBetween(s1.x, s1.y, s2.x, s2.y);
+    for (const bx of [-7.4, -3.6]) {
+      const b1 = f(bx * s, -4.6 * s), b2 = f(bx * s, 4.6 * s);
+      g.lineBetween(b1.x, b1.y, b2.x, b2.y);
+    }
+    // gloss
+    const gl = f(-6.5 * s, -2.6 * s);
+    g.fillStyle(tint(TECH.white), 0.4);
+    g.fillCircle(gl.x, gl.y, 1.8 * s);
+    // eyes: lit, and red once it is eating you
+    for (const side of [-1, 1]) {
+      const e = f(8.6 * s, side * 1.7 * s);
+      g.fillStyle(tint(hungry || ransom ? TECH.alert : TECH.amber), 1);
+      g.fillCircle(e.x, e.y, 1.25 * s);
+    }
+    if (hungry) {
+      g.lineStyle(1.4 * s, tint(TECH.alert), 0.35 + 0.35 * Math.sin(t * 10));
+      g.strokeCircle(x, y, 13 * s);
+    }
+    if (ransom) {
+      // the padlock on its back
+      const lk = f(-5 * s, 0);
+      g.lineStyle(1.6 * s, tint(TECH.amber), 1);
+      g.beginPath();
+      g.arc(lk.x, lk.y - 2.2 * s, 2.6 * s, Math.PI, 0, false);
+      g.strokePath();
+      g.fillStyle(tint(TECH.amber), 1);
+      g.fillRect(lk.x - 3.6 * s, lk.y - 2.2 * s, 7.2 * s, 5.6 * s);
+      g.fillStyle(tint(TECH.night), 1);
+      g.fillCircle(lk.x, lk.y + 0.4 * s, 1.1 * s);
+      g.lineStyle(1.6 * s, tint(TECH.alert), 0.5 + 0.4 * Math.sin(t * 8));
+      g.strokeCircle(x, y, 15 * s);
+      if (cracked) {
+        // one click in: the shell is split
+        g.lineStyle(1.4 * s, tint(TECH.white), 0.95);
+        strokePts(g, [f(-11 * s, -4 * s), f(-7 * s, -1 * s), f(-9 * s, 2 * s), f(-3 * s, 5 * s)]);
+      }
+    }
+  }
+
+  /**
+   * The Zip Bomb: a document icon with a folded corner and a zipper running down its middle,
+   * bulging at the seams — forty-two kilobytes with four petabytes inside.
+   */
+  static drawZip(
+    g: Phaser.GameObjects.Graphics, tint: TechColorFn,
+    x: number, y: number, t: number, alpha: number, s: number, torn: boolean,
+  ): void {
+    const bulge = 1 + 0.06 * Math.sin(t * 7);
+    const w = 28 * s * bulge, h = 36 * s;
+    const jx = torn ? Math.sin(t * 90) * 3 : 0;
+    const x0 = x - w / 2 + jx, y0 = y - h / 2;
+    const fold = 8 * s;
+    const page: Pt[] = [
+      { x: x0, y: y0 }, { x: x0 + w - fold, y: y0 }, { x: x0 + w, y: y0 + fold },
+      { x: x0 + w, y: y0 + h }, { x: x0, y: y0 + h },
+    ];
+    g.fillStyle(tint(TECH.night), alpha * 0.45);
+    fillPts(g, page.map((p) => ({ x: p.x + 2 * s, y: p.y + 3 * s })));
+    g.fillStyle(tint(0xf2e2a0), alpha);
+    fillPts(g, page);
+    g.fillStyle(tint(0xc8a850), alpha);
+    fillPts(g, [{ x: x0 + w - fold, y: y0 }, { x: x0 + w, y: y0 + fold }, { x: x0 + w - fold, y: y0 + fold }]);
+    g.lineStyle(1.6 * s, tint(0x7a5a10), alpha);
+    strokePts(g, page, true);
+    // the zipper: teeth alternating down the centre line, a pull tab riding it
+    const zx = x + jx;
+    g.fillStyle(tint(0x555555), alpha);
+    g.fillRect(zx - 1 * s, y0 + 2 * s, 2 * s, h - 12 * s);
+    for (let i = 0; i < 7; i++) {
+      g.fillStyle(tint(i % 2 ? 0x888888 : 0x333333), alpha);
+      g.fillRect(zx + (i % 2 ? 0 : -3.2 * s), y0 + (3 + i * 3.2) * s, 3.2 * s, 2.2 * s);
+    }
+    const pull = y0 + (6 + 9 * (0.5 + 0.5 * Math.sin(t * 2.4))) * s;
+    g.fillStyle(tint(TECH.amber), alpha);
+    g.fillRoundedRect(zx - 2.6 * s, pull, 5.2 * s, 7 * s, 1.5 * s);
+    g.fillStyle(tint(TECH.night), alpha);
+    g.fillRect(zx - 1 * s, pull + 3.6 * s, 2 * s, 2 * s);
+    // the ".zip" label, as a tag across the bottom
+    g.fillStyle(tint(0x2255aa), alpha);
+    g.fillRect(x0 + 3 * s, y0 + h - 9 * s, w - 6 * s, 6 * s);
+    g.fillStyle(tint(TECH.white), alpha);
+    for (let i = 0; i < 3; i++) g.fillRect(x0 + (6 + i * 6) * s, y0 + h - 7.4 * s, 4 * s, 2.6 * s);
+    // strain lines popping off the corners as it swells
+    g.lineStyle(1.3 * s, tint(TECH.alert), alpha * (0.4 + 0.5 * Math.abs(Math.sin(t * 7))));
+    for (const [cx, cy] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+      const px = x + jx + cx * (w / 2 + 3 * s), py = y + cy * (h / 2 + 3 * s);
+      g.lineBetween(px, py, px + cx * 4 * s, py + cy * 4 * s);
+    }
+  }
+
+  /** ;give's ammunition: a bigger, red, furious cruncher with a brow. */
+  static drawPacman(
+    g: Phaser.GameObjects.Graphics, tint: TechColorFn,
+    x: number, y: number, angle: number, t: number, alpha: number,
+  ): void {
+    const chomp = 0.5 + 0.5 * Math.sin(t * 30);
+    g.fillStyle(tint(TECH.alert), alpha * 0.25);
+    g.fillCircle(x, y, 19);
+    cruncherHead(g, tint, x, y, angle, 14, chomp, TECH.alert, alpha);
+    // the brow, slanted down toward the mouth — the whole difference between hungry and angry
+    const f = frame(x, y, angle);
+    const b1 = f(-7, -9.5), b2 = f(3.5, -4.5);
+    g.lineStyle(2.6, tint(TECH.night), alpha);
+    g.lineBetween(b1.x, b1.y, b2.x, b2.y);
+  }
+
+  /** ;give's phaser: a stubby sci-fi pistol held out from the body, glowing at the emitter. */
+  static drawPhaser(
+    g: Phaser.GameObjects.Graphics, tint: TechColorFn,
+    x: number, y: number, angle: number, t: number, kick: number, alpha: number,
+  ): void {
+    // Flip the grip so it always hangs below the barrel, whichever way it points.
+    const up = Math.cos(angle) < 0 ? -1 : 1;
+    const f = frame(x + Math.cos(angle) * (24 - kick * 5), y + Math.sin(angle) * (24 - kick * 5), angle);
+    g.fillStyle(tint(TECH.night), alpha);
+    fillPts(g, [f(-6, 2 * up), f(-1, 2 * up), f(-3, 11 * up), f(-8, 11 * up)]);
+    g.fillStyle(tint(TECH.steel), alpha);
+    fillPts(g, [f(-9, -4.5), f(9, -4.5), f(12, -2), f(12, 2), f(9, 4.5), f(-9, 4.5)]);
+    g.lineStyle(1.2, tint(TECH.wire), alpha);
+    strokePts(g, [f(-9, -4.5), f(9, -4.5), f(12, -2), f(12, 2), f(9, 4.5), f(-9, 4.5)], true);
+    // charge coils along the barrel
+    for (let i = 0; i < 3; i++) {
+      const lit = ((t * 9) | 0) % 3 === i;
+      g.fillStyle(tint(lit ? TECH.amber : TECH.alert), alpha * (lit ? 1 : 0.7));
+      const c1 = f(-5 + i * 4.6, -3), c2 = f(-2.6 + i * 4.6, -3), c3 = f(-2.6 + i * 4.6, 3), c4 = f(-5 + i * 4.6, 3);
+      fillPts(g, [c1, c2, c3, c4]);
+    }
+    // the emitter
+    const tip = f(14, 0);
+    g.fillStyle(tint(TECH.alert), alpha * (0.3 + 0.2 * Math.sin(t * 14) + kick * 0.5));
+    g.fillCircle(tip.x, tip.y, 6 + kick * 5);
+    g.fillStyle(tint(TECH.white), alpha);
+    g.fillCircle(tip.x, tip.y, 2.2 + kick * 2);
   }
 
   /** A fighter that has been turned into a box. */

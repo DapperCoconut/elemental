@@ -19,10 +19,10 @@ const ULT_MIN_TIMER_MS = 5000;
 const ULT_BASE_COST = 60;
 const ULT_COST_PER_SEC = 6;
 /**
- * Ultimates charged by a resource of their own kit, which keep it: Magma's pendant, Metal's
+ * Ultimates charged by a resource of their own kit, which keep it: Metal's
  * blood bar — and Myth's rocket, a Final Destiny gun that only wears a Q.
  */
-const SELF_CHARGED_ULTIMATES = new Set(['magma-mutiny', 'metal-clot-armor', 'myth-rocket']);
+const SELF_CHARGED_ULTIMATES = new Set(['metal-clot-armor', 'myth-rocket', 'astra-singularity']);
 
 const stationaryTrackers = new WeakMap<object, { x: number; y: number; lastMovedAt: number }>();
 
@@ -766,6 +766,12 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
    */
   public psychicCooldownMult = 1;
   /**
+   * Technology (Admin Console — ;speed): 0.75 for the ten seconds the command lasts. Its own
+   * field for the same reason the others are. Written by TechnologyKit and handed back by its
+   * reset().
+   */
+  public techCooldownMult = 1;
+  /**
    * Psychic Mastery (Pre-move): per-ability cooldown stretches. Every stamp of that id while
    * `until` (Date.now()) has not passed is banked at `mult` times its length. Written through
    * {@link penalizeCooldown}.
@@ -814,6 +820,17 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   public effectSplitUntil = 0;
   /** If set, called with the damage amount before shields; return true to absorb the hit entirely. */
   public damageAbsorber: ((amount: number) => boolean) | null = null;
+  /**
+   * Astra's mass. Given a hit that got past invincibility and the dodges, returns how much of it
+   * still reaches the body (the rest came off the mass bar). Set and cleared by AstraKit; never
+   * consulted for a piercing hit or on a replica.
+   */
+  public massAbsorb: ((amount: number) => number) | null = null;
+  /**
+   * Astra's mass, as a hitbox: multiplies the body's radius without touching the sprite — the
+   * kit draws the gathered dust itself. 1 = normal. Call `applySizeMult()` after changing it.
+   */
+  public massHitboxMult = 1;
   /**
    * Run-long absorbers consulted right after `damageAbsorber` (City invasion relics: an item's
    * revive, an artifact's mirror shell). A list rather than a chained `damageAbsorber` because
@@ -887,6 +904,12 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
    * anything hits it.
    */
   public pressureGroundedUntil = 0;
+  /**
+   * Gas (id `pressure`): breathed an enemy's gas for too long — until this `Date.now()` timestamp
+   * the body runs about at random. PressureKit drives the legs on whichever sim moves the body, and
+   * the gas owner's sim deals the damage that comes with it.
+   */
+  public gasPanicUntil = 0;
   /**
    * Astra R (Celestial Smite): struck by the purple bolt — heavily slowed until this `Date.now()`
    * timestamp. Read through `astraSlowMult()` by every mover.
@@ -1177,7 +1200,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   /** Earth Mastery — Dust Screen: while active, Husk AI wanders/misfires instead of pathfinding normally. */
   public confusedWanderUntil = 0;
 
-  /** Technology Mastery — Byte-Bomb: laggy connection (rubber-banding, freezes, stalled cooldowns) until this `scene.time.now` timestamp. */
+  /** Technology — Zip Bomb: laggy connection (rubber-banding, freezes, stalled cooldowns) until this `scene.time.now` timestamp. */
   public laggedUntil = 0;
 
   /** Fate Mastery — Confusing curse: WASD input is mirrored until this `scene.time.now` timestamp. */
@@ -1604,7 +1627,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     const baseRadius = 22;
     // `hitboxMult` deliberately misses `setScale` above: an X-rayed target is easier to hit
     // without looking any different, which is the whole trade the ability makes.
-    const radius = Math.round(baseRadius * scale * this.hitboxMult);
+    const radius = Math.round(baseRadius * scale * this.hitboxMult * this.massHitboxMult);
     const offset = (48 - radius * 2) / 2;
     (this.body as Phaser.Physics.Arcade.Body).setCircle(radius, offset, offset);
   }
@@ -1803,6 +1826,12 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       return;
     }
 
+    // Astra's mass: part of the hit comes off the gathered mass instead of the body. Unlike the
+    // absorbers below it answers with what is *left* of the hit, which carries on down the chain.
+    if (!pierce && this.massAbsorb && amount > 0) {
+      amount = Math.max(0, Math.round(this.massAbsorb(amount)));
+      if (amount <= 0) { this.lastIncomingDamage = 0; this.emit('damaged', 0); return; }
+    }
     if (!pierce && this.damageAbsorber && this.damageAbsorber(amount)) return;
     if (!pierce && this.relicAbsorbers.length > 0 && this.relicAbsorbers.some((f) => f(amount))) return;
 
@@ -2136,7 +2165,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     const ultimateExtra = ability.isUltimate ? this.ultimateCooldownMult : 1;
     return ability.cooldown * (this.cooldownMult || 1) * this.netCooldownMult
       * this.amputationCooldownMult * this.deathDelayCooldownMult * this.dreamCooldownMult
-      * this.justiceCooldownMult * this.perkCooldownMult * this.psychicCooldownMult * this.clothCooldownMult * this.goldCooldownMult * this.bindCooldownMult * this.savorCooldownMult * this.fearCooldownMult * this.airShredCooldownMult() * ultimateExtra;
+      * this.justiceCooldownMult * this.perkCooldownMult * this.psychicCooldownMult * this.techCooldownMult * this.clothCooldownMult * this.goldCooldownMult * this.bindCooldownMult * this.savorCooldownMult * this.fearCooldownMult * this.airShredCooldownMult() * ultimateExtra;
   }
 
   /** As {@link effectiveCooldown}, including whatever split was banked when this id was stamped. */
@@ -2265,6 +2294,21 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       }
       this.painLockFiredAt = wall;
     }
+  }
+
+  /**
+   * Technology (Zip Bomb — "Restart your computer?"): every ability back on its full cooldown
+   * and the ultimate bank emptied. Deliberately not a cast: nothing is announced, relayed or
+   * punished, the clocks are simply wound back.
+   */
+  restartCooldowns(): void {
+    const now = Date.now();
+    for (const a of this.element.abilities) {
+      if (a.displayKey === 'Click' || a.cooldown <= 0 || this.isChargedUltimate(a)) continue;
+      this.cooldowns.set(a.id, now);
+      this.cooldownScales.set(a.id, 1);
+    }
+    this.ultCharge = 0;
   }
 
   /** Starts the cooldown for an ability without calling cast() — for charge-and-release abilities. */

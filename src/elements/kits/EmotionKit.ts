@@ -278,7 +278,11 @@ export class EmotionKit {
   private bodyR(f: Fighter): number { return (f.body as Body | null)?.radius || 20; }
   private alive(f: Fighter | null | undefined): boolean { return !!f && f.active && f.hp > 0; }
   private dist(ax: number, ay: number, bx: number, by: number): number { return Math.hypot(ax - bx, ay - by); }
-  private mirrorX(x: number): number { return this.api.width - x; }
+  /**
+   * A coordinate off the wire. A duel is seen mirrored by each side; a co-op party shares one
+   * arena, so there it is already ours.
+   */
+  private mirrorX(x: number): number { return this.api.isInvasion ? x : this.api.width - x; }
 
   private isEmotion(owner: Owner): boolean {
     return owner === 'player' ? this.api.elementId === EMOTION_ELEMENT_ID : this.api.npcElementId === EMOTION_ELEMENT_ID;
@@ -406,7 +410,8 @@ export class EmotionKit {
       netShots: 0, netSeenAt: this.now, netX: at.x, netY: at.y,
     };
     body.onStruck = (lost) => this.onTroopStruck(tr, lost);
-    if (owner === 'npc') this.api.addEnemyBody(body);
+    // A co-op ally's soldier is on our side: drawn here, and never something we can hit.
+    if (owner === 'npc' && !this.api.isInvasion) this.api.addEnemyBody(body);
     else this.api.player.bodySections.push(body);
     s.troops.push(tr);
     this.fx(owner).rise(at.x, at.y, st.r * 1.4);
@@ -958,7 +963,7 @@ export class EmotionKit {
   /** Our army, for the machine that only draws it: `emx-t:seq:id,kind,x,y,hp,flags,shots,facing;…`. */
   private relayTroops(): void {
     const s = this.sides.player;
-    if (!this.duelOnline || this.now < s.snapAt) return;
+    if (!this.api.isOnline || this.now < s.snapAt) return;
     if (!s.troops.length && !s.snapHadTroops) return;
     s.snapAt = this.now + NET_SNAP_MS;
     s.snapHadTroops = s.troops.length > 0;
@@ -978,7 +983,7 @@ export class EmotionKit {
       if (v.length < 8 || v.some((n) => !Number.isFinite(n))) continue;
       const [id, k, rx, y, hp, flags, shots, facing100] = v;
       const x = this.mirrorX(rx);
-      const facing = Math.PI - facing100 / 100;
+      const facing = this.api.isInvasion ? facing100 / 100 : Math.PI - facing100 / 100;
       const kind: TroopKind = k === 0 ? 'knight' : k === 1 ? 'archer' : 'barbarian';
       seen.add(id);
       let tr = s.troops.find((o) => o.id === id);

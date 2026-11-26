@@ -821,6 +821,11 @@ export function getMasteryBinds(elementId: string): Record<string, string> {
   for (const s of Object.keys(binds)) if (binds[s] === 'ritual-sacrifice') binds[s] = 'false-idol';
   // Ruin's bindable was redone: an old Second Skin bind reads as its replacement, Screeching Steel.
   for (const s of Object.keys(binds)) if (binds[s] === 'second-skin') binds[s] = 'screeching-steel';
+  // Subterfuge's bindable was redone: an old Smoke Break bind reads as its replacement, Hijack.
+  for (const s of Object.keys(binds)) if (binds[s] === 'smoke-break') binds[s] = 'hijack';
+  // Technology's bindable (Byte-Bomb) was replaced by a passive, Glitch Abuse: an old bind is
+  // ignored, not deleted, so the slot simply keeps its own ability.
+  for (const s of Object.keys(binds)) if (binds[s] === 'byte-bomb') delete binds[s];
   return binds;
 }
 

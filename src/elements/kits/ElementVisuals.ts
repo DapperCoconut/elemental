@@ -116,6 +116,7 @@ export type ArmHold =
   | 'ride'     // arms thrown out wide for balance while something carries you
   | 'reach'    // one hand thrown far out along the aim, the other tucked in (grapples, long limbs)
   | 'gun'      // the right hand levelled along the aim, the left at rest (a weapon strapped to one hand)
+  | 'behind'   // both hands clasped out of sight behind the back, perfectly still
   | null;
 
 export interface ArmPose { ang: number; dist: number; scale: number }
@@ -212,6 +213,8 @@ export abstract class BaseAvatar {
   private nextPunchSide = 1;
 
   protected hold: ArmHold = null;
+  /** Eyes held shut (a serene or sleeping character) rather than blinking. */
+  protected eyesShut = false;
   protected holdAngle = 0;
 
   private blinkAt = 0;
@@ -377,7 +380,7 @@ export abstract class BaseAvatar {
     if (this.blinkAt <= 0) { this.blinkUntil = 110; this.blinkAt = 2200 + Math.random() * 3400; }
     if (this.blinkUntil > 0) this.blinkUntil -= delta;
     // Narrowed while casting: the cheapest read on "this character is doing something".
-    const open = this.blinkUntil > 0 ? 0.12 : (this.gesture || this.hold ? 0.72 : 1);
+    const open = this.eyesShut || this.blinkUntil > 0 ? 0.12 : (this.gesture || this.hold ? 0.72 : 1);
 
     const look = this.facing;
     const bob = Math.sin(this.t * 2.6) * 1.1;
@@ -588,6 +591,8 @@ export abstract class BaseAvatar {
         return side > 0
           ? { ang: this.holdAngle + 0.22, dist: 30, scale: idle.scale * 1.05 }
           : idle;
+      case 'behind':
+        return { ang: this.holdAngle + Math.PI + side * 0.34, dist: 13, scale: idle.scale * 0.8 };
       case 'sow': {
         // Low and cupped, working close to the ground rather than out at arm's length.
         const knead = Math.sin(this.t * 5 + side * 1.4);

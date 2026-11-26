@@ -84,7 +84,8 @@ export interface CreationDagger {
   damage: number;
   owner: 'player' | 'npc';
   hitSet: Set<string>;
-  cutSet: Set<CreationBlocker>; // blocks already cut by this dagger
+  /** Shared by every dagger of one throw: the whole volley splits one block (Click+), never more. */
+  volley: { cut: boolean };
   // Converging launch: daggers curve toward this cursor point, then fly straight past it.
   targetX?: number;
   targetY?: number;
@@ -777,6 +778,7 @@ export class CreationKit {
     const spread = Phaser.Math.DegToRad(30);
     const tint = this.col(owner);
     const fx = this.fx(owner);
+    const volley = { cut: false };
     for (let i = 0; i < count; i++) {
       const a = baseAngle + (i - (count - 1) / 2) * spread;
       const spr = this.add.graphics().setDepth(7);
@@ -784,7 +786,7 @@ export class CreationKit {
       spr.setPosition(fromX, fromY).setRotation(a);
       this.creatDaggers.push({
         sprite: spr, vx: Math.cos(a) * speed, vy: Math.sin(a) * speed,
-        damage: 8, owner, hitSet: new Set(), cutSet: new Set(),
+        damage: 8, owner, hitSet: new Set(), volley,
         targetX: tx, targetY: ty, converged: false,
       });
     }
@@ -3183,13 +3185,13 @@ export class CreationKit {
         }
       }
 
-      // 12. Click+ Blade Split: each dagger can cut any number of different blocks, but not the same block twice
+      // 12. Click+ Blade Split: one throw splits one block — the first a dagger of the volley reaches —
+      // however many daggers went out and however many blocks they cross.
       if (this.api.hasUpgrade('click')) {
         for (const d of this.creatDaggers) {
-          if (d.owner !== 'player') continue;
+          if (d.owner !== 'player' || d.volley.cut) continue;
           for (let bi = this.creatBlockers.length - 1; bi >= 0; bi--) {
             const bl = this.creatBlockers[bi];
-            if (d.cutSet.has(bl)) continue; // this dagger already cut this block
             if (Math.abs(d.sprite.x - bl.x) <= bl.w / 2 + 20 && Math.abs(d.sprite.y - bl.y) <= bl.h / 2 + 20) {
               // Split block: determine cut axis based on dagger direction
               const absDx = Math.abs(d.vx), absDy = Math.abs(d.vy);
@@ -3210,19 +3212,20 @@ export class CreationKit {
               // Remove original
               bl.rect.destroy(); bl.hpBar.destroy(); bl.hpBg.destroy();
               this.creatBlockers.splice(bi, 1);
-              // Spawn two halves, add them to this dagger's cutSet so it won't re-cut them
+              d.volley.cut = true;
+              // Spawn two halves
               if (splitH) {
                 this.spawnBlocker(ox, oy - oh / 4 - gap, ow, oh / 2, oOwner, false);
-                const h1 = this.creatBlockers[this.creatBlockers.length - 1]; h1.hp = halfHp; d.cutSet.add(h1);
+                const h1 = this.creatBlockers[this.creatBlockers.length - 1]; h1.hp = halfHp;
                 this.spawnBlocker(ox, oy + oh / 4 + gap, ow, oh / 2, oOwner, false);
-                const h2 = this.creatBlockers[this.creatBlockers.length - 1]; h2.hp = halfHp; d.cutSet.add(h2);
+                const h2 = this.creatBlockers[this.creatBlockers.length - 1]; h2.hp = halfHp;
               } else {
                 this.spawnBlocker(ox - ow / 4 - gap, oy, ow / 2, oh, oOwner, false);
-                const h1 = this.creatBlockers[this.creatBlockers.length - 1]; h1.hp = halfHp; d.cutSet.add(h1);
+                const h1 = this.creatBlockers[this.creatBlockers.length - 1]; h1.hp = halfHp;
                 this.spawnBlocker(ox + ow / 4 + gap, oy, ow / 2, oh, oOwner, false);
-                const h2 = this.creatBlockers[this.creatBlockers.length - 1]; h2.hp = halfHp; d.cutSet.add(h2);
+                const h2 = this.creatBlockers[this.creatBlockers.length - 1]; h2.hp = halfHp;
               }
-              break; // move to next dagger after one cut
+              break; // the volley's one cut is spent
             }
           }
         }

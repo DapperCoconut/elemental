@@ -169,7 +169,7 @@ export const HUSK_FAMILIES: HuskFamily[] = [
   { elementId: 'gum', name: 'Savor', emoji: '🍬', color: 0xf7b2d0, category: 'corrupt', behavior: 'melee', marker: 'gem', quirk: 'bulk', hp: 1.4, speed: 0.95, damage: 1.05, size: 1.06 },
   { elementId: 'gluttony', name: 'Wood', emoji: '🌳', color: 0xd9d3c3, category: 'corrupt', behavior: 'melee', marker: 'meat', quirk: 'bulk', hp: 1.4, speed: 0.85, damage: 1.2, size: 1.1 },
   { elementId: 'myth', name: 'Myth', emoji: '🌠', color: 0x7d5cff, category: 'corrupt', behavior: 'melee', marker: 'star', quirk: 'halo', hp: 1.25, speed: 1, damage: 1.1 },
-  { elementId: 'pressure', name: 'Pressure', emoji: '🔩', color: 0xc7462e, category: 'corrupt', behavior: 'charger', marker: 'gear', quirk: 'bulk', hp: 1.5, speed: 0.8, damage: 1.35, size: 1.1 },
+  { elementId: 'pressure', name: 'Gas', emoji: '🏭', color: 0xa35be0, category: 'corrupt', behavior: 'charger', marker: 'gear', quirk: 'bulk', hp: 1.5, speed: 0.8, damage: 1.35, size: 1.1 },
   { elementId: 'astra', name: 'Astra', emoji: '🌟', color: 0x6a4cff, category: 'corrupt', behavior: 'ranged', marker: 'star', quirk: 'halo', hp: 1, speed: 0.95, damage: 1, preferredRange: 300 },
   { elementId: 'ink', name: 'Ink', emoji: '🖋️', color: 0x1a1a1a, category: 'corrupt', behavior: 'ranged', marker: 'scribble', quirk: 'lean', hp: 0.85, speed: 1.25, damage: 0.8, preferredRange: 280 },
   { elementId: 'memory', name: 'Memory', emoji: '🎩', color: 0x4a4458, category: 'corrupt', behavior: 'ranged', marker: 'mask', quirk: 'lean', hp: 0.95, speed: 1, damage: 0.95, preferredRange: 290 },

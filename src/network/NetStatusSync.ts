@@ -40,7 +40,7 @@ const MIRRORED_TIMERS = new Set([
   'high-gravity', 'inverted', 'exposed', 'purged', 'venom-rot', 'venom-vuln', 'venom-paralyzed', 'venom-melting', 'heal-block', 'dark-link', 'oily',
   'gold-heart', 'midas', 'stalked', 'stunned', 'out-of-tune',
   'rad-mutated', 'over-radiated', 'devotion-slow', 'gold-hex', 'gold-statue', 'wood-slow',
-  'pain-lock', 'pressure-slow', 'grounded', 'astra-slow', 'emotion-depressed', 'air-winded', 'air-shredded',
+  'pain-lock', 'pressure-slow', 'gas-panic', 'grounded', 'astra-slow', 'emotion-depressed', 'air-winded', 'air-shredded',
   'memory-sealed',
   'string-hexed', 'string-snared', 'string-infested',
   'ink-slip', 'ink-flat',

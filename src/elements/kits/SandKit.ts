@@ -6,8 +6,8 @@ import type { SummonPurgeTarget } from '../../combat/SummonPurge';
 import { Sfx } from '../../audio';
 import {
   LIFT, SND, SandAvatar, SandColorFn, SandFx, crown, cursedSlab, dustDevil, flameJet, flintlock,
-  fracture, glassGhost, glassShell, goldOrb, grains, laneDivider, lavaTide, miniIdol, pillar,
-  poisonPatch, pyramidIdol, sandBeam, sandBridge, sandVeil,
+  fracture, glassGhost, glassShell, goldOrb, grains, killBrick, laneDivider, laserGrid,
+  laserSpinner, lavaTide, miniIdol, pillar, poisonPatch, pyramidIdol, sandBeam, sandBridge, sandVeil,
 } from './SandVisuals';
 import { meterStep } from '../../combat/Meters';
 
@@ -186,7 +186,46 @@ const MINI_IDOL_SHOT_MS = 1500;
 const MINI_IDOL_R = 52;
 const MINI_IDOL_SPIN = 1.1;
 
+// ── Laser hazards ──
+// What a course is salted with. All three are the same 8 on the same re-hit clock, and all three
+// are answered the same way every other danger in this kit is: be in the air. A laser only ever
+// reads a fighter who is *standing* on its slab.
+const LASER_DAMAGE = 8;
+const LASER_REHIT_MS = 700;
+/** How close to a beam's centre line your feet have to be for it to count. */
+const LASER_HIT_W = 6;
+/** A spinner's beam as a fraction of the slab's half-side: short of the corners, which are safe. */
+const SPINNER_REACH = 0.9;
+/** Where in a spinner slab's corner a bot plants itself, as a fraction of the half-side. */
+const SPINNER_CORNER = 0.76;
+const BRICK_HALF_W = 5;
+const BLINK_OFF_MS = 1700;
+const BLINK_WARN_MS = 600;
+const BLINK_ON_MS = 900;
+const BLINK_CYCLE_MS = BLINK_OFF_MS + BLINK_WARN_MS + BLINK_ON_MS;
+/** Half-sides. Hazard slabs are bigger than plain ones: the laser needs room to be dodged in. */
+const SPINNER_SLAB_R = 40;
+const BRICK_SLAB_R = 38;
+const BLINK_SLAB_R = 32;
+
 // ── Board ────────────────────────────────────────────────────────────────────
+
+/**
+ * A laser bolted to a slab.
+ *
+ *  - `spinner`: a beam through the middle of the slab, turning. Stand in a corner or jump it.
+ *  - `brick`: a bar of solid light across the slab, edge to edge. Land on one half, jump to the other.
+ *  - `blink`: a grid over the whole face on a cycle — dark, a warning stutter, then lit.
+ */
+interface Hazard {
+  kind: 'spinner' | 'brick' | 'blink';
+  /** Spinner: starting angle. Blink: offset into the cycle, in ms. */
+  phase: number;
+  /** Spinner only: radians a second, signed. */
+  speed: number;
+  /** Brick only: the bar runs up the screen (true) or across it (false). */
+  vertical: boolean;
+}
 
 interface Platform {
   owner: Owner;
@@ -196,6 +235,7 @@ interface Platform {
   /** Screen position of the *top face*: you stand exactly where this is drawn. */
   x: number;
   y: number;
+  /** Half-side. The top face is a square, and the square is the whole landing area. */
   r: number;
   z: number;
   grey: boolean;
@@ -221,6 +261,8 @@ interface Platform {
    * course chain it belongs to has to keep its shape while one of its steps is away.
    */
   goneUntil: number;
+  /** The laser on this slab, if it has one. */
+  hazard: Hazard | null;
 }
 
 /**
@@ -410,6 +452,14 @@ interface Side {
   glassUntil: number;
   /** When the glass was last cast — the cooldown counts from here, not from when it ended. */
   glassCastAt: number;
+  /** Earliest a laser may hit this side again. One clock for every laser on the board. */
+  laserSafeUntil: number;
+  /**
+   * Index of the slab this side jumps to next — the one that gets the golden dust. One past
+   * whatever they are stood on, back to 0 the moment they are on the floor, and *held* while
+   * they are in the air so the marker does not blink out mid-jump.
+   */
+  nextIdx: number;
 }
 
 function makeSide(owner: Owner): Side {
@@ -423,6 +473,7 @@ function makeSide(owner: Owner): Side {
     // A first match runs the constructor rather than reset(), and readiness is measured against
     // absolute `scene.time.now` — leaving this at 0 would lock the ability for its first 34s.
     glassUntil: 0, glassCastAt: -GLASS_COOLDOWN_MS,
+    laserSafeUntil: 0, nextIdx: 0,
   };
 }
 
@@ -629,6 +680,11 @@ export class SandKit implements SummonPurgeTarget {
 
   // ── Height sim ─────────────────────────────────────────────────────────────
 
+  /** Whether a point is over a slab's top face. The face is a square, `r` to a side each way. */
+  private onSlab(p: Platform, x: number, y: number): boolean {
+    return Math.abs(x - p.x) <= p.r && Math.abs(y - p.y) <= p.r;
+  }
+
   /** The platform a side is standing over, if any — nearest wins when two overlap. */
   private platformUnder(owner: Owner, x: number, y: number, z: number, grace: number): Platform | null {
     let best: Platform | null = null;
@@ -637,7 +693,7 @@ export class SandKit implements SummonPurgeTarget {
       if (p.owner !== owner) continue;
       // A crumbled slab is off the board even though it is still in the chain.
       if (p.goneUntil > this.now) continue;
-      if (Phaser.Math.Distance.Between(x, y, p.x, p.y) > p.r) continue;
+      if (!this.onSlab(p, x, y)) continue;
       // Only a platform at or below you can catch you, and of those the highest wins.
       if (p.z > z + grace) continue;
       if (p.z <= bestZ) continue;
@@ -747,7 +803,7 @@ export class SandKit implements SummonPurgeTarget {
       const p = s.standing;
       // Walked off the edge, or the platform under you was destroyed — or, tempered, gave way.
       if (!this.platforms.includes(p) || p.goneUntil > this.now
-        || Phaser.Math.Distance.Between(f.x, f.y, p.x, p.y) > p.r) {
+        || !this.onSlab(p, f.x, f.y)) {
         s.standing = null;
         s.fellFromCourse = p.courseId;
         s.vz = 0;
@@ -772,7 +828,9 @@ export class SandKit implements SummonPurgeTarget {
       // tuning. Nothing gives the player this.
       const aimed = this.trailBotTarget(owner);
       if (aimed && s.z <= aimed.z && this.platforms.includes(aimed)) {
-        f.setPosition(aimed.x, aimed.y);
+        // Onto the slab's safe spot rather than its middle — the middle of a spinner is the hub.
+        const spot = this.aimSpot(aimed);
+        f.setPosition(spot.x, spot.y);
         this.landOn(owner, aimed);
         return;
       }
@@ -921,6 +979,125 @@ export class SandKit implements SummonPurgeTarget {
     if (p.goal && !c.claimed) this.claimCourse(owner, c, p);
   }
 
+  // ── Laser hazards ──────────────────────────────────────────────────────────
+
+  /**
+   * Pick a laser for a slab. `(dx, dy)` is the step that arrives at it: a laser block is laid
+   * *across* that step, so it is always between where you land and where you are going.
+   * Never the same kind twice running — a course should be a mix, not a corridor.
+   */
+  private rollHazard(dx: number, dy: number, last: Hazard['kind'] | null, allowBlink: boolean): Hazard {
+    const kinds = (['spinner', 'brick', 'blink'] as Hazard['kind'][])
+      .filter((k) => k !== last && (allowBlink || k !== 'blink'));
+    const kind = kinds[Math.floor(Math.random() * kinds.length)];
+    return {
+      kind,
+      phase: kind === 'blink' ? Math.random() * BLINK_CYCLE_MS : Math.random() * TAU,
+      speed: (1.5 + Math.random() * 0.6) * (Math.random() < 0.5 ? -1 : 1),
+      vertical: Math.abs(dx) >= Math.abs(dy),
+    };
+  }
+
+  private hazardSlabR(h: Hazard): number {
+    return h.kind === 'spinner' ? SPINNER_SLAB_R : h.kind === 'brick' ? BRICK_SLAB_R : BLINK_SLAB_R;
+  }
+
+  private spinnerAngle(h: Hazard): number {
+    return h.phase + h.speed * (this.now / 1000);
+  }
+
+  /** Where a blinking grid is in its cycle: dark, warming up (`warm` 0–1), or lit. */
+  private blinkState(h: Hazard, ahead = 0): { on: boolean; warm: number } {
+    const pos = (this.now + ahead + h.phase) % BLINK_CYCLE_MS;
+    if (pos < BLINK_OFF_MS) return { on: false, warm: 0 };
+    if (pos < BLINK_OFF_MS + BLINK_WARN_MS) return { on: false, warm: (pos - BLINK_OFF_MS) / BLINK_WARN_MS };
+    return { on: true, warm: 1 };
+  }
+
+  /** Whether a slab's laser is touching a point on its top face right now. */
+  private laserTouches(p: Platform, x: number, y: number): boolean {
+    const h = p.hazard;
+    if (!h) return false;
+    const dx = x - p.x;
+    const dy = y - p.y;
+    if (h.kind === 'blink') return this.blinkState(h).on;
+    if (h.kind === 'brick') return Math.abs(h.vertical ? dx : dy) <= BRICK_HALF_W + 3;
+    const a = this.spinnerAngle(h);
+    const ca = Math.cos(a);
+    const sa = Math.sin(a);
+    return Math.abs(dx * ca + dy * sa) <= p.r * SPINNER_REACH + 2
+      && Math.abs(dy * ca - dx * sa) <= LASER_HIT_W;
+  }
+
+  /**
+   * The lasers' one rule: they burn whoever is *standing* on their slab and touching them.
+   * Anybody in the air is over it — which is why a spinner is jumped rather than outrun, and
+   * why a laser block is something you hop and not something you squeeze past.
+   */
+  private updateLasers(): void {
+    for (const o of ['player', 'npc'] as Owner[]) {
+      const s = this.sides[o];
+      const p = s.standing;
+      if (!p || !p.hazard || this.now < s.laserSafeUntil) continue;
+      const f = this.fighter(o);
+      if (!this.alive(f) || !this.laserTouches(p, f.x, f.y)) continue;
+      s.laserSafeUntil = this.now + LASER_REHIT_MS;
+      // Your own course, or a lane you were both put on: nobody *aimed* this at you.
+      f.takeDamage(LASER_DAMAGE, { selfInflicted: true });
+      this.api.spawnHitFlash(f.x, f.y, this.col(p.owner)(SND.laserHot));
+      this.fx(p.owner).ping(f.x, f.y, 18, SND.laser);
+      Sfx.playAt('light-beam', f.x, { rate: 1.7, volume: 0.35 });
+    }
+  }
+
+  /** The slab after this one in the same chain, if it is still standing. */
+  private nextOf(p: Platform): Platform | null {
+    return this.platforms.find((q) => q.owner === p.owner && q.courseId === p.courseId
+      && q.idx === p.idx + 1) ?? null;
+  }
+
+  /**
+   * Where a bot should put its feet on a slab. The middle, unless there is a laser there:
+   * a spinner's safe ground is its corners (the one nearest the slab after it, so the next hop
+   * is short), and a laser block is landed *past* — on the half the next slab is on, which the
+   * jump in carries it over to. The kit owns this geometry; the autopilot only walks at it.
+   */
+  private aimSpot(p: Platform): { x: number; y: number } {
+    const h = p.hazard;
+    if (!h || h.kind === 'blink') return { x: p.x, y: p.y };
+    const to = this.nextOf(p);
+    const sx = to && to.x < p.x ? -1 : 1;
+    const sy = to && to.y < p.y ? -1 : 1;
+    if (h.kind === 'spinner') {
+      return { x: p.x + sx * p.r * SPINNER_CORNER, y: p.y + sy * p.r * SPINNER_CORNER };
+    }
+    return h.vertical ? { x: p.x + sx * p.r * 0.56, y: p.y } : { x: p.x, y: p.y + sy * p.r * 0.56 };
+  }
+
+  /**
+   * Keep `nextIdx` honest for a side, and hand back the slab it names — the one to dust gold.
+   * Null when there is nothing to climb: no course, a claimed one, or a lane already lost.
+   */
+  private nextSlab(owner: Owner): Platform | null {
+    const s = this.sides[owner];
+    const lane = this.laneOf(this.fighter(owner));
+    const c = lane ? null : s.course;
+    if (lane ? lane.lost : (!c || c.claimed)) return null;
+    const mine = (p: Platform) => (lane ? lane.platforms.includes(p) : p.owner === owner && p.courseId === c!.id);
+    if (s.standing && mine(s.standing)) s.nextIdx = s.standing.idx + 1;
+    else if (!s.standing && !s.onBridge && s.z <= AIRBORNE_Z && s.vz === 0) s.nextIdx = 0;
+    return this.platforms.find((p) => mine(p) && p.idx === s.nextIdx) ?? null;
+  }
+
+  /** Height of whatever is directly under a side — the surface their shadow falls on. */
+  private surfaceZ(owner: Owner): number {
+    const s = this.sides[owner];
+    if (s.standing || s.onBridge) return s.z;
+    const f = this.fighter(owner);
+    const under = this.platformUnder(owner, f.x, f.y, s.z, 0);
+    return under ? under.z : 0;
+  }
+
   // ── Course generation ──────────────────────────────────────────────────────
 
   /**
@@ -952,7 +1129,14 @@ export class SandKit implements SummonPurgeTarget {
     let z = 58;
 
     // The grey block: the only one you can reach from the floor, and coloured to say so.
-    this.addPlatform(owner, id, 0, x, y, 34, z, true, false, null);
+    this.addPlatform(owner, id, 0, x, y, 34, z, true, false, null, null);
+    this.side(owner).nextIdx = 0;
+
+    // A short course gets one laser at most; a long one is salted with them.
+    const ruinsHazardAt = !long && Math.random() < 0.75 ? 1 + Math.floor(Math.random() * (steps - 1)) : -1;
+    let lastKind: Hazard['kind'] | null = null;
+    let prevX = x;
+    let prevY = y;
 
     for (let i = 1; i <= steps; i++) {
       ang += (Math.random() - 0.5) * 1.5;
@@ -972,9 +1156,16 @@ export class SandKit implements SummonPurgeTarget {
       z += 26 + Math.random() * Math.min(30, JUMP_APEX - 40);
 
       const goal = i === steps;
-      const r = goal ? 40 : (long ? 25 + Math.random() * 6 : 29 + Math.random() * 5);
       // Cursed Pyramid only: about a third of the run slides, and the goal never does.
       const moving = long && !goal && Math.random() < 0.34;
+      // A slab that slides is its own obstacle and does not get a laser on top.
+      const wantsHazard = !goal && !moving && (long ? Math.random() < 0.5 : i === ruinsHazardAt);
+      const hazard: Hazard | null = wantsHazard ? this.rollHazard(x - prevX, y - prevY, lastKind, true) : null;
+      lastKind = hazard ? hazard.kind : null;
+      prevX = x;
+      prevY = y;
+      const r = goal ? 40 : hazard ? this.hazardSlabR(hazard)
+        : (long ? 25 + Math.random() * 6 : 29 + Math.random() * 5);
       // Amplitude kept well under the jump's horizontal reach: a slab that could wander further
       // than you can throw yourself would make its own course unclearable at the wrong phase.
       const move = moving ? {
@@ -984,7 +1175,7 @@ export class SandKit implements SummonPurgeTarget {
         period: 2600 + Math.random() * 1400,
         phase: Math.random() * TAU,
       } : null;
-      this.addPlatform(owner, id, i, x, y, r, z, false, goal, move);
+      this.addPlatform(owner, id, i, x, y, r, z, false, goal, move, hazard);
 
       // Poison sunk into the floor *across* the gap, not beside it. Sized to span the ground
       // between the two pillars it sits between, so the floor route is genuinely closed and
@@ -1012,12 +1203,12 @@ export class SandKit implements SummonPurgeTarget {
   private addPlatform(
     owner: Owner, courseId: number, idx: number,
     x: number, y: number, r: number, z: number,
-    grey: boolean, goal: boolean, move: Platform['move'],
+    grey: boolean, goal: boolean, move: Platform['move'], hazard: Hazard | null,
   ): void {
     this.platforms.push({
       owner, courseId, idx, x, y, r, z, grey, goal, seed: Math.random() * 999, move,
       cursedUntil: 0, cursedBy: owner, curseTickAt: 0,
-      glass: false, crumble: false, standSince: 0, goneUntil: 0,
+      glass: false, crumble: false, standSince: 0, goneUntil: 0, hazard,
     });
     this.fx(owner).rise(x, y, r, z, grey);
   }
@@ -1653,12 +1844,15 @@ export class SandKit implements SummonPurgeTarget {
     let z = 40;
     let dir: 1 | -1 = Math.random() < 0.5 ? 1 : -1;
 
-    const push = (px: number, py: number, r: number, pz: number, goal: boolean, move: Platform['move']) => {
+    const push = (
+      px: number, py: number, r: number, pz: number, goal: boolean,
+      move: Platform['move'], hazard: Hazard | null = null,
+    ) => {
       const p: Platform = {
         owner, courseId, idx: platforms.length, x: px, y: py, r, z: pz,
         grey: platforms.length === 0, goal, seed: Math.random() * 999, move,
         cursedUntil: 0, cursedBy: owner, curseTickAt: 0,
-        glass: false, crumble: false, standSince: 0, goneUntil: 0,
+        glass: false, crumble: false, standSince: 0, goneUntil: 0, hazard,
       };
       platforms.push(p);
       this.platforms.push(p);
@@ -1666,6 +1860,9 @@ export class SandKit implements SummonPurgeTarget {
     };
 
     push(x, y, 34, z, false, null);
+    let lastKind: Hazard['kind'] | null = null;
+    let lastX = x;
+    let lastY = y;
 
     for (let i = 1; i <= steps; i++) {
       const dy = -dyStep * (0.85 + Math.random() * 0.3);
@@ -1684,7 +1881,6 @@ export class SandKit implements SummonPurgeTarget {
       z += 22 + Math.random() * Math.min(20, JUMP_APEX - 40);
 
       const goal = i === steps;
-      const r = goal ? 38 : 24 + Math.random() * 6;
       // A third of the middle slabs slide. The amplitude stays well under a jump's reach, so a
       // patrol can never phase a lane into being unclearable.
       const moving = !goal && i > 1 && Math.random() < 0.33;
@@ -1695,7 +1891,16 @@ export class SandKit implements SummonPurgeTarget {
         period: 2400 + Math.random() * 1600,
         phase: Math.random() * TAU,
       } : null;
-      push(x, y, r, z, goal, move);
+      // Spinners and laser blocks only — never the blinking grid. A grid is answered by
+      // *waiting*, and waiting is the one thing a lane cannot afford with the lava tuned
+      // against the climb rate; the other two cost a good runner nothing.
+      const hazard: Hazard | null = !goal && !moving && i > 1 && Math.random() < 0.34
+        ? this.rollHazard(x - lastX, y - lastY, lastKind, false) : null;
+      lastKind = hazard ? hazard.kind : null;
+      lastX = x;
+      lastY = y;
+      const r = goal ? 38 : hazard ? this.hazardSlabR(hazard) - 2 : 24 + Math.random() * 6;
+      push(x, y, r, z, goal, move, hazard);
     }
 
     // A beat before the first hop, so both runners get a moment to read their lane.
@@ -1719,6 +1924,7 @@ export class SandKit implements SummonPurgeTarget {
     s.fellFromCourse = -1;
     s.launchedFromPlatform = false;
     s.poisonIn = null;
+    s.nextIdx = 1;
     this.fx(o).rise(start.x, start.y, start.r, start.z, true);
   }
 
@@ -2106,14 +2312,26 @@ export class SandKit implements SummonPurgeTarget {
     // Its next step is a tempered slab that is currently away. Wait for it rather than walking
     // at the hole and throwing itself through — the slab is coming back in four seconds.
     if (want.goneUntil > this.now) { this.body(f).setVelocity(0, 0); return; }
+    // Same patience for a laser grid: do not set off for a slab that will be lit, or about to
+    // be, by the time the jump comes down on it.
+    if (want.hazard?.kind === 'blink' && (s.standing || grounded)) {
+      const b = this.blinkState(want.hazard, 850);
+      if (b.on || b.warm > 0) { this.body(f).setVelocity(0, 0); return; }
+    }
 
-    const d = Phaser.Math.Distance.Between(f.x, f.y, want.x, want.y);
-    const ang = Math.atan2(want.y - f.y, want.x - f.x);
+    // Walk at the slab's safe ground rather than its middle — on a spinner that is a corner, on
+    // a laser block the half past the bar.
+    const spot = this.aimSpot(want);
+    const d = Phaser.Math.Distance.Between(f.x, f.y, spot.x, spot.y);
+    const ang = Math.atan2(spot.y - f.y, spot.x - f.x);
     this.body(f).setVelocity(Math.cos(ang) * f.speed, Math.sin(ang) * f.speed);
 
     // Jump as the gap closes, and only from something solid: a jump started too early lands
-    // short, which is exactly the mistake a player makes.
-    if (s.standing && d < 78 && d > 34) this.tryJump('npc');
+    // short, which is exactly the mistake a player makes. Around a laser it goes early instead:
+    // it does not stroll across a slab with a beam on it to shave the gap, and a safe spot that
+    // is off-centre is that much further away than the slab it belongs to.
+    const lasers = !!s.standing?.hazard || !!want.hazard;
+    if (s.standing && d < (lasers ? 112 : 78) && d > 34) this.tryJump('npc');
     else if (grounded && d < 70) this.tryJump('npc');
   }
 
@@ -2504,6 +2722,7 @@ export class SandKit implements SummonPurgeTarget {
       if (s.glassUntil !== 0 && time >= s.glassUntil) this.endGlass(o, 'THE GLASS IS GONE');
     }
     this.updateJets();
+    this.updateLasers();
     this.updateMiniIdols();
 
     // After the height sim, so the lava and the fall checks read this frame's `z`, and after
@@ -2570,6 +2789,7 @@ export class SandKit implements SummonPurgeTarget {
       }
       av.setFacing(Math.atan2(s.aimY - f.y, s.aimX - f.x));
       av.setElevation(s.z);
+      av.setSurface(this.surfaceZ(o));
       av.setGolden(this.now < s.goldenUntil);
       av.setTempered(this.glassOn(o));
       av.setMastered(o === 'player' ? this.api.masteryActive : this.api.npcMasteryActive);
@@ -2613,6 +2833,9 @@ export class SandKit implements SummonPurgeTarget {
 
     // Tallest last, so a pillar in front of another one genuinely overlaps it.
     const ordered = [...this.platforms].sort((p1, p2) => p1.y - p2.y);
+    // The slab to jump to next, buried in golden dust. Only ever the local player's: a marker on
+    // the other side's course is a marker on something you cannot stand on.
+    const nextUp = this.alive(this.api.player) ? this.nextSlab('player') : null;
     for (const p of ordered) {
       // A crumbled slab leaves its outline and the arc counting it back in — anything less and
       // the course looks like it was generated with a hole in it.
@@ -2626,7 +2849,19 @@ export class SandKit implements SummonPurgeTarget {
       const crumble = p.crumble && p.standSince > 0
         ? Phaser.Math.Clamp((this.now - p.standSince) / CRUMBLE_STAND_MS, 0, 1) : 0;
       pillar(g, this.col(p.owner), p.x, p.y, p.r, p.z, 1,
-        { seed: p.seed, grey: p.grey, lit, t, glass: p.glass, crumble });
+        { seed: p.seed, grey: p.grey, lit, t, glass: p.glass, crumble, next: p === nextUp ? 1 : 0 });
+      const h = p.hazard;
+      if (h) {
+        const c = this.col(p.owner);
+        if (h.kind === 'spinner') {
+          laserSpinner(g, c, p.x, p.y, p.r * SPINNER_REACH, this.spinnerAngle(h), Math.sign(h.speed), t, 1);
+        } else if (h.kind === 'brick') {
+          killBrick(g, c, p.x, p.y, p.r, BRICK_HALF_W, h.vertical, t, 1);
+        } else {
+          const b = this.blinkState(h);
+          laserGrid(g, c, p.x, p.y, p.r, b.warm, b.on, t, 1);
+        }
+      }
       // The curse is painted over the top face, so a cursed slab is unmistakable from below.
       if (p.cursedUntil > this.now) {
         cursedSlab(g, this.col(p.owner), p.x, p.y, p.r,
@@ -2726,8 +2961,9 @@ export class SandKit implements SummonPurgeTarget {
       const o = this.ownerOf(lane.fighter);
       if (!o || this.isSand(o) || !this.alive(lane.fighter)) continue;
       const s = this.sides[o];
-      const drop = s.z * LIFT;
-      const k = Math.min(1, s.z / 400);
+      // Onto whatever is under them, not onto the floor a pillar is hiding — same as the rig.
+      const drop = Math.max(0, s.z - this.surfaceZ(o)) * LIFT;
+      const k = Math.min(1, drop / 250);
       g.fillStyle(this.col(o)(SND.shadow), 0.42 - k * 0.2);
       g.fillEllipse(lane.fighter.x, lane.fighter.y + 15 + drop, 40 - k * 16, 14 - k * 6);
       g.fillStyle(this.col(o)(SND.deep), 0.4);

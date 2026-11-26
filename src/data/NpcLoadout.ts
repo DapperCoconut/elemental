@@ -15,8 +15,7 @@ export interface NpcLoadout {
 
 /**
  * The bindable mastery ability a Nightmare bot fights with, and the slot it gives up for
- * it. Curated by hand: the slot is one whose base ability a bot leans on least (or cannot
- * use at all — Technology's F opens a browser minigame), and every entry respects the
+ * it. Curated by hand: the slot is one whose base ability a bot leans on least, and every entry respects the
  * enhancement's `excludeSlots`. Elements missing from this table run passive-only —
  * their bindable needs player-only input: Fate's tarot enchants the card under the
  * mouse, Silence's Puppetmaster hand-steers a possessed body, and Soul's Grave Mistake
@@ -48,21 +47,17 @@ const NPC_MASTERY_BINDS: Record<string, { enhId: string; slot: MasterySlot }> = 
   // Math (`magic`) has no mastery yet — it replaced Magic on 2026-11-23.
   creation: { enhId: 'mortar-command', slot: 'f' },
   rubber: { enhId: 'atom-nhilego', slot: 'f' },
-  technology: { enhId: 'byte-bomb', slot: 'f' },
+  // Technology's mastery is two passives (VPN, Glitch Abuse) since 2026-11-25 — nothing to bind.
   gunpowder: { enhId: 'overload', slot: 'f' },
   light: { enhId: 'killer-kebab', slot: 'f' },
   echo: { enhId: 'echo-bloom', slot: 'r' },
-  subterfuge: { enhId: 'smoke-break', slot: 'f' },
+  // Subterfuge's mastery ability is Hijack (2026-11-25): a bot cannot drive, so it keeps Bribe.
   plasma: { enhId: 'unstable-orbital', slot: 'f' },
   hunt: { enhId: 'beastling', slot: 'f' },
   // Illusion, Chalk and Radiation used to give up their E. E is never replaceable now
   // (2026-10-15), so each binds over F instead — except Illusion, whose F is Guise (its best
   // escape and its whole decoy game), so it gives up Relocate, the escape Guise replaces.
   illusion: { enhId: 'masquerade', slot: 'r' },
-  // Magma gives up Bloat: it is the one slot that costs the pressure economy nothing (the block
-  // charges 25, the saw charges 30 a second), and a bot holding a chainsaw is committed to being
-  // in melee anyway — which is exactly where a saved block would have mattered least.
-  magma: { enhId: 'magma-saw', slot: 'r' },
   // Bind gives up Siphon for False Idol: the eyes and the chain are what feed the Ritual, and the
   // kit plants the idol at the bot's feet and parks a spare soul in it.
   bind: { enhId: 'false-idol', slot: 'f' },

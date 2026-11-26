@@ -12,7 +12,7 @@ export const subterfugeElement: Element = {
     {
       id: 'sub-cutter',
       name: 'Molecular Cutter',
-      description: 'Click: hurl a dagger that plants where you aim (8 dmg). Up to 3 can be out; the next click recalls them all — a dagger that hits on the way back deals 12.',
+      description: 'Click: hurl a fast dagger that plants where you aim (8 dmg). Up to 3 can be out; the next click recalls them all — a dagger that hits on the way back deals 18. There is a beat between throws, and a longer one after a recall.',
       displayKey: 'Click',
       cooldown: 0,
       cast(ctx) { ctx.subterfugeCutter(ctx.targetX, ctx.targetY); },
@@ -28,7 +28,7 @@ export const subterfugeElement: Element = {
     {
       id: 'sub-recruit',
       name: 'Recruit',
-      description: 'Spend 1 money to hire a Lackey: keeps its distance and sprays the enemy down (1 dmg pellets, 25-round mag, 5s reload). Its yellow loyalty bar drains over 20s — projectile hits cost it 2s each.',
+      description: 'Spend 1 money to hire a Thug who stands where you hired him and sprays the enemy with a Tommy gun (1 dmg rounds, 25-round drum, 5s reload). His loyalty bar drains over 40s — projectile hits cost it 2s each. Up to 3 recruits at a time.',
       displayKey: 'R',
       cooldown: 1000,
       cast(ctx) { ctx.subterfugeRecruit(ctx.targetX, ctx.targetY); },
@@ -36,7 +36,7 @@ export const subterfugeElement: Element = {
     {
       id: 'sub-bribe',
       name: 'Bribe',
-      description: 'Spend 1 money to bribe whatever your cursor is over. Enemy: deals 25% less damage for 8s (censored for the duration). Lackey: loyalty refilled to 120%. No target: bribes whoever is closest.',
+      description: 'Spend 1 money to bribe whatever your cursor is over. Enemy: deals 25% less damage for 8s (censored for the duration). Recruit: loyalty refilled to 120%. No target: bribes whoever is closest.',
       displayKey: 'F',
       cooldown: 1000,
       cast(ctx) { ctx.subterfugeBribe(ctx.targetX, ctx.targetY); },

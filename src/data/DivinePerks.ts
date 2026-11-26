@@ -89,7 +89,7 @@ export const DIVINE_PERKS: PerkDef[] = [
     name: 'Moral',
     emoji: '🎺',
     color: 0xffcc55,
-    description: 'Every recruit is hired with 25% more loyalty, and the Rolodex gains the Bard for 1💵. The Bard never fights — it bounces around like a money runner, and while it is on the payroll every other recruit loses loyalty 75% slower. Bards do not buff bards.',
+    description: 'Every recruit is hired with 25% more loyalty, and the Rolodex gains the Bard for 1💵. The Bard never fights — it strolls around the arena playing (it is the one recruit that does not stand still), and while it is on the payroll every other recruit loses loyalty 75% slower. Bards do not buff bards.',
     ingredients: ['air', 'sound'],
     tier: 'divine',
     elementId: 'subterfuge',

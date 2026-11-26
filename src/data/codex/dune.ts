@@ -109,6 +109,7 @@ const dune: ElementCodex = {
         + 'worth +10 a shot in the meantime. 15s cooldown.',
       cast: 'E, no aim — the chain is laid out into open floor near you, angled toward the middle of the arena. 15s cooldown.',
       effects: [
+        { tag: 'damage', label: 'The laser', detail: 'Three times in four, one of the middle slabs carries a laser: a spinner (a beam turning through the middle — the corners are safe), a laser block (a bar across the slab you jump from one half to the other), or a blinking grid (1.7s dark, 0.6s of warning, 0.9s lit). Touching one while standing on its slab costs 8, at most once every 0.7 seconds. Being in the air is immunity.' },
         { tag: 'summon', label: 'The course', detail: '4–5 platforms: one grey block at 58 units, then 3 or 4 pillars each 26–68 units higher than the last, spaced 88–112px apart.' },
         { tag: 'buff', label: 'The orb', detail: 'Reaching the last platform gives Golden Sand: 8 seconds in which the flintlock reloads in 1 second instead of 2, doubling its rate of fire.' },
         { tag: 'cost', label: 'Falling off', detail: '20 damage as self-inflicted, for every landing back on the floor while the course is unfinished.' },
@@ -135,6 +136,7 @@ const dune: ElementCodex = {
         + 'scaffolding. Unclaimed it stands 34 seconds and crumbles, poison and all. 28s cooldown.',
       cast: 'R, no aim. 28s cooldown.',
       effects: [
+        { tag: 'damage', label: 'The lasers', detail: 'About half the slabs that do not slide carry a laser, never the same kind twice running: a spinner, a laser block, or a blinking grid (1.7s dark, 0.6s of warning, 0.9s lit). 8 damage for touching one while standing on its slab, at most once every 0.7 seconds. Being in the air is immunity.' },
         { tag: 'summon', label: 'The course', detail: '9–11 platforms, spaced 92–122px, each 26–68 units higher than the last. About a third of the run slides on a 2.6–4.0 second patrol up to 52px wide; the goal never does.' },
         { tag: 'dot', label: 'The poison', detail: '12 damage the instant you step into a patch, then 9 every 0.6 seconds while you stand in it. Patches are 34–56px across and sit in the middle of every gap.' },
         { tag: 'utility', label: 'Height is immunity', detail: 'Anything above 6 units of height ignores poison entirely. Jumping the patch is the one free way across.' },
@@ -194,6 +196,7 @@ const dune: ElementCodex = {
         + 'cooldown.',
       cast: 'Q, no aim — it takes the nearest enemy the height sim can carry, and is refused with "NO RIVAL" if there is nobody eligible. Ultimate, 42s cooldown.',
       effects: [
+        { tag: 'damage', label: 'The lasers', detail: 'About a third of the middle slabs that do not slide carry a spinner or a laser block — never a blinking grid. 8 damage for touching one while standing on its slab, at most once every 0.7 seconds, for either runner.' },
         { tag: 'summon', label: 'The lanes', detail: '11–13 slabs each, confined to half the screen, climbing 22–60 units per step. Both lanes roll their own randomness, so they are the same difficulty and never the same course.' },
         { tag: 'damage', label: 'Losing', detail: '70 damage — for coming second, for falling to the floor, or for letting the lava reach you. One price for all three.' },
         { tag: 'cost', label: 'It can be you', detail: 'The caster losing their own minigame takes the 70 as self-inflicted. This is a bet that you climb better, not a free ultimate.' },

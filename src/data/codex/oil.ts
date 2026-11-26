@@ -40,7 +40,7 @@ const oil: ElementCodex = {
       emoji: '🛢️',
       name: 'Oil Puddles and Oily',
       basics:
-        'The floor half of the kit. A puddle is 30px across and stands 12 seconds, left by rolling '
+        'The floor half of the kit. A puddle is 60px in radius and stands 18 seconds, left by rolling '
         + 'barrels every 80px, by every barrel detonation (two extra) and by a Train Morph every 2s. '
         + 'Standing in one applies Oily for 8 seconds, refreshed while you stay. A lit puddle deals 2 '
         + 'damage every 0.3s — about 6.7 a second — and sets Burning, which is 3 damage every 0.5s for 5 '
@@ -48,9 +48,9 @@ const oil: ElementCodex = {
         + 'half as long. Shooting an Oily enemy with a drone laser burns the coat straight off them and '
         + 'Burns them too.',
       effects: [
-        { tag: 'area', label: 'The spill', detail: '30px radius, standing 12s. Left by rolling barrels every 80px, by every barrel detonation (2 extra), and by a Train Morph every 2s.' },
+        { tag: 'area', label: 'The spill', detail: '60px radius, standing 18s. Left by rolling barrels every 80px, by every barrel detonation (2 extra), and by a Train Morph every 2s.' },
         { tag: 'debuff', label: 'Oily', detail: 'Standing in a puddle applies Oily for 8s, refreshed continuously while you stay in it.' },
-        { tag: 'dot', label: 'Ignited puddles', detail: 'A lit puddle deals 2 damage every 0.3s to anyone inside — about 6.7 a second — and sets them Burning. Lighting a puddle halves whatever lifetime it had left: it burns twice as hot for half as long.' },
+        { tag: 'dot', label: 'Ignited puddles', detail: 'A lit puddle deals 2 damage every 0.3s to anyone inside — about 6.7 a second — and sets them Burning. Your Arm Laser lights every one of your own puddles its beam crosses; drone lasers and detonated barrels light them too. Lighting a puddle with a laser halves whatever lifetime it had left: it burns twice as hot for half as long.' },
         { tag: 'dot', label: 'Burning', detail: '3 damage every 0.5s for 5s — 30 total. Applied by stepping in a lit puddle, or by shooting an Oily enemy with a drone laser, which burns the coat straight off them.' },
       ],
       notes: [
@@ -108,7 +108,7 @@ const oil: ElementCodex = {
 
     'barrel-roll': {
       basics:
-        'Rolls a barrel from you toward the cursor at 300 px/s, leaving a 30px puddle every 80px of '
+        'Rolls a barrel from you toward the cursor at 300 px/s, leaving a 60px puddle every 80px of '
         + 'travel. It detonates for 20 damage in a 50px radius with a 150ms shake and two more puddles '
         + 'scattered within 25px — set off by touching an enemy, reaching a wall, or being hit by an '
         + 'enemy projectile, so you do not choose the moment unless you right-click it. 3s cooldown, and '
@@ -116,7 +116,7 @@ const oil: ElementCodex = {
       cast: 'E, aimed at the cursor. Casting again while one is rolling detonates the old barrel first.',
       effects: [
         { tag: 'damage', label: 'Detonation', detail: '20 damage in a 50px radius, plus a 150ms camera shake.' },
-        { tag: 'summon', label: 'The spill', detail: 'One 30px puddle every 80px of travel, plus 2 more scattered within 25px of the blast.' },
+        { tag: 'summon', label: 'The spill', detail: 'One 60px puddle every 80px of travel, plus 2 more scattered within 25px of the blast.' },
         { tag: 'movement', label: 'Travel', detail: '300 px/s in a straight line from the caster toward the cursor.' },
         { tag: 'cost', label: 'What sets it off', detail: 'Touching an enemy (within 30px), reaching a wall, or being hit by an enemy projectile (within 30px). You do not choose the moment unless you right-click it.' },
         { tag: 'utility', label: 'Availability', detail: '3s cooldown.' },

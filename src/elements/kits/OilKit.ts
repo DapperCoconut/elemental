@@ -47,6 +47,9 @@ const SHIELD_GEN_RANGE = 150;
 const ARM_LASER_INTERVAL_MS = 110;
 const ARM_LASER_DAMAGE = 2;
 const ARM_LASER_RANGE = 560;
+/** An oil puddle's reach and how long it stands (the codex previews read these too). */
+export const OIL_PUDDLE_RADIUS = 60;
+export const OIL_PUDDLE_MS = 18000;
 /** Each shot's heat, on a 0–1 gauge: 22 shots (≈2.4s held) to overheat from cold. */
 const ARM_HEAT_PER_SHOT = 0.046;
 /** Heat bled per second once the trigger has been off for `ARM_COOL_DELAY_MS`. */
@@ -773,6 +776,13 @@ export class OilKit {
     Sfx.playAt('zap', o.x, { rate: 1.5 + g.heat * 0.4, volume: 0.25 });
     if (hit) hit.takeDamage(ARM_LASER_DAMAGE, { source: f, sourceX: f.x, sourceY: f.y });
 
+    // The beam lights every one of your own puddles it crosses on the way.
+    for (const p of owner === 'player' ? this.playerOilPuddles : this.npcOilPuddles) {
+      if (p.ignited) continue;
+      const u = Phaser.Math.Clamp((p.x - o.x) * dx + (p.y - o.y) * dy, 0, hitU);
+      if (Phaser.Math.Distance.Between(p.x, p.y, o.x + dx * u, o.y + dy * u) <= p.radius) this.shootPuddleAlight(p);
+    }
+
     if (g.heat >= 1) this.overheatArmGun(owner, ang);
   }
 
@@ -1172,9 +1182,7 @@ export class OilKit {
       const ownPuddles = owner === 'player' ? this.playerOilPuddles : this.npcOilPuddles;
       for (const p of ownPuddles) {
         if (!p.ignited && Phaser.Math.Distance.Between(tx, ty, p.x, p.y) <= p.radius + 20) {
-          this.ignitePuddle(p);
-          const remaining = p.expiresAt - scene.time.now;
-          p.expiresAt = scene.time.now + remaining * 0.5;
+          this.shootPuddleAlight(p);
         }
       }
 
@@ -1670,8 +1678,8 @@ export class OilKit {
     const gfx = this.arena.scene.add.graphics().setDepth(2);
     const puddle: OilPuddle = {
       gfx, x, y,
-      expiresAt: this.arena.scene.time.now + 12000,
-      ignited: false, igniteTickAccum: 0, radius: 30,
+      expiresAt: this.arena.scene.time.now + OIL_PUDDLE_MS,
+      ignited: false, igniteTickAccum: 0, radius: OIL_PUDDLE_RADIUS,
       seed: Math.random() * 10, owner,
     };
     if (owner === 'player') this.playerOilPuddles.push(puddle);
@@ -1697,6 +1705,14 @@ export class OilKit {
     fx.gusher(puddle.x, puddle.y, puddle.radius * 0.8, 8, 3);
     fx.smoke(puddle.x, puddle.y, 2, puddle.radius * 0.7, 3);
     if (puddle.owner === 'player') this.arena.recordMasteryStat('puddleIgnites', 1);
+  }
+
+  /** A laser lighting a puddle: it burns twice as hot, so whatever life it had left is halved. */
+  private shootPuddleAlight(puddle: OilPuddle): void {
+    if (puddle.ignited) return;
+    this.ignitePuddle(puddle);
+    const now = this.arena.scene.time.now;
+    puddle.expiresAt = now + (puddle.expiresAt - now) * 0.5;
   }
 
   private updateOilPuddles(puddles: OilPuddle[], time: number, delta: number, owner: 'player' | 'npc'): void {

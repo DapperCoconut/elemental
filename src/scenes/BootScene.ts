@@ -2773,9 +2773,9 @@ export class BootScene extends Phaser.Scene {
     gfx.generateTexture('elem-gluttony', 48, 48);
     gfx.clear();
 
-    // Pressure — a riveted steel boiler-shell (PRESSURE.steel), darker at the rim, a hot glint.
-    // The seam, the grille, the stacks and the gauntlet are the rig's.
-    bakeOrb(gfx, { rim: 0x2a2e34, shell: 0x4f555d, body: 0x6d747d, mid: 0x858c95, core: 0x9aa1aa, light: 0xc4cad1, glint: 0xffe8c8 });
+    // Gas (id `pressure`) — a riveted steel boiler-shell (PRESSURE.steel), darker at the rim, a
+    // smog-lilac glint. The weeping seam, the belly-port, the smokestacks and the gauntlet are the rig's.
+    bakeOrb(gfx, { rim: 0x2a2e34, shell: 0x4f555d, body: 0x6d747d, mid: 0x858c95, core: 0x9aa1aa, light: 0xc4cad1, glint: 0xe2c2ff });
     gfx.fillStyle(0xa9b0b8, 1);
     for (const [rx, ry] of [[14, 14], [34, 14], [10, 26], [38, 26]]) gfx.fillCircle(rx, ry, 1.4);
     gfx.generateTexture('elem-pressure', 48, 48);

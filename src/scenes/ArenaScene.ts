@@ -4,7 +4,7 @@ import { Player } from '../entities/Player';
 import { NpcOpponent, NpcAiState, DIFFICULTY_PRESETS, DifficultyConfig } from '../entities/NpcOpponent';
 import { Husk } from '../invasion/Husk';
 import { InvasionKit, InvasionArenaApi, getInvasionDifficulty } from '../invasion/InvasionKit';
-import { InvasionCoopKit, InvasionCoopArenaApi, CoopAllySpec } from '../invasion/InvasionCoopKit';
+import { InvasionCoopKit, InvasionCoopArenaApi, CoopAllySpec, isCoopRelayId } from '../invasion/InvasionCoopKit';
 import { DisgracedKingKit, DisgracedKingArenaApi, BossOutcome } from '../boss/DisgracedKingKit';
 import { WorldBossKit, WorldBossArenaApi } from '../boss/framework/WorldBossKit';
 import { getWorldBossDef } from '../boss/bosses';
@@ -520,6 +520,8 @@ export class ArenaScene extends Phaser.Scene {
   private readonly hpBarH = 24;
   private dodgeOnCooldown = false;
   private isDodging = false;
+  /** `time.now` of the player's last dodge. Magma's Blunderblast only kicks straight out of one. */
+  private lastDodgeAt = -99999;
   private echoHypersenseNextDodgeAt = 0; // Echo Q+ Hypersense: internal auto-dodge throttle
   private gameEnded = false;
   private playerSpeedMult = 1;
@@ -723,7 +725,7 @@ export class ArenaScene extends Phaser.Scene {
   private waxKit!: WaxKit;
   /** Clay (test element) — managed by ClayKit. The golem, the drawn shield, the wall run and the fused body. */
   private clayKit!: ClayKit;
-  /** Magma — managed by MagmaKit. Lava, volcanoes, the blunderbuss, the pendant and the ship. */
+  /** Magma — managed by MagmaKit. The blunderbuss, the flintlocks, the drink, the core and the ship. */
   private magmaKit!: MagmaKit;
   /** Illusion (test element) — managed by IllusionKit. Panes, folds, corner-hops and the crack. */
   private illusionKit!: IllusionKit;
@@ -731,9 +733,9 @@ export class ArenaScene extends Phaser.Scene {
   private depthsKit!: DepthsKit;
   /** Wood (element id `gluttony`, test element) — managed by GluttonyKit. Sap, birches, sprouts and the scythe. */
   private gluttonyKit!: GluttonyKit;
-  /** Pressure (test element) — managed by PressureKit. Held charges, the gauntlet, orbs, vents and the floor. */
+  /** Gas (id `pressure`, test element) — managed by PressureKit. Held charges, the gauntlet, orbs, the jet and its gas clouds. */
   private pressureKit!: PressureKit;
-  /** Astra (test element) — managed by AstraKit. Level shots, flares, the smite, the warp, the Star Trial. */
+  /** Astra (test element) — managed by AstraKit. Mass from space dust, antimatter, the comet, the Singularity. */
   private astraKit!: AstraKit;
   /** Memory (test element) — managed by MemoryKit. Guilt, the shards' static, the snatch, Rebirth, the copy, the wounds. */
   private memoryKit!: MemoryKit;
@@ -2532,8 +2534,8 @@ export class ArenaScene extends Phaser.Scene {
         get rKey() { return arena.keyFor('magma', arena.rKey); },
         get fKey() { return arena.keyFor('magma', arena.fKey); },
         get qKey() { return arena.keyFor('magma', arena.qKey); },
-        get spaceKey() { return arena.keyFor('magma', arena.spaceKey); },
         get projectiles() { return arena.projectiles; },
+        get lastDodgeAt() { return arena.lastDodgeAt; },
         get pointerWasDown() { return arena.pointerWasDown; },
         get elementId() { return arena.liveElementFor('magma'); },
         get npcElementId() { return arena.npcElement.id; },
@@ -2542,21 +2544,12 @@ export class ArenaScene extends Phaser.Scene {
         magmaColor: (owner, base) => arena.skinsKit.magmaColor(owner, base),
         skinId: (owner) => arena.skinsKit.skinId(owner),
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
-        showFloatingText: (x, y, t, c) => arena.showFloatingText(x, y, t, c),
         getNearestEnemy: (x, y) => arena.getNearestEnemy(x, y),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
         setStatusIndicator: (id, status) => arena.statusHudKit.setCustom(id, status),
-        hasUpgrade: (slot) => arena.hasUpgradeFor('magma', slot),
-        hasNpcUpgrade: (slot) => arena.hasNpcUpgrade(slot),
         get masteryActive() { return arena.magmaMasteryOn && arena.playerIs('magma'); },
         get npcMasteryActive() { return arena.npcMasteryOn && arena.npcElement.id === 'magma'; },
-        masteryBindFor: (slot) => arena.masteryBindForElement('magma', slot),
-        npcMasteryBindFor: (slot) => arena.npcMasteryBindFor(slot),
-        recordMasteryStat: (key, amount) => {
-          if (arena.playerIs('magma')) PlayerData.addMasteryStat('magma', key, amount);
-        },
-        broadcastMasteryCast: (enhId) => arena.broadcastMasteryCast(enhId),
-        get isOnline() { return arena.isOnline; },
+        barFor: (id) => arena.abilityBars.find((e) => e.abilityId === id),
       };
       this.magmaKit = new MagmaKit(magmaApi);
     }
@@ -2677,7 +2670,7 @@ export class ArenaScene extends Phaser.Scene {
       this.gluttonyKit = new GluttonyKit(gluttonyApi);
     }
 
-    // ── Pressure kit (test element) ───────────────────────────
+    // ── Gas kit (id `pressure`, test element) ─────────────────
     if (this.pressureKit) {
       this.pressureKit.reset();
     } else {
@@ -2737,10 +2730,7 @@ export class ArenaScene extends Phaser.Scene {
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
         setStatusIndicator: (id, status) => arena.statusHudKit.setCustom(id, status),
         broadcast: (id) => arena.broadcastMasteryCast(id),
-        hasUpgrade: (owner, slot) => (owner === 'player' ? arena.hasUpgradeFor('astra', slot) : arena.hasNpcUpgrade(slot)),
-        // No mastery exists yet; the rig's tell is ready for one.
-        get masteryActive() { return false; },
-        get npcMasteryActive() { return false; },
+        relabelCard: (id, name, desc) => arena.relabelAbilityCard(id, name, desc),
       };
       this.astraKit = new AstraKit(astraApi);
     }
@@ -3598,7 +3588,6 @@ export class ArenaScene extends Phaser.Scene {
         get fKey() { return arena.keyFor('technology', arena.fKey); },
         get qKey() { return arena.keyFor('technology', arena.qKey); },
         get nukeChanneling() { return arena.nukeChanneling; },
-        get projGroup() { return arena.projectiles; },
         get projReg() { return arena.techProjReg; },
         hasUpgrade: (owner, slot) => owner === 'player'
           ? arena.hasUpgradeFor('technology', slot)
@@ -3737,6 +3726,15 @@ export class ArenaScene extends Phaser.Scene {
         get rKey() { return arena.keyFor('subterfuge', arena.rKey); },
         get fKey() { return arena.keyFor('subterfuge', arena.fKey); },
         get qKey() { return arena.keyFor('subterfuge', arena.qKey); },
+        get spaceKey() { return arena.keyFor('subterfuge', arena.spaceKey); },
+        moveAxis: () => ({
+          x: (arena.keyFor('subterfuge', arena.dKey).isDown ? 1 : 0) - (arena.keyFor('subterfuge', arena.aKey).isDown ? 1 : 0),
+          y: (arena.keyFor('subterfuge', arena.sKey).isDown ? 1 : 0) - (arena.keyFor('subterfuge', arena.wKey).isDown ? 1 : 0),
+        }),
+        get enemies() { return arena.reachableEnemies; },
+        cardRects: () => arena.abilityBars.filter((b) => b.fill.visible).map((b) => ({
+          abilityId: b.abilityId, x: b.fill.x, y: b.fill.y - b.fill.height / 2, w: b.maxWidth, h: b.fill.height,
+        })),
         get projectiles() { return arena.projectiles; },
         get nukeChanneling() { return arena.nukeChanneling; },
         get elementId() { return arena.liveElementFor('subterfuge'); },
@@ -4767,6 +4765,7 @@ export class ArenaScene extends Phaser.Scene {
             endCoopRun: (waves, shards) => arena.endCoopRun(waves, shards),
             get cityLoadout() { return arena.cityRun ? arena.cityLoadout() : null; },
             onWoodGift: (sap, heal, brewMs) => arena.gluttonyKit.receiveGift(sap, heal, brewMs),
+            replayNpcMastery: (enhId, tx, ty) => arena.replayNpcMastery(enhId, tx, ty),
             latchPointer: () => {
               arena.pointerInputLatched = true;
               arena.input.once('pointerup', () => { arena.pointerInputLatched = false; });
@@ -5342,7 +5341,9 @@ export class ArenaScene extends Phaser.Scene {
    * sim can replay it (see {@link replayNpcMastery}). Kits call this on cast.
    */
   broadcastMasteryCast(enhId: string): void {
-    if (this.isOnline) this.onlineKit?.sendMasteryCast(enhId);
+    if (!this.isOnline) return;
+    if (!this.isInvasion) this.onlineKit?.sendMasteryCast(enhId);
+    else if (isCoopRelayId(enhId)) this.invasionCoopKit?.sendMasteryCast(enhId);
   }
 
   /**
@@ -5394,6 +5395,11 @@ export class ArenaScene extends Phaser.Scene {
     // Tempest Mastery: Gale Uppercut runs off the kit's own clock.
     if (enhId === 'tempest-gale-uppercut') {
       if (this.npcElement.id === 'tempest') this.tempestKit.replayNet(enhId, tx, ty);
+      return;
+    }
+    // Subterfuge: money-bar purchases and Hijack rides never touch a cooldown.
+    if (enhId.startsWith('subx-')) {
+      if (this.npcElement.id === 'subterfuge') this.subterfugeKit.replayNet(enhId, tx, ty);
       return;
     }
     // Oil: arm-laser shots, drones off the line and drone volleys are presses, not cooldown casts.
@@ -5450,8 +5456,8 @@ export class ArenaScene extends Phaser.Scene {
       this.mathKit.replayNet(enhId);
       return;
     }
-    // Astra: the Q+ hold and its stars, the trial's result, R+'s second bolt, and the swap, the
-    // theft, the slap and the finale — which land on our own body, so only we may apply them.
+    // Astra: its mass and pickups, early detonations, the comet's catch and throw, and what the
+    // black hole does to a body — which lands on our own, so only we may apply it.
     if (enhId.startsWith('astra-') && !this.npcElement.abilities.some((a) => a.id === enhId)) {
       if (this.npcElement.id === 'astra') this.astraKit.replayNet(enhId);
       return;
@@ -5610,14 +5616,6 @@ export class ArenaScene extends Phaser.Scene {
         break;
       // Paint Mastery — Yin-Yang travels as its own `pnt` message (what was painted where), so
       // there is nothing to replay here.
-      // Magma Mastery — the saw is two signals: the motor on, and the motor off. The replica
-      // runs its own eight-second heat clock, so the detonation needs no message of its own.
-      case 'magma-saw':
-        if (this.npcElement.id === 'magma') this.magmaKit.doNpcSaw();
-        break;
-      case 'magma-saw-off':
-        if (this.npcElement.id === 'magma') this.magmaKit.doNpcSawOff();
-        break;
       case 'shadow-beacon':
         if (this.npcElement.id === 'shadow') this.shadowKit.doNpcShadowBeacon(tx, ty);
         break;
@@ -5705,9 +5703,6 @@ export class ArenaScene extends Phaser.Scene {
         break;
       case 'atom-nhilego':
         if (this.npcElement.id === 'rubber') this.rubberKit.doNpcAtomNhilego();
-        break;
-      case 'byte-bomb':
-        if (this.npcElement.id === 'technology') this.techKit.doNpcByteBomb(tx, ty);
         break;
       case 'overload':
         if (this.npcElement.id === 'gunpowder') this.gunpowderKit.doNpcOverload();
@@ -5815,12 +5810,11 @@ export class ArenaScene extends Phaser.Scene {
       // Pale gold rather than the Expansion's own — both are money, and the mastery card has to
       // read apart from the ability whose key it may well be sitting on.
       market:              0xf7e08a,
-      'magma-plume':       0xff8b22,
-      'magma-volcano':     0xff5a1e,
-      'magma-bloat':       0xffc44a,
       'magma-blunder':     0xff7733,
-      'magma-mutiny':      0xc4101c,
-      'magma-saw':         0xffc44a,
+      'magma-hotshot':     0xffc44a,
+      'magma-drink':       0x9fe8ff,
+      'magma-core':        0xff5a1e,
+      'magma-limoncello':  0xffe36a,
       'illusion-crack-shot': 0xff3b4a,
       'illusion-veil':       0x8a6cff,
       'illusion-relocate':   0xb45cff,
@@ -5889,18 +5883,18 @@ export class ArenaScene extends Phaser.Scene {
       'tempest-front':         0x7fb4ff,
       'tempest-updraft':       0x4f6d99,
       'tempest-forecast':      0xfff3a6,
-      // Pressure: steel for the punch, slab for the slam, pain red, steam, and the red-hot boiler.
+      // Gas (id `pressure`): steel for the punch, slab for the slam, pain red, smog purple, and the red-hot boiler.
       'pressure-punch':        0xc4cad1,
       'pressure-slam':         0x9a8b78,
       'pressure-point':        0xe0232f,
-      'pressure-release':      0xeef1f3,
+      'pressure-release':      0xa35be0,
       'pressure-exceed':       0xff5a36,
-      // Astra: solar gold for the shots and flares, smite violet, wormhole cyan, the star itself.
-      'astra-starstruck':      0xffe27a,
-      'astra-solar-flares':    0xffb52e,
-      'astra-smite':           0xb05cff,
-      'astra-worm-warp':       0x52d8ff,
-      'astra-true-self':       0xfff6d0,
+      // Astra: mercury antimatter, supernova orange, furnace red, comet ice, the black hole's rim.
+      'astra-antimatter':      0xb9c4d6,
+      'astra-supernova':       0xff7a1a,
+      'astra-fusion':          0xff4d2e,
+      'astra-comet':           0x9fe6ff,
+      'astra-singularity':     0xfff6d0,
       // Memory: obsidian for the shards, static grey, Rebirth's white, the grey record, Trauma red.
       'memory-forget':         0x5d527a,
       'memory-snatch':         0x8d8a99,
@@ -6101,7 +6095,7 @@ export class ArenaScene extends Phaser.Scene {
       // Technology
       'tech-cruncher': 0x33ff88,
       'tech-ads':      0x44ccaa,
-      'tech-upload':   0xff3355,
+      'tech-zip':      0xffcc44,
       'tech-webdrag':  0x66eecc,
       'tech-admin':    0xff4444,
       // Echo (abstract combined: fate + light)
@@ -6662,7 +6656,7 @@ export class ArenaScene extends Phaser.Scene {
       // Technology
       techCruncherFire: (tx, ty) => { this.techKit.doTechCruncherFire('player', tx, ty); },
       techAdsCast: () => { this.techKit.doTechAdsCast('player'); },
-      techUploadCast: (tx, ty) => { this.techKit.doTechUploadCast('player', tx, ty); },
+      techZipCast: (tx, ty) => { this.techKit.doTechZipCast('player', tx, ty); },
       techWebDragCast: () => { this.techKit.doTechWebDragCast('player'); },
       techAdminCast: () => { this.techKit.doTechAdminCast('player'); },
       // Echo (player input handled entirely in echoKit.handleInput; these are stubs for ability cast registration)
@@ -6709,11 +6703,11 @@ export class ArenaScene extends Phaser.Scene {
       paintCongeal: () => this.chalkKit.doCongeal('player'),
       paintStillLife: () => this.chalkKit.doStillLife('player'),
       paintMasterpiece: () => this.chalkKit.doMasterpiece('player'),
-      magmaPlume: (tx, ty) => this.magmaKit.doPlume('player', tx, ty),
-      magmaVolcano: (tx, ty) => this.magmaKit.doVolcano('player', tx, ty),
-      magmaBloat: () => this.magmaKit.doBloat('player'),
       magmaBlunder: (tx, ty) => this.magmaKit.doBlunder('player', tx, ty),
-      magmaMutiny: () => this.magmaKit.doMutiny('player'),
+      magmaHotshot: () => this.magmaKit.doHotshot('player'),
+      magmaDrink: () => this.magmaKit.doDrink('player'),
+      magmaCore: () => this.magmaKit.doCore('player'),
+      magmaLimoncello: () => this.magmaKit.doLimoncello('player'),
       illusionCrackShot: (tx, ty) => this.illusionKit.doCrackShot('player', tx, ty),
       illusionVeil: (tx, ty) => this.illusionKit.doVeil('player', tx, ty),
       illusionRelocate: () => this.illusionKit.doRelocate('player'),
@@ -6810,11 +6804,11 @@ export class ArenaScene extends Phaser.Scene {
       pressurePoint: (tx, ty) => this.pressureKit.doPoint('player', tx, ty),
       pressureRelease: (tx, ty) => this.pressureKit.doRelease('player', tx, ty),
       pressureExceed: () => this.pressureKit.doExceed('player'),
-      astraStarstruck: (tx, ty) => this.astraKit.doStarstruck('player', tx, ty),
-      astraSolarFlares: (tx, ty) => this.astraKit.doSolarFlares('player', tx, ty),
-      astraSmite: (tx, ty) => this.astraKit.doSmite('player', tx, ty),
-      astraWormWarp: (tx, ty) => this.astraKit.doWormWarp('player', tx, ty),
-      astraTrueSelf: () => this.astraKit.doTrueSelf('player'),
+      astraAntimatter: (tx, ty) => this.astraKit.doAntimatter('player', tx, ty),
+      astraSupernova: () => this.astraKit.doSupernova('player'),
+      astraFusion: () => this.astraKit.doFusion('player'),
+      astraComet: (tx, ty) => this.astraKit.doComet('player', tx, ty),
+      astraSingularity: () => this.astraKit.doSingularity('player'),
       memoryForget: (tx, ty) => this.memoryKit.doForget('player', tx, ty),
       memorySnatch: (tx, ty) => this.memoryKit.doSnatch('player', tx, ty),
       memoryRebirth: (tx, ty) => this.memoryKit.doRebirth('player', tx, ty),
@@ -7087,7 +7081,7 @@ export class ArenaScene extends Phaser.Scene {
       // Technology
       techCruncherFire: (tx, ty) => { this.techKit.doTechCruncherFire('npc', tx, ty); },
       techAdsCast: () => { this.techKit.doTechAdsCast('npc'); },
-      techUploadCast: (tx, ty) => { this.techKit.doTechUploadCast('npc', tx, ty); },
+      techZipCast: (tx, ty) => { this.techKit.doTechZipCast('npc', tx, ty); },
       techWebDragCast: () => { this.techKit.doTechWebDragCast('npc'); },
       techAdminCast: () => { this.techKit.doTechAdminCast('npc'); },
       // Echo
@@ -7099,7 +7093,7 @@ export class ArenaScene extends Phaser.Scene {
       // Subterfuge
       subterfugeCutter: (tx, ty) => this.subterfugeKit.doNpcCutter(tx, ty),
       subterfugeSpray: (tx, ty) => this.subterfugeKit.doNpcSpray(tx, ty),
-      subterfugeRecruit: () => this.subterfugeKit.doNpcRecruit(),
+      subterfugeRecruit: (tx, ty) => this.subterfugeKit.doNpcRecruit(tx, ty),
       subterfugeBribe: (tx, ty) => this.subterfugeKit.doNpcBribe(tx, ty),
       subterfugeTreachery: () => this.subterfugeKit.doNpcTreachery(),
       // Justice
@@ -7134,11 +7128,11 @@ export class ArenaScene extends Phaser.Scene {
       paintCongeal: () => this.chalkKit.doCongeal('npc'),
       paintStillLife: () => this.chalkKit.doStillLife('npc'),
       paintMasterpiece: () => this.chalkKit.doMasterpiece('npc'),
-      magmaPlume: (tx, ty) => this.magmaKit.doPlume('npc', tx, ty),
-      magmaVolcano: (tx, ty) => this.magmaKit.doVolcano('npc', tx, ty),
-      magmaBloat: () => this.magmaKit.doBloat('npc'),
       magmaBlunder: (tx, ty) => this.magmaKit.doBlunder('npc', tx, ty),
-      magmaMutiny: () => this.magmaKit.doMutiny('npc'),
+      magmaHotshot: () => this.magmaKit.doHotshot('npc'),
+      magmaDrink: () => this.magmaKit.doDrink('npc'),
+      magmaCore: () => this.magmaKit.doCore('npc'),
+      magmaLimoncello: () => this.magmaKit.doLimoncello('npc'),
       illusionCrackShot: (tx, ty) => this.illusionKit.doCrackShot('npc', tx, ty),
       illusionVeil: (tx, ty) => this.illusionKit.doVeil('npc', tx, ty),
       illusionRelocate: () => this.illusionKit.doRelocate('npc'),
@@ -7235,11 +7229,11 @@ export class ArenaScene extends Phaser.Scene {
       pressurePoint: (tx, ty) => this.pressureKit.doPoint('npc', tx, ty),
       pressureRelease: (tx, ty) => this.pressureKit.doRelease('npc', tx, ty),
       pressureExceed: () => this.pressureKit.doExceed('npc'),
-      astraStarstruck: (tx, ty) => this.astraKit.doStarstruck('npc', tx, ty),
-      astraSolarFlares: (tx, ty) => this.astraKit.doSolarFlares('npc', tx, ty),
-      astraSmite: (tx, ty) => this.astraKit.doSmite('npc', tx, ty),
-      astraWormWarp: (tx, ty) => this.astraKit.doWormWarp('npc', tx, ty),
-      astraTrueSelf: () => this.astraKit.doTrueSelf('npc'),
+      astraAntimatter: (tx, ty) => this.astraKit.doAntimatter('npc', tx, ty),
+      astraSupernova: () => this.astraKit.doSupernova('npc'),
+      astraFusion: () => this.astraKit.doFusion('npc'),
+      astraComet: (tx, ty) => this.astraKit.doComet('npc', tx, ty),
+      astraSingularity: () => this.astraKit.doSingularity('npc'),
       memoryForget: (tx, ty) => this.memoryKit.doForget('npc', tx, ty),
       memorySnatch: (tx, ty) => this.memoryKit.doSnatch('npc', tx, ty),
       memoryRebirth: (tx, ty) => this.memoryKit.doRebirth('npc', tx, ty),
@@ -7457,7 +7451,7 @@ export class ArenaScene extends Phaser.Scene {
       mathFortyTwo: () => {},
       techCruncherFire: () => {},
       techAdsCast: () => {},
-      techUploadCast: () => {},
+      techZipCast: () => {},
       techWebDragCast: () => {},
       techAdminCast: () => {},
       // Fear — no-ops for clone
@@ -7506,11 +7500,11 @@ export class ArenaScene extends Phaser.Scene {
       paintCongeal: () => {},
       paintStillLife: () => {},
       paintMasterpiece: () => {},
-      magmaPlume: () => {},
-      magmaVolcano: () => {},
-      magmaBloat: () => {},
       magmaBlunder: () => {},
-      magmaMutiny: () => {},
+      magmaHotshot: () => {},
+      magmaDrink: () => {},
+      magmaCore: () => {},
+      magmaLimoncello: () => {},
       illusionCrackShot: () => {},
       illusionVeil: () => {},
       illusionRelocate: () => {},
@@ -7609,11 +7603,11 @@ export class ArenaScene extends Phaser.Scene {
       pressurePoint: () => {},
       pressureRelease: () => {},
       pressureExceed: () => {},
-      astraStarstruck: () => {},
-      astraSolarFlares: () => {},
-      astraSmite: () => {},
-      astraWormWarp: () => {},
-      astraTrueSelf: () => {},
+      astraAntimatter: () => {},
+      astraSupernova: () => {},
+      astraFusion: () => {},
+      astraComet: () => {},
+      astraSingularity: () => {},
       memoryForget: () => {},
       memorySnatch: () => {},
       memoryRebirth: () => {},
@@ -7879,6 +7873,7 @@ export class ArenaScene extends Phaser.Scene {
   private executeDodge(dx: number, dy: number, bypassCooldown = false): void {
     if (!bypassCooldown) this.dodgeOnCooldown = true;
     this.isDodging = true;
+    this.lastDodgeAt = this.time.now;
     this.player.isInvincible = true;
     const playerBody = this.player.body as Phaser.Physics.Arcade.Body;
     const mouseX = this.input.activePointer.worldX;
@@ -10304,7 +10299,7 @@ export class ArenaScene extends Phaser.Scene {
         this.scene.start('GameOverScene', {
           playerWon,
           difficulty: this.npcDifficulty.level,
-          rewardMult: playerWon ? getTotalRewardMult() : undefined,
+          rewardMult: playerWon ? getTotalRewardMult() * this.astraKit.rewardMult() : undefined,
           campaign: this.campaign ?? undefined,
           bounty: this.bounty ?? undefined,
           // A secret mode pays its own flat purse instead of the difficulty table's.
@@ -11027,6 +11022,7 @@ export class ArenaScene extends Phaser.Scene {
       this.playerSpeedMult *= this.soundKit.getPlayerSpeedMult();
     } else if (this.elementId === 'subterfuge') {
       this.playerSpeedMult = time < this.playerGeyserBuffUntil ? 1.5 : 1;
+      this.playerSpeedMult *= this.subterfugeKit.getPlayerSpeedMult();
     } else if (this.elementId === 'water') {
       this.playerSpeedMult = time < this.playerGeyserBuffUntil ? 1.5 : 1;
       // Water Mastery — Slipstream: +25% while standing in your own water.
@@ -11069,6 +11065,10 @@ export class ArenaScene extends Phaser.Scene {
     // Water NPC: a Sulphur eruption they set off under themselves.
     if (this.npcElement.id === 'water') {
       this.npcSpeedMult *= this.waterKit.getNpcSpeedMult();
+    }
+    // Technology NPC: the admin console's ;fly and ;speed.
+    if (this.npcElement.id === 'technology') {
+      this.npcSpeedMult *= this.techKit.getNpcSpeedMult();
     }
     // Sound: the bot's soul song and its Crescendo dance.
     if (this.npcElement.id === 'sound') {
@@ -11217,7 +11217,7 @@ export class ArenaScene extends Phaser.Scene {
       this.playerSpeedMult *= this.pressureKit.getPlayerSpeedMult();
       this.npcSpeedMult *= this.pressureKit.getNpcSpeedMult();
     }
-    // Astra is rooted while it holds Q+ and while the giant decides. Pulled for the same reason.
+    // Astra's mass slows it; the punch's wind-up and the finale root it. Pulled for the same reason.
     if (this.playerIs('astra') || this.npcElement.id === 'astra') {
       this.playerSpeedMult *= this.astraKit.getPlayerSpeedMult();
       this.npcSpeedMult *= this.astraKit.getNpcSpeedMult();
@@ -11849,12 +11849,12 @@ export class ArenaScene extends Phaser.Scene {
     // here rather than inside the kit so one press can never be both a hop and a roll. The same
     // applies to anyone Sand has pulled onto a Final Trail course, whatever element they are.
     if (!this.playerIs('dune') && !this.sandKit.isTrailActive()
-      // Magma's Space is the gangplank while its ship is up: off the deck, or back onto it.
-      && !this.magmaKit.suppressesDodge()
       // Psychic's Queen has no legs — she only moves the way a queen moves.
       && !this.psychicKit.suppressesDodge()
       // Sound's Big Finish: Space speeds the solo up instead.
       && !this.soundKit.suppressesDodge()
+      // Subterfuge's Hijack: Space is the car door while you are in a ride or beside one.
+      && !this.subterfugeKit.claimsSpace()
       && !(this.reality?.kind === 'trials' && this.realityDungeonKit?.claimsSpace())
       && Phaser.Input.Keyboard.JustDown(this.spaceKey)
       // Clay's Slipstream (F+) banks dashes: a stored charge is the gate rather than the cooldown.
@@ -11992,6 +11992,8 @@ export class ArenaScene extends Phaser.Scene {
       subMoney: this.npcElement.id === 'subterfuge' ? this.subterfugeKit.getNpcMoney() : 0,
       subBullets: this.npcElement.id === 'subterfuge' ? this.subterfugeKit.getNpcBullets() : 0,
       subLackeys: this.npcElement.id === 'subterfuge' ? this.subterfugeKit.getNpcLackeyCount() : 0,
+      subCanRecruit: this.npcElement.id === 'subterfuge' && this.subterfugeKit.getNpcCanRecruit(),
+      subBribeAim: this.npcElement.id === 'subterfuge' ? this.subterfugeKit.getNpcBribeAim() : null,
       npcJusticeWill: this.justiceKit.getWill('npc'),
       npcJusticeFlying: this.justiceKit.getForm('npc') === 'flight',
       npcJusticeSheer: this.justiceKit.isSheerWillActive('npc'),
@@ -12051,25 +12053,20 @@ export class ArenaScene extends Phaser.Scene {
       npcMathDeriveHits: this.mathKit.npcMathDeriveHits(),
       npcMathDeriveCovers: this.mathKit.npcMathDeriveCovers(),
       npcMathExamRunning: this.mathKit.npcMathExamRunning(),
-      npcMagmaBloat: this.magmaKit.isBloatActive('npc'),
-      npcMagmaVolcanoes: this.magmaKit.volcanoCount('npc'),
       npcLightTrickRamp: this.npcElement.id === 'light' && this.lightKit.npcTrickRampReady(),
       npcLightNovaReady: this.npcElement.id === 'light' && this.lightKit.npcNovaReady(),
-      npcMagmaChargeTarget: this.magmaKit.chargeTarget('npc') ?? undefined,
-      npcMagmaBlunderCharges: this.magmaKit.blunderCharges('npc'),
-      npcMagmaGaugePressure: this.magmaKit.npcGaugePressure(),
-      npcMagmaGaugeOver: this.magmaKit.npcGaugeOver(),
-      npcMagmaPendant: this.magmaKit.isPendantOn('npc'),
-      npcMagmaShip: this.magmaKit.hasShip('npc'),
-      npcMagmaMounted: this.magmaKit.isMounted('npc'),
-      // Magma: a volcano of its own standing next to the player that a broadside would light
-      // on the spot — the kit owns the geometry, the routine only has to aim there.
-      npcMagmaCannonVolcano: this.magmaKit.npcCannonVolcano() ?? undefined,
-      npcMagmaSawOut: this.magmaKit.isSawActive('npc'),
-      npcMagmaSawSlot: this.magmaKit.npcSawSlot() ?? undefined,
-      // Magma Mastery: an over-erupting cone of its own is worth walking back into — that
-      // collapse is the only thing that ever puts an Obsidian Coat on it.
-      magmaObsidianPoint: this.magmaKit.npcObsidianPoint() ?? undefined,
+      // Magma: the kit's reads of its own synergies — a core still holding (damage now cracks
+      // it), a gun worth lighting and the deck beside it, and the anchor lined up on the player.
+      npcMagmaBusy: this.magmaKit.npcBusy(),
+      npcMagmaBlunderCharges: this.magmaKit.npcBlunderCharges(),
+      npcMagmaHotRounds: this.magmaKit.npcHotRounds(),
+      npcMagmaNumb: this.magmaKit.npcNumb(),
+      npcMagmaCoreHolding: this.magmaKit.npcCoreHolding(),
+      npcMagmaCoreInReach: this.magmaKit.npcCoreInReach(),
+      npcMagmaShip: this.magmaKit.npcHasShip(),
+      npcMagmaCannonAim: this.magmaKit.npcCannonAim() ?? undefined,
+      npcMagmaSeekPoint: this.npcElement.id === 'magma' ? this.magmaKit.npcSeekPoint() ?? undefined : undefined,
+      npcMagmaAnchorAim: this.magmaKit.npcAnchorAim() ?? undefined,
       // Depths: the seek point is the only one of these that moves the body, and it is
       // deliberately live for a Depths *player* too — the lure exists to be walked into.
       depthsSeekPoint: this.depthsKit.npcSeekPoint() ?? undefined,
@@ -12100,16 +12097,16 @@ export class ArenaScene extends Phaser.Scene {
       npcPressureVentShot: this.pressureKit.npcVentShot(),
       pressureCompressPoint: this.pressureKit.npcCompressPoint() ?? undefined,
       npcPressureExceedReady: this.pressureKit.npcExceedReady(),
-      // Astra: busy hands, where to stand (the target's row, a touch below it), and the synergies —
-      // a smite that picks them, flares on a slowed target, a warp worth its swap or its theft.
+      npcPressureIgnite: this.pressureKit.npcIgniteReady(),
+      pressureStandPoint: this.pressureKit.npcIgniteStand() ?? undefined,
+      // Astra: busy hands, where to walk (a comet to catch, dust to gather), and the synergies —
+      // mass worth throwing, a furnace with something in it, a comet to call, a full bar to collapse.
       npcAstraBusy: this.astraKit.npcAstraBusy(),
       astraSeekPoint: this.astraKit.astraSeekPoint() ?? undefined,
-      npcAstraLanedUp: this.astraKit.npcAstraLanedUp(),
-      npcAstraSmiteSafe: this.astraKit.npcAstraSmiteSafe(),
-      npcAstraFlareShot: this.astraKit.npcAstraFlareShot(),
-      npcAstraWarpShot: this.astraKit.npcAstraWarpShot(),
-      npcAstraTrialReady: this.astraKit.npcAstraTrialReady(),
-      npcAstraInTrial: this.astraKit.npcAstraInTrial(),
+      npcAstraNovaShot: this.astraKit.npcAstraNovaShot(),
+      npcAstraFusionShot: this.astraKit.npcAstraFusionShot(),
+      npcAstraCometShot: this.astraKit.npcAstraCometShot(),
+      npcAstraSingReady: this.astraKit.npcAstraSingReady(),
       // Memory: busy hands, and the synergies — Snatch on a target sitting on ready abilities,
       // Trauma's window over a burst (the beam, the copy's replay, a deep Guilt).
       npcMemoryBusy: this.memoryKit.npcMemoryBusy(),
@@ -12264,6 +12261,12 @@ export class ArenaScene extends Phaser.Scene {
       npcTempestCycloneReady: this.tempestKit.cycloneReady('npc'),
       npcTempestUppercutSlot: this.tempestKit.npcUppercutSlot(),
       tempestJuggleShot: this.tempestKit.juggleShot('npc') ?? undefined,
+
+      // Technology: an open console, a ban that would land, a file to haul, a target that cannot leave.
+      npcTechConsoleOpen: this.techKit.npcConsoleOpen(),
+      npcTechBanLive: this.techKit.npcBanLive(),
+      npcTechZipAdrift: this.techKit.npcZipAdrift(),
+      npcTechTargetPinned: this.techKit.npcTargetPinned(),
 
       // Myth: the shards, every open window, and where to stand to be run over by its own beast.
       npcMythShards: this.mythKit.shardsOf('npc'),
@@ -12870,12 +12873,12 @@ export class ArenaScene extends Phaser.Scene {
         entry.fill.setSize(entry.maxWidth * this.creationKit.getMortarCooldownRatio(time), entry.fill.height);
       } else if (entry.abilityId === 'atom-nhilego') {
         entry.fill.setSize(entry.maxWidth * this.rubberKit.getAtomNhilegoCooldownRatio(time), entry.fill.height);
-      } else if (entry.abilityId === 'byte-bomb') {
-        entry.fill.setSize(entry.maxWidth * this.techKit.getByteBombCooldownRatio(time), entry.fill.height);
       } else if (entry.abilityId === 'overload') {
         entry.fill.setSize(entry.maxWidth * this.gunpowderKit.getOverloadCooldownRatio(time), entry.fill.height);
       } else if (entry.abilityId === 'syringe-shot') {
         entry.fill.setSize(entry.maxWidth * this.growthKit.getSyringeCooldownRatio(time), entry.fill.height);
+      } else if (entry.abilityId === 'hijack' || entry.abilityId === 'sub-cutter') {
+        entry.fill.setSize(entry.maxWidth * this.subterfugeKit.getBarRatio(entry.abilityId, time), entry.fill.height);
       } else if (entry.abilityId === 'smoke-break') {
         entry.fill.setSize(entry.maxWidth * this.subterfugeKit.getSmokeBreakCooldownRatio(time), entry.fill.height);
       } else if (entry.abilityId === 'give-life') {
@@ -12928,7 +12931,7 @@ export class ArenaScene extends Phaser.Scene {
         // and Q counts Trauma's window.
         entry.fill.setSize(entry.maxWidth * this.memoryKit.getBarRatio(entry.abilityId), entry.fill.height);
       } else if (entry.abilityId.startsWith('astra-')) {
-        // Q is the trial's clock, then the slap; R+ holds R lit through its recast window.
+        // Q is the mass bar and F the comet's spin; in the Singularity each card is that form's clock.
         entry.fill.setSize(entry.maxWidth * this.astraKit.getBarRatio(entry.abilityId), entry.fill.height);
       } else if (entry.abilityId.startsWith('pressure-')) {
         // A held key shows the pressure it has built, the click the gear (Click+), and Release
@@ -12959,13 +12962,9 @@ export class ArenaScene extends Phaser.Scene {
         // False Idol (mastery) is cast off the kit's own timer, not the cooldown map.
         entry.fill.setSize(entry.maxWidth * this.bindKit.getBarRatio(entry.abilityId, time), entry.fill.height);
       } else if (entry.abilityId.startsWith('magma-')) {
-        // F's charges, a swollen bloat and Q's pendant-then-ship arc all outlast their own
-        // cooldowns, so the kit decides what these five cards are counting down — and Pressure
-        // Gauge (F+) paints the F card darker and redder as the gun sits full.
+        // The click's charges, drawn pistols, the numb window, an erupting core and the hull
+        // all outlast their own cooldowns, so the kit decides what these five cards count.
         entry.fill.setSize(entry.maxWidth * this.magmaKit.getBarRatio(entry.abilityId, time), entry.fill.height);
-        const style = this.magmaKit.getBarStyle(entry.abilityId);
-        if (style) entry.fill.setFillStyle(style.color, style.alpha);
-        else entry.fill.setFillStyle(entry.baseFillColor ?? 0x4466aa, 0.45);
       } else if (entry.abilityId.startsWith('justice-') || entry.abilityId === 'vigilante-vengeance') {
         // Sheer Will, Flight and a hooked chain are states, not cooldowns, and Vigilante
         // Vengeance rides a private timer rather than the cooldown map — the kit owns the bar.

@@ -23,7 +23,6 @@ const F = Object.freeze({
   bone: 0xf1ede0,
   boneDim: 0xc2bcaa,
   boneShade: 0x837d6c,
-  rose: 0xfbf8f0,
   leaf: 0x3f5a3a,
   blood: 0xb3121f,
   bloodDeep: 0x5c0710,
@@ -1871,11 +1870,11 @@ export class FearFx extends FxBase {
             this.tint(F.bone), this.tint(F.boneShade), this.tint(F.ink), 1 - mt * mt);
         }
       }
-      // The rose, in pieces, reddening as they fall.
+      // The rose, in pieces, darkening as they fall.
       for (const p of petals) {
         const px = x - 12 + Math.cos(p.a) * p.v * e;
         const py = y + 12 + Math.sin(p.a) * p.v * e * 0.6 - 30 * e + 60 * t * t;
-        g.fillStyle(this.tint(t > 0.35 ? F.blood : F.rose), 1 - t * t);
+        g.fillStyle(this.tint(t > 0.35 ? F.bloodDeep : F.blood), 1 - t * t);
         g.fillEllipse(px, py, 5 * Math.abs(Math.cos(p.r + t * 9)) + 1.5, 4);
       }
       // Steel, catching what light there is, at the end.
@@ -1990,7 +1989,7 @@ const SLASHER_SCALE = 1.35;
 const SWING_GESTURES: readonly ArmGesture[] = ['punch', 'sweep', 'slam', 'dash'];
 
 /**
- * The Fear user: a charcoal orb in a suit, bow tie and white gloves, a white rose on the lapel,
+ * The Fear user: a charcoal orb in a suit, bow tie and white gloves, a bleeding red rose on the lapel,
  * and a smiling comedy mask where a face should be. `setForm('slasher')` swaps him for what the
  * suit was holding in: a third again as big, a stained work jacket, a pale blank mask, and a
  * machete dragged along the floor behind him.
@@ -2311,26 +2310,30 @@ export class FearAvatar extends BaseAvatar {
     // The rose on the left lapel: a whorl of petals over two leaves.
     const rx = x - 13;
     const ry = y + 14.5;
-    const red = this.mastered;
     g.fillStyle(c(F.leaf), alpha);
     g.fillTriangle(rx - 1, ry + 1, rx - 6.5, ry + 4.5, rx - 2, ry + 5.5);
     g.fillTriangle(rx + 1, ry + 2, rx + 3.5, ry + 7, rx - 1, ry + 5);
-    g.fillStyle(c(red ? F.bloodDeep : F.boneShade), alpha);
+    g.fillStyle(c(F.bloodDeep), alpha);
     g.fillCircle(rx, ry, 4.9);
-    g.fillStyle(c(red ? F.blood : F.rose), alpha);
+    g.fillStyle(c(F.blood), alpha);
     g.fillCircle(rx - 0.3, ry - 0.3, 4.2);
-    g.lineStyle(0.9, c(red ? F.bloodDeep : F.boneDim), alpha);
+    g.lineStyle(0.9, c(F.bloodDeep), alpha);
     arcLine(g, rx, ry, 2.9, 0.3, 3.4);
     arcLine(g, rx + 0.3, ry + 0.2, 1.7, 2.6, 6);
     arcLine(g, rx - 0.4, ry - 0.3, 3.5, 3.9, 5.6);
-    g.fillStyle(c(red ? F.bloodHot : F.shirt), alpha);
+    g.fillStyle(c(F.bloodHot), alpha);
     g.fillCircle(rx - 1.4, ry - 1.6, 0.9);
-    if (red) {
-      // It drips.
-      const f = (this.t * 0.55) % 1;
-      g.lineStyle(1.2, c(F.blood), alpha * 0.9);
-      g.lineBetween(rx + 0.6, ry + 4, rx + 0.6, ry + 6.5 + 2 * Math.min(1, f * 3));
-      droplet(g, rx + 0.6, ry + 7.5 + f * 9, Math.PI / 2, 1.3, 3, c(F.blood), alpha * (1 - f * f));
+    // It drips.
+    const f = (this.t * 0.55) % 1;
+    g.lineStyle(1.2, c(F.blood), alpha * 0.9);
+    g.lineBetween(rx + 0.6, ry + 4, rx + 0.6, ry + 6.5 + 2 * Math.min(1, f * 3));
+    droplet(g, rx + 0.6, ry + 7.5 + f * 9, Math.PI / 2, 1.3, 3, c(F.blood), alpha * (1 - f * f));
+    if (this.mastered) {
+      // Mastered, it runs: a second, quicker drip off the other side of the bloom.
+      const f2 = (this.t * 0.8 + 0.5) % 1;
+      g.lineStyle(1, c(F.bloodHot), alpha * 0.9);
+      g.lineBetween(rx - 2.2, ry + 3.6, rx - 2.2, ry + 5.5 + 2 * Math.min(1, f2 * 3));
+      droplet(g, rx - 2.2, ry + 6.5 + f2 * 10, Math.PI / 2, 1.1, 2.6, c(F.bloodHot), alpha * (1 - f2 * f2));
     }
   }
 }

@@ -5,7 +5,13 @@ import {
   ArmGesture, SUB, SubAuraStyle, SubColorFn, SubterfugeAura, SubterfugeAvatar, SubterfugeFx,
   banknoteLayered, smokeBank, stiletto,
 } from './SubterfugeVisuals';
-import { FONT_DISPLAY, FONT_UI } from '../../ui/Theme';
+import {
+  CrewType, MoneyIcon, drawBomb, drawBomber, drawCrew, drawCrewRank, drawDropMarker, drawFlare,
+  drawGrenade, drawHelicopter, drawMoneyBag, drawMoneyButton, drawSelectRing, drawStrikeZone,
+} from './SubterfugeCrewVisuals';
+import { RIDE_BY_TIER, RIDE_SPECS, SubterfugeRides } from './SubterfugeRide';
+import { RideKind, drawHijackCharge } from './SubterfugeRideVisuals';
+import { FONT_DISPLAY } from '../../ui/Theme';
 import { meterGain } from '../../combat/Meters';
 
 // ── Arena API ────────────────────────────────────────────────────────────────
@@ -19,6 +25,17 @@ export interface SubterfugeArenaApi {
   get rKey(): Phaser.Input.Keyboard.Key;
   get fKey(): Phaser.Input.Keyboard.Key;
   get qKey(): Phaser.Input.Keyboard.Key;
+  /** Space — climbs in and out of a Hijack ride. */
+  get spaceKey(): Phaser.Input.Keyboard.Key;
+  /** WASD as an axis pair: x = right minus left, y = down minus up. Steers a Hijack ride. */
+  moveAxis(): { x: number; y: number };
+  /** Everyone the local player's attacks can reach (the opponent, or every husk in Invasion). */
+  get enemies(): Fighter[];
+  /**
+   * The tray's visible cards, in order, with the ability each one currently carries. The money
+   * bars sit on top of these, so a card a mastery ability has taken over simply has none.
+   */
+  cardRects(): Array<{ abilityId: string; x: number; y: number; w: number; h: number }>;
   get projectiles(): Phaser.Physics.Arcade.Group;
   get nukeChanneling(): boolean;
   get elementId(): string;
@@ -88,49 +105,95 @@ interface SubDagger {
 }
 
 /**
- * The four hires the Rolodex (R+) unlocks. Without R+ only 'lackey' is ever built.
+ * Who can be on the payroll. R hires a Thug; the Rolodex (R+) adds the three specialists.
  * 'bard' is a fifth, and only exists when the Moral perk (divine) is equipped.
  */
-type RecruitType = 'lackey' | 'runner' | 'thug' | 'specialist' | 'bard';
+type RecruitType = CrewType | 'bard';
 
 interface Lackey {
+  /**
+   * Payroll number, handed out by the machine that owns the hire and carried in every online
+   * message about him. The two sims lose men at different moments, so a position in the crew
+   * list means nothing across the wire; this does.
+   */
+  nid: number;
   owner: 'player' | 'npc';
   type: RecruitType;
-  barBg: Phaser.GameObjects.Rectangle;
-  barFill: Phaser.GameObjects.Rectangle;
-  levelText: Phaser.GameObjects.Text | null;
   x: number;
   y: number;
-  /** Which way it is looking — drives the gun hand and the shades. */
+  /** Which way it is looking — drives the gun hands and the eyes. */
   facing: number;
-  /** Whether F+ Hardened Criminals is running for this hire (it used to be `levelText !== null`). */
-  ranked: boolean;
+  /** 0–3. Every bribe under F+ is one promotion. */
+  level: number;
   loyaltyMs: number;
   loyaltyMaxMs: number;
   bullets: number;
   reloadingUntil: number;
   nextShotAt: number;
-  strafeDir: number;
+  lastShotAt: number;
   ignited: boolean;
-  // ── Hardened Criminals (F+) ──
-  xp: number;
-  level: number;
-  xpDmgAccum: number;   // damage dealt since the last +1 XP
-  xpSecAccum: number;   // ms since the last +1 XP tick
-  inverted: boolean;    // level-V palette applied
-  // ── Per-type scratch ──
-  wanderX: number;      // runner: current destination
+  /** Seat index in the owner's Hijack ride, or -1 when standing on the floor. */
+  seat: number;
+  /** Hanging off a helicopter hook: nothing shoots, nothing drains, nothing moves it but the hook. */
+  lifted: boolean;
+  /** Medic: currently patching its boss up. */
+  healing: boolean;
+  healAccumMs: number;
+  /** When this hire's level-3 favour can be bought again. */
+  favourReadyAt: number;
+  // ── Bard scratch ──
+  wanderX: number;
   wanderY: number;
-  payoutAccum: number;  // runner (level V): ms since the last 1💵 stipend
 }
 
-/** Blade Dance (Click+): a returned dagger that stayed on as a bodyguard. */
-interface OrbitDagger {
+/** A thug's Active Reload grenade (level 2), lobbed while the drum is out. */
+interface Grenade {
   owner: 'player' | 'npc';
-  color: 'red' | 'black';
+  sx: number; sy: number;
+  tx: number; ty: number;
+  bornAt: number;
+}
+
+/** The Enforcer's helicopter (level 3): flies in, hooks one recruit, sets them down elsewhere. */
+interface HeliLift {
+  owner: 'player' | 'npc';
+  crew: Lackey;
+  x: number; y: number;
+  destX: number; destY: number;
+  phase: 'inbound' | 'carry' | 'leave';
   angle: number;
-  endsAt: number;
-  nextHitAt: number;
+}
+
+/** The Sniper's air strike (level 3): a flare, five seconds, then the bombs. */
+interface AirStrike {
+  owner: 'player' | 'npc';
+  flareX: number; flareY: number;
+  calledAt: number;
+  /** Filled in the moment the plane arrives; empty until then. */
+  bombs: Array<{ x: number; y: number; dropAt: number; done: boolean }>;
+  planeFrom: { x: number; y: number };
+  planeTo: { x: number; y: number };
+}
+
+/** F+ — Laundering: a bag of money that pays out if you stay out of trouble. */
+interface StashBag {
+  owner: 'player' | 'npc';
+  bornAt: number;
+  damageTaken: number;
+}
+
+/** A clickable money bar, rebuilt every frame: where it is, what it costs, what it does. */
+interface MoneyButton {
+  id: string;
+  x: number; y: number; w: number; h: number;
+  cost: number;
+  icon: MoneyIcon;
+  /** -1 idle, else 0–1 of something running down. */
+  progress: number;
+  /** Greyed out for a reason other than the price. */
+  blocked?: boolean;
+  open?: boolean;
+  act: () => void;
 }
 
 interface DiscoBall {
@@ -178,19 +241,27 @@ const MONEY_MAX_MASTERY = 4;  // Mastery passive: Big Pockets
 const MONEY_START = 2;
 const MONEY_TICK_MS = 5000;
 
-const DAGGER_SPEED = 900;
+const DAGGER_SPEED = 1350;
 const DAGGER_THROW_DMG = 8;
-const DAGGER_RETURN_DMG = 12;
+const DAGGER_RETURN_DMG = 18;
 const DAGGER_MAX = 3;
-const DAGGER_ARRIVE_R = 12;
+const DAGGER_ARRIVE_R = 14;
 const DAGGER_FILL: Record<'red' | 'black', number> = { red: 0xdd2233, black: 0x1a1a1a };
+/** The hand has to come back before it can throw again. */
+const DAGGER_GAP_MS = 380;
+/** Calling the set home leaves you empty-handed for most of a second. */
+const DAGGER_RECALL_LOCK_MS = 850;
+
+// ── Click+ Full Set ─────────────────────────────────────────────────────────
+const FIVE_DAGGER_MAX = 5;
+const FIVE_COST = 2;
+const FIVE_MS = 10000;
 
 const SPRAY_CONE_HALF = Phaser.Math.DegToRad(7.5); // 15° total cone
 const SPRAY_DMG = 2;
 const SPRAY_INTERVAL_MS = 80;
 const SPRAY_RANGE = 520;
 const BULLETS_MAX = 50;
-const BULLETS_MAX_UPG = 75;           // E+ Steady Hands
 const BULLETS_START = 25;
 const BULLETS_RELOAD = 25;
 const AMMO_PER_10_DMG = 3;
@@ -200,24 +271,101 @@ const AMMO_PER_10_DMG = 3;
 const SPRAY_FOCUS_FULL_MS = 8000;
 const SPRAY_FOCUS_GAP_MS = 450;
 
-const LACKEY_LOYALTY_MS = 20000;
+// ── E+ Luxury Rounds ────────────────────────────────────────────────────────
+const LUX_COST = 2;
+const LUX_ROUNDS = 35;
+const LUX_DMG = 3;
+
+// ── Recruits (R) ────────────────────────────────────────────────────────────
+const CREW_MAX = 3;
+const CREW_LOYALTY_MS = 40000;
 const LACKEY_BRIBE_BONUS = 1.2; // bribe refills to 120% of base
-const LACKEY_DMG = 1;
-const LACKEY_MAG = 25;
-const LACKEY_RELOAD_MS = 5000;
-const LACKEY_SHOT_INTERVAL = 140;
-const LACKEY_RANGE = 560;
 const LACKEY_PROJ_HIT_LOSS_MS = 2000;
 const LACKEY_IGNITE_EXTRA_PER_SEC = 2000; // Soul copy: +2s loyalty lost per second
+const CREW_SPAWN_REACH = 46;
+const CREW_SEAT_RANGE = 96;     // hired this close to your ride, they climb straight in
+const CREW_MAX_LEVEL = 3;
 
-// ── R+ The Rolodex ──────────────────────────────────────────────────────────
-const RECRUIT_ORDER: RecruitType[] = ['lackey', 'runner', 'thug', 'specialist'];
-const RECRUIT_COST: Record<RecruitType, number> = { lackey: 1, runner: 1, thug: 2, specialist: 3, bard: 1 };
-const RECRUIT_LOYALTY_MS: Record<RecruitType, number> = { lackey: LACKEY_LOYALTY_MS, runner: 12000, thug: 35000, specialist: 20000, bard: 12000 };
-const RECRUIT_NAME: Record<RecruitType, string> = { lackey: 'Lackey', runner: 'Money Runner', thug: 'Thug', specialist: 'Specialist', bard: 'Bard' };
-const RECRUIT_EMOJI: Record<RecruitType, string> = { lackey: '🕴️', runner: '💸', thug: '🏏', specialist: '🛡️', bard: '🎺' };
-const RECRUIT_RADIUS: Record<RecruitType, number> = { lackey: 14, runner: 11, thug: 16, specialist: 15, bard: 13 };
-const RECRUIT_WEDGE_COLOR: Record<RecruitType, number> = { lackey: 0x552222, runner: 0x226633, thug: 0x772222, specialist: 0x444466, bard: 0x776622 };
+const RECRUIT_COST: Record<RecruitType, number> = { thug: 1, enforcer: 2, sniper: 2, medic: 2, bard: 1 };
+const RECRUIT_LOYALTY_MS: Record<RecruitType, number> = {
+  thug: CREW_LOYALTY_MS, enforcer: CREW_LOYALTY_MS, sniper: CREW_LOYALTY_MS, medic: CREW_LOYALTY_MS, bard: 12000,
+};
+const RECRUIT_ICON: Record<RecruitType, MoneyIcon> = {
+  thug: 'crew', enforcer: 'enforcer', sniper: 'sniper', medic: 'medic', bard: 'bard',
+};
+/** The specialists the Rolodex (R+) puts on its money bar. */
+const ROLODEX: RecruitType[] = ['enforcer', 'sniper', 'medic'];
+
+// Thug — a Tommy gun and nowhere to be.
+const THUG_DMG = 1;
+const THUG_MAG = 25;
+const THUG_MAG_L3 = 40;               // Suppressing Fire
+const THUG_RELOAD_MS = 5000;
+const THUG_INTERVAL = 140;
+const THUG_INTERVAL_L1 = 100;         // More Gun
+const THUG_CONE_HALF_L1 = Phaser.Math.DegToRad(3.5);
+const THUG_RANGE = 560;
+const GRENADE_FLIGHT_MS = 750;        // Active Reload
+const GRENADE_RADIUS = 72;
+const GRENADE_DMG = 10;
+const SUPPRESS_MS = 2000;             // Suppressing Fire: the target takes more from everyone
+const SUPPRESS_MULT = 1.15;
+const THUG_RELOAD_COST = 1;
+
+// Enforcer — a shotgun and a shield.
+const ENF_PELLETS = 5;
+const ENF_PELLET_DMG = 2;
+const ENF_PELLET_DMG_L3 = 3;          // Protector
+const ENF_INTERVAL = 900;
+const ENF_INTERVAL_L1 = 600;          // Pump Action
+const ENF_MAG = 5;
+const ENF_RELOAD_MS = 4000;
+const ENF_RANGE = 230;
+const ENF_RANGE_L2 = 330;             // Juggernaut
+const ENF_DRAIN_L2 = 0.75;
+const ENF_CONE_HALF = Phaser.Math.DegToRad(11);
+const ENF_COVER_RADIUS = 165;         // Protector: his shield covers the men beside him
+const HELI_COST = 1;
+const HELI_SPEED = 520;
+const HELI_CD_MS = 4000;
+
+// Sniper — one round, a long way, not often.
+const SNIPER_DMG = 14;
+const SNIPER_DMG_L1 = 18;             // High Caliber
+const SNIPER_TRUE_DMG_L1 = 4;
+const SNIPER_DMG_L3 = 24;             // Bounty Hunter
+const SNIPER_HEADSHOT_CHANCE = 0.25;
+const SNIPER_HEADSHOT_MULT = 2;
+const SNIPER_INTERVAL = 3500;
+const SNIPER_INTERVAL_L2 = 2400;      // Professional
+const SNIPER_RANGE = 1400;
+const STRIKE_COST = 1;
+const STRIKE_DELAY_MS = 5000;
+const STRIKE_BOMBS = 10;
+const STRIKE_BOMB_DMG = 14;
+const STRIKE_BOMB_RADIUS = 62;
+const STRIKE_FALL_MS = 520;
+const STRIKE_STAGGER_MS = 110;
+const STRIKE_PLANE_MS = 1500;
+const STRIKE_SPREAD_ONE = 175;        // one dagger: still mostly guesswork
+const STRIKE_SPREAD_LINE = 26;
+const STRIKE_SPREAD_AREA = 14;
+const STRIKE_CD_MS = 8000;
+
+// Medic — a pistol he would rather not use.
+const MEDIC_DMG = 1;
+const MEDIC_DMG_L1 = 2;               // More Supplies
+const MEDIC_INTERVAL = 900;
+const MEDIC_RANGE = 420;
+const MEDIC_HEAL_PER_S = 2;
+const MEDIC_HEAL_PER_S_L1 = 3;
+const MEDIC_RADIUS = 150;
+const MEDIC_DRAIN = 0.85;
+const MEDIC_DRAIN_L2 = 0.7;           // Triage
+const MEDIC_TRIAGE_BONUS = 1.5;       // up to +150% healing at death's door
+const MEDIC_SPEED_L3 = 1.2;           // Savior
+const SAVIOR_COST = 2;
+const SAVIOR_MS = 5000;
 
 // ── Moral perk (divine) ─────────────────────────────────────────────────────
 /** Every hire is signed on for a quarter longer. */
@@ -226,45 +374,27 @@ const MORAL_LOYALTY_MULT = 1.25;
 const BARD_DRAIN_MULT = 0.25;
 const BARD_SPEED = 240;
 
-const RUNNER_SPEED = 280;
-const RUNNER_QUIT_MONEY = 2;
-const RUNNER_L5_STIPEND_MS = 15000;
-
-const THUG_SPEED = 175;
-const THUG_SWING_RANGE = 46;
-const THUG_SWING_CD_MS = 1800;
-const THUG_DMG = 12;
-const THUG_STUN_MS = 2000;
-const THUG_KNOCKBACK = 720;
-const THUG_KNOCKBACK_MS = 260;
-
-const SPEC_SPEED = 140;
-const SPEC_RANGE = 230;
-const SPEC_PELLETS = 5;
-const SPEC_PELLETS_L5 = 7;
-const SPEC_PELLET_DMG = 2;
-const SPEC_SHOT_INTERVAL = 500;
-const SPEC_MAG = 5;
-const SPEC_CONE_HALF = Phaser.Math.DegToRad(11);
-
-// ── F+ Hardened Criminals ───────────────────────────────────────────────────
-const XP_PER_LEVEL = 50;
-const XP_MAX_LEVEL = 5;
-const XP_PER_BRIBE = 10;
-const XP_DMG_PER_POINT = 25;
-const ROMAN = ['', 'I', 'II', 'III', 'IV', 'V'];
-
-// ── Click+ Blade Dance ──────────────────────────────────────────────────────
-const ORBIT_CHANCE = 0.15;
-const ORBIT_MS = 10000;
-const ORBIT_DMG = 12;
-const ORBIT_HIT_CD_MS = 500;
-const ORBIT_RADIUS = 48;
-const ORBIT_RAD_PER_SEC = 2.6;
+// ── F+ Laundering ───────────────────────────────────────────────────────────
+const STASH_COST = 1;
+const STASH_PAYOUT = 2;
+const STASH_MS = 3000;
+/** Take this much while the bag is out and the deal is off. */
+const STASH_FAIL_DMG = 50;
 
 // ── Q+ On Retainer ──────────────────────────────────────────────────────────
 const RETAINER_MS = 8000;
 const RETAINER_COST = 2;
+
+// ── Mastery: Hijack ─────────────────────────────────────────────────────────
+const HIJACK_COOLDOWN_MS = 15000;
+/** Hold time at which each tier is reached: car, motorcycle, sports car, tank. */
+const HIJACK_TIER_MS = [0, 450, 950, 1500];
+
+// ── Money bars ──────────────────────────────────────────────────────────────
+const BAR_H = 16;
+const BAR_GAP = 4;
+const HEAD_BTN_W = 30;
+const HEAD_BTN_H = 14;
 
 const BRIBE_MS = 8000;
 const BRIBE_DMG_MULT = 0.75; // bribed enemy deals 25% less
@@ -310,6 +440,7 @@ const CAST_GESTURES: Record<string, ArmGesture> = {
 
 /** Depths for the kit's shared paint layers. */
 const D_GROUND = 3;    // scorches, cloud shadows, nhilego marks
+const D_RIDE = 4;      // Hijack bodywork and the laundering bag — under the fighters
 const D_WORLD = 7;     // recruits, planted daggers, disco balls
 const D_AIR = 11;      // daggers in flight, orbiters, cigarettes
 
@@ -340,7 +471,12 @@ export class SubterfugeKit {
   private npcDaggers: SubDagger[] = [];
   private npcDaggerNextThrowAt = 0;
   private pointerWasDown = false;
-  private orbitDaggers: OrbitDagger[] = [];   // Click+ Blade Dance
+  /** When each side's hand is free to throw again (the gap between blades, and the recall lock). */
+  private daggerNextAt = { player: 0, npc: 0 };
+  /** How long the current wait was, so the Click card can draw it as a bar. */
+  private daggerWaitMs = { player: DAGGER_GAP_MS, npc: DAGGER_GAP_MS };
+  /** Click+ Full Set: five blades instead of three until this passes. */
+  private fiveUntil = { player: 0, npc: 0 };
   /** Sonic Boom perk: shockwaves currently drawing themselves out. */
   private booms: Array<{ x: number; y: number; owner: 'player' | 'npc'; bornAt: number }> = [];
 
@@ -358,19 +494,42 @@ export class SubterfugeKit {
   private npcLastSprayShotAt = 0;
   private sprayFocusMs = 0;             // E+ Steady Hands
   private npcSprayFocusMs = 0;
+  /** E+ Luxury Rounds: bought separately, fired first, never missed with. */
+  private lux = { player: 0, npc: 0 };
 
   // ── Lackeys (R) ──────────────────────────────────────────────────────────
   private lackeys: Lackey[] = [];
+  /** Last payroll number issued on this machine (see `Lackey.nid`). */
+  private crewSeq = 0;
 
-  // R+ hiring wheel (player only)
-  private recruitMenuOpen = false;
-  private recruitMenuGfx: Phaser.GameObjects.Graphics | null = null;
-  private recruitMenuLabels: Phaser.GameObjects.Text[] = [];
-  private recruitSelectedIndex = 0;
-  private recruitLastPick = 0;
+  /** R+ The Rolodex: the specialist fan above the R card is open. */
+  private rolodexOpen = false;
+  private grenades: Grenade[] = [];
+  private heliLifts: HeliLift[] = [];
+  private strikes: AirStrike[] = [];
+  /** Suppressing Fire: who is currently taking extra damage, and until when. */
+  private suppressed = new Map<Fighter, number>();
+  /** Savior: bought invincibility. `on` records that the flag on the fighter is ours to clear. */
+  private saviorUntil = { player: 0, npc: 0 };
+  private saviorOn = { player: false, npc: false };
+  /** Enforcer helicopter targeting: first click picks a recruit, second picks where he lands. */
+  private heliAim: { enforcer: Lackey; crew: Lackey | null } | null = null;
 
-  // Thug bat: this codebase's earthStunnedUntil is inert, so — like FateKit and
-  // GunpowderKit — the stun/knockback is enforced here by driving velocity.
+  // ── Laundering (F+) ──────────────────────────────────────────────────────
+  private stashes: StashBag[] = [];
+
+  // ── Money bars ───────────────────────────────────────────────────────────
+  private buttons: MoneyButton[] = [];
+  private hudGfx: Phaser.GameObjects.Graphics | null = null;
+
+  // ── Mastery: Hijack ──────────────────────────────────────────────────────
+  private readonly rides: SubterfugeRides;
+  private hijackLastAt = -HIJACK_COOLDOWN_MS;
+  /** When the Hijack key went down, or 0 when it is not being held. */
+  private hijackChargeAt = 0;
+
+  // Shoves and staggers (Sonic Boom, a rammed car): this codebase's earthStunnedUntil is inert,
+  // so — like FateKit and GunpowderKit — they are enforced here by driving velocity.
   private playerStunUntil = 0;
   private npcStunUntil = 0;
   private knocks = new Map<Fighter, { vx: number; vy: number; until: number }>();
@@ -393,7 +552,6 @@ export class SubterfugeKit {
   private npcRetainerElementId: string | null = null;
   private npcRetainerUntil = 0;
   private npcRetainerNextTryAt = 0;
-  private retainerLabel: Phaser.GameObjects.Text | null = null;
 
   // Copied-Q states
   private discoBalls: DiscoBall[] = [];
@@ -443,6 +601,25 @@ export class SubterfugeKit {
     this.ncol = (base) => api.subterfugeColor('npc', base);
     this.pfx = new SubterfugeFx(api.scene, this.pcol);
     this.nfx = new SubterfugeFx(api.scene, this.ncol);
+    this.rides = new SubterfugeRides({
+      get scene() { return api.scene; },
+      get projectiles() { return api.projectiles; },
+      get width() { return api.sceneWidth; },
+      get height() { return api.sceneHeight; },
+      fighter: (owner) => (owner === 'player' ? api.player : api.npc),
+      foes: (owner) => this._foes(owner),
+      col: (owner) => this.col(owner),
+      fx: (owner) => this.fx(owner),
+      moveAxis: () => api.moveAxis(),
+      pointer: () => ({ x: api.pointer.worldX, y: api.pointer.worldY }),
+      dealAoe: (owner, x, y, r, d) => api.dealAoeDamage(owner, x, y, r, d),
+      spawnHitFlash: (x, y, c) => api.spawnHitFlash(x, y, c),
+      knock: (f, vx, vy, ms) => this.knocks.set(f, { vx, vy, until: api.scene.time.now + ms }),
+      authoritative: (owner) => !this._ghost(owner),
+      onRideGone: (owner) => { for (const l of this.lackeys) if (l.owner === owner) l.seat = -1; },
+      onPlayerRideDestroyed: () => api.broadcastMasteryCast('subx-ride-boom'),
+      restoreAbsorber: (owner) => this._rearmAbsorbers(owner),
+    });
   }
 
   // ── Visual helpers ───────────────────────────────────────────────────────
@@ -500,6 +677,8 @@ export class SubterfugeKit {
     this.auras.clear();
     for (const g of this.layers.values()) g.destroy();
     this.layers.clear();
+    if (this.hudGfx?.active) this.hudGfx.destroy();
+    this.hudGfx = null;
   }
 
   // ── Public getters (NPC AI / ArenaScene) ─────────────────────────────────
@@ -530,7 +709,9 @@ export class SubterfugeKit {
     this.npcDaggers = [];
     this.npcDaggerNextThrowAt = 0;
     this.pointerWasDown = false;
-    this.orbitDaggers = [];
+    this.daggerNextAt = { player: 0, npc: 0 };
+    this.daggerWaitMs = { player: DAGGER_GAP_MS, npc: DAGGER_GAP_MS };
+    this.fiveUntil = { player: 0, npc: 0 };
     this.booms = [];
 
     this.bullets = BULLETS_START;
@@ -543,16 +724,33 @@ export class SubterfugeKit {
     this.npcLastSprayShotAt = 0;
     this.sprayFocusMs = 0;
     this.npcSprayFocusMs = 0;
+    this.lux = { player: 0, npc: 0 };
     if (this.bulletCounterText?.active) this.bulletCounterText.destroy();
     this.bulletCounterText = null;
     if (this.tagGfx?.active) this.tagGfx.destroy();
     this.tagGfx = null;
 
-    for (const l of this.lackeys) this._destroyLackeyVisuals(l);
     this.lackeys = [];
-    this._closeRecruitMenu();
-    this.recruitSelectedIndex = 0;
-    this.recruitLastPick = 0;
+    this.crewSeq = 0;
+    this.rolodexOpen = false;
+    this.grenades = [];
+    this.heliLifts = [];
+    this.strikes = [];
+    for (const f of this.suppressed.keys()) f.bribeIncomingMult = 1;
+    this.suppressed.clear();
+    for (const owner of ['player', 'npc'] as const) {
+      if (this.saviorOn[owner]) (owner === 'player' ? this.api.player : this.api.npc).isInvincible = false;
+    }
+    this.saviorUntil = { player: 0, npc: 0 };
+    this.saviorOn = { player: false, npc: false };
+    this.api.setStatusIndicator('sub-savior', null);
+    this.heliAim = null;
+    this.stashes = [];
+    this.buttons = [];
+    this.rides.reset();
+    this.hijackLastAt = -HIJACK_COOLDOWN_MS;
+    this.hijackChargeAt = 0;
+    this.npcBrainNextAt = 0;
     this.playerStunUntil = 0;
     this.npcStunUntil = 0;
     this.knocks.clear();
@@ -571,8 +769,6 @@ export class SubterfugeKit {
     this.npcRetainerElementId = null;
     this.npcRetainerUntil = 0;
     this.npcRetainerNextTryAt = 0;
-    if (this.retainerLabel?.active) this.retainerLabel.destroy();
-    this.retainerLabel = null;
 
     this.discoBalls = [];
     this.linkUntil = 0;
@@ -621,8 +817,44 @@ export class SubterfugeKit {
       : this.api.hasNpcUpgrade(slot);
   }
 
-  private _bulletsMax(owner: 'player' | 'npc'): number {
-    return this._up(owner, 'e') ? BULLETS_MAX_UPG : BULLETS_MAX;
+  /** The magazine. E+ used to widen it; it only steadies the aim now. */
+  private _bulletsMax(_owner: 'player' | 'npc'): number {
+    return BULLETS_MAX;
+  }
+
+  /** An online replica: its owner's machine decides what it bought and what it took. */
+  private _ghost(owner: 'player' | 'npc'): boolean {
+    return owner === 'npc' && !!this.api.npc.netGhost;
+  }
+
+  /** Everyone this side's attacks can land on. */
+  private _foes(owner: 'player' | 'npc'): Fighter[] {
+    return owner === 'player' ? this.api.enemies : this.api.player.bodies();
+  }
+
+  /** The nearest living foe to a point, or null. */
+  private _nearestFoe(owner: 'player' | 'npc', x: number, y: number): Fighter | null {
+    let best: Fighter | null = null;
+    let bestD = Infinity;
+    for (const f of this._foes(owner)) {
+      if (!f.active || f.hp <= 0) continue;
+      const d = Phaser.Math.Distance.Between(x, y, f.x, f.y);
+      if (d < bestD) { bestD = d; best = f; }
+    }
+    return best;
+  }
+
+  private _money(owner: 'player' | 'npc'): number {
+    return owner === 'player' ? this.money : this.npcMoney;
+  }
+
+  /** Can this side pay? A replica always can — its owner already did. */
+  private _canPay(owner: 'player' | 'npc', cost: number): boolean {
+    return this._ghost(owner) || this._money(owner) >= cost;
+  }
+
+  private _pay(owner: 'player' | 'npc', cost: number): void {
+    if (!this._ghost(owner)) this._spendMoney(owner, cost);
   }
 
   // ── Input (player only) ──────────────────────────────────────────────────
@@ -634,41 +866,49 @@ export class SubterfugeKit {
 
     const { player } = api;
 
-    // ── R+ hiring wheel owns every input while it is open ────────────────
-    if (this.recruitMenuOpen) {
-      this._updateRecruitMenuHover(pointer);
-      if (Phaser.Input.Keyboard.JustUp(api.rKey)) {
-        const pick = this.recruitSelectedIndex;
-        this.recruitLastPick = pick;
-        this._closeRecruitMenu();
-        this._tryHire('player', this._recruitOrder('player')[pick] ?? 'lackey');
-      }
-      this.pointerWasDown = pointer.isDown;
-      return;
+    // ── Space: in and out of a Hijack ride ───────────────────────────────
+    if (this.claimsSpace() && Phaser.Input.Keyboard.JustDown(api.spaceKey) && this.rides.toggle('player')) {
+      api.broadcastMasteryCast(this.rides.isRiding('player') ? 'subx-ride-in' : 'subx-ride-out');
+      this.heliAim = null;
+      this.rolodexOpen = false;
+      this.hijackChargeAt = 0;
+    }
+    const riding = this.rides.isRiding('player');
+
+    // ── A press goes to a money bar first, then to helicopter targeting ──
+    // Whatever takes it here, it never also becomes a dagger.
+    const pressed = pointer.isDown && !this.pointerWasDown;
+    this.pointerWasDown = pointer.isDown;
+    let clickFree = pressed;
+    if (pressed && this._clickButtons(pointer.worldX, pointer.worldY)) {
+      clickFree = false;
+    } else if (pressed && this.heliAim) {
+      this._clickHeliAim(pointer.worldX, pointer.worldY);
+      clickFree = false;
+    } else if (pressed) {
+      this.rolodexOpen = false;
     }
 
-    // ── Mastery: Smoke Break takes over whichever slot it is bound to ────
-    const smokeSlot = this._smokeSlot();
-    if (smokeSlot) {
-      const key = smokeSlot === 'e' ? api.eKey : smokeSlot === 'r' ? api.rKey : smokeSlot === 'f' ? api.fKey : api.qKey;
-      if (Phaser.Input.Keyboard.JustDown(key)) this._trySmokeBreak(time, pointer.worldX, pointer.worldY);
+    // ── Mastery: Hijack / Smoke Break take over whichever slot they are bound to ──
+    const hijackSlot = this._bindSlot('hijack');
+    if (hijackSlot) this._hijackInput(time, this._keyOf(hijackSlot), pointer);
+    const smokeSlot = this._bindSlot('smoke-break');
+    if (smokeSlot && !riding && Phaser.Input.Keyboard.JustDown(this._keyOf(smokeSlot))) {
+      this._trySmokeBreak(time, pointer.worldX, pointer.worldY);
     }
+    const bound = (slot: string): boolean => hijackSlot === slot || smokeSlot === slot;
 
-    // ── E: Spray — hold to fire; press with 0 bullets to buy a reload ────
-    if (smokeSlot !== 'e') {
-      if (Phaser.Input.Keyboard.JustDown(api.eKey)) {
-        if (this.bullets <= 0 && player.getCooldownRatio('sub-spray') >= 1) {
-          if (this.money >= 1) {
-            this._spendMoney('player', 1);
-            this.bullets = Math.min(this._bulletsMax('player'), BULLETS_RELOAD);
-            player.startCooldown('sub-spray');
-            api.showFloatingText(player.x, player.y - 40, '💵 Reloaded!', '#ff5555');
-          } else {
-            api.showFloatingText(player.x, player.y - 40, 'No money!', '#888888');
-          }
-        }
+    // ── E: Spray — hold to fire; press with nothing loaded to buy a reload ──
+    // The one thing you can still do from the driver's seat.
+    if (!bound('e')) {
+      const loaded = this.bullets + this.lux.player;
+      if (Phaser.Input.Keyboard.JustDown(api.eKey) && loaded <= 0 && player.getCooldownRatio('sub-spray') >= 1
+          && this.money >= 1) {
+        this._spendMoney('player', 1);
+        this.bullets = Math.min(this._bulletsMax('player'), BULLETS_RELOAD);
+        player.startCooldown('sub-spray');
       }
-      if (api.eKey.isDown && this.bullets > 0) {
+      if (api.eKey.isDown && this.bullets + this.lux.player > 0) {
         if (!this.sprayHeld && player.getCooldownRatio('sub-spray') < 1) {
           // still cooling down from the previous burst
         } else {
@@ -684,52 +924,41 @@ export class SubterfugeKit {
       }
     }
 
-    // ── R: Recruit — straight to a Lackey, or the Rolodex wheel with R+ ──
-    if (smokeSlot !== 'r' && Phaser.Input.Keyboard.JustDown(api.rKey)) {
-      if (player.getCooldownRatio('sub-recruit') >= 1) {
-        if (this._up('player', 'r')) this._openRecruitMenu(this.recruitLastPick);
-        else this._tryHire('player', 'lackey');
+    if (riding) {
+      // The tank's gun is the only other thing a driver has: a click fires it.
+      if (clickFree && this.rides.fireCannon('player', pointer.worldX, pointer.worldY, time)) {
+        api.broadcastMasteryCast('subx-shell');
       }
+      return;
+    }
+
+    // ── R: Recruit — a Thug, standing where you stand ────────────────────
+    if (!bound('r') && Phaser.Input.Keyboard.JustDown(api.rKey) && player.getCooldownRatio('sub-recruit') >= 1) {
+      if (this._tryHire('player', 'thug', pointer.worldX, pointer.worldY)) player.startCooldown('sub-recruit');
     }
 
     // ── F: Bribe ─────────────────────────────────────────────────────────
-    if (smokeSlot !== 'f' && Phaser.Input.Keyboard.JustDown(api.fKey)) {
-      if (player.getCooldownRatio('sub-bribe') >= 1) {
-        if (this.money >= 1) {
-          if (this._doBribe('player', pointer.worldX, pointer.worldY, time)) {
-            this._spendMoney('player', 1);
-            player.startCooldown('sub-bribe');
-          }
-        } else {
-          api.showFloatingText(player.x, player.y - 40, 'No money!', '#888888');
-        }
+    if (!bound('f') && Phaser.Input.Keyboard.JustDown(api.fKey)
+        && player.getCooldownRatio('sub-bribe') >= 1 && this.money >= 1) {
+      if (this._doBribe('player', pointer.worldX, pointer.worldY, time)) {
+        this._spendMoney('player', 1);
+        player.startCooldown('sub-bribe');
       }
     }
 
     // ── Q: Dark Treachery — or a retainer recast while the contract is open ──
-    if (smokeSlot !== 'q' && Phaser.Input.Keyboard.JustDown(api.qKey) && this.treacheryFiresAt === 0) {
+    if (!bound('q') && Phaser.Input.Keyboard.JustDown(api.qKey) && this.treacheryFiresAt === 0) {
       if (this.retainerElementId && time < this.retainerUntil) {
-        if (this.money >= RETAINER_COST) {
-          this._spendMoney('player', RETAINER_COST);
-          api.showFloatingText(player.x, player.y - 44, '🤝 On Retainer!', '#ff5555');
-          this._executeTreachery('player', time, this.retainerElementId);
-        } else {
-          api.showFloatingText(player.x, player.y - 40, `Need ${RETAINER_COST}💵!`, '#888888');
-        }
+        if (this._buyRetainer('player')) api.broadcastMasteryCast('subx-retainer');
       } else if (player.getCooldownRatio('sub-treachery') >= 1) {
         player.startCooldown('sub-treachery');
         this.treacheryFiresAt = time + TREACHERY_DELAY_MS;
         this.treacheryFogNextAt = time;
-        api.showFloatingText(player.x, player.y - 44, '🌫️ Dark Treachery...', '#552255');
       }
     }
 
     // ── Click: Molecular Cutter — throw, or recall once the max are out ──
-    const isDown = pointer.isDown;
-    if (isDown && !this.pointerWasDown) {
-      this._playerClickDaggers(pointer.worldX, pointer.worldY);
-    }
-    this.pointerWasDown = isDown;
+    if (clickFree) this._playerClickDaggers(pointer.worldX, pointer.worldY);
   }
 
   // ── Per-frame update ─────────────────────────────────────────────────────
@@ -744,23 +973,33 @@ export class SubterfugeKit {
       this._tickMoney('player', delta);
       this._renderBulletCounter(time);
       this._tickTreacheryChannel('player', time);
-      this._renderRetainerLabel(time);
-      if (this.recruitMenuOpen) this._drawRecruitMenu(this.recruitSelectedIndex);
+      this._tickRetainerWindow(time);
+      this._buildButtons(time);
+    } else {
+      this.buttons = [];
     }
     if (isNpcSub) {
       this._tickMoney('npc', delta);
       this._tickTreacheryChannel('npc', time);
       this._tickNpcRetainer(time);
+      this._tickNpcBrain(time);
     }
 
     this._updateSmokeBreak(time, delta, dt);
 
     this._updateDaggers(this.playerDaggers, 'player', dt);
     this._updateDaggers(this.npcDaggers, 'npc', dt);
-    this._updateOrbitDaggers(time, dt);
     this._updateBooms(time);
     this._updateLackeys(time, delta);
+    this._updateGrenades(time);
+    this._updateHeli(dt);
+    this._updateStrikes(time);
+    this._updateSavior(time);
+    this._updateStashes(time);
+    // Rides before the shoves: a car steers its driver by velocity, and a stagger has to win.
+    this.rides.update(time, delta);
     this._updateStunsAndKnocks(time);
+    this._updateSuppression(time);
     this._updateBribes(time);
     this._updateDiscoBalls(time);
     this._updateOvercharge(time);
@@ -772,6 +1011,7 @@ export class SubterfugeKit {
 
     // Everything the kit owns is repainted from scratch here, after the sim has moved it.
     this._paintWorld(time, isPlayerSub, isNpcSub);
+    this._paintHud(time, isPlayerSub);
     this._updateAuras(delta, time);
     this._updateAvatars(delta, isPlayerSub, isNpcSub);
   }
@@ -791,14 +1031,77 @@ export class SubterfugeKit {
     world.clear();
     air.clear();
 
+    const under = this.layer(D_RIDE);
+    under.clear();
+
     this._paintNhilego(ground, t);
     this._paintSmokeClouds(time);
+    this.rides.paintUnder(under, time);
+    this._paintStashes(under, time);
+    this.rides.paintOver(world, time);
     this._paintRecruits(world, t);
     this._paintDaggers(world, air, t);
+    this._paintOps(ground, air, time);
     this._paintBooms(air, time);
     this._paintDisco(air, t);
     this._paintCigarettes(air, t);
     this._paintMoney(air, time, isPlayerSub, isNpcSub);
+  }
+
+  /** The bag of money each launderer has sitting behind them, and how its three seconds are going. */
+  private _paintStashes(g: Phaser.GameObjects.Graphics, time: number): void {
+    for (const b of this.stashes) {
+      const p = this._stashPos(b.owner);
+      drawMoneyBag(g, this.col(b.owner), p.x, p.y, time / 1000,
+        Phaser.Math.Clamp((time - b.bornAt) / STASH_MS, 0, 1),
+        Phaser.Math.Clamp(b.damageTaken / STASH_FAIL_DMG, 0, 1), 1);
+    }
+  }
+
+  /** Grenades in the air, the helicopter, the air strike and a bought halo. */
+  private _paintOps(ground: Phaser.GameObjects.Graphics, air: Phaser.GameObjects.Graphics, time: number): void {
+    const t = time / 1000;
+    for (const n of this.grenades) {
+      const k = Phaser.Math.Clamp((time - n.bornAt) / GRENADE_FLIGHT_MS, 0, 1);
+      drawGrenade(air, this.col(n.owner), Phaser.Math.Linear(n.sx, n.tx, k), Phaser.Math.Linear(n.sy, n.ty, k),
+        Math.sin(k * Math.PI) * 70, t, 1);
+    }
+    for (const s of this.strikes) {
+      const tint = this.col(s.owner);
+      if (s.bombs.length === 0) {
+        // Inbound: the flare climbing, and red on every blade the plane will aim by.
+        const k = Phaser.Math.Clamp((time - s.calledAt) / STRIKE_DELAY_MS, 0, 1);
+        drawFlare(air, tint, s.flareX, s.flareY, Math.min(1, k * 2.5), t, 1);
+        drawStrikeZone(ground, tint, this._plantedDaggers(s.owner).map((d) => ({ x: d.x, y: d.y })),
+          STRIKE_SPREAD_ONE, this.api.sceneWidth, this.api.sceneHeight, k, t, 1);
+        continue;
+      }
+      for (const b of s.bombs) {
+        if (b.done || time < b.dropAt) continue;
+        drawBomb(air, tint, b.x, b.y, STRIKE_BOMB_RADIUS, Phaser.Math.Clamp((time - b.dropAt) / STRIKE_FALL_MS, 0, 1), t, 1);
+      }
+      const k = (time - (s.calledAt + STRIKE_DELAY_MS)) / STRIKE_PLANE_MS;
+      if (k >= 0 && k <= 1) {
+        drawBomber(air, tint, Phaser.Math.Linear(s.planeFrom.x, s.planeTo.x, k), Phaser.Math.Linear(s.planeFrom.y, s.planeTo.y, k),
+          Math.atan2(s.planeTo.y - s.planeFrom.y, s.planeTo.x - s.planeFrom.x), t, 1);
+      }
+    }
+    for (const h of this.heliLifts) {
+      drawHelicopter(air, this.col(h.owner), h.x, h.y, h.angle, t, 1, h.phase === 'carry');
+    }
+    // Savior: a gold halo that closes in as the five seconds run out.
+    for (const owner of ['player', 'npc'] as const) {
+      if (!this.saviorOn[owner]) continue;
+      const f = owner === 'player' ? this.api.player : this.api.npc;
+      const left = Phaser.Math.Clamp((this.saviorUntil[owner] - time) / SAVIOR_MS, 0, 1);
+      const tint = this.col(owner);
+      air.lineStyle(3, tint(SUB.gold), 0.55 + 0.25 * Math.sin(t * 9));
+      air.strokeCircle(f.x, f.y, 24 + 8 * left);
+      air.lineStyle(1.4, tint(SUB.paper), 0.7);
+      air.beginPath();
+      air.arc(f.x, f.y, 34, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * left, false);
+      air.strokePath();
+    }
   }
 
   private _paintNhilego(g: Phaser.GameObjects.Graphics, t: number): void {
@@ -841,13 +1144,40 @@ export class SubterfugeKit {
   private _paintRecruits(g: Phaser.GameObjects.Graphics, t: number): void {
     const now = this.api.scene.time.now;
     for (const l of this.lackeys) {
-      SubterfugeFx.drawRecruit(g, this.col(l.owner), l.x, l.y, l.facing, RECRUIT_RADIUS[l.type], t, 1, {
-        type: l.type,
-        inverted: l.inverted,
-        reloading: l.reloadingUntil > now,
-        ignited: l.ignited,
-        enemy: l.owner === 'npc',
-      });
+      const tint = this.col(l.owner);
+      if (l.type === 'bard') {
+        SubterfugeFx.drawRecruit(g, tint, l.x, l.y, l.facing, 13, t, 1, {
+          type: 'bard', inverted: false, reloading: false, ignited: l.ignited, enemy: l.owner === 'npc',
+        });
+      } else {
+        // What each one reaches: the Medic's care and a Protector's cover are both worth
+        // standing inside, so both get a faint ring on the floor.
+        if (l.type === 'medic' && !l.lifted) {
+          g.lineStyle(1, tint(SUB.moneyGreen), 0.16);
+          g.strokeCircle(l.x, l.y, MEDIC_RADIUS);
+          if (l.healing) {
+            const boss = l.owner === 'player' ? this.api.player : this.api.npc;
+            g.lineStyle(2, tint(SUB.moneyGreen), 0.4 + 0.2 * Math.sin(t * 8));
+            g.lineBetween(l.x, l.y, boss.x, boss.y);
+          }
+        } else if (l.type === 'enforcer' && l.level >= 3 && !l.lifted) {
+          g.lineStyle(1, tint(SUB.haze), 0.2);
+          g.strokeCircle(l.x, l.y, ENF_COVER_RADIUS);
+        }
+        // A sniper spends most of his time working the bolt.
+        const cycling = l.type === 'sniper' && now < l.nextShotAt - 500;
+        drawCrew(g, tint, l.x, l.y, l.facing, t, 1, {
+          type: l.type, level: l.level,
+          reloading: l.reloadingUntil > now || cycling,
+          ignited: l.ignited,
+          enemy: l.owner === 'npc',
+          firedAgoMs: now - l.lastShotAt,
+          shielded: this._crewShielded(l),
+          healing: l.healing,
+          seated: l.seat >= 0,
+        });
+      }
+      drawCrewRank(g, tint, l.x, l.y - 35, l.level, t, 1);
       // Loyalty as a banknote laid over the head: the paper is what is left of his pay, the
       // torn-off grey end is what has run out, and the seal turns red in the last quarter.
       const ratio = Phaser.Math.Clamp(l.loyaltyMs / l.loyaltyMaxMs, 0, 1);
@@ -878,7 +1208,6 @@ export class SubterfugeKit {
   private _paintDaggers(
     world: Phaser.GameObjects.Graphics, air: Phaser.GameObjects.Graphics, t: number,
   ): void {
-    const now = this.api.scene.time.now;
     for (const list of [this.playerDaggers, this.npcDaggers]) {
       for (const d of list) {
         // A planted dagger is scenery on the floor; one in the air is over everything.
@@ -886,14 +1215,6 @@ export class SubterfugeKit {
         SubterfugeFx.drawDagger(g, this.col(d.owner), d.x, d.y, Math.atan2(d.dirY, d.dirX),
           d.state, d.color === 'red' ? SUB.blood : SUB.ink, t, 1);
       }
-    }
-    for (const o of this.orbitDaggers) {
-      const caster = o.owner === 'player' ? this.api.player : this.api.npc;
-      if (!caster.active) continue;
-      SubterfugeFx.drawOrbitDagger(air, this.col(o.owner),
-        caster.x + Math.cos(o.angle) * ORBIT_RADIUS, caster.y + Math.sin(o.angle) * ORBIT_RADIUS,
-        o.angle + Math.PI / 2, o.color === 'red' ? SUB.blood : SUB.ink,
-        (o.endsAt - now) / 1000, 1);
     }
   }
 
@@ -1035,7 +1356,7 @@ export class SubterfugeKit {
       av.setCigarette(cig ? cig.msLeft / CIG_BURN_MS : -1);
       // A live Q channel visibly swells the rig, so "mid-deal" reads off the character alone.
       av.setIntensity(this.treacheryFiresAt > now ? 1.35 : 1);
-      av.setHold(this.recruitMenuOpen ? 'brace' : this.sprayHeld ? 'spray' : null,
+      av.setHold(this.hijackChargeAt > 0 ? 'brace' : this.sprayHeld ? 'spray' : null,
         Math.atan2(p.worldY - player.y, p.worldX - player.x));
       av.update(delta, player.x, player.y, player.forceInvisible ? 0 : player.alpha);
     } else if (this.playerAvatar) {
@@ -1111,25 +1432,30 @@ export class SubterfugeKit {
   private _fireSprayShot(owner: 'player' | 'npc', tx: number, ty: number): void {
     const caster = owner === 'player' ? this.api.player : this.api.npc;
     this.gesture(owner, 'sub-spray', Math.atan2(ty - caster.y, tx - caster.x));
-    if (owner === 'player') {
+    // Luxury Rounds go first: they were paid for, and they do not miss.
+    const luxe = this.lux[owner] > 0;
+    if (luxe) {
+      this.lux[owner] -= 1;
+    } else if (owner === 'player') {
       if (this.bullets <= 0) return;
       this.bullets -= 1;
-      this.api.recordMasteryStat('bulletsFired', 1);
     } else {
       if (this.npcBullets <= 0) return;
       this.npcBullets -= 1;
     }
+    if (owner === 'player') this.api.recordMasteryStat('bulletsFired', 1);
     const now = this.api.scene.time.now;
-    const cone = this._sprayCone(owner, now);
+    const cone = luxe ? 0 : this._sprayCone(owner, now);
     if (owner === 'player') this.lastSprayShotAt = now;
     else this.npcLastSprayShotAt = now;
     const baseAngle = Math.atan2(ty - caster.y, tx - caster.x);
-    this._hitscanBeam(owner, caster.x, caster.y, baseAngle + Phaser.Math.FloatBetween(-cone, cone), SPRAY_DMG, 0xff3333);
+    const dmg = luxe ? LUX_DMG : SPRAY_DMG;
+    this._hitscanBeam(owner, caster.x, caster.y, baseAngle + Phaser.Math.FloatBetween(-cone, cone), dmg, luxe ? SUB.gold : 0xff3333);
 
     // Crystal copy: active clones also shoot guns with E
     for (const pos of this.api.crystalClonePositions(owner)) {
       const cloneAngle = Math.atan2(ty - pos.y, tx - pos.x);
-      this._hitscanBeam(owner, pos.x, pos.y, cloneAngle + Phaser.Math.FloatBetween(-cone, cone), SPRAY_DMG, 0xff8888);
+      this._hitscanBeam(owner, pos.x, pos.y, cloneAngle + Phaser.Math.FloatBetween(-cone, cone), dmg, 0xff8888);
     }
   }
 
@@ -1152,8 +1478,7 @@ export class SubterfugeKit {
   private _hitscanBeam(owner: 'player' | 'npc', sx: number, sy: number, angle: number, dmg: number, color: number): void {
     const ex = sx + Math.cos(angle) * SPRAY_RANGE;
     const ey = sy + Math.sin(angle) * SPRAY_RANGE;
-    const targets: Fighter[] = owner === 'player' ? [this.api.npc] : this.api.player.bodies();
-    for (const t of targets) {
+    for (const t of this._foes(owner)) {
       if (!t.active || t.hp <= 0) continue;
       if (this._pointToSegmentDist(t.x, t.y, sx, sy, ex, ey) <= 24) {
         t.takeDamage(dmg);
@@ -1166,8 +1491,8 @@ export class SubterfugeKit {
     const enemyLackeys = this.lackeys.filter(l => l.owner !== owner);
     for (const l of enemyLackeys) {
       if (this._pointToSegmentDist(l.x, l.y, sx, sy, ex, ey) <= 20) {
-        // Specialists are armored — bullets rattle off without shaking their loyalty.
-        if (l.type !== 'specialist') l.loyaltyMs -= 500;
+        // Behind a shield, bullets rattle off without shaking anyone's loyalty.
+        if (!this._crewShielded(l)) l.loyaltyMs -= 500;
         this.api.spawnHitFlash(l.x, l.y, color);
       }
     }
@@ -1229,7 +1554,9 @@ export class SubterfugeKit {
     this._tags().clear();
     this.bulletCounterText.setVisible(visible);
     if (visible) {
-      this.bulletCounterText.setText(`${this.bullets}`).setPosition(player.x + 6, player.y - 58);
+      const luxe = this.lux.player > 0;
+      this.bulletCounterText.setText(`${luxe ? this.lux.player : this.bullets}`)
+        .setColor(luxe ? '#ffdd33' : '#ff4455').setPosition(player.x + 6, player.y - 58);
       // A tag behind the number, with a brass cartridge laid on its left end.
       const g = this._tags();
       const w = this.bulletCounterText.width + 26;
@@ -1253,224 +1580,129 @@ export class SubterfugeKit {
     return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
   }
 
-  // ── Lackeys ──────────────────────────────────────────────────────────────
+  // ── Recruits ─────────────────────────────────────────────────────────────
 
-  /** Pay for and place a recruit; falls through to a floating "No money!" when broke. */
-  private _tryHire(owner: 'player' | 'npc', type: RecruitType): boolean {
-    const fighter = owner === 'player' ? this.api.player : this.api.npc;
+  private _crewOf(owner: 'player' | 'npc'): Lackey[] {
+    return this.lackeys.filter((l) => l.owner === owner);
+  }
+
+  /**
+   * Pay for and place a recruit beside the caster, facing (tx, ty). Refused — and nothing is
+   * spent — when the payroll is already three deep or the wallet is short.
+   */
+  private _tryHire(owner: 'player' | 'npc', type: RecruitType, tx?: number, ty?: number): boolean {
+    if (this._crewOf(owner).length >= CREW_MAX) return false;
     const cost = RECRUIT_COST[type];
-    const purse = owner === 'player' ? this.money : this.npcMoney;
-    if (purse < cost) {
-      if (owner === 'player') {
-        this.api.showFloatingText(fighter.x, fighter.y - 40, cost > 1 ? `Need ${cost}💵!` : 'No money!', '#888888');
-      }
-      return false;
-    }
-    this._spendMoney(owner, cost);
+    if (!this._canPay(owner, cost)) return false;
+    this._pay(owner, cost);
     this.gesture(owner, 'sub-recruit');
-    this._spawnLackey(owner, type);
-    fighter.startCooldown('sub-recruit');
+    this._spawnLackey(owner, type, tx, ty);
     return true;
   }
 
-  private _spawnLackey(owner: 'player' | 'npc', type: RecruitType = 'lackey'): void {
-    const { scene } = this.api;
+  /** First empty seat in this side's ride, or -1. */
+  private _freeSeat(owner: 'player' | 'npc'): number {
+    const n = this.rides.seatCount(owner);
+    for (let i = 0; i < n; i++) {
+      if (!this.lackeys.some((l) => l.owner === owner && l.seat === i)) return i;
+    }
+    return -1;
+  }
+
+  private _mag(l: Lackey): number {
+    if (l.type === 'thug') return l.level >= 3 ? THUG_MAG_L3 : THUG_MAG;
+    if (l.type === 'enforcer') return ENF_MAG;
+    return Infinity;
+  }
+
+  private _spawnLackey(
+    owner: 'player' | 'npc', type: RecruitType = 'thug', tx?: number, ty?: number,
+    net?: { nid: number; x: number; y: number },
+  ): void {
+    // A replica's payroll is whatever its owner's machine says it is (`subx-crew`): it never
+    // takes a man on by its own reckoning, or the two crews stop matching.
+    if (this._ghost(owner) && !net) return;
     const caster = owner === 'player' ? this.api.player : this.api.npc;
-    const angle = Math.random() * Math.PI * 2;
-    const x = caster.x + Math.cos(angle) * 50;
-    const y = caster.y + Math.sin(angle) * 50;
-    // Kept as invisible handles for the existing teardown; the loyalty bar itself is painted
-    // per frame in _paintRecruits as a little banknote that drains.
-    const barBg = scene.add.rectangle(x, y - 24, 32, 5, 0x333311, 0.8).setDepth(11).setVisible(false) as Phaser.GameObjects.Rectangle;
-    const barFill = scene.add.rectangle(x - 16, y - 24, 32, 5, 0xffdd33, 0.95).setOrigin(0, 0.5).setDepth(12).setVisible(false) as Phaser.GameObjects.Rectangle;
-    const levelText = this._up(owner, 'f')
-      ? scene.add.text(x, y - 38, ROMAN[1], {
-          fontSize: '16px', fontFamily: 'Georgia, "Times New Roman", serif', fontStyle: 'bold', color: '#ffdd33',
-          stroke: '#1a1a1a', strokeThickness: 4,
-        }).setOrigin(0.5).setDepth(13) as Phaser.GameObjects.Text
-      : null;
+    const foe = this._nearestFoe(owner, caster.x, caster.y);
+    const aimX = tx ?? foe?.x ?? caster.x + 1;
+    const aimY = ty ?? foe?.y ?? caster.y;
+    // He steps out from beside the boss, on the side the boss is looking — and shuffles round
+    // if one of the others is already standing there.
+    let angle = Math.atan2(aimY - caster.y, aimX - caster.x);
+    let x = caster.x, y = caster.y;
+    for (let tries = 0; tries < 7; tries++) {
+      x = Phaser.Math.Clamp(caster.x + Math.cos(angle) * CREW_SPAWN_REACH, 22, this.api.sceneWidth - 22);
+      y = Phaser.Math.Clamp(caster.y + Math.sin(angle) * CREW_SPAWN_REACH, 22, this.api.sceneHeight - 22);
+      const px = x, py = y;
+      if (!this.lackeys.some((l) => Phaser.Math.Distance.Between(l.x, l.y, px, py) < 28)) break;
+      angle += 0.9;
+    }
+    if (net) { x = net.x; y = net.y; }
     // Moral perk: the whole payroll signs on for a quarter longer, Bards included.
     const loyalty = RECRUIT_LOYALTY_MS[type]
       * (this.api.hasPerk(owner, 'moral') ? MORAL_LOYALTY_MULT : 1);
-    this.lackeys.push({
-      owner, type, barBg, barFill, levelText, x, y,
-      facing: angle + Math.PI,
-      ranked: levelText !== null,
+    const l: Lackey = {
+      nid: net?.nid ?? ++this.crewSeq,
+      owner, type, x, y,
+      facing: Math.atan2(aimY - y, aimX - x),
+      level: 0,
       loyaltyMs: loyalty, loyaltyMaxMs: loyalty,
-      bullets: type === 'specialist' ? SPEC_MAG : LACKEY_MAG, reloadingUntil: 0, nextShotAt: 0,
-      strafeDir: Math.random() < 0.5 ? 1 : -1,
+      bullets: 0, reloadingUntil: 0, nextShotAt: 0, lastShotAt: -99999,
       ignited: false,
-      xp: 0, level: 1, xpDmgAccum: 0, xpSecAccum: 0, inverted: false,
-      wanderX: x, wanderY: y, payoutAccum: 0,
-    });
+      seat: -1, lifted: false,
+      healing: false, healAccumMs: 0,
+      favourReadyAt: 0,
+      wanderX: x, wanderY: y,
+    };
+    l.bullets = this._mag(l);
+    // Hired right beside your ride, he gets in — if there is a seat going.
+    if (type !== 'bard' && this.rides.near(owner, caster.x, caster.y, CREW_SEAT_RANGE)) l.seat = this._freeSeat(owner);
+    this.lackeys.push(l);
+    if (owner === 'player') this.api.broadcastMasteryCast(`subx-crew:${type}:${l.nid}:${Math.round(x)}:${Math.round(y)}`);
     // Hired on the spot: cash changes hands from the caster to the new man.
     this.fx(owner).payment(caster.x, caster.y, x, y, { count: RECRUIT_COST[type] * 2, depth: D_AIR });
     this.fx(owner).smoke(x, y, 4, { speed: 40, size: 6, life: 520, depth: D_WORLD - 1 });
-    this.api.showFloatingText(x, y - 34, `${RECRUIT_EMOJI[type]} ${RECRUIT_NAME[type]}!`, '#dd2233');
   }
 
-  private _destroyLackeyVisuals(l: Lackey): void {
-    if (l.barBg?.active) l.barBg.destroy();
-    if (l.barFill?.active) l.barFill.destroy();
-    if (l.levelText?.active) l.levelText.destroy();
+  /** Is a Bard of this side on the payroll? Its buff never reaches another Bard. */
+  private _hasBard(owner: 'player' | 'npc'): boolean {
+    return this.lackeys.some((l) => l.owner === owner && l.type === 'bard');
   }
 
-  // ── Hardened Criminals (F+) ──────────────────────────────────────────────
+  /**
+   * Does anything stop this hire's loyalty being shot off him? An Enforcer's own shield does,
+   * and a level-3 Enforcer (Protector) holds it over everyone standing near him.
+   */
+  private _crewShielded(l: Lackey): boolean {
+    if (l.type === 'enforcer') return true;
+    return this.lackeys.some((o) => o.owner === l.owner && o.type === 'enforcer' && o.level >= 3 && !o.lifted
+      && Phaser.Math.Distance.Between(o.x, o.y, l.x, l.y) <= ENF_COVER_RADIUS);
+  }
 
-  /** Award XP and promote; returns silently when the owner lacks F+. */
-  private _addRecruitXp(l: Lackey, amount: number): void {
-    if (!l.ranked) return;
-    l.xp = Math.min(l.xp + amount, (XP_MAX_LEVEL - 1) * XP_PER_LEVEL);
-    const next = Math.min(XP_MAX_LEVEL, 1 + Math.floor(l.xp / XP_PER_LEVEL));
-    if (next === l.level) return;
-    l.level = next;
-    if (l.owner === 'player') this.api.recordMasteryBestStat('recruitBestLevel', l.level);
-    this.api.showFloatingText(l.x, l.y - 46, `⭐ ${ROMAN[l.level]}`, '#ffdd33');
-    if (l.level >= XP_MAX_LEVEL && !l.inverted) {
-      // Level V wears the palette inside out: red suit, black trim. The painter reads
-      // `inverted` — this just marks the promotion and throws a fistful of cash for it.
-      l.inverted = true;
-      this.fx(l.owner).cash(l.x, l.y, 8, { speed: 170, size: 15, life: 720, depth: D_AIR, seal: SUB.gold });
+  /** Everything that speeds up or slows down how fast one hire's loyalty runs out. */
+  private _drainMult(l: Lackey): number {
+    // Soul copy: ignited hires lose an extra 2s per second. Mastery smoke gives the ones
+    // standing in it somewhere pleasant to loiter, a Bard keeps everyone but the Bards happy
+    // for four times as long, a Juggernaut simply does not care, and a Medic looks after the
+    // men around him (but not himself).
+    let m = (l.ignited ? 1 + LACKEY_IGNITE_EXTRA_PER_SEC / 1000 : 1)
+      * (this._inOwnSmoke(l.owner, l.x, l.y) ? SMOKE_LOYALTY_DRAIN_MULT : 1)
+      * (l.type !== 'bard' && this._hasBard(l.owner) ? BARD_DRAIN_MULT : 1)
+      * (l.type === 'enforcer' && l.level >= 2 ? ENF_DRAIN_L2 : 1);
+    let care = 1;
+    for (const o of this.lackeys) {
+      if (o === l || o.owner !== l.owner || o.type !== 'medic' || o.lifted) continue;
+      if (Phaser.Math.Distance.Between(o.x, o.y, l.x, l.y) > MEDIC_RADIUS) continue;
+      care = Math.min(care, o.level >= 2 ? MEDIC_DRAIN_L2 : MEDIC_DRAIN);
     }
+    m *= care;
+    return m;
   }
 
-  private _lvlSpeed(l: Lackey): number { return 1 + 0.10 * (l.level - 1); }
-  private _lvlDrain(l: Lackey): number { return 1 - 0.08 * (l.level - 1); }
-  /** Scaled, rounded damage for a recruit's hit (minimum 1). */
-  private _lvlDmg(l: Lackey, base: number): number {
-    return Math.max(1, Math.round(base * (1 + 0.15 * (l.level - 1))));
-  }
-
-  /** Books damage a recruit dealt toward its next XP point. */
-  private _creditRecruitDamage(l: Lackey, dmg: number): void {
-    if (!l.ranked) return;
-    l.xpDmgAccum += dmg;
-    while (l.xpDmgAccum >= XP_DMG_PER_POINT) {
-      l.xpDmgAccum -= XP_DMG_PER_POINT;
-      this._addRecruitXp(l, 1);
-    }
-  }
-
-  // ── The Rolodex hiring wheel (R+) ────────────────────────────────────────
-
-  /** The hires a side can pick from: the Rolodex four, plus the Bard when Moral is equipped. */
-  private _recruitOrder(owner: 'player' | 'npc'): RecruitType[] {
-    return this.api.hasPerk(owner, 'moral') ? [...RECRUIT_ORDER, 'bard'] : RECRUIT_ORDER;
-  }
-
-  private _openRecruitMenu(selectedIndex: number): void {
-    this._closeRecruitMenu();
-    this.recruitMenuGfx = this.api.scene.add.graphics().setDepth(31);
-    for (let i = 0; i < this._recruitOrder('player').length; i++) {
-      this.recruitMenuLabels.push(
-        this.api.scene.add.text(0, 0, '', {
-          fontSize: '11px', color: '#ffffff', fontFamily: FONT_UI, fontStyle: 'bold', align: 'center',
-          wordWrap: { width: 80 }, stroke: '#0a0a0a', strokeThickness: 3,
-        }).setOrigin(0.5).setDepth(32),
-      );
-    }
-    this.recruitMenuOpen = true;
-    this.recruitSelectedIndex = selectedIndex;
-    this._drawRecruitMenu(selectedIndex);
-  }
-
-  private _drawRecruitMenu(selectedIndex: number): void {
-    const gfx = this.recruitMenuGfx;
-    if (!gfx) return;
-    const cx = this.api.player.x;
-    const cy = this.api.player.y;
-    const R = 120;
-    const order = this._recruitOrder('player');
-    const count = order.length;
-    const angleStep = (Math.PI * 2) / count;
-    gfx.clear();
-    // The Rolodex: a black lacquer dial with a gold pinstripe rim and card-tab wedges.
-    const tNow = this.api.scene.time.now / 1000;
-    gfx.fillStyle(SUB.ink, 0.62);
-    gfx.fillCircle(cx, cy, R + 22);
-    gfx.lineStyle(3, SUB.brass, 0.9);
-    gfx.strokeCircle(cx, cy, R + 22);
-    gfx.lineStyle(1, SUB.gold, 0.5);
-    gfx.strokeCircle(cx, cy, R + 17);
-    for (let k = 0; k < 40; k++) {
-      const a = (k / 40) * Math.PI * 2 + tNow * 0.15;
-      gfx.fillStyle(SUB.gold, k % 5 === 0 ? 0.8 : 0.35);
-      gfx.fillCircle(cx + Math.cos(a) * (R + 19.5), cy + Math.sin(a) * (R + 19.5), k % 5 === 0 ? 1.6 : 0.9);
-    }
-    for (let i = 0; i < count; i++) {
-      const type = order[i];
-      const affordable = this.money >= RECRUIT_COST[type];
-      const startA = i * angleStep - Math.PI / 2 - angleStep / 2;
-      const isSelected = i === selectedIndex;
-      const rr = isSelected ? R + 10 : R;
-      gfx.fillStyle(RECRUIT_WEDGE_COLOR[type], affordable ? (isSelected ? 0.92 : 0.6) : 0.3);
-      gfx.beginPath(); gfx.moveTo(cx, cy);
-      gfx.arc(cx, cy, rr, startA, startA + angleStep, false);
-      gfx.closePath(); gfx.fillPath();
-      // pinstripes across the wedge, the suit cloth
-      gfx.lineStyle(1, SUB.white, affordable ? 0.07 : 0.03);
-      for (let k = 1; k <= 4; k++) {
-        gfx.beginPath();
-        gfx.arc(cx, cy, rr * (0.2 * k + 0.1), startA + 0.04, startA + angleStep - 0.04, false);
-        gfx.strokePath();
-      }
-      // a dark vignette toward the hub
-      gfx.fillStyle(SUB.ink, 0.35);
-      gfx.beginPath(); gfx.moveTo(cx, cy);
-      gfx.arc(cx, cy, rr * 0.38, startA, startA + angleStep, false);
-      gfx.closePath(); gfx.fillPath();
-      if (isSelected) {
-        gfx.lineStyle(4, affordable ? SUB.gold : SUB.ashDark, 0.35 + 0.2 * Math.sin(tNow * 6));
-        gfx.beginPath();
-        gfx.arc(cx, cy, rr + 4, startA + 0.03, startA + angleStep - 0.03, false);
-        gfx.strokePath();
-      }
-      gfx.lineStyle(isSelected ? 3 : 1.2, isSelected ? SUB.gold : SUB.brass, isSelected ? 1 : 0.55);
-      gfx.beginPath(); gfx.moveTo(cx, cy);
-      gfx.arc(cx, cy, rr, startA, startA + angleStep, false);
-      gfx.closePath(); gfx.strokePath();
-      // a banknote price tab at the rim of each card
-      const tabA = startA + angleStep / 2;
-      banknoteLayered(gfx, this.pcol, cx + Math.cos(tabA) * (rr - 10), cy + Math.sin(tabA) * (rr - 10),
-        tabA + Math.PI / 2, 14, 4.2, affordable ? 0.95 : 0.35, 0.1, affordable ? SUB.gold : SUB.ashDark);
-
-      const lbl = this.recruitMenuLabels[i];
-      if (!lbl?.active) continue;
-      const midA = i * angleStep - Math.PI / 2;
-      lbl.setPosition(cx + Math.cos(midA) * (rr * 0.66), cy + Math.sin(midA) * (rr * 0.66));
-      lbl.setText(`${RECRUIT_EMOJI[type]} ${RECRUIT_NAME[type]}\n💵${RECRUIT_COST[type]}`);
-      lbl.setColor(affordable ? (isSelected ? '#fff2c0' : '#ffffff') : '#777777');
-    }
-    // hub: a gold signet with the house crimson inside
-    gfx.fillStyle(SUB.brass, 1);
-    gfx.fillCircle(cx, cy, 13);
-    gfx.fillStyle(SUB.wine, 1);
-    gfx.fillCircle(cx, cy, 9.5);
-    gfx.fillStyle(SUB.gold, 1);
-    gfx.fillTriangle(cx - 4, cy + 3, cx + 4, cy + 3, cx, cy - 5);
-  }
-
-  private _updateRecruitMenuHover(pointer: Phaser.Input.Pointer): void {
-    const cx = this.api.player.x;
-    const cy = this.api.player.y;
-    if (Phaser.Math.Distance.Between(pointer.worldX, pointer.worldY, cx, cy) <= 24) return;
-    const count = this._recruitOrder('player').length;
-    const angleStep = (Math.PI * 2) / count;
-    const raw = Math.atan2(pointer.worldY - cy, pointer.worldX - cx);
-    const normalized = (((raw + Math.PI / 2) % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
-    const hoverIdx = Math.round(normalized / angleStep) % count;
-    if (hoverIdx !== this.recruitSelectedIndex) {
-      this.recruitSelectedIndex = hoverIdx;
-      this._drawRecruitMenu(hoverIdx);
-    }
-  }
-
-  private _closeRecruitMenu(): void {
-    if (this.recruitMenuGfx?.active) this.recruitMenuGfx.destroy();
-    this.recruitMenuGfx = null;
-    for (const l of this.recruitMenuLabels) { if (l?.active) l.destroy(); }
-    this.recruitMenuLabels = [];
-    this.recruitMenuOpen = false;
+  /** Loyalty ran out: he pockets what he was owed and walks — or, lit, goes up where he stands. */
+  private _crewLeaves(l: Lackey): void {
+    if (l.ignited) this._lackeyBurnout(l);
+    else this.fx(l.owner).smoke(l.x, l.y, 4, { speed: 50, size: 6, life: 480, depth: D_WORLD });
   }
 
   private _updateLackeys(time: number, delta: number): void {
@@ -1480,218 +1712,466 @@ export class SubterfugeKit {
 
     for (let i = this.lackeys.length - 1; i >= 0; i--) {
       const l = this.lackeys[i];
-      const enemy = l.owner === 'player' ? this.api.npc : this.api.player;
+      // On the helicopter's hook he is cargo: the lift moves him and nothing else touches him.
+      if (l.lifted) continue;
 
-      // Loyalty drain (Soul copy: ignited lackeys lose an extra 2s per second;
-      // F+ levels make every recruit that bit harder to shake off; Mastery smoke
-      // clouds give the ones standing in them somewhere pleasant to loiter; and a
-      // Bard on the payroll keeps everyone but the Bards happy for four times as long)
-      l.loyaltyMs -= delta * this._lvlDrain(l)
-        * (l.ignited ? 1 + LACKEY_IGNITE_EXTRA_PER_SEC / 1000 : 1)
-        * (this._inOwnSmoke(l.owner, l.x, l.y) ? SMOKE_LOYALTY_DRAIN_MULT : 1)
-        * (l.type !== 'bard' && this._hasBard(l.owner) ? BARD_DRAIN_MULT : 1);
-
-      // XP: +1 per second on the payroll, and the level-V money runner stipend
-      if (l.levelText) {
-        l.xpSecAccum += delta;
-        while (l.xpSecAccum >= 1000) { l.xpSecAccum -= 1000; this._addRecruitXp(l, 1); }
-        if (l.type === 'runner' && l.level >= XP_MAX_LEVEL) {
-          l.payoutAccum += delta;
-          while (l.payoutAccum >= RUNNER_L5_STIPEND_MS) {
-            l.payoutAccum -= RUNNER_L5_STIPEND_MS;
-            this._addMoney(l.owner, 1);
-            this.api.showFloatingText(l.x, l.y - 34, '+1💵', '#66dd66');
-          }
-        }
+      if (l.seat >= 0) {
+        const p = this.rides.seatPos(l.owner, l.seat);
+        if (p) { l.x = p.x; l.y = p.y; } else l.seat = -1;
       }
 
-      // Enemy projectile hits: -2s loyalty each, projectile consumed.
-      // Specialists are armored: the round still stops, the loyalty doesn't move.
+      l.loyaltyMs -= delta * this._drainMult(l);
+
+      // Enemy projectile hits: -2s loyalty each, projectile consumed. Behind a shield the
+      // round still stops; the loyalty does not move.
       for (const go of [...this.api.projectiles.getChildren()]) {
         const p = go as Phaser.Physics.Arcade.Sprite & { isFromPlayer?: boolean };
         if (!p.active) continue;
         if ((l.owner === 'player') === (p.isFromPlayer === true)) continue;
         if (Phaser.Math.Distance.Between(p.x, p.y, l.x, l.y) <= 18) {
           p.destroy();
-          this.api.spawnHitFlash(l.x, l.y, this.col(l.owner)(0xffdd33));
-          if (l.type === 'specialist') {
-            this.api.showFloatingText(l.x, l.y - 28, '🛡️ Armored', '#aaaacc');
+          if (this._crewShielded(l)) {
+            this.api.spawnHitFlash(l.x, l.y, this.col(l.owner)(SUB.haze));
           } else {
+            this.api.spawnHitFlash(l.x, l.y, this.col(l.owner)(SUB.gold));
             l.loyaltyMs -= LACKEY_PROJ_HIT_LOSS_MS;
-            this.api.showFloatingText(l.x, l.y - 28, '-2s', '#ffdd33');
           }
         }
       }
 
+      // A replica's man stays until his owner's machine says he walked (`subx-gone`).
+      if (l.loyaltyMs <= 0 && this._ghost(l.owner)) l.loyaltyMs = 1;
       if (l.loyaltyMs <= 0) {
-        if (l.ignited) this._lackeyBurnout(l);
-        else this.api.showFloatingText(l.x, l.y - 20, '👋 Quit', '#999999');
-        // A money runner cashes out its float on the way out the door.
-        if (l.type === 'runner') {
-          this._addMoney(l.owner, RUNNER_QUIT_MONEY);
-          this.api.showFloatingText(l.x, l.y - 36, `+${RUNNER_QUIT_MONEY}💵`, '#66dd66');
-        }
-        this._destroyLackeyVisuals(l);
+        if (l.owner === 'player') this.api.broadcastMasteryCast(`subx-gone:${l.nid}:${l.ignited ? 1 : 0}`);
+        this._crewLeaves(l);
         this.lackeys.splice(i, 1);
         continue;
       }
 
-      this._moveRecruit(l, enemy, dt, W, H);
-      this._fireRecruit(l, enemy, time);
-
-      // The loyalty bar and the rank are HUD, so they stay as GameObjects; the man himself
-      // is painted from this state by paintRecruits.
-      l.barBg.setPosition(l.x, l.y - 24);
-      const ratio = Phaser.Math.Clamp(l.loyaltyMs / l.loyaltyMaxMs, 0, 1);
-      l.barFill.setPosition(l.x - 16, l.y - 24).setSize(32 * ratio, 5);
-      l.levelText?.setPosition(l.x, l.y - 38).setText(ROMAN[l.level]);
-      if (enemy.active && enemy.hp > 0 && l.type !== 'runner' && l.type !== 'bard') {
-        l.facing = Math.atan2(enemy.y - l.y, enemy.x - l.x);
-      } else {
-        l.facing = Math.atan2(l.wanderY - l.y, l.wanderX - l.x);
+      if (l.type === 'bard') {
+        this._moveBard(l, dt, W, H);
+        continue;
       }
+
+      const enemy = this._nearestFoe(l.owner, l.x, l.y);
+      if (enemy) l.facing = Math.atan2(enemy.y - l.y, enemy.x - l.x);
+      if (l.type === 'medic') this._medicTend(l, delta);
+      if (enemy) this._fireRecruit(l, enemy, time);
     }
   }
 
-  /** Is a Bard of this side on the payroll? Its buff never reaches another Bard. */
-  private _hasBard(owner: 'player' | 'npc'): boolean {
-    return this.lackeys.some((l) => l.owner === owner && l.type === 'bard');
-  }
-
-  /** Per-type positioning: gunners hold mid range, runners bolt, muscle closes in. */
-  private _moveRecruit(l: Lackey, enemy: Fighter, dt: number, W: number, H: number): void {
-    const lvl = this._lvlSpeed(l);
-    let mx = 0, my = 0, speed = 0;
-
-    if (l.type === 'runner' || l.type === 'bard') {
-      // Sprints between random points, picking a new one whenever it arrives. The Bard does
-      // the same thing at a stroll — it is here to be heard, not to be anywhere in particular.
-      speed = (l.type === 'bard' ? BARD_SPEED : RUNNER_SPEED) * lvl;
-      if (Phaser.Math.Distance.Between(l.x, l.y, l.wanderX, l.wanderY) <= 24) {
-        l.wanderX = 40 + Math.random() * (W - 80);
-        l.wanderY = 40 + Math.random() * (H - 80);
-      }
-      const dx = l.wanderX - l.x, dy = l.wanderY - l.y;
-      const d = Math.hypot(dx, dy) || 1;
-      mx = dx / d; my = dy / d;
-    } else if (!enemy.active || enemy.hp <= 0) {
-      return;
-    } else {
-      const dx = enemy.x - l.x, dy = enemy.y - l.y;
-      const dist = Math.hypot(dx, dy) || 1;
-      if (l.type === 'thug') {
-        speed = THUG_SPEED * lvl;
-        mx = dx / dist; my = dy / dist;
-      } else if (l.type === 'specialist') {
-        speed = SPEC_SPEED * lvl;
-        if (dist > SPEC_RANGE * 0.7) { mx = dx / dist; my = dy / dist; }
-        else if (dist < SPEC_RANGE * 0.35) { mx = -dx / dist; my = -dy / dist; }
-        else { mx = (-dy / dist) * 0.5 * l.strafeDir; my = (dx / dist) * 0.5 * l.strafeDir; }
-      } else {
-        speed = 150 * lvl;
-        if (dist < 200) { mx = -dx / dist; my = -dy / dist; }
-        else if (dist > 320) { mx = dx / dist; my = dy / dist; }
-        else { mx = (-dy / dist) * 0.5 * l.strafeDir; my = (dx / dist) * 0.5 * l.strafeDir; }
-      }
+  /** The Bard strolls between random points — it is here to be heard, not to be anywhere. */
+  private _moveBard(l: Lackey, dt: number, W: number, H: number): void {
+    if (Phaser.Math.Distance.Between(l.x, l.y, l.wanderX, l.wanderY) <= 24) {
+      l.wanderX = 40 + Math.random() * (W - 80);
+      l.wanderY = 40 + Math.random() * (H - 80);
     }
-
-    l.x = Phaser.Math.Clamp(l.x + mx * speed * dt, 20, W - 20);
-    l.y = Phaser.Math.Clamp(l.y + my * speed * dt, 20, H - 20);
+    const dx = l.wanderX - l.x, dy = l.wanderY - l.y;
+    const d = Math.hypot(dx, dy) || 1;
+    l.x = Phaser.Math.Clamp(l.x + (dx / d) * BARD_SPEED * dt, 20, W - 20);
+    l.y = Phaser.Math.Clamp(l.y + (dy / d) * BARD_SPEED * dt, 20, H - 20);
+    l.facing = Math.atan2(dy, dx);
   }
 
-  /** Per-type offence. Money runners and Bards never fight — they run money and play. */
+  /** A Medic patches up his own boss while the boss is hurt and standing close. */
+  private _medicTend(l: Lackey, delta: number): void {
+    const boss = l.owner === 'player' ? this.api.player : this.api.npc;
+    l.healing = boss.active && boss.hp > 0 && boss.hp < boss.maxHp
+      && Phaser.Math.Distance.Between(l.x, l.y, boss.x, boss.y) <= MEDIC_RADIUS;
+    if (!l.healing) { l.healAccumMs = 0; return; }
+    // A replica's health is its owner's business; the stitches are only drawn here.
+    if (this._ghost(l.owner)) return;
+    l.healAccumMs += delta;
+    if (l.healAccumMs < 1000) return;
+    l.healAccumMs -= 1000;
+    let amount = l.level >= 1 ? MEDIC_HEAL_PER_S_L1 : MEDIC_HEAL_PER_S;
+    // Triage: the worse it looks, the faster he works.
+    if (l.level >= 2) amount *= 1 + MEDIC_TRIAGE_BONUS * (1 - boss.hp / boss.maxHp);
+    boss.heal(Math.round(amount));
+    this.fx(l.owner).ring(boss.x, boss.y, 6, 26, SUB.moneyGreen, 320, D_AIR, 2);
+  }
+
+  /** Per-type offence. Nobody on the payroll walks anywhere: they shoot from where they stand. */
   private _fireRecruit(l: Lackey, enemy: Fighter, time: number): void {
-    if (l.type === 'runner' || l.type === 'bard') return;
-    if (!enemy.active || enemy.hp <= 0) return;
     const dist = Phaser.Math.Distance.Between(l.x, l.y, enemy.x, enemy.y);
-
-    if (l.type === 'thug') {
-      if (time < l.nextShotAt || dist > THUG_SWING_RANGE) return;
-      l.nextShotAt = time + THUG_SWING_CD_MS;
-      this._thugSwing(l, enemy, time);
-      return;
-    }
-
-    // Reload gate — level-V lackeys rack the next mag in half the time
     if (l.reloadingUntil > 0) {
       if (time < l.reloadingUntil) return;
       l.reloadingUntil = 0;
-      l.bullets = l.type === 'specialist' ? SPEC_MAG : LACKEY_MAG;
+      l.bullets = this._mag(l);
     }
-    if (l.bullets <= 0 || time < l.nextShotAt) return;
+    if (time < l.nextShotAt) return;
+    const aim = Math.atan2(enemy.y - l.y, enemy.x - l.x);
 
-    if (l.type === 'specialist') {
-      if (dist > SPEC_RANGE) return;
-      l.nextShotAt = time + SPEC_SHOT_INTERVAL;
-      l.bullets -= 1;
-      const pellets = l.level >= XP_MAX_LEVEL ? SPEC_PELLETS_L5 : SPEC_PELLETS;
-      const base = Math.atan2(enemy.y - l.y, enemy.x - l.x);
-      for (let p = 0; p < pellets; p++) {
-        const spread = (p / (pellets - 1) - 0.5) * 2 * SPEC_CONE_HALF;
-        this._lackeyHitscan(l, base + spread, enemy, SPEC_PELLET_DMG, SPEC_RANGE, 0x8899dd);
+    switch (l.type) {
+      case 'thug': {
+        if (dist > THUG_RANGE) return;
+        // More Gun: faster and tighter.
+        l.nextShotAt = time + (l.level >= 1 ? THUG_INTERVAL_L1 : THUG_INTERVAL);
+        l.lastShotAt = time;
+        l.bullets -= 1;
+        const cone = l.level >= 1 ? THUG_CONE_HALF_L1 : SPRAY_CONE_HALF;
+        const hit = this._crewHitscan(l, aim + Phaser.Math.FloatBetween(-cone, cone), THUG_DMG, THUG_RANGE, SUB.rust, false);
+        // Suppressing Fire: whoever he is hosing down takes more from everybody.
+        if (l.level >= 3) for (const f of hit) this.suppressed.set(f, time + SUPPRESS_MS);
+        if (l.bullets <= 0) {
+          l.reloadingUntil = time + THUG_RELOAD_MS;
+          // Active Reload: the drum comes out and a grenade goes over.
+          if (l.level >= 2) this.grenades.push({ owner: l.owner, sx: l.x, sy: l.y, tx: enemy.x, ty: enemy.y, bornAt: time });
+        }
+        return;
       }
-      if (l.bullets <= 0) l.reloadingUntil = time + LACKEY_RELOAD_MS;
-      return;
-    }
-
-    // Plain lackey: 15° cone, 1 dmg pellets, 25-round mag then a 5s reload
-    if (dist > LACKEY_RANGE) return;
-    l.nextShotAt = time + LACKEY_SHOT_INTERVAL;
-    l.bullets -= 1;
-    const angle = Math.atan2(enemy.y - l.y, enemy.x - l.x) + Phaser.Math.FloatBetween(-SPRAY_CONE_HALF, SPRAY_CONE_HALF);
-    this._lackeyHitscan(l, angle, enemy, LACKEY_DMG, LACKEY_RANGE, 0xdd6633);
-    if (l.bullets <= 0) {
-      l.reloadingUntil = time + LACKEY_RELOAD_MS * (l.level >= XP_MAX_LEVEL ? 0.5 : 1);
+      case 'enforcer': {
+        // Juggernaut: the same shotgun, somehow reaching half as far again.
+        const range = l.level >= 2 ? ENF_RANGE_L2 : ENF_RANGE;
+        if (dist > range) return;
+        l.nextShotAt = time + (l.level >= 1 ? ENF_INTERVAL_L1 : ENF_INTERVAL);
+        l.lastShotAt = time;
+        l.bullets -= 1;
+        const dmg = l.level >= 3 ? ENF_PELLET_DMG_L3 : ENF_PELLET_DMG;
+        for (let p = 0; p < ENF_PELLETS; p++) {
+          const spread = (p / (ENF_PELLETS - 1) - 0.5) * 2 * ENF_CONE_HALF;
+          this._crewHitscan(l, aim + spread, dmg, range, SUB.haze, false);
+        }
+        if (l.bullets <= 0) l.reloadingUntil = time + ENF_RELOAD_MS;
+        return;
+      }
+      case 'sniper': {
+        if (dist > SNIPER_RANGE) return;
+        l.nextShotAt = time + (l.level >= 2 ? SNIPER_INTERVAL_L2 : SNIPER_INTERVAL);
+        l.lastShotAt = time;
+        let dmg = l.level >= 3 ? SNIPER_DMG_L3 : l.level >= 1 ? SNIPER_DMG_L1 : SNIPER_DMG;
+        // Bounty Hunter: one in four is between the eyes.
+        const headshot = l.level >= 3 && Math.random() < SNIPER_HEADSHOT_CHANCE;
+        if (headshot) dmg *= SNIPER_HEADSHOT_MULT;
+        // Professional: the round keeps going through whoever it hits.
+        const hit = this._crewHitscan(l, aim, dmg, SNIPER_RANGE, headshot ? SUB.gold : SUB.steelHi, l.level >= 2, 3.2);
+        for (const f of hit) {
+          // High Caliber: a little of it nothing can stop.
+          if (l.level >= 1 && f.active && f.hp > 0) f.takeDamage(SNIPER_TRUE_DMG_L1, { trueDamage: true });
+          if (headshot) this.fx(l.owner).ring(f.x, f.y, 6, 40, SUB.gold, 360, D_AIR, 3);
+        }
+        return;
+      }
+      case 'medic': {
+        if (dist > MEDIC_RANGE) return;
+        l.nextShotAt = time + MEDIC_INTERVAL;
+        l.lastShotAt = time;
+        this._crewHitscan(l, aim, l.level >= 1 ? MEDIC_DMG_L1 : MEDIC_DMG, MEDIC_RANGE, SUB.moneyGreen, false);
+        return;
+      }
+      default:
+        return;
     }
   }
 
-  /** Thug bat: damage, a stun, and a shove that hurts more at level V. */
-  private _thugSwing(l: Lackey, enemy: Fighter, time: number): void {
-    const dmg = this._lvlDmg(l, THUG_DMG);
-    enemy.takeDamage(dmg);
-    this._creditRecruitDamage(l, dmg);
-    this.api.spawnHitFlash(enemy.x, enemy.y, this.col(l.owner)(0xdd2233));
-
-    const maxed = l.level >= XP_MAX_LEVEL;
-    const stunMs = THUG_STUN_MS * (maxed ? 2 : 1);
-    if (enemy === this.api.player) this.playerStunUntil = Math.max(this.playerStunUntil, time + stunMs);
-    else this.npcStunUntil = Math.max(this.npcStunUntil, time + stunMs);
-
-    const ang = Math.atan2(enemy.y - l.y, enemy.x - l.x);
-    const force = THUG_KNOCKBACK * (maxed ? 1.5 : 1);
-    this.knocks.set(enemy, {
-      vx: Math.cos(ang) * force, vy: Math.sin(ang) * force,
-      until: time + THUG_KNOCKBACK_MS,
-    });
-    this.api.showFloatingText(enemy.x, enemy.y - 34, '🏏 CLOBBERED!', '#dd2233');
-
-    // The bat comes round in an arc and the victim's pocket change goes with it.
-    const fx = this.fx(l.owner);
-    fx.cut(l.x, l.y, ang, THUG_SWING_RANGE + 18, { color: SUB.wood, scores: 1, duration: 260, depth: D_AIR });
-    fx.deal(enemy.x, enemy.y, 40, { notes: 5, rings: 1, duration: 380, mark: false, color: SUB.gold });
+  /**
+   * One round from a hire. Hits the nearest foe on the line — every foe on it when `pierce` —
+   * and returns who it hit.
+   */
+  private _crewHitscan(
+    l: Lackey, angle: number, dmg: number, range: number, color: number, pierce: boolean, width = 1.4,
+  ): Fighter[] {
+    const sx = l.x, sy = l.y;
+    const ex = sx + Math.cos(angle) * range;
+    const ey = sy + Math.sin(angle) * range;
+    const onLine = this._foes(l.owner)
+      .filter((f) => f.active && f.hp > 0 && this._pointToSegmentDist(f.x, f.y, sx, sy, ex, ey) <= 24)
+      .sort((a, b) => Phaser.Math.Distance.Between(sx, sy, a.x, a.y) - Phaser.Math.Distance.Between(sx, sy, b.x, b.y));
+    const hit = pierce ? onLine : onLine.slice(0, 1);
+    for (const f of hit) {
+      f.takeDamage(dmg);
+      this.api.spawnHitFlash(f.x, f.y, this.col(l.owner)(color));
+    }
+    this.fx(l.owner).tracer(sx, sy, ex, ey, { color, depth: D_WORLD, duration: width > 2 ? 240 : 110, width });
+    return hit;
   }
 
-  /** Enforces the thug's stun + knockback: this codebase drives those from update(). */
+  /** Enforces shoves and staggers: this codebase drives those from update(). */
   private _updateStunsAndKnocks(time: number): void {
     if (time < this.playerStunUntil) (this.api.player.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
     if (time < this.npcStunUntil) (this.api.npc.body as Phaser.Physics.Arcade.Body).setVelocity(0, 0);
     for (const [target, k] of this.knocks) {
-      if (time >= k.until) { this.knocks.delete(target); continue; }
-      (target.body as Phaser.Physics.Arcade.Body).setVelocity(k.vx, k.vy);
+      if (time >= k.until || !target.active) { this.knocks.delete(target); continue; }
+      (target.body as Phaser.Physics.Arcade.Body | null)?.setVelocity(k.vx, k.vy);
     }
   }
 
-  private _lackeyHitscan(l: Lackey, angle: number, enemy: Fighter, baseDmg: number, range: number, color: number): void {
-    const sx = l.x, sy = l.y;
-    const ex = sx + Math.cos(angle) * range;
-    const ey = sy + Math.sin(angle) * range;
-    if (enemy.active && enemy.hp > 0 && this._pointToSegmentDist(enemy.x, enemy.y, sx, sy, ex, ey) <= 24) {
-      const dmg = this._lvlDmg(l, baseDmg);
-      enemy.takeDamage(dmg);
-      this._creditRecruitDamage(l, dmg);
-      this.api.spawnHitFlash(enemy.x, enemy.y, this.col(l.owner)(color));
+  // ── Recruit favours (F+ level 3) ─────────────────────────────────────────
+
+  /** Thug — pay to skip the reload. */
+  private _buyReload(l: Lackey): boolean {
+    if (l.type !== 'thug' || l.level < 3 || l.reloadingUntil <= 0) return false;
+    if (!this._canPay(l.owner, THUG_RELOAD_COST)) return false;
+    this._pay(l.owner, THUG_RELOAD_COST);
+    l.reloadingUntil = 0;
+    l.bullets = this._mag(l);
+    const boss = l.owner === 'player' ? this.api.player : this.api.npc;
+    this.fx(l.owner).payment(boss.x, boss.y, l.x, l.y, { count: 2, depth: D_AIR });
+    return true;
+  }
+
+  /** Enforcer — a helicopter picks `crew` up and sets him down at (x, y). */
+  private _callHeli(enforcer: Lackey, crew: Lackey, x: number, y: number): boolean {
+    const time = this.api.scene.time.now;
+    if (enforcer.type !== 'enforcer' || enforcer.level < 3 || time < enforcer.favourReadyAt) return false;
+    if (crew.owner !== enforcer.owner || crew.lifted || this.heliLifts.some((h) => h.crew === crew)) return false;
+    if (!this._canPay(enforcer.owner, HELI_COST)) return false;
+    this._pay(enforcer.owner, HELI_COST);
+    enforcer.favourReadyAt = time + HELI_CD_MS;
+    this.heliLifts.push({
+      owner: enforcer.owner, crew,
+      // It comes in over the nearest edge of the arena.
+      x: crew.x, y: -70,
+      destX: Phaser.Math.Clamp(x, 24, this.api.sceneWidth - 24),
+      destY: Phaser.Math.Clamp(y, 24, this.api.sceneHeight - 24),
+      phase: 'inbound', angle: Math.PI / 2,
+    });
+    return true;
+  }
+
+  private _updateHeli(dt: number): void {
+    for (let i = this.heliLifts.length - 1; i >= 0; i--) {
+      const h = this.heliLifts[i];
+      const gone = !this.lackeys.includes(h.crew);
+      if (gone && h.phase !== 'leave') h.phase = 'leave';
+      // The hook hangs 34px under the airframe, so the heli hovers that far above its cargo.
+      const goal = h.phase === 'inbound' ? { x: h.crew.x, y: h.crew.y - 34 }
+        : h.phase === 'carry' ? { x: h.destX, y: h.destY - 34 }
+          : { x: h.x, y: -90 };
+      const dx = goal.x - h.x, dy = goal.y - h.y;
+      const dist = Math.hypot(dx, dy);
+      const step = HELI_SPEED * dt;
+      if (dist > 1) h.angle = Phaser.Math.Angle.RotateTo(h.angle, Math.atan2(dy, dx), 5 * dt);
+      if (dist <= step) {
+        h.x = goal.x; h.y = goal.y;
+        if (h.phase === 'inbound') {
+          h.phase = 'carry';
+          h.crew.lifted = true;
+          h.crew.seat = -1;
+          this.fx(h.owner).smoke(h.crew.x, h.crew.y, 5, { speed: 80, size: 6, life: 420, depth: D_WORLD });
+        } else if (h.phase === 'carry') {
+          h.phase = 'leave';
+          h.crew.lifted = false;
+          h.crew.x = h.destX; h.crew.y = h.destY;
+          // Set down beside the boss's ride, he takes a seat in it.
+          if (this.rides.near(h.owner, h.destX, h.destY, CREW_SEAT_RANGE * 0.6)) h.crew.seat = this._freeSeat(h.owner);
+          this.fx(h.owner).smoke(h.destX, h.destY, 6, { speed: 90, size: 7, life: 460, depth: D_WORLD });
+        } else {
+          this.heliLifts.splice(i, 1);
+          continue;
+        }
+      } else {
+        h.x += (dx / dist) * step;
+        h.y += (dy / dist) * step;
+      }
+      if (h.phase === 'carry' && h.crew.lifted) { h.crew.x = h.x; h.crew.y = h.y + 34; }
     }
-    this.fx(l.owner).tracer(sx, sy, ex, ey, { color, depth: D_WORLD, duration: 110, width: 1.4 });
+  }
+
+  /** This side's daggers that are standing in the floor — the Sniper's air strike aims by them. */
+  private _plantedDaggers(owner: 'player' | 'npc'): SubDagger[] {
+    return (owner === 'player' ? this.playerDaggers : this.npcDaggers).filter((d) => d.state === 'planted');
+  }
+
+  private _strikeInbound(owner: 'player' | 'npc'): AirStrike | undefined {
+    return this.strikes.find((s) => s.owner === owner && s.bombs.length === 0);
+  }
+
+  /** Sniper — a flare goes up; five seconds later a plane bombs wherever the daggers say. */
+  private _callStrike(sniper: Lackey): boolean {
+    const time = this.api.scene.time.now;
+    if (sniper.type !== 'sniper' || sniper.level < 3 || time < sniper.favourReadyAt) return false;
+    if (this._strikeInbound(sniper.owner)) return false;
+    if (!this._canPay(sniper.owner, STRIKE_COST)) return false;
+    this._pay(sniper.owner, STRIKE_COST);
+    sniper.favourReadyAt = time + STRIKE_CD_MS;
+    this.strikes.push({
+      owner: sniper.owner, flareX: sniper.x, flareY: sniper.y, calledAt: time, bombs: [],
+      planeFrom: { x: 0, y: 0 }, planeTo: { x: 0, y: 0 },
+    });
+    this.fx(sniper.owner).flash(sniper.x, sniper.y - 10, 12, D_AIR, SUB.scarlet);
+    return true;
+  }
+
+  /**
+   * Where the bombs go. The same ten every time — the daggers only decide how tightly they
+   * land: none is the whole arena, one is a wide scatter around it, two is the line between
+   * them, three or more is the patch of floor they fence off.
+   */
+  private _strikeTargets(owner: 'player' | 'npc'): Array<{ x: number; y: number }> {
+    const W = this.api.sceneWidth, H = this.api.sceneHeight;
+    const pts = this._plantedDaggers(owner);
+    const out: Array<{ x: number; y: number }> = [];
+    const jitter = (spread: number): { x: number; y: number } => {
+      const a = Math.random() * Math.PI * 2;
+      const r = spread * Math.sqrt(Math.random());
+      return { x: Math.cos(a) * r, y: Math.sin(a) * r };
+    };
+    for (let i = 0; i < STRIKE_BOMBS; i++) {
+      let x: number, y: number;
+      if (pts.length === 0) {
+        x = 50 + Math.random() * (W - 100);
+        y = 50 + Math.random() * (H - 100);
+      } else if (pts.length === 1) {
+        const j = jitter(STRIKE_SPREAD_ONE);
+        x = pts[0].x + j.x; y = pts[0].y + j.y;
+      } else if (pts.length === 2) {
+        // Evenly down the line, so the whole length of it goes up.
+        const k = (i + 0.5) / STRIKE_BOMBS;
+        const j = jitter(STRIKE_SPREAD_LINE);
+        x = Phaser.Math.Linear(pts[0].x, pts[1].x, k) + j.x;
+        y = Phaser.Math.Linear(pts[0].y, pts[1].y, k) + j.y;
+      } else {
+        // A random blend of the corners always lands inside the shape they make.
+        const w = pts.map(() => -Math.log(1 - Math.random()));
+        const sum = w.reduce((a, b) => a + b, 0) || 1;
+        const j = jitter(STRIKE_SPREAD_AREA);
+        x = j.x; y = j.y;
+        pts.forEach((p, k) => { x += p.x * (w[k] / sum); y += p.y * (w[k] / sum); });
+      }
+      out.push({ x: Phaser.Math.Clamp(x, 16, W - 16), y: Phaser.Math.Clamp(y, 16, H - 16) });
+    }
+    return out;
+  }
+
+  private _updateStrikes(time: number): void {
+    for (let i = this.strikes.length - 1; i >= 0; i--) {
+      const s = this.strikes[i];
+      if (s.bombs.length === 0) {
+        if (time < s.calledAt + STRIKE_DELAY_MS) continue;
+        // The plane is here: fix the targets and the line it flies.
+        const targets = this._strikeTargets(s.owner);
+        s.bombs = targets.map((p, k) => ({ x: p.x, y: p.y, dropAt: time + 200 + k * STRIKE_STAGGER_MS, done: false }));
+        const cx = targets.reduce((a, p) => a + p.x, 0) / targets.length;
+        const cy = targets.reduce((a, p) => a + p.y, 0) / targets.length;
+        const pts = this._plantedDaggers(s.owner);
+        const dir = pts.length === 2 ? Math.atan2(pts[1].y - pts[0].y, pts[1].x - pts[0].x) : 0;
+        s.planeFrom = { x: cx - Math.cos(dir) * 760, y: cy - Math.sin(dir) * 760 };
+        s.planeTo = { x: cx + Math.cos(dir) * 760, y: cy + Math.sin(dir) * 760 };
+        s.calledAt = time - STRIKE_DELAY_MS;
+        continue;
+      }
+      let live = false;
+      for (const b of s.bombs) {
+        if (b.done) continue;
+        if (time < b.dropAt + STRIKE_FALL_MS) { live = true; continue; }
+        b.done = true;
+        this.api.dealAoeDamage(s.owner, b.x, b.y, STRIKE_BOMB_RADIUS, STRIKE_BOMB_DMG);
+        const fx = this.fx(s.owner);
+        fx.flash(b.x, b.y, 30, D_AIR, SUB.flame);
+        fx.deal(b.x, b.y, STRIKE_BOMB_RADIUS, { notes: 0, rings: 2, duration: 420, color: SUB.ember });
+        fx.smoke(b.x, b.y, 5, { speed: 110, size: 9, life: 760, depth: D_AIR, color: SUB.ashDark });
+        fx.scorch(b.x, b.y, 26);
+        this.api.scene.cameras.main.shake(110, 0.005);
+      }
+      if (!live && time > s.calledAt + STRIKE_DELAY_MS + STRIKE_PLANE_MS) this.strikes.splice(i, 1);
+    }
+  }
+
+  /** Medic — five seconds in which nothing can touch the boss. */
+  private _buySavior(medic: Lackey): boolean {
+    const time = this.api.scene.time.now;
+    if (medic.type !== 'medic' || medic.level < 3 || time < this.saviorUntil[medic.owner]) return false;
+    if (!this._canPay(medic.owner, SAVIOR_COST)) return false;
+    this._pay(medic.owner, SAVIOR_COST);
+    this.saviorUntil[medic.owner] = time + SAVIOR_MS;
+    const boss = medic.owner === 'player' ? this.api.player : this.api.npc;
+    this.fx(medic.owner).payment(medic.x, medic.y, boss.x, boss.y, { count: 4, depth: D_AIR });
+    this.fx(medic.owner).ring(boss.x, boss.y, 10, 54, SUB.gold, 420, D_AIR, 3);
+    return true;
+  }
+
+  private _updateSavior(time: number): void {
+    for (const owner of ['player', 'npc'] as const) {
+      const f = owner === 'player' ? this.api.player : this.api.npc;
+      const active = time < this.saviorUntil[owner] && f.active && f.hp > 0;
+      // Re-asserted every frame: other kits flip this flag too, and ours has to outlast them.
+      if (active) { f.isInvincible = true; this.saviorOn[owner] = true; }
+      else if (this.saviorOn[owner]) { f.isInvincible = false; this.saviorOn[owner] = false; }
+    }
+    if (this.saviorOn.player) {
+      this.api.setStatusIndicator('sub-savior', {
+        name: 'Savior', emoji: '⛑️', color: 0xffdd33,
+        description: 'Your Medic has you covered: nothing can damage you until this runs out.',
+        until: this.saviorUntil.player, priority: 108,
+      });
+    } else {
+      this.api.setStatusIndicator('sub-savior', null);
+    }
+  }
+
+  private _updateGrenades(time: number): void {
+    for (let i = this.grenades.length - 1; i >= 0; i--) {
+      const n = this.grenades[i];
+      if (time < n.bornAt + GRENADE_FLIGHT_MS) continue;
+      this.grenades.splice(i, 1);
+      this.api.dealAoeDamage(n.owner, n.tx, n.ty, GRENADE_RADIUS, GRENADE_DMG);
+      const fx = this.fx(n.owner);
+      fx.flash(n.tx, n.ty, 26, D_AIR, SUB.flame);
+      fx.deal(n.tx, n.ty, GRENADE_RADIUS, { notes: 0, rings: 2, duration: 380, color: SUB.ember });
+      fx.smoke(n.tx, n.ty, 5, { speed: 100, size: 8, life: 620, depth: D_AIR, color: SUB.ashDark });
+    }
+  }
+
+  /**
+   * Suppressing Fire rides the kit's own victim-side field: whoever is being hosed down takes
+   * 15% more from everything. `_updateBribes` folds the same map into the two duellists, so
+   * this only has to look after everyone else (Invasion's husks) and let lapsed marks go.
+   */
+  private _updateSuppression(time: number): void {
+    for (const [f, until] of this.suppressed) {
+      const live = time < until && f.active && f.hp > 0;
+      if (f !== this.api.player && f !== this.api.npc) f.bribeIncomingMult = live ? SUPPRESS_MULT : 1;
+      if (!live) this.suppressed.delete(f);
+    }
+  }
+
+  private _suppressMult(f: Fighter, time: number): number {
+    return time < (this.suppressed.get(f) ?? 0) ? SUPPRESS_MULT : 1;
+  }
+
+  // ── Laundering (F+) ──────────────────────────────────────────────────────
+
+  private _stashOf(owner: 'player' | 'npc'): StashBag | undefined {
+    return this.stashes.find((b) => b.owner === owner);
+  }
+
+  /** Put a note in a bag behind you. Stay out of trouble for three seconds and it comes back as two. */
+  private _buyStash(owner: 'player' | 'npc'): boolean {
+    if (this._stashOf(owner) || !this._canPay(owner, STASH_COST)) return false;
+    this._pay(owner, STASH_COST);
+    this.stashes.push({ owner, bornAt: this.api.scene.time.now, damageTaken: 0 });
+    const f = owner === 'player' ? this.api.player : this.api.npc;
+    this.fx(owner).cash(f.x, f.y, 2, { speed: 60, size: 11, life: 420, depth: D_AIR, seal: SUB.gold });
+    return true;
+  }
+
+  /** Where a side's bag sits: on the floor behind them, away from whatever they are facing. */
+  private _stashPos(owner: 'player' | 'npc'): { x: number; y: number } {
+    const f = owner === 'player' ? this.api.player : this.api.npc;
+    const facing = f.facingAngle;
+    return { x: f.x - Math.cos(facing) * 26, y: f.y - Math.sin(facing) * 20 + 8 };
+  }
+
+  private _updateStashes(time: number): void {
+    for (let i = this.stashes.length - 1; i >= 0; i--) {
+      const b = this.stashes[i];
+      const p = this._stashPos(b.owner);
+      if (b.damageTaken >= STASH_FAIL_DMG) {
+        // Shot to ribbons: the bag and the note in it are both gone.
+        this.stashes.splice(i, 1);
+        this.fx(b.owner).cash(p.x, p.y, 6, { speed: 190, size: 12, life: 620, depth: D_AIR, seal: SUB.ashDark });
+        this.fx(b.owner).smoke(p.x, p.y, 4, { speed: 70, size: 6, life: 520, depth: D_AIR });
+        continue;
+      }
+      if (time - b.bornAt < STASH_MS) continue;
+      this.stashes.splice(i, 1);
+      // A replica's wallet belongs to its owner's machine; only the show plays here.
+      if (!this._ghost(b.owner)) this._addMoney(b.owner, STASH_PAYOUT);
+      const f = b.owner === 'player' ? this.api.player : this.api.npc;
+      this.fx(b.owner).payment(p.x, p.y, f.x, f.y - 44, { count: 6, depth: D_AIR });
+      this.fx(b.owner).ring(p.x, p.y, 6, 30, SUB.gold, 360, D_AIR, 2.4);
+    }
   }
 
   /** Soul copy: an ignited lackey erupts in a burning AoE when it expires. */
@@ -1754,19 +2234,29 @@ export class SubterfugeKit {
       target.loyaltyMs = target.loyaltyMaxMs * LACKEY_BRIBE_BONUS;
       this.gesture(owner, 'sub-bribe', Math.atan2(target.y - caster.y, target.x - caster.x));
       this.fx(owner).payment(caster.x, caster.y, target.x, target.y, { count: 6, depth: D_AIR });
-      this.api.showFloatingText(target.x, target.y - 30, '💵 Loyalty +120%!', '#ffdd33');
-      // F+ Hardened Criminals: nothing teaches like being paid.
-      this._addRecruitXp(target, XP_PER_BRIBE);
+      // F+ Hardened Criminals: nothing teaches like being paid. One bribe, one promotion.
+      if (this._up(owner, 'f') && target.type !== 'bard' && target.level < CREW_MAX_LEVEL) {
+        target.level += 1;
+        if (owner === 'player') {
+          this.api.recordMasteryBestStat('recruitBestLevel', target.level);
+          this.api.broadcastMasteryCast(`subx-lvl:${target.nid}:${target.level}`);
+        }
+        // A bigger drum is a bigger drum straight away.
+        if (target.reloadingUntil <= 0 && target.bullets > 0) target.bullets = Math.max(target.bullets, this._mag(target));
+        this.fx(owner).cash(target.x, target.y, 4 + target.level * 2, { speed: 170, size: 14, life: 700, depth: D_AIR, seal: SUB.gold });
+        this.fx(owner).ring(target.x, target.y, 8, 30 + target.level * 6, SUB.gold, 380, D_AIR, 2.6);
+      }
     }
     return true;
   }
 
   private _updateBribes(time: number): void {
     // Bribed enemies deal 25% less damage — applied victim-side (1v1: identical outcome).
+    // Suppressing Fire shares the field: the same fighter can be bought off and pinned down.
     const npcBribed = time < this.npcBribedUntil;
     const playerBribed = time < this.playerBribedUntil;
-    this.api.player.bribeIncomingMult = npcBribed ? BRIBE_DMG_MULT : 1;
-    this.api.npc.bribeIncomingMult = playerBribed ? BRIBE_DMG_MULT : 1;
+    this.api.player.bribeIncomingMult = (npcBribed ? BRIBE_DMG_MULT : 1) * this._suppressMult(this.api.player, time);
+    this.api.npc.bribeIncomingMult = (playerBribed ? BRIBE_DMG_MULT : 1) * this._suppressMult(this.api.npc, time);
 
     // The censor bar and the money raining down on them are the 'bribed' aura's job.
   }
@@ -1820,12 +2310,12 @@ export class SubterfugeKit {
     if (!this.npcRetainerElementId) return;
     if (time >= this.npcRetainerUntil) { this.npcRetainerElementId = null; return; }
     if (this.npcTreacheryFiresAt > 0) return;
+    // A replica recasts when its owner's machine says it did (`subx-retainer`), not on a guess.
+    if (this._ghost('npc')) return;
     if (time < this.npcRetainerNextTryAt) return;
     if (this.npcMoney < RETAINER_COST) return;
-    this._spendMoney('npc', RETAINER_COST);
     this.npcRetainerNextTryAt = time + 1500;
-    this.api.showFloatingText(this.api.npc.x, this.api.npc.y - 44, '🤝 On Retainer!', '#ff5555');
-    this._executeTreachery('npc', time, this.npcRetainerElementId);
+    this._buyRetainer('npc');
   }
 
   /**
@@ -1858,10 +2348,18 @@ export class SubterfugeKit {
         caster.shieldHp += 50;
         api.showFloatingText(caster.x, caster.y - 40, '🛡️ +50 Shield', '#aaaacc');
         break;
-      case 'growth': // spawn 2 lackeys for free
-        this._spawnLackey(owner);
-        this._spawnLackey(owner);
+      case 'growth': { // two free Thugs — or, with the payroll full, a raise for everyone on it
+        let grown = 0;
+        for (let k = 0; k < 2; k++) {
+          if (this._crewOf(owner).length >= CREW_MAX) break;
+          this._spawnLackey(owner, 'thug');
+          grown++;
+        }
+        if (grown === 0) {
+          for (const l of this._crewOf(owner)) l.loyaltyMs = l.loyaltyMaxMs * LACKEY_BRIBE_BONUS;
+        }
         break;
+      }
       case 'soul': // ignite lackeys: extra loyalty drain + burning AoE on burnout
         this._igniteLackeys(owner);
         break;
@@ -1951,13 +2449,14 @@ export class SubterfugeKit {
   }
 
   private _updateLinks(time: number): void {
+    // A ride borrows the same slot while its owner is driving, and gives it back itself.
     if (this.linkUntil > 0 && time >= this.linkUntil) {
       this.linkUntil = 0;
-      if (this.api.player.damageAbsorber) this.api.player.damageAbsorber = null;
+      if (this.api.player.damageAbsorber && !this.rides.isRiding('player')) this.api.player.damageAbsorber = null;
     }
     if (this.npcLinkUntil > 0 && time >= this.npcLinkUntil) {
       this.npcLinkUntil = 0;
-      if (this.api.npc.damageAbsorber) this.api.npc.damageAbsorber = null;
+      if (this.api.npc.damageAbsorber && !this.rides.isRiding('npc')) this.api.npc.damageAbsorber = null;
     }
   }
 
@@ -1991,11 +2490,11 @@ export class SubterfugeKit {
   private _updateOvercharge(time: number): void {
     if (this.overchargeUntil > 0 && time >= this.overchargeUntil) {
       this.overchargeUntil = 0;
-      if (this.api.player.damageAbsorber) this.api.player.damageAbsorber = null;
+      if (this.api.player.damageAbsorber && !this.rides.isRiding('player')) this.api.player.damageAbsorber = null;
     }
     if (this.npcOverchargeUntil > 0 && time >= this.npcOverchargeUntil) {
       this.npcOverchargeUntil = 0;
-      if (this.api.npc.damageAbsorber) this.api.npc.damageAbsorber = null;
+      if (this.api.npc.damageAbsorber && !this.rides.isRiding('npc')) this.api.npc.damageAbsorber = null;
     }
   }
 
@@ -2082,7 +2581,7 @@ export class SubterfugeKit {
     }
   }
 
-  // ── Molecular Cutter daggers (Click — behavior unchanged since Quantum) ──
+  // ── Molecular Cutter daggers (Click) ─────────────────────────────────────
 
   private _pickBalancedColor(owner: 'player' | 'npc'): 'red' | 'black' {
     const list = owner === 'player' ? this.playerDaggers : this.npcDaggers;
@@ -2121,8 +2620,7 @@ export class SubterfugeKit {
     const time = this.api.scene.time.now;
     this.api.dealAoeDamage(owner, x, y, BOOM_RADIUS, BOOM_DAMAGE);
 
-    const foes: Fighter[] = owner === 'player' ? [this.api.npc] : this.api.player.bodies();
-    for (const f of foes) {
+    for (const f of this._foes(owner)) {
       if (!f || !f.active || f.hp <= 0) continue;
       const d = Phaser.Math.Distance.Between(x, y, f.x, f.y);
       if (d > BOOM_RADIUS) continue;
@@ -2204,8 +2702,14 @@ export class SubterfugeKit {
   }
 
   private _playerClickDaggers(tx: number, ty: number): void {
+    if (this.api.scene.time.now < this.daggerNextAt.player) return;
     const out = this.playerDaggers.filter(d => d.state !== 'returning').length;
-    if (out >= DAGGER_MAX) { this._recallDaggers('player'); return; }
+    if (out >= this._daggerMax('player')) {
+      this._recallDaggers('player');
+      this._daggerWait('player', DAGGER_RECALL_LOCK_MS);
+      return;
+    }
+    this._daggerWait('player', DAGGER_GAP_MS);
     this.api.player.onKitCast?.('sub-cutter');
     this._throwDagger('player', tx, ty, this._pickBalancedColor('player'));
     // Crystal copy: active clones also throw daggers (extras beyond the 3-dagger cap)
@@ -2216,7 +2720,7 @@ export class SubterfugeKit {
 
   private _updateDaggers(list: SubDagger[], owner: 'player' | 'npc', dt: number): void {
     const caster = owner === 'player' ? this.api.player : this.api.npc;
-    const enemies: Fighter[] = owner === 'player' ? [this.api.npc] : this.api.player.bodies();
+    const enemies = this._foes(owner);
     for (let i = list.length - 1; i >= 0; i--) {
       const d = list[i];
       if (d.state === 'flying') {
@@ -2241,8 +2745,6 @@ export class SubterfugeKit {
             this._sonicBoom(d.recallFromX, d.recallFromY, owner);
             d.boomed = true;
           }
-          // Click+ Blade Dance: a blade that makes it home sometimes stays out.
-          if (this._up(owner, 'click') && Math.random() < ORBIT_CHANCE) this._spawnOrbitDagger(owner, d.color);
           list.splice(i, 1); continue;
         }
       }
@@ -2272,109 +2774,383 @@ export class SubterfugeKit {
     }
   }
 
-  // ── Blade Dance orbit daggers (Click+) ───────────────────────────────────
+  // ── Purchases (the money bars' wares) ────────────────────────────────────
 
-  private _spawnOrbitDagger(owner: 'player' | 'npc', color: 'red' | 'black'): void {
-    const caster = owner === 'player' ? this.api.player : this.api.npc;
-    const angle = Math.random() * Math.PI * 2;
-    this.orbitDaggers.push({
-      owner, color, angle,
-      endsAt: this.api.scene.time.now + ORBIT_MS,
-      nextHitAt: 0,
-    });
-    this.api.showFloatingText(caster.x, caster.y - 50, '🗡️ Blade Dance!', '#dd2233');
+  private _daggerMax(owner: 'player' | 'npc'): number {
+    return this.api.scene.time.now < this.fiveUntil[owner] ? FIVE_DAGGER_MAX : DAGGER_MAX;
   }
 
-  private _updateOrbitDaggers(time: number, dt: number): void {
-    for (let i = this.orbitDaggers.length - 1; i >= 0; i--) {
-      const o = this.orbitDaggers[i];
-      if (time >= o.endsAt) {
-        this.orbitDaggers.splice(i, 1);
-        continue;
-      }
-      const caster = o.owner === 'player' ? this.api.player : this.api.npc;
-      o.angle += ORBIT_RAD_PER_SEC * dt;
-      const ox = caster.x + Math.cos(o.angle) * ORBIT_RADIUS;
-      const oy = caster.y + Math.sin(o.angle) * ORBIT_RADIUS;
-
-      if (time < o.nextHitAt) continue;
-      const enemy = o.owner === 'player' ? this.api.npc : this.api.player;
-      if (!enemy.active || enemy.hp <= 0) continue;
-      if (Phaser.Math.Distance.Between(ox, oy, enemy.x, enemy.y) <= 22) {
-        o.nextHitAt = time + ORBIT_HIT_CD_MS;
-        enemy.takeDamage(ORBIT_DMG);
-        this.api.spawnHitFlash(enemy.x, enemy.y, this.col(o.owner)(DAGGER_FILL[o.color]));
-        this.fx(o.owner).cut(enemy.x, enemy.y, o.angle + Math.PI / 2, 34, {
-          color: o.color === 'red' ? SUB.scarlet : SUB.steelHi, scores: 2, depth: D_AIR,
-        });
-        this._addSprayAmmoFromDamage(o.owner, ORBIT_DMG);
-        this._noteSmokeAttack(o.owner);
-      }
+  /** Click+ Full Set: five blades instead of three for ten seconds. */
+  private _buyFive(owner: 'player' | 'npc'): boolean {
+    const time = this.api.scene.time.now;
+    if (time < this.fiveUntil[owner] || !this._canPay(owner, FIVE_COST)) return false;
+    this._pay(owner, FIVE_COST);
+    this.fiveUntil[owner] = time + FIVE_MS;
+    const f = owner === 'player' ? this.api.player : this.api.npc;
+    // Two more knives out of the coat, fanned.
+    for (const off of [-0.5, 0.5]) {
+      this.fx(owner).cut(f.x, f.y, f.facingAngle + off, 34, { color: SUB.steelHi, scores: 1, duration: 260, depth: D_AIR });
     }
+    return true;
   }
 
-  // ── On Retainer HUD (Q+) ─────────────────────────────────────────────────
+  /** E+ Luxury Rounds: 35 rounds that hit for 3 and go exactly where they are pointed. */
+  private _buyLux(owner: 'player' | 'npc'): boolean {
+    if (this.lux[owner] > 0 || !this._canPay(owner, LUX_COST)) return false;
+    this._pay(owner, LUX_COST);
+    this.lux[owner] = LUX_ROUNDS;
+    const f = owner === 'player' ? this.api.player : this.api.npc;
+    this.fx(owner).cash(f.x, f.y, 4, { speed: 110, size: 12, life: 520, depth: D_AIR, seal: SUB.gold });
+    return true;
+  }
 
-  private _renderRetainerLabel(time: number): void {
-    const active = this.retainerElementId !== null && time < this.retainerUntil;
-    if (!active) {
-      if (this.retainerLabel?.active) this.retainerLabel.destroy();
-      this.retainerLabel = null;
-      if (this.retainerElementId !== null && time >= this.retainerUntil) this.retainerElementId = null;
+  /** Q+ On Retainer: pay to run the stolen ultimate again while the contract is open. */
+  private _buyRetainer(owner: 'player' | 'npc'): boolean {
+    const time = this.api.scene.time.now;
+    const id = owner === 'player' ? this.retainerElementId : this.npcRetainerElementId;
+    const until = owner === 'player' ? this.retainerUntil : this.npcRetainerUntil;
+    const channelling = (owner === 'player' ? this.treacheryFiresAt : this.npcTreacheryFiresAt) > 0;
+    if (!id || time >= until || channelling || !this._canPay(owner, RETAINER_COST)) return false;
+    this._pay(owner, RETAINER_COST);
+    this._executeTreachery(owner, time, id);
+    return true;
+  }
+
+  /** The specialists a side can pick from: the Rolodex three, plus the Bard when Moral is equipped. */
+  private _recruitOrder(owner: 'player' | 'npc'): RecruitType[] {
+    return this.api.hasPerk(owner, 'moral') ? [...ROLODEX, 'bard'] : ROLODEX;
+  }
+
+  /** Lock a side's throwing hand for `ms`, remembering the length so the card can draw it. */
+  private _daggerWait(owner: 'player' | 'npc', ms: number): void {
+    this.daggerNextAt[owner] = this.api.scene.time.now + ms;
+    this.daggerWaitMs[owner] = ms;
+  }
+
+  /** The contract lapses on its own once the window shuts. */
+  private _tickRetainerWindow(time: number): void {
+    if (this.retainerElementId !== null && time >= this.retainerUntil) this.retainerElementId = null;
+  }
+
+  // ── Money bars ───────────────────────────────────────────────────────────
+  //
+  // Everything an upgrade lets you *buy* is a bar you click: one above each ability card, and
+  // one over the head of any recruit who has a favour to sell. They are rebuilt from scratch
+  // every frame from live state, so there is nothing to keep in sync and nothing to tear down.
+
+  private _buildButtons(time: number): void {
+    const b: MoneyButton[] = [];
+    this.buttons = b;
+    const { player } = this.api;
+    if (!player.active || player.hp <= 0) return;
+    const riding = this.rides.isRiding('player');
+    const cards = this.api.cardRects();
+    const bar = (abilityId: string): { x: number; y: number; w: number; h: number } | null => {
+      const c = cards.find((k) => k.abilityId === abilityId);
+      return c ? { x: c.x + 3, y: c.y - BAR_H - BAR_GAP, w: c.w - 6, h: BAR_H } : null;
+    };
+    const tell = (id: string): void => this.api.broadcastMasteryCast(id);
+    const full = this._crewOf('player').length >= CREW_MAX;
+
+    // E+ — the one bar that still works from the driver's seat.
+    const eBar = this._up('player', 'e') ? bar('sub-spray') : null;
+    if (eBar) {
+      b.push({
+        ...eBar, id: 'lux', cost: LUX_COST, icon: 'luxury',
+        progress: this.lux.player > 0 ? this.lux.player / LUX_ROUNDS : -1, blocked: this.lux.player > 0,
+        act: () => { if (this._buyLux('player')) tell('subx-lux'); },
+      });
+    }
+    if (riding) return;
+
+    const clickBar = this._up('player', 'click') ? bar('sub-cutter') : null;
+    if (clickBar) {
+      const on = time < this.fiveUntil.player;
+      b.push({
+        ...clickBar, id: 'five', cost: FIVE_COST, icon: 'daggers',
+        progress: on ? (this.fiveUntil.player - time) / FIVE_MS : -1, blocked: on,
+        act: () => { if (this._buyFive('player')) tell('subx-five'); },
+      });
+    }
+
+    const rBar = this._up('player', 'r') ? bar('sub-recruit') : null;
+    if (rBar) {
+      b.push({
+        ...rBar, id: 'rolodex', cost: RECRUIT_COST.enforcer, icon: 'crew', progress: -1,
+        blocked: full, open: this.rolodexOpen,
+        act: () => { this.rolodexOpen = !this.rolodexOpen; },
+      });
+      if (this.rolodexOpen && !full) {
+        this._recruitOrder('player').forEach((type, i) => {
+          b.push({
+            x: rBar.x, y: rBar.y - (BAR_H + 2) * (i + 1), w: rBar.w, h: BAR_H,
+            id: `hire:${type}`, cost: RECRUIT_COST[type], icon: RECRUIT_ICON[type], progress: -1,
+            act: () => {
+              const foe = this._nearestFoe('player', player.x, player.y);
+              if (this._tryHire('player', type, foe?.x, foe?.y)) tell(`subx-hire:${type}`);
+              this.rolodexOpen = false;
+            },
+          });
+        });
+      }
+    } else {
+      this.rolodexOpen = false;
+    }
+
+    const fPlus = this._up('player', 'f');
+    const fBar = fPlus ? bar('sub-bribe') : null;
+    if (fBar) {
+      const bag = this._stashOf('player');
+      b.push({
+        ...fBar, id: 'stash', cost: STASH_COST, icon: 'stash',
+        progress: bag ? 1 - (time - bag.bornAt) / STASH_MS : -1, blocked: !!bag,
+        act: () => { if (this._buyStash('player')) tell('subx-stash'); },
+      });
+    }
+
+    const qBar = this._up('player', 'q') && this.retainerElementId && time < this.retainerUntil
+      ? bar('sub-treachery') : null;
+    if (qBar) {
+      b.push({
+        ...qBar, id: 'retainer', cost: RETAINER_COST, icon: 'retainer',
+        progress: (this.retainerUntil - time) / RETAINER_MS,
+        act: () => { if (this._buyRetainer('player')) tell('subx-retainer'); },
+      });
+    }
+
+    // Favours: whatever a level-3 recruit has to sell hangs over his head.
+    const crew = this._crewOf('player');
+    crew.forEach((l, idx) => {
+      if (l.level < CREW_MAX_LEVEL || l.lifted) return;
+      const at = { x: l.x - HEAD_BTN_W / 2, y: l.y - 55, w: HEAD_BTN_W, h: HEAD_BTN_H };
+      if (l.type === 'thug' && l.reloadingUntil > time) {
+        b.push({
+          ...at, id: `reload:${idx}`, cost: THUG_RELOAD_COST, icon: 'reload',
+          progress: (l.reloadingUntil - time) / THUG_RELOAD_MS,
+          act: () => { if (this._buyReload(l)) tell(`subx-reload:${l.nid}`); },
+        });
+      } else if (l.type === 'enforcer') {
+        b.push({
+          ...at, id: `chopper:${idx}`, cost: HELI_COST, icon: 'chopper', progress: -1,
+          blocked: time < l.favourReadyAt, open: this.heliAim?.enforcer === l,
+          act: () => {
+            if (this.money < HELI_COST) return;
+            this.heliAim = this.heliAim?.enforcer === l ? null : { enforcer: l, crew: null };
+          },
+        });
+      } else if (l.type === 'sniper') {
+        const inbound = this._strikeInbound('player');
+        b.push({
+          ...at, id: `airstrike:${idx}`, cost: STRIKE_COST, icon: 'airstrike',
+          progress: inbound ? 1 - (time - inbound.calledAt) / STRIKE_DELAY_MS : -1,
+          blocked: !!inbound || time < l.favourReadyAt,
+          act: () => { if (this._callStrike(l)) tell(`subx-strike:${l.nid}`); },
+        });
+      } else if (l.type === 'medic') {
+        const on = time < this.saviorUntil.player;
+        b.push({
+          ...at, id: `savior:${idx}`, cost: SAVIOR_COST, icon: 'savior',
+          progress: on ? (this.saviorUntil.player - time) / SAVIOR_MS : -1, blocked: on,
+          act: () => { if (this._buySavior(l)) tell(`subx-savior:${l.nid}`); },
+        });
+      }
+    });
+  }
+
+  /** A press landed on a money bar: it is spent there and never becomes a dagger. */
+  private _clickButtons(x: number, y: number): boolean {
+    for (let i = this.buttons.length - 1; i >= 0; i--) {
+      const b = this.buttons[i];
+      if (x < b.x || x > b.x + b.w || y < b.y || y > b.y + b.h) continue;
+      if (!b.blocked) b.act();
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * The Enforcer's helicopter is aimed in two clicks: a recruit, then the spot to put him.
+   * A click on nothing calls it off.
+   */
+  private _clickHeliAim(x: number, y: number): void {
+    const aim = this.heliAim;
+    if (!aim) return;
+    if (!this.lackeys.includes(aim.enforcer)) { this.heliAim = null; return; }
+    if (!aim.crew) {
+      const pick = this._crewOf('player')
+        .filter((l) => !l.lifted && l.type !== 'bard')
+        .find((l) => Phaser.Math.Distance.Between(x, y, l.x, l.y) <= 26);
+      if (pick) aim.crew = pick; else this.heliAim = null;
       return;
     }
-    if (!this.retainerLabel?.active) {
-      this.retainerLabel = this.api.scene.add.text(0, 0, '', {
-        fontSize: '12px', fontFamily: FONT_DISPLAY, color: '#ffaaaa',
-        stroke: '#0a0a0a', strokeThickness: 3,
-      }).setOrigin(0.5).setDepth(22);
+    // The drop point is the click, which the message already carries as its (mirrored) aim.
+    if (this.lackeys.includes(aim.crew) && this._callHeli(aim.enforcer, aim.crew, x, y)) {
+      this.api.broadcastMasteryCast(`subx-heli:${aim.enforcer.nid}:${aim.crew.nid}`);
     }
-    const secs = Math.max(0, (this.retainerUntil - time) / 1000);
-    this.retainerLabel
-      .setPosition(this.api.player.x + 3, this.api.player.y - 72)
-      .setText(`🤝 Q ${RETAINER_COST}💵 · ${secs.toFixed(1)}s`);
-    // A contract tag behind it, its gold rule burning down with the retainer.
-    const g = this._tags();
-    const w = this.retainerLabel.width + 20;
-    this._paintTag(g, this.api.player.x, this.api.player.y - 72, w, 18, SUB.gold);
-    const frac = Phaser.Math.Clamp((this.retainerUntil - time) / RETAINER_MS, 0, 1);
-    g.fillStyle(this.pcol(SUB.crimson), 0.95);
-    g.fillRect(this.api.player.x - w / 2 + 7, this.api.player.y - 63, (w - 8) * frac, 2);
+    this.heliAim = null;
+  }
+
+  private _paintHud(time: number, isPlayerSub: boolean): void {
+    if (!this.hudGfx || !this.hudGfx.active) this.hudGfx = this.api.scene.add.graphics().setDepth(23);
+    const g = this.hudGfx;
+    g.clear();
+    if (!isPlayerSub) return;
+    const t = time / 1000;
+    const p = this.api.pointer;
+    for (const b of this.buttons) {
+      const hover = p.worldX >= b.x && p.worldX <= b.x + b.w && p.worldY >= b.y && p.worldY <= b.y + b.h;
+      drawMoneyButton(g, this.pcol, b.x, b.y, b.w, b.h, t, {
+        cost: b.cost, affordable: this.money >= b.cost && !b.blocked, hover: hover && !b.blocked,
+        progress: b.progress < 0 ? -1 : Phaser.Math.Clamp(b.progress, 0, 1), icon: b.icon, open: b.open,
+      });
+    }
+    // Helicopter targeting: who can be picked up, then where he is going.
+    if (this.heliAim) {
+      if (!this.heliAim.crew) {
+        for (const l of this._crewOf('player')) {
+          if (!l.lifted && l.type !== 'bard') drawSelectRing(g, this.pcol, l.x, l.y, 22, SUB.gold, t, 1);
+        }
+      } else {
+        drawSelectRing(g, this.pcol, this.heliAim.crew.x, this.heliAim.crew.y, 22, SUB.scarlet, t, 1);
+        drawDropMarker(g, this.pcol, p.worldX, p.worldY, t, 1);
+      }
+    }
+    // Hijack, mid-charge: which ride the hold has reached, and which the wallet can reach.
+    if (this.hijackChargeAt > 0) {
+      const held = time - this.hijackChargeAt;
+      const tier = this._hijackTier(time);
+      const next = HIJACK_TIER_MS[tier] ?? 0;
+      const frac = tier >= 4 || tier >= this.money ? 1
+        : Phaser.Math.Clamp((held - HIJACK_TIER_MS[tier - 1]) / Math.max(1, next - HIJACK_TIER_MS[tier - 1]), 0, 1);
+      drawHijackCharge(g, this.pcol, this.api.player.x, this.api.player.y - 74, tier,
+        Math.min(4, this.money), frac, t, 1);
+    }
+  }
+
+  // ── Mastery: Hijack (bindable) ───────────────────────────────────────────
+
+  /** The slot a mastery ability is bound over this match, or null when it isn't bound anywhere. */
+  private _bindSlot(enhId: string): 'e' | 'r' | 'f' | 'q' | null {
+    if (!this.api.masteryActive) return null;
+    for (const s of ['e', 'r', 'f', 'q'] as const) {
+      if (this.api.masteryBindFor(s) === enhId) return s;
+    }
+    return null;
+  }
+
+  private _keyOf(slot: 'e' | 'r' | 'f' | 'q'): Phaser.Input.Keyboard.Key {
+    const { api } = this;
+    return slot === 'e' ? api.eKey : slot === 'r' ? api.rKey : slot === 'f' ? api.fKey : api.qKey;
+  }
+
+  /** Which ride the current hold has earned: time buys the tier, the wallet caps it. */
+  private _hijackTier(time: number): number {
+    const held = time - this.hijackChargeAt;
+    let tier = 1;
+    for (let i = 1; i < HIJACK_TIER_MS.length; i++) if (held >= HIJACK_TIER_MS[i]) tier = i + 1;
+    return Math.min(tier, this.money, 4);
+  }
+
+  /** Tap for the car; hold for something better, at a note a step. */
+  private _hijackInput(time: number, key: Phaser.Input.Keyboard.Key, pointer: Phaser.Input.Pointer): void {
+    const { player } = this.api;
+    if (this.rides.isRiding('player')) { this.hijackChargeAt = 0; return; }
+    if (Phaser.Input.Keyboard.JustDown(key)
+        && time - this.hijackLastAt >= HIJACK_COOLDOWN_MS && this.money >= 1) {
+      this.hijackChargeAt = time;
+    }
+    if (this.hijackChargeAt <= 0 || key.isDown) return;
+    const tier = this._hijackTier(time);
+    this.hijackChargeAt = 0;
+    if (tier < 1) return;
+    this._spendMoney('player', tier);
+    this.hijackLastAt = time;
+    const kind = RIDE_BY_TIER[tier - 1];
+    const aim = Math.atan2(pointer.worldY - player.y, pointer.worldX - player.x);
+    const reach = RIDE_SPECS[kind].radius + 26;
+    this.avatarFor('player')?.play('sweep', aim);
+    this.rides.spawn('player', kind, player.x + Math.cos(aim) * reach, player.y + Math.sin(aim) * reach, aim);
+    this.api.broadcastMasteryCast(`subx-ride:${kind}`);
+  }
+
+  /** Space belongs to the ride while you are in one, or standing at the door of one. */
+  claimsSpace(): boolean {
+    return this.api.elementId === 'subterfuge'
+      && (this.rides.isRiding('player') || this.rides.canEnter('player'));
+  }
+
+  /** Savior (Medic level 3): a spring in the boss's step while he is being patched up. */
+  getPlayerSpeedMult(): number {
+    return this.lackeys.some((l) => l.owner === 'player' && l.type === 'medic' && l.level >= 3 && l.healing && !l.lifted)
+      ? MEDIC_SPEED_L3 : 1;
+  }
+
+  /** Same boost for the other side's body. */
+  getNpcSpeedMult(): number {
+    return this.lackeys.some((l) => l.owner === 'npc' && l.type === 'medic' && l.level >= 3 && l.healing && !l.lifted)
+      ? MEDIC_SPEED_L3 : 1;
+  }
+
+  /**
+   * Tray bars the kit owns: the Click card shows the hand coming back, and the Hijack card
+   * shows its cooldown, the charge while held, or the tank's gun reloading.
+   */
+  getBarRatio(abilityId: string, time: number): number {
+    if (abilityId === 'sub-cutter') {
+      return Phaser.Math.Clamp(1 - (this.daggerNextAt.player - time) / this.daggerWaitMs.player, 0, 1);
+    }
+    if (abilityId === 'hijack') {
+      if (this.rides.isRiding('player')) return this.rides.cannonRatio('player', time);
+      if (this.hijackChargeAt > 0) return Phaser.Math.Clamp(this._hijackTier(time) / 4, 0, 1);
+      return Phaser.Math.Clamp((time - this.hijackLastAt) / HIJACK_COOLDOWN_MS, 0, 1);
+    }
+    return 1;
+  }
+
+  /** Put back whichever damage absorber this kit had on a fighter before a ride borrowed the slot. */
+  private _rearmAbsorbers(owner: 'player' | 'npc'): void {
+    const time = this.api.scene.time.now;
+    if (time < (owner === 'player' ? this.linkUntil : this.npcLinkUntil)) this._armLinkAbsorber(owner);
+    else if (time < (owner === 'player' ? this.overchargeUntil : this.npcOverchargeUntil)) this._armOvercharge(owner);
   }
 
   // ── CastContext dispatchers ──────────────────────────────────────────────
 
   doPlayerCutter(tx: number, ty: number): void {
     if (this.api.elementId !== 'subterfuge') return;
+    if (this.rides.isRiding('player')) return;
     this._playerClickDaggers(tx, ty);
   }
 
   /** NPC Molecular Cutter — throws daggers on a cadence, recalling once the max are out. */
   doNpcCutter(tx: number, ty: number): void {
     const time = this.api.scene.time.now;
-    if (time < this.npcDaggerNextThrowAt) return;
+    if (time < this.daggerNextAt.npc) return;
     const out = this.npcDaggers.filter(d => d.state !== 'returning').length;
-    if (out >= DAGGER_MAX) {
-      if (this.npcDaggers.some(d => d.state === 'planted')) this._recallDaggers('npc');
-      this.npcDaggerNextThrowAt = time + 400;
+    if (out >= this._daggerMax('npc')) {
+      // Blades standing in the floor are what an inbound air strike aims by: leave them be.
+      if (this._strikeInbound('npc')) return;
+      if (this.npcDaggers.some(d => d.state === 'planted')) {
+        this._recallDaggers('npc');
+        this._daggerWait('npc', DAGGER_RECALL_LOCK_MS);
+      }
       return;
     }
     this._throwDagger('npc', tx, ty, this._pickBalancedColor('npc'));
-    this.npcDaggerNextThrowAt = time + 350;
+    this._daggerWait('npc', DAGGER_GAP_MS);
   }
 
   /** NPC Spray — a short burst toward the target; buys a reload when dry. */
   doNpcSpray(tx: number, ty: number): void {
     const { scene, npc } = this.api;
-    if (this.npcBullets <= 0) {
-      if (this.npcMoney >= 1) {
-        this._spendMoney('npc', 1);
+    if (this.npcBullets <= 0 && this.lux.npc <= 0) {
+      if (this._canPay('npc', 1)) {
+        this._pay('npc', 1);
         this.npcBullets = Math.min(this._bulletsMax('npc'), BULLETS_RELOAD);
-        this.api.showFloatingText(npc.x, npc.y - 40, '💵 Reloaded!', '#ff5555');
       }
       return;
     }
-    const shots = Math.min(8, this.npcBullets);
+    const shots = Math.min(8, this.npcBullets + this.lux.npc);
     for (let i = 0; i < shots; i++) {
       scene.time.delayedCall(i * 60, () => {
         if (!npc.active || npc.hp <= 0) return;
@@ -2383,36 +3159,162 @@ export class SubterfugeKit {
     }
   }
 
-  doNpcRecruit(): void {
-    // R+ opens the Rolodex for the NPC too: hire the best muscle it can afford,
-    // with a bias toward the pricier options when the wallet allows.
-    if (this._up('npc', 'r')) {
-      const affordable = this._recruitOrder('npc').filter(t => RECRUIT_COST[t] <= this.npcMoney);
-      if (affordable.length === 0) return;
-      const pick = Math.random() < 0.6
-        ? affordable[affordable.length - 1]
-        : affordable[Math.floor(Math.random() * affordable.length)];
-      this._tryHire('npc', pick);
-      return;
+  /**
+   * NPC Recruit. A bot with the Rolodex spends up to a specialist when it can afford one,
+   * favouring whichever it does not already have; a replica only ever hires what its owner's
+   * R press hired, which is a Thug (specialists arrive by their own message).
+   */
+  doNpcRecruit(tx?: number, ty?: number): void {
+    // A replica only makes the call here; the Thug arrives as his own `subx-crew` message.
+    if (this._ghost('npc')) { void tx; void ty; this.gesture('npc', 'sub-recruit'); return; }
+    const aim = this.api.player;
+    if (this._up('npc', 'r') && this.npcMoney >= RECRUIT_COST.enforcer && Math.random() < 0.65) {
+      const have = new Set(this._crewOf('npc').map((l) => l.type));
+      const fresh = ROLODEX.filter((t) => !have.has(t));
+      const pool = fresh.length > 0 ? fresh : ROLODEX;
+      if (this._tryHire('npc', pool[Math.floor(Math.random() * pool.length)], aim.x, aim.y)) return;
     }
-    this._tryHire('npc', 'lackey');
+    this._tryHire('npc', 'thug', aim.x, aim.y);
   }
 
   doNpcBribe(tx: number, ty: number): void {
-    if (this.npcMoney < 1) return;
-    if (this._doBribe('npc', tx, ty, this.api.scene.time.now)) this._spendMoney('npc', 1);
+    if (!this._canPay('npc', 1)) return;
+    if (this._doBribe('npc', tx, ty, this.api.scene.time.now)) this._pay('npc', 1);
+  }
+
+  // ── Bot: opportunities and purchases ─────────────────────────────────────
+
+  /**
+   * A recruit of the bot's own worth a Bribe right now — one a note would promote (F+), or one
+   * about to walk out. Side-effect-free; the AI aims its F here before anything else.
+   */
+  getNpcBribeAim(): { x: number; y: number } | null {
+    if (this.npcMoney < 1) return null;
+    const crew = this._crewOf('npc').filter((l) => !l.lifted && l.type !== 'bard');
+    if (crew.length === 0) return null;
+    const leaving = crew.find((l) => l.loyaltyMs < l.loyaltyMaxMs * 0.25);
+    if (leaving) return { x: leaving.x, y: leaving.y };
+    if (!this._up('npc', 'f')) return null;
+    // Closest to the top first: a favour is worth more than a third level-1.
+    const rising = crew.filter((l) => l.level < CREW_MAX_LEVEL).sort((a, b) => b.level - a.level)[0];
+    return rising ? { x: rising.x, y: rising.y } : null;
+  }
+
+  /** True while the bot has room on the payroll and the note to fill it. */
+  getNpcCanRecruit(): boolean {
+    return this.npcMoney >= 1 && this._crewOf('npc').length < CREW_MAX;
+  }
+
+  /**
+   * The money bars, for a bot: nobody clicks for it, so the kit presses them — each only when
+   * the thing it pays for is actually set up (blades in the floor for the strike, a dry drum
+   * for the reload, an Enforcer out of reach for the helicopter).
+   */
+  private npcBrainNextAt = 0;
+  private _tickNpcBrain(time: number): void {
+    if (this._ghost('npc') || time < this.npcBrainNextAt) return;
+    this.npcBrainNextAt = time + 600;
+    const { npc, player } = this.api;
+    if (!npc.active || npc.hp <= 0) return;
+    const hpRatio = npc.hp / npc.maxHp;
+
+    // Favours first: they are the dearest things on the payroll.
+    if (this._up('npc', 'f')) {
+      for (const l of this._crewOf('npc')) {
+        if (l.level < CREW_MAX_LEVEL || l.lifted) continue;
+        if (l.type === 'medic' && hpRatio < 0.35 && this._buySavior(l)) return;
+        if (l.type === 'thug' && l.reloadingUntil > time + 2000 && this._buyReload(l)) return;
+        if (l.type === 'sniper' && this._plantedDaggers('npc').length >= 2 && this._callStrike(l)) return;
+        if (l.type === 'enforcer' && player.active
+            && Phaser.Math.Distance.Between(l.x, l.y, player.x, player.y) > ENF_RANGE_L2 + 60) {
+          // Drop him just short of the target, on the bot's side of it.
+          const a = Math.atan2(npc.y - player.y, npc.x - player.x);
+          if (this._callHeli(l, l, player.x + Math.cos(a) * 130, player.y + Math.sin(a) * 130)) return;
+        }
+      }
+      // Laundering: only when nobody is in its face.
+      if (this.npcMoney >= 1 && this.npcMoney < this._moneyMax('npc') && hpRatio > 0.4
+          && Phaser.Math.Distance.Between(npc.x, npc.y, player.x, player.y) > 260
+          && Math.random() < 0.4 && this._buyStash('npc')) return;
+    }
+    if (this._up('npc', 'e') && this.npcBullets < 10 && this._buyLux('npc')) return;
+    if (this._up('npc', 'click') && this.npcMoney >= FIVE_COST + 1
+        && this.npcDaggers.length >= DAGGER_MAX - 1 && this._buyFive('npc')) return;
+  }
+
+  // ── Online replay ────────────────────────────────────────────────────────
+
+  /**
+   * The remote Subterfuge player bought something off a money bar, or did something with a
+   * ride. None of it touches a cooldown, so each arrives as its own `subx-` message.
+   */
+  replayNet(id: string, tx: number, ty: number): void {
+    const [head, ...args] = id.slice('subx-'.length).split(':');
+    const crew = this._crewOf('npc');
+    // Crew are named by payroll number, never by where they sit in this machine's list.
+    const at = (i: string | undefined): Lackey | undefined => crew.find((l) => l.nid === Number(i));
+    const { npc } = this.api;
+    switch (head) {
+      case 'five': this._buyFive('npc'); break;
+      case 'lux': this._buyLux('npc'); break;
+      case 'stash': this._buyStash('npc'); break;
+      case 'retainer': this._buyRetainer('npc'); break;
+      // The man himself arrives as `crew`; this is only the boss making the call.
+      case 'hire': this.gesture('npc', 'sub-recruit'); break;
+      case 'crew': {
+        const type = args[0] as RecruitType, nid = Number(args[1]);
+        if (!(type in RECRUIT_COST) || !Number.isFinite(nid) || at(args[1])) break;
+        // Their payroll has room for him, so ours must: whoever we still hold past the cap
+        // already left over there and the word has not reached us.
+        for (let over = crew.length - CREW_MAX; over >= 0; over--) {
+          const stale = this._crewOf('npc')[0];
+          if (stale) this.lackeys.splice(this.lackeys.indexOf(stale), 1);
+        }
+        // Positions cross the wire mirrored, like every other coordinate.
+        this._spawnLackey('npc', type, tx, ty, { nid, x: this.api.sceneWidth - Number(args[2]), y: Number(args[3]) });
+        break;
+      }
+      case 'gone': {
+        const l = at(args[0]);
+        if (!l) break;
+        if (args[1] !== 'x') { l.ignited = args[1] === '1'; this._crewLeaves(l); }
+        this.lackeys.splice(this.lackeys.indexOf(l), 1);
+        break;
+      }
+      case 'lvl': {
+        const l = at(args[0]);
+        const level = Phaser.Math.Clamp(Number(args[1]) || 0, 0, CREW_MAX_LEVEL);
+        if (l && l.level !== level) {
+          l.level = level;
+          if (l.reloadingUntil <= 0 && l.bullets > 0) l.bullets = Math.max(l.bullets, this._mag(l));
+        }
+        break;
+      }
+      case 'reload': { const l = at(args[0]); if (l) this._buyReload(l); break; }
+      case 'strike': { const l = at(args[0]); if (l) this._callStrike(l); break; }
+      case 'savior': { const l = at(args[0]); if (l) this._buySavior(l); break; }
+      case 'heli': {
+        const enf = at(args[0]), who = at(args[1]);
+        if (enf && who) this._callHeli(enf, who, tx, ty);
+        break;
+      }
+      case 'ride': {
+        const kind = args[0] as RideKind;
+        if (!RIDE_SPECS[kind]) break;
+        const aim = Math.atan2(ty - npc.y, tx - npc.x);
+        const reach = RIDE_SPECS[kind].radius + 26;
+        this.rides.spawn('npc', kind, npc.x + Math.cos(aim) * reach, npc.y + Math.sin(aim) * reach, aim);
+        break;
+      }
+      case 'ride-in': this.rides.mount('npc'); break;
+      case 'ride-out': this.rides.dismount('npc', true); break;
+      case 'ride-boom': this.rides.destroyRemote('npc'); break;
+      case 'shell': this.rides.fireCannon('npc', tx, ty, this.api.scene.time.now); break;
+      default: break;
+    }
   }
 
   // ── Mastery: Smoke Break (bindable) ──────────────────────────────────────
-
-  /** The slot Smoke Break is bound over this match, or null when it isn't bound anywhere. */
-  private _smokeSlot(): 'e' | 'r' | 'f' | 'q' | null {
-    if (!this.api.masteryActive) return null;
-    for (const s of ['e', 'r', 'f', 'q'] as const) {
-      if (this.api.masteryBindFor(s) === 'smoke-break') return s;
-    }
-    return null;
-  }
 
   private _cigaretteOf(owner: 'player' | 'npc'): Cigarette | undefined {
     return this.cigarettes.find(c => c.owner === owner);
@@ -2528,6 +3430,9 @@ export class SubterfugeKit {
    */
   onDamageReceived(owner: 'player' | 'npc', amount: number): void {
     if (amount <= 0) return;
+    // Laundering: every point taken while the bag is out counts against it.
+    const bag = this._stashOf(owner);
+    if (bag) bag.damageTaken += amount;
     const cig = this._cigaretteOf(owner);
     if (!cig) return;
     cig.msLeft -= CIG_HIT_COST_MS;
@@ -2770,7 +3675,7 @@ export class SubterfugeKit {
     for (let i = this.lackeys.length - 1; i >= 0; i--) {
       const l = this.lackeys[i];
       if (l.owner === exceptOwner || !near(l.x, l.y)) continue;
-      this._destroyLackeyVisuals(l);
+      if (l.owner === 'player') this.api.broadcastMasteryCast(`subx-gone:${l.nid}:x`);
       this.lackeys.splice(i, 1);
       razed++;
     }

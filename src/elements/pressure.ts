@@ -2,13 +2,16 @@ import { Element } from './Element';
 import { Ability, CastContext } from './Ability';
 
 /**
- * Pressure — a test element, reachable only from a cheat-mode save for now.
+ * Gas (id `pressure` — it was the Pressure element) — a test element, reachable only from a
+ * cheat-mode save for now.
  *
- * A riveted steel robot with one giant gauntlet. Every key is held to build pressure (the bar
- * under the robot, 0–100 over six seconds) and let go to spend it; each ability has a 50 and a
- * 100 breakpoint on top of its plain scaling. Release (F) is the exception: it banks its pressure
- * between holds and fires on a tap. Exceed (Q) doubles every charge rate for 15 seconds and then
- * locks the boiler up for 3.
+ * A riveted steel robot full of purple smog, with one giant gauntlet. Every key is held to build
+ * pressure (the bar under the robot, 0–100 over six seconds) and let go to spend it; each ability
+ * has a 50 and a 100 breakpoint on top of its plain scaling. A key still held at 100 throws
+ * sparks out behind the robot, and sparks light the gas clouds Release leaves — each cloud that
+ * blows lights the ones near it. Anyone who stands in the gas too long panics. Release (F) banks
+ * its pressure between holds and fires on a tap. Exceed (Q) doubles every charge rate for 15
+ * seconds and then locks the boiler up for 3.
  *
  * Every `cast` below is a one-line delegate; the whole simulation lives in PressureKit.
  */
@@ -16,7 +19,7 @@ import { Ability, CastContext } from './Ability';
 const pressurePunch: Ability = {
   id: 'pressure-punch',
   name: 'Pressure Punch',
-  description: 'Hold to wind up the gauntlet — you walk slowly while it builds — and let go to punch: 8 damage, up to 40 at full pressure. At 50+ the punch carries you forward 110px and slows them 40% for 1.5s. At 100 it stuns for 1.2s instead.',
+  description: 'Hold to wind up the gauntlet — you walk slowly while it builds — and let go to punch: 8 damage, up to 40 at full pressure. At 50+ the punch carries you forward 110px and slows them 40% for 1.5s. At 100 it stuns for 1.2s instead. Keep holding any key at 100 and sparks fly out behind you: 1 damage, and they set your gas clouds off.',
   displayKey: 'Click',
   cooldown: 450,
   cast(ctx: CastContext) { ctx.pressurePunch(ctx.targetX, ctx.targetY); },
@@ -43,7 +46,7 @@ const pressurePoint: Ability = {
 const release: Ability = {
   id: 'pressure-release',
   name: 'Release',
-  description: 'Hold F to bank pressure three times slower than the others. It keeps what it has when you let go. Tap F to vent it: a jet of steam along your aim that does 4 damage a second, up to 12, for 1.5s, up to 4s. Anyone in the jet cannot use abilities, though they can still move. At 50+ the jet also slows them 15%. At 100 the jet ends in a great blast for 30 that stuns for 1s — and while a full 100 is banked, every other ability charges 20% faster.',
+  description: 'Hold F to bank pressure three times slower than the others. It keeps what it has when you let go. Tap F to vent it: a jet of gas along your aim that does 4 damage a second, up to 12, for 1.5s, up to 4s, and leaves clouds of gas hanging all along it for 14s. Anyone in the jet cannot use abilities, though they can still move, and anyone who stands in the gas for 1.5s panics — running about at random and taking 5 damage a second. Sparks blow a cloud up for 18, and every cloud that blows lights the ones beside it. At 50+ the jet also slows them 15%. At 100 the jet ends in a great blast for 30 that stuns for 1s — and while a full 100 is banked, every other ability charges 20% faster.',
   displayKey: 'F',
   cooldown: 9000,
   cast(ctx: CastContext) { ctx.pressureRelease(ctx.targetX, ctx.targetY); },
@@ -52,7 +55,7 @@ const release: Ability = {
 const exceed: Ability = {
   id: 'pressure-exceed',
   name: 'Exceed',
-  description: 'Run the boiler past its limit for 15 seconds: you glow red and pour steam, and every ability charges twice as fast. When it runs out, you are stunned for 3 seconds while the boiler cools.',
+  description: 'Run the boiler past its limit for 15 seconds: you glow red and pour smog, and every ability charges twice as fast. When it runs out, you are stunned for 3 seconds while the boiler cools.',
   displayKey: 'Q',
   isUltimate: true,
   cooldown: 30000,
@@ -61,8 +64,8 @@ const exceed: Ability = {
 
 export const pressureElement: Element = {
   id: 'pressure',
-  name: 'Pressure',
-  color: 0xc7462e,
-  emoji: '🔩',
+  name: 'Gas',
+  color: 0xa35be0,
+  emoji: '🏭',
   abilities: [pressurePunch, seismicSlam, pressurePoint, release, exceed],
 };
