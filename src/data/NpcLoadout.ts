@@ -47,7 +47,7 @@ const NPC_MASTERY_BINDS: Record<string, { enhId: string; slot: MasterySlot }> = 
   // Math (`magic`) has no mastery yet — it replaced Magic on 2026-11-23.
   creation: { enhId: 'mortar-command', slot: 'f' },
   rubber: { enhId: 'atom-nhilego', slot: 'f' },
-  // Technology's mastery is two passives (VPN, Glitch Abuse) since 2026-11-25 — nothing to bind.
+  // Technology's mastery is one passive (Glitch Abuse) since 2026-11-25 — nothing to bind.
   gunpowder: { enhId: 'overload', slot: 'f' },
   light: { enhId: 'killer-kebab', slot: 'f' },
   echo: { enhId: 'echo-bloom', slot: 'r' },
@@ -109,11 +109,11 @@ const NPC_MASTERY_BINDS: Record<string, { enhId: string; slot: MasterySlot }> = 
   // the crowd, and the portal point walks the bot to the exit with Excalibur ready. The parry,
   // its riposte, the slash and Final Destiny all survive.
   myth: { enhId: 'myth-wormhole', slot: 'f' },
-  // Gold (id `fortune`) gives up Midas Curse. The curse's value is a long chase across the floor it
-  // lays, which the bot only half plays; Rags to Riches turns the purse the rest of its rotation
-  // already fills into permanent damage, fired by the kit the moment it can be afforded. The heart
-  // and the plume — the synergy the rotation is built on — both survive.
-  fortune: { enhId: 'rags-to-riches', slot: 'q' },
+  // Gold (id `fortune`) gives up Rebirth. A rebirth costs a finished tycoon, which a duel rarely
+  // lasts long enough to buy twice; No Pain, No Gain is gold on the floor from the first seconds,
+  // fired by the kit whenever the bot is healthy, and with Q gone the finished tycoon pours into
+  // Advance instead. The heart and the billiards — the synergy the rotation is built on — survive.
+  fortune: { enhId: 'no-pain-no-gain', slot: 'q' },
   // Magnet gives up Steel Spike (and its zip). The spike's value is a cursor dragged over a moving
   // target and a ride timed to it, which the bot plays loosely; Mag-Lev is fired by the kit at a
   // target the bot has already nailed or magnetised — the track slows exactly the bodies the rest of

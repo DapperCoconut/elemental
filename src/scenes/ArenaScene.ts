@@ -3089,8 +3089,6 @@ export class ArenaScene extends Phaser.Scene {
         get player() { return arena.player; },
         get npc() { return arena.npc; },
         get enemies() { return arena.reachableEnemies; },
-        get projectiles() { return arena.projectiles; },
-        get projectileRegistry() { return arena.techProjReg; },
         get eKey() { return arena.keyFor('fortune', arena.eKey); },
         get rKey() { return arena.keyFor('fortune', arena.rKey); },
         get fKey() { return arena.keyFor('fortune', arena.fKey); },
@@ -3102,12 +3100,12 @@ export class ArenaScene extends Phaser.Scene {
         get isOnline() { return arena.isOnline; },
         get isInvasion() { return arena.isInvasion; },
         isTargetable: (f) => !arena.isInvasion || !(f instanceof Husk) || arena.invasionKit.isHuskTargetable(f),
-        stealHuskShots: (f) => (arena.isInvasion && f instanceof Husk ? arena.invasionKit.stealShotsFrom(f) : []),
         fortuneColor: (owner, base) => arena.skinsKit.fortuneColor(owner, base),
         spawnHitFlash: (x, y, c) => arena.spawnHitFlash(x, y, c),
         buildPlayerContext: (x, y) => arena.buildPlayerContext(x, y),
         setStatusIndicator: (id, status) => arena.statusHudKit.setCustom(id, status),
-        purgeSummons: (x, y, r, except, report) => arena.purgeSummonsInCircle(x, y, r, except, report),
+        spendShards: (n) => PlayerData.spendShards(n),
+        get shards() { return PlayerData.getShards(); },
         hasUpgrade: (owner, slot) => (owner === 'player' ? arena.hasUpgradeFor('fortune', slot) : arena.hasNpcUpgrade(slot)),
         broadcastMasteryCast: (id) => arena.broadcastMasteryCast(id),
         get masteryActive() { return arena.fortuneMasteryOn && arena.playerIs('fortune'); },
@@ -5532,9 +5530,10 @@ export class ArenaScene extends Phaser.Scene {
     }
     // Devotion upgrades: the pocket crucifix (F+) and the sky ride's fire pillars (Q+) bypass
     // `castAbility`, so each action rides its own pseudo-cast.
-    // Gold's Click+ Accumulation: the floor's bursts are rolled on the alchemist's own machine.
-    if (enhId.startsWith('fortune-burst:')) {
-      if (this.npcElement.id === 'fortune') this.fortuneKit.replayNpcUpgradeAct(enhId);
+    // Gold: tycoon pads, the life-support switch, a rebirth's machine, cue shots and the mastery
+    // dagger are all decided on the alchemist's own machine and never go through `castAbility`.
+    if (enhId.startsWith('gold-net:')) {
+      if (this.npcElement.id === 'fortune') this.fortuneKit.replayNet(enhId);
       return;
     }
     // Magnet Mastery: Mag-Lev is cast off the kit's own clock, and every patch of the track is
@@ -5552,11 +5551,6 @@ export class ArenaScene extends Phaser.Scene {
     // breaking are decided on the thrower's machine.
     if (enhId === 'test-dummy' || enhId.startsWith('rad-dummy-')) {
       if (this.npcElement.id === 'radiation') this.radiationKit.replayNet(enhId, tx, ty);
-      return;
-    }
-    // Gold Mastery: cashing in the purse is the kit's own clock, never a cooldown cast.
-    if (enhId === 'rags-to-riches') {
-      if (this.npcElement.id === 'fortune') this.fortuneKit.replayRags();
       return;
     }
     // Devotion Mastery: the Ark is set down off the kit's own clock.
@@ -5849,9 +5843,9 @@ export class ArenaScene extends Phaser.Scene {
       // Gold: grass, gold, the powder, the cane and the curse.
       'fortune-fray':          0x7ccf5a,
       'fortune-advance':       0xfff0a8,
-      'fortune-plume':         0xf0c33c,
+      'fortune-billiards':     0xf0c33c,
       'fortune-heart':         0xe0a030,
-      'fortune-midas':         0xffd34d,
+      'fortune-rebirth':       0xffd34d,
       // …and the car is rust, which is the one thing in the element that is not worth anything.
       'drive-by-flex':         0x8c5c31,
       // Savor: sugar white, candy pinks and the chocolate; then salt greys.
@@ -6731,9 +6725,9 @@ export class ArenaScene extends Phaser.Scene {
       deathDeal: (tx, ty) => this.deathKit.doDeal('player', tx, ty),
       fortuneFray: (tx, ty) => this.fortuneKit.doFray('player', tx, ty),
       fortuneAdvance: () => this.fortuneKit.doAdvance('player'),
-      fortunePlume: (tx, ty) => this.fortuneKit.doPlume('player', tx, ty),
+      fortuneBilliards: (tx, ty) => this.fortuneKit.doBilliards('player', tx, ty),
       fortuneHeart: (tx, ty) => this.fortuneKit.doHeart('player', tx, ty),
-      fortuneMidas: (tx, ty) => this.fortuneKit.doMidas('player', tx, ty),
+      fortuneRebirth: () => this.fortuneKit.doRebirth('player'),
       clothGrab: (tx, ty) => this.clothKit.doGrab('player', tx, ty),
       clothNeedles: (tx, ty) => this.clothKit.doNeedles('player', tx, ty),
       clothBola: (tx, ty) => this.clothKit.doBola('player', tx, ty),
@@ -7156,9 +7150,9 @@ export class ArenaScene extends Phaser.Scene {
       deathDeal: (tx, ty) => this.deathKit.doDeal('npc', tx, ty),
       fortuneFray: (tx, ty) => this.fortuneKit.doFray('npc', tx, ty),
       fortuneAdvance: () => this.fortuneKit.doAdvance('npc'),
-      fortunePlume: (tx, ty) => this.fortuneKit.doPlume('npc', tx, ty),
+      fortuneBilliards: (tx, ty) => this.fortuneKit.doBilliards('npc', tx, ty),
       fortuneHeart: (tx, ty) => this.fortuneKit.doHeart('npc', tx, ty),
-      fortuneMidas: (tx, ty) => this.fortuneKit.doMidas('npc', tx, ty),
+      fortuneRebirth: () => this.fortuneKit.doRebirth('npc'),
       clothGrab: (tx, ty) => this.clothKit.doGrab('npc', tx, ty),
       clothNeedles: (tx, ty) => this.clothKit.doNeedles('npc', tx, ty),
       clothBola: (tx, ty) => this.clothKit.doBola('npc', tx, ty),
@@ -7533,9 +7527,9 @@ export class ArenaScene extends Phaser.Scene {
       deathDeal: () => {},
       fortuneFray: () => {},
       fortuneAdvance: () => {},
-      fortunePlume: () => {},
+      fortuneBilliards: () => {},
       fortuneHeart: () => {},
-      fortuneMidas: () => {},
+      fortuneRebirth: () => {},
       clothGrab: () => {},
       clothNeedles: () => {},
       clothBola: () => {},
@@ -11033,7 +11027,7 @@ export class ArenaScene extends Phaser.Scene {
       this.playerSpeedMult *= this.airKit.getPlayerSpeedMult();
     } else if (this.elementId === 'technology') {
       this.playerSpeedMult = time < this.playerGeyserBuffUntil ? 1.5 : 1;
-      // VPN mastery ramp + Adrenaline dose
+      // Adrenaline dose + the admin console's ;fly and ;speed
       this.playerSpeedMult *= this.techKit.getPlayerSpeedMult();
     } else if (this.elementId === 'growth') {
       this.playerSpeedMult = time < this.playerGeyserBuffUntil ? 1.5 : 1;
@@ -11111,7 +11105,7 @@ export class ArenaScene extends Phaser.Scene {
     // updates long after this block has resolved the frame's movement.
     this.playerSpeedMult *= this.mutationKit.getPlayerSpeedMult();
     this.npcSpeedMult *= this.mutationKit.getNpcSpeedMult();
-    // Gold (id `fortune`): Stride, the Midas floor and a heart attack's stop. Pulled for the same
+    // Gold (id `fortune`): Stride, Gilded Augment and a heart attack's stop. Pulled for the same
     // reason Justice is — FortuneKit.update() runs long after movement has resolved — and
     // unconditional, because a heart attack outlives whoever caused it.
     this.playerSpeedMult *= this.fortuneKit.getPlayerSpeedMult();
@@ -11686,7 +11680,7 @@ export class ArenaScene extends Phaser.Scene {
       this.quantumCoreKit.handleInput(time, pointer, mouseX, mouseY, playerCtx);
     }
     // Gold (id `fortune`) sits outside the chain for historical reasons; it early-returns itself.
-    this.fortuneKit.handleInput(time, pointer, mouseX, mouseY);
+    this.fortuneKit.handleInput(time, this.pointerFor('fortune'), mouseX, mouseY);
     this.pointerWasDown = pointer.isDown;
     this.rightPointerWasDown = pointer.rightButtonDown();
     // The auto-fire pulse masked a button that is really still down: put it back now that
@@ -12222,12 +12216,11 @@ export class ArenaScene extends Phaser.Scene {
       npcGoldCanAdvance: this.fortuneKit.npcCanAdvance(),
       npcGoldLunging: this.fortuneKit.npcLunging(),
       npcGoldHeartLive: this.fortuneKit.npcHeartLive(),
-      npcGoldMidasLive: this.fortuneKit.npcMidasLive(),
-      npcGoldStatueHold: this.fortuneKit.npcStatueHold(),
+      npcGoldCanRebirth: this.fortuneKit.npcCanRebirth(),
+      npcGoldCueOut: this.fortuneKit.npcCueOut(),
       npcGoldFrayAim: this.fortuneKit.npcFrayAim(),
-      npcGoldPlumeAt: this.fortuneKit.npcPlumeAt(),
       goldSeekPoint: this.fortuneKit.npcSeekPoint(),
-      npcGoldRagsSlot: this.fortuneKit.npcRagsSlot(),
+      npcGoldPainSlot: this.fortuneKit.npcPainSlot(),
 
       // Cloth: bind then throw, cushion then punch, burn then needle. The kit owns the reach and
       // the geometry, so the AI is handed each opportunity rather than left to re-derive it.
@@ -12885,9 +12878,8 @@ export class ArenaScene extends Phaser.Scene {
         entry.fill.setSize(entry.maxWidth * this.clayKit.getGiveLifeCooldownRatio('player'), entry.fill.height);
       } else if (entry.abilityId === 'beastling') {
         entry.fill.setSize(entry.maxWidth * this.huntKit.getBeastlingCooldownRatio(time), entry.fill.height);
-      } else if (entry.abilityId === 'rags-to-riches') {
-        // Paid for with the whole purse: the bar stops short of full until there are 20 gold.
-        entry.fill.setSize(entry.maxWidth * this.fortuneKit.getRagsCooldownRatio(), entry.fill.height);
+      } else if (entry.abilityId === 'no-pain-no-gain') {
+        entry.fill.setSize(entry.maxWidth * this.fortuneKit.getPainCooldownRatio(), entry.fill.height);
       } else if (entry.abilityId.startsWith('dream-')) {
         // Sandmen's card is the magazine (or the reload), not a 125ms cooldown — the kit owns it.
         entry.fill.setSize(entry.maxWidth * this.dreamKit.getBarRatio(entry.abilityId, time), entry.fill.height);
@@ -12914,7 +12906,7 @@ export class ArenaScene extends Phaser.Scene {
         // counts the glass down while it is up and its own cooldown afterwards.
         entry.fill.setSize(entry.maxWidth * this.sandKit.getBarRatio(entry.abilityId, time), entry.fill.height);
       } else if (entry.abilityId.startsWith('fortune-')) {
-        // Advance fills with the purse as well as the cooldown, and Midas counts its curse down.
+        // Advance fills with the purse as well as the cooldown, and Rebirth fills with the tycoon.
         entry.fill.setSize(entry.maxWidth * this.fortuneKit.getBarRatio(entry.abilityId, time), entry.fill.height);
       } else if (entry.abilityId.startsWith('myth-')) {
         // In Final Destiny the five cards are the five guns, and E's card counts the recast

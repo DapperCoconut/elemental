@@ -657,6 +657,7 @@ export class InvasionCoopKit {
       // cutting our fog is the only way to see where they are.
       fa: p.facingAngle,
       sap: Math.round(p.sapHp),
+      ghp: Math.round(p.goldHp),
     });
   }
 
@@ -1035,6 +1036,7 @@ export class InvasionCoopKit {
         ally.remote = { x: msg.x, y: msg.y, vx: msg.vx, vy: msg.vy, recvAt: Date.now() };
         ally.fighter.netSyncVitals(msg.hp, msg.maxHp, msg.shieldHp, msg.shieldCharges);
         ally.fighter.sapHp = msg.sap ?? 0;
+        ally.fighter.goldHp = msg.ghp ?? 0;
         ally.downed = msg.downed ?? false;
         ally.fighter.downed = ally.downed;
         const moved = ally.room !== (msg.room ?? 0);

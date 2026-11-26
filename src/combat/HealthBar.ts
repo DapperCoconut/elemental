@@ -15,7 +15,7 @@ export class HealthBar {
     this.graphics.setDepth(10);
   }
 
-  update(x: number, y: number, hp: number, shieldHp = 0, chargeRatio = 0, clottedHp = 0, weakHp = 0, chargeColor = 0xffdd00, sapHp = 0): void {
+  update(x: number, y: number, hp: number, shieldHp = 0, chargeRatio = 0, clottedHp = 0, weakHp = 0, chargeColor = 0xffdd00, sapHp = 0, goldHp = 0): void {
     this.graphics.clear();
     if (!this.visible) return;
 
@@ -39,7 +39,7 @@ export class HealthBar {
     // lying over the top of it: when health + sap runs past max health the whole bar rescales
     // to hold both, and nothing is ever hidden.
     const safeHp = Math.max(0, hp);
-    const span = Math.max(this.maxHp, safeHp + clottedHp + sapHp);
+    const span = Math.max(this.maxHp, safeHp + clottedHp + sapHp + goldHp);
 
     // HP fill — coloured by real health against max health, whatever the bar's scale.
     const hpFrac = safeHp / this.maxHp;
@@ -73,6 +73,21 @@ export class HealthBar {
         this.graphics.fillRect(sx, by, 1, this.barH);
       }
       fillEnd += sapRatio;
+    }
+
+    // Gold health (Gold's Rebirth): bullion — a bright bar with a hot top edge and ingot seams.
+    if (goldHp > 0) {
+      const goldRatio = Math.min(goldHp / span, 1 - fillEnd);
+      const gx = bx + this.barW * fillEnd;
+      const gw = this.barW * goldRatio;
+      this.graphics.fillStyle(0xf0c33c, 1);
+      this.graphics.fillRect(gx, by, gw, this.barH);
+      this.graphics.fillStyle(0xfffbe6, 0.9);
+      this.graphics.fillRect(gx, by, gw, 2);
+      this.graphics.fillStyle(0xa8791e, 1);
+      this.graphics.fillRect(gx, by + this.barH - 1.5, gw, 1.5);
+      for (let sx = gx + (fillEnd > 0 ? 0 : 6); sx < gx + gw - 0.5; sx += 6) this.graphics.fillRect(sx, by, 1, this.barH);
+      fillEnd += goldRatio;
     }
 
     // Shield fill (blue) — bonus HP beyond your health total.

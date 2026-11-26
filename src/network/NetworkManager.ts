@@ -3,8 +3,8 @@ import type { InvasionFx, HuskStatus } from '../invasion/InvasionKit';
 import type { NetStatusEntry } from './NetStatusSync';
 import type { IslesMsg } from '../isles/net/IslesMsg';
 
-/** Bump when the wire protocol or gameplay sync changes incompatibly. (61: Savor replaces Slime — `savor-*` relays. 64: Venom rework — new cast ids, `venom-*` status timers, `acid-pick/bomb-hold/cluster` relays. 68: Gas — `pressure-gc/gx/gp` relays, `gas-panic` status timer. 69: Magma rework — new cast ids, the click replays cannons/flintlocks. 70: Astra mass rework — new cast ids, `astra-m/pk/eat/boom/cg/cs/cl/cx/out/zap/aura/doom/wind/drag/snap/parry/kneel` relays. 72: Technology rework — `tech-zip` cast id, NetTechMsg rewritten (`ads/adx/mv/bugs/bugx/zipx/restart/console/cmd`).) */
-export const NET_PROTOCOL_VERSION = 72;
+/** Bump when the wire protocol or gameplay sync changes incompatibly. (61: Savor replaces Slime — `savor-*` relays. 64: Venom rework — new cast ids, `venom-*` status timers, `acid-pick/bomb-hold/cluster` relays. 68: Gas — `pressure-gc/gx/gp` relays, `gas-panic` status timer. 69: Magma rework — new cast ids, the click replays cannons/flintlocks. 70: Astra mass rework — new cast ids, `astra-m/pk/eat/boom/cg/cs/cl/cx/out/zap/aura/doom/wind/drag/snap/parry/kneel` relays. 72: Technology rework — `tech-zip` cast id, NetTechMsg rewritten (`ads/adx/mv/bugs/bugx/zipx/restart/console/cmd`). 73: Gold tycoon rework — `fortune-billiards`/`fortune-rebirth` cast ids, `gold-net:` relays, `ghp` in state.) */
+export const NET_PROTOCOL_VERSION = 73;
 
 /** A co-op room holds the host plus up to three guests. PvP still needs exactly two. */
 export const MAX_PLAYERS = 4;
@@ -239,9 +239,10 @@ export type NetMsg =
   // dm/fr/dc: the sender's own damage reduction, cap and flat soak, applied by the peer's
   // sim when it resolves a hit on their replica of us (see Fighter.netDefenseMult).
   // room: the mansion room this player is standing in (invasion co-op only).
+  // ghp: Gold's gold health, mirrored the same way as sap.
   // sap: Wood's Sap HP — the owner's sim decides it; the replica shows it and the peer's
   // Final Harvest counts it.
-  | { t: 'state'; x: number; y: number; vx: number; vy: number; hp: number; maxHp: number; shieldHp: number; shieldCharges: number; downed?: boolean; inv?: boolean; fa?: number; st?: number; dm?: number; fr?: number; dc?: number; room?: number; sap?: number }
+  | { t: 'state'; x: number; y: number; vx: number; vy: number; hp: number; maxHp: number; shieldHp: number; shieldCharges: number; downed?: boolean; inv?: boolean; fa?: number; st?: number; dm?: number; fr?: number; dc?: number; room?: number; sap?: number; ghp?: number }
   // Co-op, point to point (`sendTo`): a Wood teammate's Oakbrew / Digest landing on us. Health
   // and Sap HP are ours to change, so the giver's sim sends what it gave and we apply it.
   | { t: 'woodGift'; sap: number; heal: number; brewMs: number }

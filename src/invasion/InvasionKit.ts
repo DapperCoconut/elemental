@@ -288,7 +288,7 @@ interface HuskShot {
   hitRadius?: number;
   /** Blessed by Devotion's Disarming Words: already slowed and softened, never twice. */
   disarmed?: boolean;
-  /** Who fired it — Gold's Midas Curse turns a cursed husk's shots into coins. */
+  /** Who fired it. */
   from?: Husk;
 }
 
@@ -1621,22 +1621,6 @@ export class InvasionKit implements HuskWorld, EffectWorld {
       from,
     });
     this.coopHooks?.onFx({ k: 'shot', x: from.x, y: from.y, vx, vy, ms: SHOT_LIFETIME_MS, rm: from.roomIndex });
-  }
-
-  /**
-   * Gold's Midas Curse: take every shot `from` has in the air out of it, silently, and say where
-   * each one was. The kit drops a coin at each spot.
-   */
-  stealShotsFrom(from: Husk): { x: number; y: number }[] {
-    const out: { x: number; y: number }[] = [];
-    for (let i = this.shots.length - 1; i >= 0; i--) {
-      const s = this.shots[i];
-      if (s.from !== from) continue;
-      out.push({ x: s.gfx.x, y: s.gfx.y });
-      s.gfx.destroy();
-      this.shots.splice(i, 1);
-    }
-    return out;
   }
 
   /**

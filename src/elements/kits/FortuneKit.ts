@@ -2,14 +2,17 @@ import Phaser from 'phaser';
 import { Fighter } from '../../entities/Fighter';
 import { CastContext } from '../Ability';
 import type { CustomStatus } from './StatusHudKit';
-import type { ProjectileRegistry } from '../../combat/ProjectileRegistry';
-import { Projectile } from '../../combat/Projectile';
 import { Sfx } from '../../audio';
 import {
-  FOR, FortuneAvatar, FortuneColorFn, FortuneFx, Jewel, StatKind, advanceCard, glitterCloak, glitterMotes,
-  goldCoin, goldFloor, goldFuse, goldPlume, goldStatue, goldStatueShell, goldenHeart, grassBlade, jewelGem,
-  midasGilt, powderBag, statueRays,
+  FOR, FortuneAvatar, FortuneColorFn, FortuneFx, Jewel, StatKind, advanceCard, goldFuse, goldenHeart, grassBlade,
+  jewelGem, jitter,
 } from './FortuneVisuals';
+import { bloodBlot, cueSight, paintTycoon, poolBall } from './FortuneTycoonVisuals';
+import {
+  DROP_MS, DROP_VALUE, FLAT_BONUS, GLORIES, GLORY_NAME, GloryId, HEAVY_MS, HEAVY_VALUE, LIFE_SUPPORT_RATE, MULT_BONUS,
+  PAD_H, PAD_W, PARTS, PadId, PartId, REFINER_MULT, SHARD_DROPPER_MULT, TYCOON_H, TYCOON_W, Tycoon, TycoonPad,
+} from './FortuneTycoon';
+import { BALL_R, Ball, BodyCircle, cueTarget, rackSpots, stepBalls } from './FortuneBilliards';
 import { FONT_DISPLAY, FONT_UI } from '../../ui/Theme';
 
 type Owner = 'player' | 'npc';
@@ -18,7 +21,7 @@ const ARENA_PAD = 32;
 const BOTH: Owner[] = ['player', 'npc'];
 
 // ── The purse ────────────────────────────────────────────────────────────────
-/** Gold pops are pooled over this long, so a plume ticking 2/s is one "+2" rather than eight. */
+/** Gold pops are pooled over this long, so a drill paying every piece is one "+2" rather than eight. */
 const POP_MS = 600;
 
 // ── Click: Fray ──────────────────────────────────────────────────────────────
@@ -32,7 +35,7 @@ const FRAY_GRAVITY = 900;
 /** How long the grass is grass. After this every blade is solid gold. */
 const FRAY_GILD_MS = 180;
 const FRAY_LIFE_MS = 1800;
-const FRAY_DAMAGE = 3;
+const FRAY_DAMAGE = 2;
 const FRAY_HIT_R = 7;
 const FRAY_BLADE_LEN = 15;
 
@@ -72,14 +75,39 @@ const GREED_STEP = 0.25;
 const SHEAF_BLADES = 2;
 const MEND_HPS = 1.5;
 
-// ── R: Gold Plume ────────────────────────────────────────────────────────────
-const PLUME_RANGE = 380;
-const BAG_MS = 450;
-const PLUME_R = 105;
-const PLUME_MS = 6000;
-const PLUME_DPS = 9;
-const PLUME_TICK_MS = 250;
-const PLUME_GOLD_PER_SEC = 2;
+// ── R: Billiards ─────────────────────────────────────────────────────────────
+const RACK_BALLS = 5;
+/** How far ahead the handful lands: at the cursor, inside these limits. */
+const RACK_MIN = 62;
+const RACK_MAX = 150;
+const TOSS_MS = 380;
+const BALL_LIFE_MS = 14_000;
+const BALL_FADE_MS = 600;
+/** Most balls one side keeps on the floor; the oldest goes first. */
+const BALL_MAX = 10;
+/** The cane stays out this long waiting for a shot. */
+const CUE_MS = 8000;
+/** From the body's centre to as far as the cane's tip reaches on a thrust. */
+const CUE_REACH = 112;
+const CUE_HALF_W = 5;
+/** Mouse travel, from where the button went down, that draws the cane all the way back. */
+/** Holding the button draws the cane back: full power after this long. */
+const CUE_PULL_MS = 1000;
+const CUE_POWER_MIN = 0.18;
+const CUE_SPEED_MIN = 300;
+const CUE_SPEED_MAX = 1050;
+/** The cane itself, on anybody standing in the line of the thrust. */
+const CUE_WHACK_MIN = 8;
+const CUE_WHACK_MAX = 18;
+/** A ball has to be moving at least this fast (along the line of the hit) to hurt. */
+const BALL_HIT_SPEED = 130;
+const BALL_DMG_MIN = 5;
+const BALL_DMG_MAX = 22;
+const BALL_DMG_FULL_SPEED = 900;
+/** One ball cannot hit the same body twice inside this. */
+const BALL_REHIT_MS = 350;
+/** Clacks closer together than this share one sound. */
+const CLACK_SOUND_MS = 45;
 
 // ── F: Heart of Gold ─────────────────────────────────────────────────────────
 const LUNGE_DIST = 150;
@@ -99,47 +127,51 @@ const HEART_ATTACK_DAMAGE = 28;
 const HEART_STUN_MS = 1400;
 const DAMAGE_PER_GOLD = 20;
 
-// ── Q: Midas Curse ───────────────────────────────────────────────────────────
-const MIDAS_MS = 10_000;
-/** Within this of the cursor, the curse goes to whoever is nearest it; otherwise nearest the caster. */
-const MIDAS_PICK_R = 260;
-/** Every this many pixels the cursed walk, another patch of floor turns. */
-const FLOOR_STEP = 26;
-const FLOOR_R = 30;
-const FLOOR_MAX = 260;
-const FLOOR_SPEED = 1.5;
-const FLOOR_GOLD_MS = 3000;
-const COIN_VALUE = 1;
-const STATUE_VALUE = 2;
-const LOOT_PICK_R = 28;
-const LOOT_LIFE_MS = 25_000;
-const COIN_DROP_MS = 360;
-/** Invasion: a husk's shot is only "theirs" if it is first seen this close to them. */
-const SHOT_OWNER_R = 70;
-const PURGE_EVERY_MS = 100;
+// ── Q: Rebirth ───────────────────────────────────────────────────────────────
+const REBIRTH_MAX = 3;
+const REBIRTH_GOLD = 0.25;
+const REBIRTH_MIGHT = 0.15;
+const REBIRTH_HIDE = 0.85;
+const REBIRTH_GOLD_HP = 150;
+const REBIRTH_FLASH_MS = 900;
+/** Gold health pays its owner as it is cut away: one coin for every this much lost. */
+const GOLD_HP_PER_COIN = 10;
+/** Body plates that turn to raw gold ore with each rebirth (the rig has eight, then a full sheen). */
+const REBIRTH_PLATES = 3;
+
+// ── The tycoon ───────────────────────────────────────────────────────────────
+// What the machines do is in FortuneTycoon; this is only where the strip sits and how the bot shops.
+/**
+ * The strip is drawn at this scale. Yours sits top-left, just under the HP bar and clear of the
+ * status tray on the right; an opponent's sits bottom-right, just above the ability tray.
+ */
+const TYCOON_SCALE = 0.75;
+const TYCOON_X = 36;
+const TYCOON_Y = 38;
+const TYCOON_BOTTOM_GAP = 62;
+/** The bot looks at its pads this often. */
+const NPC_BUY_MS = 500;
+/** The bot's shard pad is free (it has no shards), but it waits this long into the match for it. */
+const NPC_SHARD_PAD_MS = 8000;
+const PAD_BLURB: Record<PadId, string> = {
+  drop2: `${DROP_VALUE} gold every ${DROP_MS / 1000}s`,
+  drop3: `${DROP_VALUE} gold every ${DROP_MS / 1000}s`,
+  drop4: `${HEAVY_VALUE} gold every ${HEAVY_MS / 1000}s`,
+  up1: `+${FLAT_BONUS} to every piece`,
+  up2: `+${FLAT_BONUS} to every piece`,
+  up3: `x${MULT_BONUS} to every piece`,
+  ref2: `refiner pays +${Math.round((REFINER_MULT[1] - 1) * 100)}%`,
+  ref3: `refiner pays +${Math.round((REFINER_MULT[2] - 1) * 100)}%`,
+  shard: `first dropper x${SHARD_DROPPER_MULT}`,
+};
 
 // ── Shop upgrades ────────────────────────────────────────────────────────────
-// Click+ Accumulation — blades that reach the floor stay there, and the pile bursts.
-const PILE_MAX = 90;
-/** Fewer than this lying on the floor and the pile never stirs. */
-const PILE_MIN = 6;
-/** How often the pile rolls for a burst: every 1.5s with a small pile, down to 0.35s with a big one. */
-const PILE_ROLL_MS_MAX = 1500;
-const PILE_ROLL_MS_MIN = 350;
-const PILE_ROLL_MS_PER = 14;
-/** The chance a roll bursts is n / (n + this), for n blades lying on the floor. */
-const PILE_CHANCE_K = 30;
-/** A burst lifts this many blades, plus a share of the pile. */
-const BURST_BASE = 5;
-const BURST_SHARE = 0.35;
-/** The pile stirs this long before the burst leaves the floor — a beat to step out of the way. */
-const BURST_WARN_MS = 280;
-const BURST_STAGGER_MS = 14;
-/** Seconds a burst blade takes to reach where the target was. */
-const BURST_FLIGHT_MIN = 0.5;
-const BURST_FLIGHT_MAX = 0.75;
-const BURST_SCATTER = 22;
-const PILE_BLADE_LEN = 13;
+// Click+ Life-support — right click turns the refiner's output into health. (How much slower the
+// droppers run, and the shard pad's numbers, live with the tycoon.)
+const LIFE_HP_PER_GOLD = 1.5;
+/** The bot switches life-support on under this share of its health, and off again above the other. */
+const NPC_LIFE_ON = 0.45;
+const NPC_LIFE_OFF = 0.8;
 
 // E+ Artisan — two jeweled cards on every offer, each with a price of its own.
 const JEWELED_CARDS = 2;
@@ -160,29 +192,20 @@ const RUBY_HASTE = 1.08;
 const RUBY_VIGOR = 30;
 const RUBY_BLEED_HPS = 1.5;
 
-// R+ Glittery Cloak
-const CLOAK_R_MULT = 1.2;
-const CLOAK_DODGE = 0.15;
-/** Bots and husks in the glitter aim this much worse. */
-const CLOAK_AIM_DEG = 24;
-/** A player's own shots fired from inside the glitter leave up to this far off line. */
-const CLOAK_JITTER = 0.32;
-/** A shot is "fired from inside" if it is first seen this close to the shooter. */
-const CLOAK_SHOT_R = 60;
+// R+ Billiard Blitz — a ball that hits an enemy hands the cane back.
+/** Balls get at least this much longer on the floor when the cane comes back. */
+const BLITZ_BALL_MS = 6000;
+const BLITZ_READY_MS = 180;
 
 // F+ Gold Hex
 const HEX_TAIL_MS = 5000;
 /** The share of every frame the hexed body's cooldowns lose: half speed. */
 const HEX_DRAG = 0.5;
 
-// Q+ Full Metal Alchemy
-const STATUE_MS = 3000;
-const STATUE_MELT_MS = 1000;
-const STATUE_VULN = 2;
-const STATUE_COINS = 3;
+// Q+ Golden Glory — every rebirth bolts one of six machines onto the tycoon for good (FortuneTycoon).
 
 // ── Mastery ──────────────────────────────────────────────────────────────────
-// Gilded Augment (passive): low on health, the purse heals you — dearer every second it runs.
+// Gilded Augment (passive): low on health, the purse buys you gold health — dearer every second it runs.
 const AUGMENT_AT = 0.3;
 const AUGMENT_TO = 0.55;
 const AUGMENT_HPS = 16;
@@ -190,22 +213,33 @@ const AUGMENT_HPS = 16;
 const AUGMENT_GOLD_PER_SEC = 2;
 const AUGMENT_RAMP_SEC = 2.5;
 const AUGMENT_SPEED = 1.3;
-// Rags to Riches (bindable): spend the whole purse to gild a little more of the body. Stacks.
-const RAGS_ID = 'rags-to-riches';
-const RAGS_MIN_GOLD = 20;
-/** Short, so a mashed key never spends a purse twice — the 20 gold is the real gate. */
-const RAGS_COOLDOWN_MS = 1500;
-const RAGS_MIGHT = 0.2;
-const RAGS_GREED = 0.5;
-const RAGS_AUGMENT_HEAL = 0.35;
-const RAGS_AUGMENT_DISCOUNT = 0.75;
-/** The bot only cashes in a purse it can spare: above this share of its HP, not saving for a heal. */
-const NPC_RAGS_HP = 0.5;
+// No Pain, No Gain (bindable): a dagger in your own side, and the blood it throws turns to gold.
+const PAIN_ID = 'no-pain-no-gain';
+const PAIN_COOLDOWN_MS = 7000;
+const PAIN_SELF_DAMAGE = 18;
+/** Never the killing blow: the dagger leaves at least this much. */
+const PAIN_MIN_HP = 2;
+const PAIN_BLOTS = 11;
+const PAIN_STRAYS = 3;
+const PAIN_REACH = 165;
+/** Blood lies wet this long, then sets into gold from the near end of the splatter outward. */
+const PAIN_WET_MS = 450;
+const PAIN_GILD_MS = 700;
+/** Standing on the gold: a coin every other second. */
+const FLOOR_GOLD_MS = 2000;
+const FLOOR_MAX = 140;
 
 // ── Bot ──────────────────────────────────────────────────────────────────────
-const NPC_PLUME_SEEK_R = 280;
-const NPC_LOOT_SEEK_R = 300;
+/** The bot studies the table this long before it shoots, and has shot at something by the second. */
+const NPC_CUE_THINK_MS = 350;
+const NPC_CUE_GIVE_UP_MS = 2600;
+/** How well a ball has to line up with the target before the bot takes the shot (cosine). */
+const NPC_CUE_ALIGN = 0.86;
+/** Where the bot stands to shoot: this far behind the ball, on the line through the target. */
+const NPC_CUE_STANCE = 44;
 const NPC_FLOOR_SEEK_R = 220;
+/** The bot only stabs itself for gold above this share of its health. */
+const NPC_PAIN_HP = 0.6;
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -220,40 +254,34 @@ interface Blade {
   dmg: number;
 }
 
-/** Click+: a blade lying on the arena floor. `launchAt` > 0 once a burst has picked it. */
-interface PileBlade {
-  owner: Owner;
-  x: number;
-  y: number;
-  ang: number;
-  seed: number;
-  born: number;
-  launchAt: number;
-  tx: number;
-  ty: number;
-}
-
-interface Bag {
+/** R: a handful of balls in the air, on its way to the floor. */
+interface Toss {
   owner: Owner;
   fx: number;
   fy: number;
-  tx: number;
-  ty: number;
+  spots: { x: number; y: number }[];
   start: number;
-  /** R+ Glittery Cloak, decided when the bag is thrown. */
-  cloak: boolean;
 }
 
-interface Plume {
-  owner: Owner;
-  x: number;
-  y: number;
-  r: number;
-  cloak: boolean;
-  born: number;
+/** R: the cane, out and waiting for a shot. */
+interface Cue {
+  /** Not before the balls have landed. */
+  readyAt: number;
   until: number;
-  seed: number;
-  tickAt: number;
+  /** Where the button went down — the point the shot is aimed through. Null until it does. */
+  /** When the button went down to start drawing the cane back. Null until it does. */
+  pullFrom: number | null;
+}
+
+/** What the bot makes of the table. */
+interface CuePlan {
+  ang: number;
+  /** A ball (or the target itself) is inside the cane's reach along `ang`. */
+  inReach: boolean;
+  /** ...and it lines up with the target well enough to take. */
+  shoot: boolean;
+  /** Where to stand for a better one. */
+  stance: { x: number; y: number } | null;
 }
 
 interface Lunge {
@@ -284,39 +312,8 @@ interface Heart {
   seen: number;
 }
 
-interface Curse {
-  by: Owner;
-  start: number;
-  lx: number;
-  ly: number;
-  /** Cast on this sim — false for a curse we were only told about, which never turns to a statue here. */
-  live: boolean;
-}
-
-/** Q+ Full Metal Alchemy: a body the curse finished with. `Fighter.goldStatueUntil` is the truth. */
-interface Statue {
-  by: Owner;
-  /** Raw damage taken when it was made, so a hit can be noticed. */
-  raw: number;
-  hit: boolean;
-  /** Decided on this sim (vulnerability, coins); false for a mirrored statue we only draw. */
-  live: boolean;
-}
-
-interface Patch { x: number; y: number; r: number; seed: number; born: number }
-
-interface Loot {
-  kind: 'coin' | 'statue';
-  /** Who may pick it up — the curse's caster. */
-  by: Owner;
-  x: number;
-  y: number;
-  fx: number;
-  fy: number;
-  born: number;
-  r: number;
-  seed: number;
-}
+/** Mastery: one blot of No Pain, No Gain. Blood until `gildAt`, gold for good after it. */
+interface Patch { owner: Owner; x: number; y: number; r: number; seed: number; born: number; gildAt: number }
 
 /** One card on an offer. A jeweled card (E+ Artisan) has a stone and a price of its own. */
 interface Card {
@@ -358,10 +355,17 @@ interface Side {
   ruby: Record<StatKind, number>;
   /** Max HP already granted for Vigor, so a growing Sapphire grants only the difference. */
   vigorApplied: number;
-  /** Click+: when the pile next rolls for a burst. */
-  pileRollAt: number;
-  /** R+: standing in its own glittery plume this frame. */
-  cloaked: boolean;
+  /** The machinery along the top of the screen. */
+  tycoon: Tycoon;
+  /** Q: how many times this alchemist has been reborn this match, and when the last one was. */
+  rebirths: number;
+  rebirthAt: number;
+  /** R: the cane, while it is out. */
+  cue: Cue | null;
+  /** R+: a shot has been taken and no ball has hit anybody since. */
+  shotOpen: boolean;
+  /** Bot: when it next looks at its pads. */
+  buyAt: number;
   offer: Offer | null;
   floorMs: number;
   onFloor: boolean;
@@ -370,11 +374,9 @@ interface Side {
   lunge: Lunge | null;
   glow: number;
   // ── Mastery ──
-  /** Rags to Riches stacks: how much of the body is gold. */
-  riches: number;
-  /** Last Rags to Riches (scene time). Starts a cooldown in the past so it is ready. */
-  ragsAt: number;
-  /** Gilded Augment is healing right now, and since when (the price climbs with it). */
+  /** Last No Pain, No Gain (scene time). Starts a cooldown in the past so it is ready. */
+  painAt: number;
+  /** Gilded Augment is paying out right now, and since when (the price climbs with it). */
   augment: boolean;
   augmentSince: number;
   /** Gold owed to the augment, paid a whole coin at a time. */
@@ -390,9 +392,10 @@ function emptyStats(): Record<StatKind, number> {
 function makeSide(owner: Owner): Side {
   return {
     owner, gold: 0, frac: 0, aimX: 0, aimY: 0, stats: emptyStats(), plain: emptyStats(), gems: [],
-    ruby: emptyStats(), vigorApplied: 0, pileRollAt: 0, cloaked: false, offer: null,
+    ruby: emptyStats(), vigorApplied: 0, tycoon: new Tycoon(), rebirths: 0, rebirthAt: -REBIRTH_FLASH_MS,
+    cue: null, shotOpen: false, buyAt: 0, offer: null,
     floorMs: 0, onFloor: false, pop: 0, popAt: 0, lunge: null, glow: 0,
-    riches: 0, ragsAt: -RAGS_COOLDOWN_MS, augment: false, augmentSince: 0, augmentDebt: 0, spent: 0,
+    painAt: -PAIN_COOLDOWN_MS, augment: false, augmentSince: 0, augmentDebt: 0, spent: 0,
   };
 }
 
@@ -404,10 +407,6 @@ export interface FortuneArenaApi {
   get npc(): Fighter;
   /** The player's enemies: `[npc]` in a duel, the husks in an Invasion. */
   get enemies(): Fighter[];
-  /** ArenaScene's shared physics group of `Projectile`s. */
-  get projectiles(): Phaser.Physics.Arcade.Group;
-  /** Kit-local travelling shots that registered themselves. */
-  get projectileRegistry(): ProjectileRegistry;
   get eKey(): Phaser.Input.Keyboard.Key;
   get rKey(): Phaser.Input.Keyboard.Key;
   get fKey(): Phaser.Input.Keyboard.Key;
@@ -420,14 +419,13 @@ export interface FortuneArenaApi {
   /** Invasion: the npc slot is a placeholder or a co-op *ally*, never an enemy. */
   get isInvasion(): boolean;
   isTargetable(f: Fighter): boolean;
-  /** Invasion: a husk's shots live in InvasionKit, not the shared group. Empty for anything else. */
-  stealHuskShots(f: Fighter): { x: number; y: number }[];
   fortuneColor(owner: Owner, base: number): number;
   spawnHitFlash(x: number, y: number, color: number): void;
   buildPlayerContext(x: number, y: number): CastContext;
   setStatusIndicator(id: string, status: CustomStatus | null): void;
-  /** Ruin's board-wipe dispatch, borrowed: every kit's summons inside the circle, except `except`'s. */
-  purgeSummons(x: number, y: number, r: number, except: Owner, report: (x: number, y: number) => void): number;
+  /** Click+: the shard pad is paid for out of the player's real shards. False if they are short. */
+  spendShards(amount: number): boolean;
+  get shards(): number;
   /** Shop upgrades: the player's own, or the bot's loadout / the online opponent's handshake. */
   hasUpgrade(owner: Owner, slot: string): boolean;
   /** Online: a pseudo-cast id for an action that never goes through `castAbility`. */
@@ -447,23 +445,30 @@ export interface FortuneArenaApi {
 /**
  * Gold — the alchemist. (The element id is still `fortune`, so every save keeps working.)
  *
- * Everything he does turns something into gold, and most of it turns into *his* gold. The purse
- * is the element's one resource: it fills from standing in his own plume, from the blood of a
- * gold-hearted enemy and from the floor Midas leaves behind, and it is spent ten at a time on
- * **Advance**, the only thing in the kit that makes him permanently better at the rest of it.
+ * He owns a factory. A **tycoon** runs along the top of the screen for the whole match: droppers
+ * let ore fall onto a belt, the belt carries it under whatever upgraders have been built, and the
+ * refiner at the end pays it into the purse. The purse buys the next machine (click its pad), or
+ * it buys **Advance** — and when every machine has been bought, **Rebirth** tears the whole thing
+ * down in exchange for a better alchemist. The machinery itself is `FortuneTycoon`.
  *
  * - **Fray** throws a clump of grass that his other hand gilds in flight; the blades then fall
  *   down the screen as though the arena had a floor at the bottom. Small hits, lots of them.
  * - **Advance** spends 10 gold and floats three stat cards over his head. Click one.
- * - **Gold Plume** is a bag of powder: a cloud that burns enemies and pays him to stand in it.
+ * - **Billiards** throws a handful of golden pool balls and brings out the cane as a cue: press,
+ *   draw back, release. The balls are real (`FortuneBilliards`) — they hit each other, the walls
+ *   and anybody in the way — and the cane itself hurts whoever it pokes.
  * - **Heart of Gold** is a lunge with the cane. A struck heart turns to gold, and a gold heart
  *   cannot take exercise — every step fills it, and a full one is a heart attack.
- * - **Midas Curse** turns the target, slowly, and the floor under their feet, permanently. Their
- *   shots drop as coins and their summons stand where they were made as golden statues.
+ * - **Rebirth** needs a complete tycoon, up to three times: the tycoon resets, and he comes back
+ *   earning more, hitting harder, taking less, and wearing 150 **gold health** — a Fighter layer
+ *   (`goldHp`) spent before his own that pays him as it is cut away.
  *
- * The two victim-side states are Fighter fields (`goldHeartUntil`/`goldHeartStress`,
- * `midasUntil`) so the status tray and the online mirror pick them up without help; the kit
- * treats those fields as the truth and keeps only its bookkeeping beside them.
+ * The victim-side state is Fighter fields (`goldHeartUntil`/`goldHeartStress`, `goldHexUntil`)
+ * so the status tray and the online mirror pick them up without help; the kit treats those
+ * fields as the truth and keeps only its bookkeeping beside them.
+ *
+ * Online, an opponent's tycoon is run here too, for show: what they bought, their life-support
+ * switch, their cue shots and their dagger arrive as `gold-net:` pseudo-casts (`replayNet`).
  */
 export class FortuneKit {
   private api: FortuneArenaApi;
@@ -475,48 +480,50 @@ export class FortuneKit {
   private readonly nfx: FortuneFx;
   private playerAvatar: FortuneAvatar | null = null;
   private npcAvatar: FortuneAvatar | null = null;
-  /** Gold floor, coins and statues — under everything. */
+  /** Gilded blood — under everything. */
   private floorGfx: Phaser.GameObjects.Graphics | null = null;
-  /** The plumes, just under the fighters. */
-  private plumeGfx: Phaser.GameObjects.Graphics | null = null;
-  /** The gilt creeping up a cursed body, over its sprite. */
-  private giltGfx: Phaser.GameObjects.Graphics | null = null;
-  /** Blades and bags in flight, over the fighters. */
+  /** The tycoon: pinned to the screen, on the floor, so nobody is ever hidden behind it. */
+  private tycoonGfx: Phaser.GameObjects.Graphics | null = null;
+  private npcTycoonGfx: Phaser.GameObjects.Graphics | null = null;
+  /** Pool balls, just under the fighters. */
+  private ballGfx: Phaser.GameObjects.Graphics | null = null;
+  /** Blades and tossed balls in flight, and the cue's sight — over the fighters. */
   private airGfx: Phaser.GameObjects.Graphics | null = null;
   /** Hearts and the Advance cards — over everything. */
   private hudGfx: Phaser.GameObjects.Graphics | null = null;
   /** Pooled card legends: name + line per card, three cards per side. */
   private labels: Phaser.GameObjects.Text[] = [];
   private priceLabels: Phaser.GameObjects.Text[] = [];
+  /** Pooled pad prices, and one caption per tycoon for the pad under the cursor. */
+  private padLabels: Phaser.GameObjects.Text[] = [];
+  private padCaption: Phaser.GameObjects.Text | null = null;
   private vizT = 0;
 
   // ── Sim ──
   private sides: Record<Owner, Side> = { player: makeSide('player'), npc: makeSide('npc') };
   private blades: Blade[] = [];
-  /** Click+ Accumulation: blades lying on the floor, both sides'. */
-  private pile: PileBlade[] = [];
-  private bags: Bag[] = [];
-  private plumes: Plume[] = [];
+  private tosses: Toss[] = [];
+  private balls: Ball<Owner>[] = [];
+  private ballSerial = 0;
+  /** When each ball last hurt each body. */
+  private ballHits = new WeakMap<Ball<Owner>, Map<Fighter, number>>();
+  private clackAt = 0;
   private hearts = new Map<Fighter, Heart>();
-  private curses = new Map<Fighter, Curse>();
   private stuns = new Map<Fighter, number>();
-  private statues = new Map<Fighter, Statue>();
   /** Ruby Vigor already taken off each body, so only a change is applied. */
   private vigorCuts = new Map<Fighter, number>();
   /** Ruby Mend: fractional bleed carried between frames. */
   private bleedAcc = new Map<Fighter, number>();
-  /** R+: cloak dodges already announced, per body. */
-  private dodgesSeen = new Map<Fighter, number>();
-  /** R+: bodies inside an enemy's glittery plume this frame. */
-  private inGlitter = new Set<Fighter>();
-  /** R+: shots already judged for the glitter's wobble. */
-  private glitterShots = new WeakSet<object>();
+  /** Mastery: the gilded blood. */
   private patches: Patch[] = [];
-  private loot: Loot[] = [];
-  /** Shots already looked at, so an Invasion husk's shot is judged once, where it was first seen. */
-  private seenShots = new WeakSet<object>();
-  private purgeAt = 0;
+  /** Bodies wearing this kit's gold-health callback, so `reset()` can take it off again. */
+  private hooked = new Set<Fighter>();
+  /** Scene time of the first frame of the match, for the bot's shard pad. */
+  private startAt = -1;
+  private shardsSeen = 0;
+  private shardsAt = 0;
   private wasDown = false;
+  private wasRight = false;
   private pressSpent = false;
 
   constructor(api: FortuneArenaApi) {
@@ -584,10 +591,16 @@ export class FortuneKit {
     return Phaser.Math.Distance.Between(ax + dx * u, ay + dy * u, px, py);
   }
 
-  /** Might picks and Rags to Riches stacks: every point of damage the kit deals goes through here. */
+  /** Might picks and rebirths: every point of damage the kit deals goes through here. */
   private might(owner: Owner): number {
     const s = this.side(owner);
-    return (1 + MIGHT_STEP * s.stats.might) * (1 + RAGS_MIGHT * s.riches);
+    return (1 + MIGHT_STEP * s.stats.might) * (1 + REBIRTH_MIGHT * s.rebirths);
+  }
+
+  /** Greed picks and rebirths: what every source of gold is multiplied by. */
+  private earnMult(owner: Owner): number {
+    const s = this.side(owner);
+    return 1 + GREED_STEP * s.stats.greed + REBIRTH_GOLD * s.rebirths;
   }
 
   /** A shop upgrade, only ever true for an alchemist. */
@@ -601,11 +614,11 @@ export class FortuneKit {
 
   // ── The purse ──────────────────────────────────────────────────────────────
 
-  /** Pay `owner`. Greed (and Rags to Riches) multiplies every source. */
+  /** Pay `owner`. Greed and rebirths multiply every source. */
   private earn(owner: Owner, amount: number): void {
     if (amount <= 0) return;
     const s = this.side(owner);
-    s.frac += amount * (1 + GREED_STEP * s.stats.greed + RAGS_GREED * s.riches);
+    s.frac += amount * this.earnMult(owner);
     const whole = Math.floor(s.frac);
     if (whole <= 0) return;
     s.frac -= whole;
@@ -640,54 +653,51 @@ export class FortuneKit {
   reset(): void {
     this.sides = { player: makeSide('player'), npc: makeSide('npc') };
     this.blades = [];
-    this.pile = [];
-    this.bags = [];
-    this.plumes = [];
+    this.tosses = [];
+    this.balls = [];
+    this.ballHits = new WeakMap();
+    this.clackAt = 0;
     this.hearts.clear();
-    this.curses.clear();
     this.stuns.clear();
-    this.statues.clear();
     this.vigorCuts.clear();
     this.bleedAcc.clear();
-    this.dodgesSeen.clear();
-    this.inGlitter.clear();
-    this.glitterShots = new WeakSet();
     this.patches = [];
-    this.loot = [];
-    this.seenShots = new WeakSet();
-    this.purgeAt = 0;
+    this.startAt = -1;
+    this.shardsAt = 0;
     this.wasDown = false;
+    this.wasRight = false;
     this.pressSpent = false;
     this.vizT = 0;
 
+    for (const f of this.hooked) {
+      f.onGoldHpAbsorb = null;
+      f.goldHp = 0;
+    }
+    this.hooked.clear();
     for (const f of this.allFighters()) {
       f.fortuneIncomingMult = 1;
       f.goldHeartUntil = 0;
       f.goldHeartStress = 0;
-      f.midasUntil = 0;
       f.goldHexUntil = 0;
-      f.goldStatueUntil = 0;
       f.goldCooldownMult = 1;
       f.goldVigorCut = 0;
       f.goldSpeedMult = 1;
-      f.goldCloakDodge = 0;
     }
 
     this.playerAvatar?.destroy(); this.playerAvatar = null;
     this.npcAvatar?.destroy(); this.npcAvatar = null;
-    for (const g of [this.floorGfx, this.plumeGfx, this.giltGfx, this.airGfx, this.hudGfx]) g?.destroy();
-    this.floorGfx = this.plumeGfx = this.giltGfx = this.airGfx = this.hudGfx = null;
-    for (const t of this.labels) t.destroy();
+    for (const g of [this.floorGfx, this.tycoonGfx, this.npcTycoonGfx, this.ballGfx, this.airGfx, this.hudGfx]) g?.destroy();
+    this.floorGfx = this.tycoonGfx = this.npcTycoonGfx = this.ballGfx = this.airGfx = this.hudGfx = null;
+    for (const t of [...this.labels, ...this.priceLabels, ...this.padLabels]) t.destroy();
     this.labels = [];
-    for (const t of this.priceLabels) t.destroy();
     this.priceLabels = [];
+    this.padLabels = [];
+    this.padCaption?.destroy();
+    this.padCaption = null;
 
-    this.api.setStatusIndicator('gold-purse', null);
-    this.api.setStatusIndicator('gold-floor', null);
-    this.api.setStatusIndicator('gold-cloak', null);
-    this.api.setStatusIndicator('gold-ruby', null);
-    this.api.setStatusIndicator('gold-augment', null);
-    this.api.setStatusIndicator('gold-riches', null);
+    for (const id of ['purse', 'floor', 'ruby', 'augment', 'rebirth', 'life', 'health']) {
+      this.api.setStatusIndicator(`gold-${id}`, null);
+    }
     for (const st of STATS) this.api.setStatusIndicator(`gold-stat-${st.kind}`, null);
   }
 
@@ -695,8 +705,9 @@ export class FortuneKit {
     const { scene } = this.api;
     // Fighters sit at depth 5.
     if (!this.floorGfx) this.floorGfx = scene.add.graphics().setDepth(2);
-    if (!this.plumeGfx) this.plumeGfx = scene.add.graphics().setDepth(3.5);
-    if (!this.giltGfx) this.giltGfx = scene.add.graphics().setDepth(5.6);
+    if (!this.tycoonGfx) this.tycoonGfx = scene.add.graphics().setDepth(2.6).setScrollFactor(0).setScale(TYCOON_SCALE);
+    if (!this.npcTycoonGfx) this.npcTycoonGfx = scene.add.graphics().setDepth(2.6).setScrollFactor(0).setScale(TYCOON_SCALE);
+    if (!this.ballGfx) this.ballGfx = scene.add.graphics().setDepth(4.5);
     if (!this.airGfx) this.airGfx = scene.add.graphics().setDepth(9);
     if (!this.hudGfx) this.hudGfx = scene.add.graphics().setDepth(16);
   }
@@ -713,8 +724,9 @@ export class FortuneKit {
    * Called for every player regardless of element (the call site predates this element), so it
    * early-outs unless the player is the alchemist.
    *
-   * A press that lands on one of the Advance cards takes that card and is spent — it does not
-   * also throw grass. Every other held click throws grass on the cooldown.
+   * One press does one thing, checked in this order: take an Advance card, buy a tycoon pad, or —
+   * while the cane is out — start drawing it back. Only a press that did none of those throws
+   * grass, and a held click keeps throwing on the cooldown.
    */
   handleInput(time: number, pointer: Phaser.Input.Pointer, mouseX: number, mouseY: number): void {
     void time;
@@ -726,8 +738,14 @@ export class FortuneKit {
     const down = pointer.isDown;
     const pressed = down && !this.wasDown;
     this.wasDown = down;
+    const right = pointer.rightButtonDown();
+    const rightPressed = right && !this.wasRight;
+    this.wasRight = right;
     if (!down) this.pressSpent = false;
-    if (!this.alive(p)) return;
+    if (!this.alive(p)) {
+      if (s.cue) s.cue.pullFrom = null;
+      return;
+    }
 
     const ctx = this.api.buildPlayerContext(mouseX, mouseY);
 
@@ -735,42 +753,59 @@ export class FortuneKit {
       const i = this.cardUnder('player', mouseX, mouseY);
       if (i >= 0) {
         const card = s.offer.cards[i];
-        if (s.gold >= card.price) {
-          this.pick('player', i);
-        } else {
-          this.announce(p.x, p.y - 46, `NEED ${card.price} GOLD`, FOR.blood, 11);
-          Sfx.playAt('ui-click', p.x, { rate: 0.7, volume: 0.4 });
-        }
+        if (s.gold >= card.price) this.pick('player', i);
+        else Sfx.playAt('ui-denied', p.x, { volume: 0.4 });
         this.pressSpent = true;
       }
     }
+    // The tycoon's pads.
+    if (pressed && !this.pressSpent) {
+      const pad = this.padUnder('player', mouseX, mouseY);
+      if (pad) {
+        this.pressPad('player', pad);
+        this.pressSpent = true;
+      }
+    }
+    // The cue aims at the cursor. Holding the button draws it back (the longer, the harder) and
+    // releasing shoots. While the cane is out the click is the cane's, so no grass is thrown.
+    const cue = s.cue;
+    if (cue) {
+      if (pressed && !this.pressSpent && this.now >= cue.readyAt) cue.pullFrom = this.now;
+      if (cue.pullFrom !== null && !down) {
+        const aim = this.cueAim('player');
+        this.strike('player', p.x, p.y, aim.ang, aim.power);
+      }
+      if (down) this.pressSpent = true;
+    }
     if (down && !this.pressSpent) p.castAbility('fortune-fray', ctx);
+
+    // Click+ Life-support: right click throws the switch on the refiner.
+    if (rightPressed && this.up('player', 'click')) this.setLifeSupport('player', !s.tycoon.lifeSupport);
 
     if (Phaser.Input.Keyboard.JustDown(this.api.eKey)) {
       // Checked before the cast: a refused cast still stamps its cooldown *and voices itself*.
       if (s.offer) {
         // Already choosing.
       } else if (s.gold < ADVANCE_COST) {
-        this.announce(p.x, p.y - 46, `NEED ${ADVANCE_COST} GOLD`, FOR.blood, 11);
-        Sfx.playAt('ui-click', p.x, { rate: 0.7, volume: 0.4 });
+        Sfx.playAt('ui-denied', p.x, { volume: 0.4 });
       } else {
         p.castAbility('fortune-advance', ctx);
       }
     }
-    // Mastery: whichever of R/F/Q Rags to Riches was dropped on stops being its own ability.
-    const bound = this.ragsSlot('player');
+    // Mastery: whichever of R/F/Q No Pain, No Gain was dropped on stops being its own ability.
+    const bound = this.painSlot('player');
     if (Phaser.Input.Keyboard.JustDown(this.api.rKey)) {
-      if (bound === 'r') this.tryRags('player');
-      else p.castAbility('fortune-plume', ctx);
+      if (bound === 'r') this.tryPain('player', mouseX, mouseY);
+      else p.castAbility('fortune-billiards', ctx);
     }
     if (Phaser.Input.Keyboard.JustDown(this.api.fKey)) {
-      if (bound === 'f') this.tryRags('player');
+      if (bound === 'f') this.tryPain('player', mouseX, mouseY);
       else p.castAbility('fortune-heart', ctx);
     }
     if (Phaser.Input.Keyboard.JustDown(this.api.qKey)) {
-      if (bound === 'q') this.tryRags('player');
-      else if (this.midasTarget('player', mouseX, mouseY)) p.castAbility('fortune-midas', ctx);
-      else this.announce(p.x, p.y - 46, 'NO TARGET', FOR.blood, 11);
+      if (bound === 'q') this.tryPain('player', mouseX, mouseY);
+      else if (this.canRebirth('player')) p.castAbility('fortune-rebirth', ctx);
+      else Sfx.playAt('ui-denied', p.x, { volume: 0.4 });
     }
   }
 
@@ -847,21 +882,27 @@ export class FortuneKit {
     if (!ghost) this.announce(f.x, f.y - 40, `-${ADVANCE_COST} 🪙`, FOR.gold, 11);
   }
 
-  /** R — Gold Plume: the bag is thrown at the cursor and bursts when it lands. */
-  doPlume(owner: Owner, tx: number, ty: number): void {
+  /**
+   * R — Billiards: a handful of balls lobbed to the floor ahead, and the cane comes out as a cue.
+   * The rack is the same shape every time, so an online replica racks the same table.
+   */
+  doBilliards(owner: Owner, tx: number, ty: number): void {
     const f = this.fighter(owner);
     if (!this.alive(f)) return;
     this.ensureLayers();
-    this.hasten(owner, 'fortune-plume');
+    this.hasten(owner, 'fortune-billiards');
+    const s = this.side(owner);
     const ang = Math.atan2(ty - f.y, tx - f.x);
-    const d = Math.min(PLUME_RANGE, Phaser.Math.Distance.Between(f.x, f.y, tx, ty));
-    this.bags.push({
-      owner, fx: f.x, fy: f.y,
-      tx: this.clampX(f.x + Math.cos(ang) * d), ty: this.clampY(f.y + Math.sin(ang) * d),
-      start: this.now, cloak: this.up(owner, 'r'),
-    });
+    const d = Phaser.Math.Clamp(Phaser.Math.Distance.Between(f.x, f.y, tx, ty), RACK_MIN, RACK_MAX);
+    const spots = rackSpots(f.x + Math.cos(ang) * d, f.y + Math.sin(ang) * d, ang, RACK_BALLS).map((p) => ({
+      x: Phaser.Math.Clamp(p.x, this.left + BALL_R, this.right - BALL_R),
+      y: Phaser.Math.Clamp(p.y, this.top + BALL_R, this.bottom - BALL_R),
+    }));
+    this.tosses.push({ owner, fx: f.x, fy: f.y, spots, start: this.now });
+    s.cue = { readyAt: this.now + TOSS_MS, until: this.now + TOSS_MS + CUE_MS, pullFrom: null };
+    s.shotOpen = false;
     this.avatar(owner)?.play('sweep', ang);
-    Sfx.playAt('whoosh', f.x, { rate: 0.9, volume: 0.6 });
+    Sfx.playAt('whoosh', f.x, { rate: 1.1, volume: 0.6 });
   }
 
   /** F — Heart of Gold: a lunge with the cane. */
@@ -883,44 +924,54 @@ export class FortuneKit {
     Sfx.playAt('whoosh', f.x, { rate: 1.25, volume: 0.8 });
   }
 
-  /** Q — Midas Curse. */
-  doMidas(owner: Owner, tx: number, ty: number): void {
+  /** The tycoon is complete and there is a rebirth left to take. */
+  private canRebirth(owner: Owner): boolean {
+    const s = this.side(owner);
+    return s.rebirths < REBIRTH_MAX && s.tycoon.complete;
+  }
+
+  /**
+   * Q — Rebirth. Everything gold bought on the tycoon is gone; what comes back is a better
+   * alchemist. A replica is taken at its word (its tycoon is only a picture here) and is given no
+   * gold health — that arrives with its vitals.
+   */
+  doRebirth(owner: Owner): void {
     const f = this.fighter(owner);
     if (!this.alive(f)) return;
     this.ensureLayers();
-    this.hasten(owner, 'fortune-midas');
-    const v = this.midasTarget(owner, tx, ty);
-    this.fx(owner).midasCast(f.x, f.y);
+    this.hasten(owner, 'fortune-rebirth');
+    const s = this.side(owner);
+    const ghost = this.isReplica(owner);
+    if (s.rebirths >= REBIRTH_MAX || (!ghost && !s.tycoon.complete)) return;
+    s.rebirths++;
+    s.rebirthAt = this.now;
+    s.tycoon.rebirth();
+    if (!ghost) {
+      this.hook(owner);
+      f.goldHp += REBIRTH_GOLD_HP;
+      // Q+ Golden Glory: one machine nobody can buy, built before the first pad is.
+      if (this.up(owner, 'q')) {
+        const pool = GLORIES.filter((g) => !s.tycoon.glory.has(g));
+        if (pool.length) {
+          const g = Phaser.Utils.Array.GetRandom(pool);
+          s.tycoon.glory.add(g);
+          if (owner === 'player' && this.api.isOnline) this.api.broadcastMasteryCast(`gold-net:glory:${g}`);
+        }
+      }
+    }
+    this.record(owner, 'rebirths');
+    this.fx(owner).rebirth(f.x, f.y, s.rebirths);
     this.avatar(owner)?.play('raise');
-    if (!v) return;
-    this.curse(owner, v);
+    Sfx.playAt('level-up', f.x, { rate: 0.8, volume: 0.9 });
+    Sfx.playAt('money', f.x, { rate: 0.5, volume: 1 });
   }
 
-  private curse(by: Owner, v: Fighter): void {
-    v.midasUntil = Math.max(v.midasUntil, this.now + MIDAS_MS);
-    this.curses.set(v, { by, start: this.now, lx: v.x, ly: v.y, live: true });
-    this.fx(by).midasStrike(v.x, v.y);
-    this.announce(v.x, v.y - 50, '👑 MIDAS CURSE', FOR.goldLit, 14);
-    Sfx.playAt('money', v.x, { rate: 0.6, volume: 0.9 });
-  }
-
-  /** Whoever the curse would land on: nearest the cursor if anyone is near it, else nearest the caster. */
-  private midasTarget(owner: Owner, tx: number, ty: number): Fighter | null {
+  /** Gold health pays whoever is wearing it as it is cut away. Installed once per body. */
+  private hook(owner: Owner): void {
     const f = this.fighter(owner);
-    let best: Fighter | null = null;
-    let bestD = MIDAS_PICK_R;
-    const list = this.targetsOf(owner);
-    for (const t of list) {
-      const d = Phaser.Math.Distance.Between(tx, ty, t.x, t.y);
-      if (d < bestD) { bestD = d; best = t; }
-    }
-    if (best) return best;
-    bestD = Infinity;
-    for (const t of list) {
-      const d = Phaser.Math.Distance.Between(f.x, f.y, t.x, t.y);
-      if (d < bestD) { bestD = d; best = t; }
-    }
-    return best;
+    if (!f || this.hooked.has(f)) return;
+    this.hooked.add(f);
+    f.onGoldHpAbsorb = (spent) => this.earn(owner, spent / GOLD_HP_PER_COIN);
   }
 
   // ── Advance ────────────────────────────────────────────────────────────────
@@ -1092,34 +1143,28 @@ export class FortuneKit {
     void time;
     const playerIs = this.isGold('player');
     const npcIs = this.isGold('npc');
-    const anyState = this.blades.length || this.bags.length || this.plumes.length || this.hearts.size
-      || this.curses.size || this.stuns.size || this.patches.length || this.loot.length
-      || this.pile.length || this.statues.size
-      || this.api.player?.goldHeartUntil || this.api.player?.midasUntil
-      || this.api.player?.goldHexUntil || this.api.player?.goldStatueUntil || this.api.player?.goldVigorCut;
+    const anyState = this.blades.length || this.balls.length || this.tosses.length || this.hearts.size
+      || this.stuns.size || this.patches.length
+      || this.api.player?.goldHeartUntil || this.api.player?.goldHexUntil || this.api.player?.goldVigorCut;
     if (!playerIs && !npcIs && !anyState) return;
 
     this.ensureLayers();
     this.ensureAvatars();
+    if (this.startAt < 0) this.startAt = this.now;
     const dt = delta / 1000;
     this.vizT += dt;
 
     this.updateLunges();
     this.updateBlades(dt);
-    this.updatePile();
-    this.updateBags();
-    this.updatePlumes(dt);
-    this.updateGlitterShots();
+    this.updateBilliards(dt);
     this.updateHearts(dt);
     this.updateHex(delta);
     this.updateStuns();
-    this.updateCurses();
-    this.updateStatues();
-    this.updateLoot();
+    this.updateTycoons(delta);
     this.updateFloor(delta);
     this.updateOffers();
     this.updateAugment(delta);
-    this.updateNpcMastery();
+    this.updateNpc();
     this.updateSelf(dt);
     this.flushPops();
 
@@ -1217,176 +1262,286 @@ export class FortuneKit {
           break;
         }
       }
-      // Click+ Accumulation: a blade that falls as far as the floor stays on it.
-      if (!gone && b.vy > 0 && b.y >= this.bottom && this.up(b.owner, 'click')) {
-        this.landBlade(b);
-        gone = true;
-      }
       if (gone) this.blades.splice(i, 1);
     }
   }
 
-  // ── Click+ Accumulation ────────────────────────────────────────────────────
+  // ── The tycoon ─────────────────────────────────────────────────────────────
 
-  private landBlade(b: Blade): void {
-    const x = this.clampX(b.x);
-    const y = this.bottom + (Math.random() - 0.3) * 6;
-    this.pile.push({
-      owner: b.owner, x, y, ang: (Math.random() < 0.5 ? 0 : Math.PI) + (Math.random() - 0.5) * 0.5,
-      seed: Math.random() * 999, born: this.now, launchAt: 0, tx: 0, ty: 0,
-    });
-    this.fx(b.owner).bladeLand(x, y, Math.atan2(b.vy, b.vx));
-    // The oldest resting blade gives way to a new one past the cap.
-    let mine = 0;
-    for (const p of this.pile) if (p.owner === b.owner) mine++;
-    if (mine > PILE_MAX) {
-      const i = this.pile.findIndex((p) => p.owner === b.owner && !p.launchAt);
-      if (i >= 0) this.pile.splice(i, 1);
-    }
+  /** A tycoon is drawn and run for every alchemist, except the placeholder npc slot of an Invasion. */
+  private tycoonShown(owner: Owner): boolean {
+    return this.isGold(owner) && !(owner === 'npc' && this.api.isInvasion);
   }
 
-  /**
-   * The pile rolls for a burst on a clock that speeds up as it grows, with a chance that grows
-   * with it. A burst picks the blades lying nearest the target, stirs them for a beat, then lifts
-   * them on arcs that come down through where the target was. An online replica never rolls:
-   * its machine does, and the burst arrives as `fortune-burst`.
-   */
-  private updatePile(): void {
-    if (!this.pile.length) return;
-    for (let i = this.pile.length - 1; i >= 0; i--) {
-      const p = this.pile[i];
-      if (!p.launchAt || this.now < p.launchAt) continue;
-      this.pile.splice(i, 1);
-      this.launchPileBlade(p);
+  /** Top-left corner of `owner`'s strip, in screen pixels (the strip itself is drawn at TYCOON_SCALE). */
+  private tycoonOrigin(owner: Owner): { x: number; y: number } {
+    if (owner === 'player') return { x: TYCOON_X, y: TYCOON_Y };
+    return {
+      x: this.api.width - TYCOON_X - TYCOON_W * TYCOON_SCALE,
+      y: this.api.height - TYCOON_BOTTOM_GAP - TYCOON_H * TYCOON_SCALE,
+    };
+  }
+
+  /** The pads on show: the next link of each chain, and the shard pad for anyone with Click+. */
+  private padsOf(owner: Owner): TycoonPad[] {
+    return this.side(owner).tycoon.pads(this.up(owner, 'click'));
+  }
+
+  /** The pad under a world-space point. The strip is pinned to the screen, so the camera is taken off. */
+  private padUnder(owner: Owner, wx: number, wy: number): TycoonPad | null {
+    if (!this.tycoonShown(owner)) return null;
+    const cam = this.api.scene.cameras.main;
+    const sx = wx - cam.scrollX;
+    const sy = wy - cam.scrollY;
+    const o = this.tycoonOrigin(owner);
+    for (const pad of this.padsOf(owner)) {
+      const lx = (sx - o.x) / TYCOON_SCALE;
+      const ly = (sy - o.y) / TYCOON_SCALE;
+      if (Math.abs(lx - pad.x) <= PAD_W / 2 + 3 && Math.abs(ly - pad.y) <= PAD_H / 2 + 3) return pad;
     }
+    return null;
+  }
+
+  private canPay(owner: Owner, pad: TycoonPad): boolean {
+    if (pad.currency === 'shards') return owner === 'player' ? this.shardsNow() >= pad.price : true;
+    return this.side(owner).gold >= pad.price;
+  }
+
+  /** The player's shards, re-read a couple of times a second rather than out of storage every frame. */
+  private shardsNow(): number {
+    if (this.now >= this.shardsAt) {
+      this.shardsAt = this.now + 400;
+      this.shardsSeen = this.api.shards;
+    }
+    return this.shardsSeen;
+  }
+
+  /** The player clicked a pad: pay for it if they can. */
+  private pressPad(owner: Owner, pad: TycoonPad): void {
+    const s = this.side(owner);
+    const f = this.fighter(owner);
+    if (pad.currency === 'shards') {
+      if (owner === 'player' && !this.api.spendShards(pad.price)) {
+        Sfx.playAt('ui-denied', f.x, { volume: 0.4 });
+        return;
+      }
+    } else {
+      if (s.gold < pad.price) {
+        Sfx.playAt('ui-denied', f.x, { volume: 0.4 });
+        return;
+      }
+      s.gold -= pad.price;
+    }
+    this.build(owner, pad.id);
+    if (owner === 'player' && this.api.isOnline) this.api.broadcastMasteryCast(`gold-net:buy:${pad.id}`);
+  }
+
+  /** Put a bought machine on the strip. */
+  private build(owner: Owner, id: PadId): void {
+    const s = this.side(owner);
+    if (id === 'shard') s.tycoon.shardDropper = true;
+    else s.tycoon.buy(id);
+    const f = this.fighter(owner);
+    Sfx.playAt('ui-purchase', f?.x ?? 0, { rate: 1.1, volume: 0.5 });
+    Sfx.playAt('gear-turn', f?.x ?? 0, { rate: 1.2, volume: 0.35 });
+    if (s.tycoon.complete) Sfx.playAt('jackpot', f?.x ?? 0, { volume: 0.5 });
+  }
+
+  /** Click+ Life-support: the refiner pays health instead of gold, and the droppers slow down. */
+  private setLifeSupport(owner: Owner, on: boolean): void {
+    const s = this.side(owner);
+    if (s.tycoon.lifeSupport === on) return;
+    s.tycoon.lifeSupport = on;
+    const f = this.fighter(owner);
+    Sfx.playAt(on ? 'ui-toggle-on' : 'ui-toggle-off', f?.x ?? 0, { volume: 0.6 });
+    if (owner === 'player' && this.api.isOnline) this.api.broadcastMasteryCast(`gold-net:life:${on ? 1 : 0}`);
+  }
+
+  /** A piece of ore reached the refiner. A replica's refiner only turns: its purse and health are its own. */
+  private payOut(owner: Owner, value: number): void {
+    const s = this.side(owner);
+    if (!s.tycoon.lifeSupport) {
+      this.earn(owner, value);
+      return;
+    }
+    if (this.isReplica(owner)) return;
+    const f = this.fighter(owner);
+    if (this.alive(f)) f.heal(value * this.earnMult(owner) * LIFE_HP_PER_GOLD);
+  }
+
+  private updateTycoons(delta: number): void {
     for (const owner of BOTH) {
-      if (this.isReplica(owner) || !this.up(owner, 'click') || !this.alive(this.fighter(owner))) continue;
-      const s = this.side(owner);
-      if (this.now < s.pileRollAt) continue;
-      let n = 0;
-      for (const p of this.pile) if (p.owner === owner && !p.launchAt) n++;
-      if (n < PILE_MIN) continue;
-      s.pileRollAt = this.now + Math.max(PILE_ROLL_MS_MIN, PILE_ROLL_MS_MAX - PILE_ROLL_MS_PER * n);
-      if (Math.random() >= n / (n + PILE_CHANCE_K)) continue;
-      // Whoever is nearest the floor is the one the floor goes for.
-      let t: Fighter | null = null;
-      for (const c of this.targetsOf(owner)) if (!t || c.y > t.y) t = c;
-      if (!t) continue;
-      const count = Math.min(n, BURST_BASE + Math.round(n * BURST_SHARE));
-      this.burst(owner, t.x, t.y, count);
-      if (owner === 'player' && this.api.isOnline) {
-        this.api.broadcastMasteryCast(`fortune-burst:${Math.round(t.x)}:${Math.round(t.y)}:${count}`);
-      }
+      if (!this.tycoonShown(owner) || !this.alive(this.fighter(owner))) continue;
+      this.side(owner).tycoon.update(delta, { paid: (v) => this.payOut(owner, v) });
     }
   }
 
-  private burst(owner: Owner, tx: number, ty: number, count: number): void {
-    const resting = this.pile.filter((p) => p.owner === owner && !p.launchAt)
-      .sort((a, b) => Math.abs(a.x - tx) - Math.abs(b.x - tx))
-      .slice(0, count);
-    if (!resting.length) return;
-    let lo = Infinity;
-    let hi = -Infinity;
-    resting.forEach((p, i) => {
-      p.launchAt = this.now + BURST_WARN_MS + i * BURST_STAGGER_MS;
-      p.tx = tx + (Math.random() - 0.5) * 2 * BURST_SCATTER;
-      p.ty = ty + (Math.random() - 0.5) * 2 * BURST_SCATTER;
-      lo = Math.min(lo, p.x);
-      hi = Math.max(hi, p.x);
-    });
-    this.fx(owner).pileBurst((lo + hi) / 2, this.bottom, Math.max(30, hi - lo));
-    Sfx.playAt('whoosh', (lo + hi) / 2, { rate: 0.7, volume: 0.6 });
-  }
+  // ── Billiards ──────────────────────────────────────────────────────────────
 
-  /** A lifted blade: thrown on the arc that passes through its aim point after the flight time. */
-  private launchPileBlade(p: PileBlade): void {
-    const T = Phaser.Math.FloatBetween(BURST_FLIGHT_MIN, BURST_FLIGHT_MAX);
-    const vx = (p.tx - p.x) / T;
-    const vy = (p.ty - p.y - 0.5 * FRAY_GRAVITY * T * T) / T;
-    this.blades.push({
-      owner: p.owner, x: p.x, y: p.y - 2, vx, vy,
-      // Already gold: it is the gilt that fell.
-      born: this.now - FRAY_GILD_MS, seed: p.seed, dmg: FRAY_DAMAGE * this.might(p.owner),
-    });
-  }
-
-  /** Online: the opponent's pile burst. */
-  replayNpcUpgradeAct(id: string): void {
-    if (!id.startsWith('fortune-burst:')) return;
-    const [, tx, ty, n] = id.split(':').map(Number);
-    if (![tx, ty, n].every(Number.isFinite)) return;
-    this.ensureLayers();
-    this.burst('npc', tx, ty, n);
-  }
-
-  private updateBags(): void {
-    for (let i = this.bags.length - 1; i >= 0; i--) {
-      const b = this.bags[i];
-      if (this.now - b.start < BAG_MS) continue;
-      this.bags.splice(i, 1);
-      const r = PLUME_R * (b.cloak ? CLOAK_R_MULT : 1);
-      this.plumes.push({
-        owner: b.owner, x: b.tx, y: b.ty, r, cloak: b.cloak, born: this.now, until: this.now + PLUME_MS,
-        seed: Math.random() * 999, tickAt: this.now + PLUME_TICK_MS,
-      });
-      this.fx(b.owner).bagBurst(b.tx, b.ty, r);
-      Sfx.playAt('explosion-small', b.tx, { rate: 1.5, volume: 0.45 });
+  /**
+   * Where `owner`'s cue is pointing and how far back it is drawn. The player's points at the
+   * cursor and is drawn back for as long as the button is held; the bot's follows its plan,
+   * winding up as it thinks.
+   */
+  private cueAim(owner: Owner): { ang: number; power: number } {
+    const s = this.side(owner);
+    const f = this.fighter(owner);
+    if (owner === 'npc' && !this.isReplica('npc')) {
+      const plan = this.npcCuePlan();
+      const wind = s.cue ? Phaser.Math.Clamp((this.now - s.cue.readyAt) / NPC_CUE_THINK_MS, 0, 1) : 0;
+      return { ang: plan?.ang ?? Math.atan2(s.aimY - f.y, s.aimX - f.x), power: wind * 0.9 };
     }
-  }
-
-  private updatePlumes(dt: number): void {
-    for (const owner of BOTH) this.side(owner).cloaked = false;
-    this.inGlitter.clear();
-    for (let i = this.plumes.length - 1; i >= 0; i--) {
-      const pl = this.plumes[i];
-      if (this.now >= pl.until) { this.plumes.splice(i, 1); continue; }
-      // The owner, standing in it, is paid.
-      const f = this.fighter(pl.owner);
-      if (this.alive(f) && this.isGold(pl.owner)
-        && Phaser.Math.Distance.Between(f.x, f.y, pl.x, pl.y) <= pl.r) {
-        this.earn(pl.owner, PLUME_GOLD_PER_SEC * dt);
-        if (pl.cloak) this.side(pl.owner).cloaked = true;
-      }
-      // R+ Glittery Cloak: anyone of theirs in the glitter cannot see straight.
-      if (pl.cloak) {
-        for (const t of this.targetsOf(pl.owner)) {
-          if (Phaser.Math.Distance.Between(t.x, t.y, pl.x, pl.y) > pl.r + this.bodyR(t) * 0.5) continue;
-          this.inGlitter.add(t);
-          if (t === this.api.player) continue;
-          if (this.now >= t.aimOffsetBonusUntil || t.aimOffsetBonusDeg < CLOAK_AIM_DEG) t.aimOffsetBonusDeg = CLOAK_AIM_DEG;
-          t.aimOffsetBonusUntil = Math.max(t.aimOffsetBonusUntil, this.now + 250);
-        }
-      }
-      if (this.now < pl.tickAt) continue;
-      pl.tickAt += PLUME_TICK_MS;
-      const dmg = PLUME_DPS * (PLUME_TICK_MS / 1000) * this.might(pl.owner);
-      for (const t of this.targetsOf(pl.owner)) {
-        if (Phaser.Math.Distance.Between(t.x, t.y, pl.x, pl.y) > pl.r + this.bodyR(t) * 0.5) continue;
-        t.takeDamage(dmg);
-      }
-    }
+    const ang = Math.atan2(s.aimY - f.y, s.aimX - f.x);
+    const from = s.cue?.pullFrom;
+    if (from === null || from === undefined) return { ang, power: 0 };
+    return { ang, power: Phaser.Math.Clamp((this.now - from) / CUE_PULL_MS, CUE_POWER_MIN, 1) };
   }
 
   /**
-   * R+ Glittery Cloak, for a player standing in an enemy's glitter: the bot and husks aim through
-   * `aimOffsetBonusDeg`, but a player aims with the mouse, so their own shots are knocked off line
-   * as they leave the hand. Online this runs on the victim's machine, which replays the plume.
+   * The shot. The cane thrusts from `(ox, oy)` along `ang`: the first of the striker's balls in its
+   * line leaves at a speed set by `power`, and anybody standing in the line (as far as that ball)
+   * is poked. The cane goes away afterwards — Billiard Blitz is what brings it back.
    */
-  private updateGlitterShots(): void {
-    const p = this.api.player;
-    if (!p || !this.inGlitter.has(p)) return;
-    const group = this.api.projectiles;
-    if (!group) return;
-    for (const obj of group.getChildren()) {
-      if (!(obj instanceof Projectile) || !obj.active || !obj.isFromPlayer || obj.isHeal) continue;
-      if (this.glitterShots.has(obj)) continue;
-      this.glitterShots.add(obj);
-      if (Phaser.Math.Distance.Between(obj.x, obj.y, p.x, p.y) > CLOAK_SHOT_R) continue;
-      const body = obj.body as Phaser.Physics.Arcade.Body | null;
-      if (!body) continue;
-      const a = (Math.random() * 2 - 1) * CLOAK_JITTER;
-      body.velocity.rotate(a);
-      obj.rotation += a;
+  private strike(owner: Owner, ox: number, oy: number, ang: number, power: number): void {
+    const s = this.side(owner);
+    s.cue = null;
+    this.ensureLayers();
+    const dx = Math.cos(ang);
+    const dy = Math.sin(ang);
+    const ball = cueTarget(this.balls, owner, ox, oy, dx, dy, CUE_REACH, CUE_HALF_W);
+    const reach = ball ? Math.max(18, (ball.x - ox) * dx + (ball.y - oy) * dy - BALL_R) : CUE_REACH;
+    if (ball) {
+      const v = CUE_SPEED_MIN + (CUE_SPEED_MAX - CUE_SPEED_MIN) * power;
+      ball.vx = dx * v;
+      ball.vy = dy * v;
+      s.shotOpen = true;
+      this.fx(owner).cueHit(ball.x - dx * BALL_R, ball.y - dy * BALL_R, ang, power);
+      Sfx.playAt('clang', ball.x, { rate: 1.9 + power * 0.5, volume: 0.35 + power * 0.35 });
+    }
+    if (!this.isReplica(owner)) {
+      const dmg = (CUE_WHACK_MIN + (CUE_WHACK_MAX - CUE_WHACK_MIN) * power) * this.might(owner);
+      for (const t of this.targetsOf(owner)) {
+        if (this.segDist(ox, oy, ox + dx * reach, oy + dy * reach, t.x, t.y) > CUE_HALF_W + this.bodyR(t)) continue;
+        t.takeDamage(dmg);
+        this.api.spawnHitFlash(t.x, t.y, this.col(owner)(FOR.gold));
+        Sfx.playAt('hit-medium', t.x, { rate: 1.3, volume: 0.6 });
+      }
+    }
+    this.fx(owner).cueThrust(ox, oy, ang, reach);
+    this.avatar(owner)?.jab(ang);
+    Sfx.playAt('whoosh', ox, { rate: 1.7, volume: 0.4 });
+    if (owner === 'player' && this.api.isOnline) {
+      this.api.broadcastMasteryCast(
+        `gold-net:cue:${Math.round(ox)}:${Math.round(oy)}:${Math.round(ang * 1000)}:${Math.round(power * 100)}`,
+      );
+    }
+  }
+
+  private updateBilliards(dt: number): void {
+    for (const owner of BOTH) {
+      const s = this.side(owner);
+      if (s.cue && (this.now >= s.cue.until || !this.alive(this.fighter(owner)))) s.cue = null;
+    }
+    // The handful lands.
+    for (let i = this.tosses.length - 1; i >= 0; i--) {
+      const t = this.tosses[i];
+      if (this.now - t.start < TOSS_MS) continue;
+      this.tosses.splice(i, 1);
+      for (const p of t.spots) {
+        this.balls.push({
+          owner: t.owner, x: p.x, y: p.y, vx: 0, vy: 0, n: (this.ballSerial++ % 15) + 1, roll: this.ballSerial * 1.7,
+          born: this.now, until: this.now + BALL_LIFE_MS,
+        });
+      }
+      let mine = 0;
+      for (const b of this.balls) if (b.owner === t.owner) mine++;
+      while (mine > BALL_MAX) {
+        this.balls.splice(this.balls.findIndex((b) => b.owner === t.owner), 1);
+        mine--;
+      }
+      Sfx.playAt('clang', t.spots[0]?.x ?? 0, { rate: 2.4, volume: 0.3 });
+    }
+    if (!this.balls.length) return;
+    for (let i = this.balls.length - 1; i >= 0; i--) if (this.now >= this.balls[i].until) this.balls.splice(i, 1);
+
+    const circles = (owner: Owner): BodyCircle<Fighter>[] => this.targetsOf(owner)
+      .map((t) => ({ x: t.x, y: t.y, r: this.bodyR(t), ref: t }));
+    const bodies: Record<Owner, BodyCircle<Fighter>[]> = { player: circles('player'), npc: circles('npc') };
+    stepBalls(
+      this.balls, dt, { left: this.left, right: this.right, top: this.top, bottom: this.bottom },
+      (owner) => bodies[owner],
+      {
+        onClack: (x, y, speed) => this.clack(x, y, speed),
+        onWall: (x, y, speed) => this.clack(x, y, speed * 0.6),
+        onBody: (ball, t, speed) => this.ballHit(ball, t, speed),
+      },
+    );
+  }
+
+  private clack(x: number, y: number, speed: number): void {
+    if (speed < 70) return;
+    const k = Phaser.Math.Clamp(speed / 800, 0, 1);
+    this.pfx.ballClack(x, y, k);
+    if (this.now < this.clackAt) return;
+    this.clackAt = this.now + CLACK_SOUND_MS;
+    Sfx.playAt('clang', x, { rate: 2.1 + Math.random() * 0.5, volume: 0.15 + k * 0.4 });
+  }
+
+  /** A ball came off a body. Fast enough, it hurts — and with Billiard Blitz it hands the cane back. */
+  private ballHit(ball: Ball<Owner>, t: Fighter, speed: number): void {
+    if (speed < BALL_HIT_SPEED) return;
+    let seen = this.ballHits.get(ball);
+    if (!seen) {
+      seen = new Map();
+      this.ballHits.set(ball, seen);
+    }
+    if (this.now - (seen.get(t) ?? -1e9) < BALL_REHIT_MS) return;
+    seen.set(t, this.now);
+    const owner = ball.owner;
+    const k = Phaser.Math.Clamp((speed - BALL_HIT_SPEED) / (BALL_DMG_FULL_SPEED - BALL_HIT_SPEED), 0, 1);
+    this.fx(owner).ballHit(ball.x, ball.y, k);
+    Sfx.playAt('hit-medium', t.x, { rate: 1.1 + k * 0.3, volume: 0.4 + k * 0.4 });
+    // A replica's balls are a picture: its own machine decides what they did.
+    if (this.isReplica(owner)) return;
+    t.takeDamage((BALL_DMG_MIN + (BALL_DMG_MAX - BALL_DMG_MIN) * k) * this.might(owner));
+    this.api.spawnHitFlash(t.x, t.y, this.col(owner)(FOR.gold));
+    const s = this.side(owner);
+    const f = this.fighter(owner);
+    if (!s.shotOpen || !this.up(owner, 'r') || !this.alive(f)) return;
+    s.shotOpen = false;
+    s.cue = { readyAt: this.now + BLITZ_READY_MS, until: this.now + BLITZ_READY_MS + CUE_MS, pullFrom: null };
+    for (const b of this.balls) if (b.owner === owner) b.until = Math.max(b.until, this.now + BLITZ_BALL_MS);
+    this.fx(owner).blitz(f.x, f.y);
+    Sfx.playAt('ability-ready', f.x, { rate: 1.3, volume: 0.6 });
+  }
+
+  // ── Online ─────────────────────────────────────────────────────────────────
+
+  /**
+   * The opponent's actions that never go through `castAbility`: what they bought, their
+   * life-support switch, which machine a rebirth left them, every cue shot and the dagger.
+   */
+  replayNet(id: string): void {
+    const part = id.split(':');
+    if (part[0] !== 'gold-net') return;
+    const s = this.sides.npc;
+    const nums = part.slice(2).map(Number);
+    switch (part[1]) {
+      case 'buy':
+        if (part[2] === 'shard' || (PARTS as string[]).includes(part[2])) this.build('npc', part[2] as PadId);
+        break;
+      case 'life':
+        s.tycoon.lifeSupport = part[2] === '1';
+        break;
+      case 'glory':
+        if ((GLORIES as string[]).includes(part[2])) s.tycoon.glory.add(part[2] as GloryId);
+        break;
+      case 'cue':
+        if (nums.length >= 4 && nums.every(Number.isFinite)) this.strike('npc', nums[0], nums[1], nums[2] / 1000, nums[3] / 100);
+        break;
+      case 'pain':
+        if (nums.length >= 3 && nums.every(Number.isFinite)) this.tryPain('npc', nums[0], nums[1], nums[2]);
+        break;
     }
   }
 
@@ -1471,164 +1626,9 @@ export class FortuneKit {
     }
   }
 
-  // ── Midas ──────────────────────────────────────────────────────────────────
+  // ── Gold floor (mastery) ───────────────────────────────────────────────────
 
-  private updateCurses(): void {
-    // Mirrors: a curse we were told about rather than cast is still a curse on this sim.
-    for (const f of this.allFighters()) {
-      if (this.now < f.midasUntil && !this.curses.has(f)) {
-        this.curses.set(f, {
-          by: f === this.api.player ? 'npc' : 'player', start: this.now, lx: f.x, ly: f.y, live: false,
-        });
-      }
-    }
-    const purge = this.now >= this.purgeAt;
-    if (purge) this.purgeAt = this.now + PURGE_EVERY_MS;
-    for (const [v, c] of this.curses) {
-      if (!v.active || v.hp <= 0 || this.now >= v.midasUntil) {
-        // Ran its full course (a cleanse writes the timer to 0, a death ends it early).
-        const finished = v.midasUntil > 0 && v.active && v.hp > 0;
-        this.curses.delete(v);
-        v.midasUntil = 0;
-        if (finished && c.live && this.up(c.by, 'q')) this.petrify(c.by, v);
-        continue;
-      }
-      // The floor they walk on.
-      if (Phaser.Math.Distance.Between(c.lx, c.ly, v.x, v.y) >= FLOOR_STEP) {
-        c.lx = v.x;
-        c.ly = v.y;
-        this.patches.push({
-          x: v.x + (Math.random() - 0.5) * 6, y: v.y + 10 + (Math.random() - 0.5) * 6,
-          r: FLOOR_R * (0.85 + Math.random() * 0.3), seed: Math.random() * 999, born: this.now,
-        });
-        if (this.patches.length > FLOOR_MAX) this.patches.shift();
-      }
-      this.transmuteShots(v, c.by);
-      // Summons: nothing a cursed fighter builds survives being made. Invasion is skipped: the
-      // npc slot there is an ally, and husks build nothing a kit owns.
-      if (purge && !this.api.isInvasion) {
-        this.api.purgeSummons(v.x, v.y, 99999, c.by, (x, y) => {
-          this.loot.push({
-            kind: 'statue', by: c.by, x, y, fx: x, fy: y, born: this.now, r: 15,
-            seed: Math.random() * 999,
-          });
-          this.fx(c.by).transmuteSummon(x, y, 22);
-        });
-      }
-    }
-  }
-
-  /**
-   * Every shot the cursed fighter fires drops out of the air as a coin. ArenaScene's shared
-   * group carries no shooter, only a side: in a duel that side is the cursed body, in an Invasion
-   * it is every husk, so there a shot is only theirs if it is first seen close to them.
-   */
-  private transmuteShots(v: Fighter, by: Owner): void {
-    const fromPlayer = v === this.api.player;
-    const crowd = this.api.isInvasion && !fromPlayer;
-    const coinAt = (x: number, y: number): void => {
-      const tx = this.clampX(x + (Math.random() - 0.5) * 16);
-      const ty = this.clampY(y + 14 + Math.random() * 10);
-      this.loot.push({ kind: 'coin', by, x: tx, y: ty, fx: x, fy: y, born: this.now, r: 6, seed: Math.random() * 999 });
-      this.fx(by).coinDrop(x, y, tx, ty);
-    };
-    const group = this.api.projectiles;
-    if (group) {
-      for (const obj of group.getChildren().slice()) {
-        if (!(obj instanceof Projectile) || !obj.active || obj.isHeal) continue;
-        if (obj.isFromPlayer !== fromPlayer) continue;
-        if (crowd) {
-          if (this.seenShots.has(obj)) continue;
-          this.seenShots.add(obj);
-          if (Phaser.Math.Distance.Between(obj.x, obj.y, v.x, v.y) > SHOT_OWNER_R) continue;
-        }
-        const x = obj.x;
-        const y = obj.y;
-        obj.destroy();
-        coinAt(x, y);
-      }
-    }
-    if (crowd) {
-      for (const p of this.api.stealHuskShots(v)) coinAt(p.x, p.y);
-    } else {
-      const reg = this.api.projectileRegistry;
-      const side: Owner = fromPlayer ? 'player' : 'npc';
-      for (const p of reg?.within(side, v.x, v.y, 99999) ?? []) {
-        const x = p.getX();
-        const y = p.getY();
-        reg.steal(p);
-        coinAt(x, y);
-      }
-    }
-  }
-
-  // ── Q+ Full Metal Alchemy ──────────────────────────────────────────────────
-
-  private petrify(by: Owner, v: Fighter): void {
-    v.goldStatueUntil = this.now + STATUE_MS;
-    this.statues.set(v, { by, raw: v.rawDamageTaken, hit: false, live: true });
-    this.stun(v, STATUE_MS);
-    this.fx(by).statueForm(v.x, v.y);
-    this.announce(v.x, v.y - 56, '🗿 SOLID GOLD', FOR.goldLit, 15);
-    Sfx.playAt('money', v.x, { rate: 0.5, volume: 1 });
-    Sfx.playAt('hit-heavy', v.x, { rate: 0.6, volume: 0.6 });
-  }
-
-  /**
-   * A statue stands for three seconds. The one who made it chooses: hit it while it is brittle
-   * (double damage), or leave it to melt and take the three coins it leaves. A hit spends the coins.
-   * A statue this sim did not make — an online mirror — is drawn and held still, nothing more.
-   */
-  private updateStatues(): void {
-    for (const f of this.allFighters()) {
-      if (this.now < f.goldStatueUntil && !this.statues.has(f)) {
-        this.statues.set(f, {
-          by: f === this.api.player ? 'npc' : 'player', raw: f.rawDamageTaken, hit: false, live: false,
-        });
-        this.stun(f, f.goldStatueUntil - this.now);
-      }
-    }
-    for (const [v, st] of this.statues) {
-      const gone = !v.active || v.hp <= 0;
-      if (!gone && st.live && !st.hit && v.rawDamageTaken > st.raw + 0.01) {
-        st.hit = true;
-        this.record(st.by, 'statuesBroken');
-        this.fx(st.by).statueCrack(v.x, v.y);
-        this.announce(v.x, v.y - 44, 'CRACKED', FOR.brass, 11);
-      }
-      if (!gone && this.now < v.goldStatueUntil) continue;
-      this.statues.delete(v);
-      this.stuns.delete(v);
-      v.goldStatueUntil = 0;
-      if (gone) continue;
-      this.fx(st.by).statueMelt(v.x, v.y);
-      if (!st.live || st.hit || !this.isGold(st.by)) continue;
-      for (let i = 0; i < STATUE_COINS; i++) {
-        const tx = this.clampX(v.x + (i - 1) * 16 + (Math.random() - 0.5) * 6);
-        const ty = this.clampY(v.y + 22 + Math.random() * 8);
-        this.loot.push({ kind: 'coin', by: st.by, x: tx, y: ty, fx: v.x, fy: v.y, born: this.now, r: 6, seed: Math.random() * 999 });
-        this.fx(st.by).coinDrop(v.x, v.y, tx, ty);
-      }
-      Sfx.playAt('money', v.x, { rate: 1.2, volume: 0.7 });
-    }
-  }
-
-  private updateLoot(): void {
-    for (let i = this.loot.length - 1; i >= 0; i--) {
-      const l = this.loot[i];
-      if (this.now - l.born > LOOT_LIFE_MS) { this.loot.splice(i, 1); continue; }
-      if (l.kind === 'coin' && this.now - l.born < COIN_DROP_MS) continue;
-      const f = this.fighter(l.by);
-      if (!this.alive(f) || !this.isGold(l.by)) continue;
-      if (Phaser.Math.Distance.Between(f.x, f.y, l.x, l.y) > LOOT_PICK_R + l.r) continue;
-      this.loot.splice(i, 1);
-      this.earn(l.by, l.kind === 'coin' ? COIN_VALUE : STATUE_VALUE);
-      this.fx(l.by).pickup(l.x, l.y);
-      Sfx.playAt('money', l.x, { rate: l.kind === 'coin' ? 1.6 : 1.0, volume: 0.5 });
-    }
-  }
-
-  /** Gold floor: half again as fast, and a coin every three seconds spent on it. */
+  /** The gilded blood of No Pain, No Gain: a coin every other second spent standing on your own. */
   private updateFloor(delta: number): void {
     for (const owner of BOTH) {
       const s = this.side(owner);
@@ -1636,6 +1636,7 @@ export class FortuneKit {
       s.onFloor = false;
       if (!this.isGold(owner) || !this.alive(f) || !this.patches.length) continue;
       for (const p of this.patches) {
+        if (p.owner !== owner || this.now < p.gildAt + PAIN_GILD_MS) continue;
         if (Math.abs(p.x - f.x) > p.r || Math.abs(p.y - (f.y + 10)) > p.r) continue;
         if (Phaser.Math.Distance.Between(p.x, p.y, f.x, f.y + 10) <= p.r) { s.onFloor = true; break; }
       }
@@ -1650,8 +1651,8 @@ export class FortuneKit {
 
   /**
    * Everything the kit writes on bodies every frame, in one place so each field has one writer:
-   * the alchemist's own hide, mend and vigor, the Ruby picks landing on whoever he fights, a
-   * statue's brittleness and the cloak's dodge. Values from an online replica's picks never
+   * the alchemist's own hide, mend and vigor, a rebirth's thicker skin, and the Ruby picks landing
+   * on whoever he fights. Values from an online replica's picks never
    * reach here (its machine applies them and they arrive through `dm`, `spd`, `cd` and `gvig`), so
    * the local player's slow, cooldown and vigor fields are left to the mirror when online.
    */
@@ -1667,7 +1668,8 @@ export class FortuneKit {
       s.glow = Math.max(0, s.glow - dt * 2.2);
       if (!f || !this.isGold(owner) || this.isReplica(owner)) continue;
       this.recompute(owner);
-      mul(incoming, f, Math.pow(HIDE_STEP, s.stats.hide) * Math.pow(RUBY_MIGHT, s.ruby.might));
+      mul(incoming, f, Math.pow(HIDE_STEP, s.stats.hide) * Math.pow(RUBY_MIGHT, s.ruby.might) * Math.pow(REBIRTH_HIDE, s.rebirths));
+      this.hook(owner);
       if (this.alive(f)) {
         if (s.stats.mend > 0) f.heal(MEND_HPS * s.stats.mend * dt);
         const want = Math.round(VIGOR_HP * s.stats.vigor);
@@ -1686,8 +1688,7 @@ export class FortuneKit {
         if (r.stride) mul(speed, t, Math.pow(RUBY_STRIDE, r.stride));
         if (r.haste) mul(cool, t, Math.pow(RUBY_HASTE, r.haste));
         if (r.vigor) vigor.set(t, (vigor.get(t) ?? 0) + RUBY_VIGOR * r.vigor);
-        // A statue does not bleed: it would spend the coins it is waiting to drop.
-        if (r.mend && !this.statues.has(t)) {
+        if (r.mend) {
           const acc = (this.bleedAcc.get(t) ?? 0) + RUBY_BLEED_HPS * r.mend * dt;
           const whole = Math.floor(acc);
           this.bleedAcc.set(t, acc - whole);
@@ -1695,7 +1696,6 @@ export class FortuneKit {
         }
       }
     }
-    for (const [v, st] of this.statues) if (st.live) mul(incoming, v, STATUE_VULN);
 
     const mirrored = this.api.isOnline ? this.api.player : null;
     for (const f of this.allFighters()) {
@@ -1709,16 +1709,6 @@ export class FortuneKit {
         f.goldCooldownMult = 1;
       }
       this.applyVigorCut(f);
-      // R+ Glittery Cloak: only on the body's own machine, where its hits are resolved.
-      const owner: Owner | null = f === this.api.player ? 'player' : f === this.api.npc ? 'npc' : null;
-      const cloaked = !!owner && !this.isReplica(owner) && this.side(owner).cloaked && this.up(owner, 'r');
-      f.goldCloakDodge = cloaked ? CLOAK_DODGE : 0;
-      const seen = this.dodgesSeen.get(f) ?? f.goldCloakDodges;
-      if (f.goldCloakDodges > seen && this.alive(f)) {
-        this.fx(owner ?? 'player').cloakDodge(f.x, f.y);
-        this.announce(f.x, f.y - 44, '✨ DODGE', FOR.goldLit, 12);
-      }
-      this.dodgesSeen.set(f, f.goldCloakDodges);
     }
   }
 
@@ -1740,12 +1730,12 @@ export class FortuneKit {
     return this.isGold(owner) && (owner === 'player' ? this.api.masteryActive : this.api.npcMasteryActive);
   }
 
-  /** Which slot Rags to Riches was dropped on, or null. */
-  private ragsSlot(owner: Owner): 'r' | 'f' | 'q' | null {
+  /** Which slot No Pain, No Gain was dropped on, or null. */
+  private painSlot(owner: Owner): 'r' | 'f' | 'q' | null {
     if (!this.masteryOn(owner)) return null;
     for (const k of ['r', 'f', 'q'] as const) {
       const bind = owner === 'player' ? this.api.masteryBindFor(k) : this.api.npcMasteryBindFor(k);
-      if (bind === RAGS_ID) return k;
+      if (bind === PAIN_ID) return k;
     }
     return null;
   }
@@ -1759,54 +1749,69 @@ export class FortuneKit {
   }
 
   /**
-   * Rags to Riches, from the bound key, the bot, or an online peer's replay.
+   * No Pain, No Gain, from the bound key, the bot, or an online peer's replay.
    *
    * It never goes through `castAbility` — the enhancement is not in the element's ability list —
-   * so the refusals that gate every other key are repeated here. A replica pays nothing (its purse
-   * is on its own machine); the stack is counted here so its damage and its body match.
+   * so the refusals that gate every other key are repeated here. The dagger goes in on the cursor's
+   * side and the blood leaves by the other. A replica is not cut (its health is its own machine's);
+   * its splatter is laid from the seed it sent, so both floors are the same.
    */
-  private tryRags(owner: Owner): boolean {
+  private tryPain(owner: Owner, tx: number, ty: number, seed?: number): boolean {
     const f = this.fighter(owner);
     if (!this.alive(f)) return false;
     const s = this.side(owner);
-    let paid = 0;
-    if (!this.isReplica(owner)) {
+    const ghost = this.isReplica(owner);
+    if (!ghost) {
       const wall = Date.now();
       if (wall < f.disarmedUntil || wall < f.chickenUntil || wall < f.silencedUntil || wall < f.stunnedUntil) return false;
-      if (this.now - s.ragsAt < RAGS_COOLDOWN_MS) return false;
-      if (s.gold < RAGS_MIN_GOLD) {
-        if (owner === 'player') {
-          this.announce(f.x, f.y - 46, `NEED ${RAGS_MIN_GOLD} GOLD`, FOR.blood, 11);
-          Sfx.playAt('ui-click', f.x, { rate: 0.7, volume: 0.4 });
-        }
-        return false;
-      }
-      paid = s.gold;
-      s.gold = 0;
-      s.frac = 0;
+      if (this.now - s.painAt < PAIN_COOLDOWN_MS) return false;
+      if (f.hp + f.goldHp <= PAIN_MIN_HP) return false;
     }
-    s.ragsAt = this.now;
-    s.riches++;
+    s.painAt = this.now;
+    const sd = seed ?? 1 + Math.floor(Math.random() * 9000);
+    const ang = Math.atan2(ty - f.y, tx - f.x);
     this.ensureLayers();
-    this.fx(owner).ragsToRiches(f.x, f.y, s.riches);
-    this.avatar(owner)?.play('flex');
-    this.announce(f.x, f.y - 58, s.riches > 1 ? `👑 RAGS TO RICHES ×${s.riches}` : '👑 RAGS TO RICHES', FOR.goldLit, 15);
-    if (paid > 0) this.announce(f.x, f.y - 42, `-${paid} 🪙`, FOR.gold, 11);
-    Sfx.playAt('money', f.x, { rate: 0.55, volume: 1 });
-    Sfx.playAt('beam-charge', f.x, { rate: 1.4, volume: 0.5 });
-    if (owner === 'player' && this.api.isOnline) this.api.broadcastMasteryCast(RAGS_ID);
+    if (!ghost) {
+      const cut = Math.min(PAIN_SELF_DAMAGE, f.hp + f.goldHp - PAIN_MIN_HP);
+      Fighter.asNonAllyDamage(() => f.takeDamage(cut, { selfInflicted: true }));
+    }
+    this.splatter(owner, f.x, f.y, ang + Math.PI, sd);
+    this.fx(owner).painStab(f.x, f.y, ang);
+    this.avatar(owner)?.play('clap', ang);
+    Sfx.playAt('stab', f.x, { rate: 0.9, volume: 0.8 });
+    Sfx.playAt('splash', f.x, { rate: 1.4, volume: 0.4 });
+    if (owner === 'player' && this.api.isOnline) {
+      this.api.broadcastMasteryCast(`gold-net:pain:${Math.round(tx)}:${Math.round(ty)}:${sd}`);
+    }
     return true;
   }
 
-  /** Online: the opponent cashed in their purse. */
-  replayRags(): void {
-    this.tryRags('npc');
+  /**
+   * The blood: a fan thrown out along `back` that is cone-like and no more than that — it widens
+   * as it goes, the whole spray drifts to one side, each blot is thrown a little short or long, and
+   * a few strays land well outside it. Laid entirely from `seed`.
+   */
+  private splatter(owner: Owner, x: number, y: number, back: number, seed: number): void {
+    const drift = (jitter(seed, 99) - 0.5) * 0.5;
+    for (let i = 0; i < PAIN_BLOTS + PAIN_STRAYS; i++) {
+      const stray = i >= PAIN_BLOTS;
+      const u = stray ? 0.35 + jitter(seed, i + 40) * 0.65 : (i + 0.5) / PAIN_BLOTS;
+      const half = stray ? 0.75 : 0.14 + u * 0.4;
+      const a = back + drift * u + (jitter(seed, i) * 2 - 1) * half;
+      const d = 24 + Math.pow(u, 0.85) * PAIN_REACH * (0.82 + jitter(seed, i + 20) * 0.3);
+      const r = stray ? 5 + jitter(seed, i + 60) * 4 : 23 - u * 10 + jitter(seed, i + 60) * 5;
+      this.patches.push({
+        owner, x: this.clampX(x + Math.cos(a) * d), y: this.clampY(y + Math.sin(a) * d), r, seed: seed + i * 7.3,
+        born: this.now + u * 140, gildAt: this.now + PAIN_WET_MS + u * 500,
+      });
+    }
+    while (this.patches.length > FLOOR_MAX) this.patches.shift();
   }
 
   /**
-   * Gilded Augment: below 30% the purse starts paying for HP, until 55% or until it is empty. The
-   * price per second climbs the longer one stretch of healing runs; Rags to Riches stacks make it
-   * heal faster and cost less. Runs on the body's own machine — a replica's heals arrive as HP.
+   * Gilded Augment: below 30% the purse starts buying gold health, until health and gold health
+   * together are back to 55% or the purse is empty. The price per second climbs the longer one
+   * stretch runs. Runs on the body's own machine — a replica's gold health arrives with its vitals.
    */
   private updateAugment(delta: number): void {
     const dt = delta / 1000;
@@ -1818,132 +1823,153 @@ export class FortuneKit {
         s.augment = false;
         continue;
       }
-      const ratio = f.hp / Math.max(1, f.maxHp);
+      const ratio = (f.hp + f.goldHp) / Math.max(1, f.maxHp);
       const broke = s.gold <= 0 && s.augmentDebt < 1;
       if (was) s.augment = ratio < AUGMENT_TO && !broke;
       else s.augment = ratio < AUGMENT_AT && s.gold > 0;
       if (!s.augment) {
-        if (was && broke) this.announce(f.x, f.y - 46, 'OUT OF GOLD', FOR.blood, 11);
         s.augmentDebt = 0;
         continue;
       }
       if (!was) {
         s.augmentSince = this.now;
         this.fx(owner).augmentStart(f.x, f.y);
-        this.announce(f.x, f.y - 56, '✨ GILDED AUGMENT', FOR.goldLit, 13);
         Sfx.playAt('money', f.x, { rate: 0.8, volume: 0.7 });
       }
       const running = (this.now - s.augmentSince) / 1000;
-      const rate = AUGMENT_GOLD_PER_SEC * (1 + running / AUGMENT_RAMP_SEC) * Math.pow(RAGS_AUGMENT_DISCOUNT, s.riches);
-      s.augmentDebt += rate * dt;
+      s.augmentDebt += AUGMENT_GOLD_PER_SEC * (1 + running / AUGMENT_RAMP_SEC) * dt;
       while (s.augmentDebt >= 1 && s.gold > 0) {
         s.augmentDebt -= 1;
         s.gold -= 1;
         s.spent += 1;
       }
-      f.heal(AUGMENT_HPS * (1 + RAGS_AUGMENT_HEAL * s.riches) * dt);
+      this.hook(owner);
+      f.goldHp += AUGMENT_HPS * dt;
       if (Math.random() < dt * 8) this.fx(owner).augmentMote(f.x, f.y);
     }
   }
 
+  // ── Bot ────────────────────────────────────────────────────────────────────
+
   /**
-   * The bot's half of Rags to Riches: the moment it holds 20 gold and is healthy enough not to need
-   * that gold for Gilded Augment, it cashes in. Driven here, not from `NpcOpponent` — the rotation
-   * only has to leave the bound key alone (and `npcCanAdvance` saves every other purse for this).
+   * Everything the bot does that is not a cast: shop the tycoon, throw the life-support switch,
+   * take its cue shots and use its dagger. Driven here rather than from `NpcOpponent` because none
+   * of it is an ability — the rotation only reads what this publishes and stays out of the way.
    */
-  private updateNpcMastery(): void {
-    if (this.api.isOnline || this.api.isInvasion || !this.ragsSlot('npc')) return;
+  private updateNpc(): void {
+    if (this.api.isOnline || this.api.isInvasion || !this.isGold('npc')) return;
     const n = this.api.npc;
     const s = this.sides.npc;
-    if (!this.alive(n) || s.offer || s.augment || s.gold < RAGS_MIN_GOLD) return;
-    if (n.hp / Math.max(1, n.maxHp) < NPC_RAGS_HP) return;
-    if (this.now - s.ragsAt < RAGS_COOLDOWN_MS) return;
-    this.tryRags('npc');
+    if (!this.alive(n)) return;
+
+    // The tycoon first: the cheapest pad the moment the purse covers it.
+    if (this.now >= s.buyAt) {
+      s.buyAt = this.now + NPC_BUY_MS;
+      const pad = s.tycoon.cheapest();
+      if (pad && s.gold >= pad.price) this.pressPad('npc', pad);
+      else if (this.up('npc', 'click') && !s.tycoon.shardDropper && this.now - this.startAt >= NPC_SHARD_PAD_MS) this.build('npc', 'shard');
+    }
+    if (this.up('npc', 'click')) {
+      const hp = n.hp / Math.max(1, n.maxHp);
+      if (!s.tycoon.lifeSupport && hp < NPC_LIFE_ON) this.setLifeSupport('npc', true);
+      else if (s.tycoon.lifeSupport && hp > NPC_LIFE_OFF) this.setLifeSupport('npc', false);
+    }
+    if (this.stunned(n) || Date.now() < n.disarmedUntil) return;
+
+    // The cue: shoot when a ball lines up, shoot at whatever is in reach when time is short, and
+    // put the cane away rather than stand there holding it.
+    const c = s.cue;
+    if (c) {
+      if (this.now < c.readyAt + NPC_CUE_THINK_MS) return;
+      const plan = this.npcCuePlan();
+      const late = this.now >= c.readyAt + NPC_CUE_GIVE_UP_MS;
+      if (plan && (plan.shoot || (late && plan.inReach))) this.strike('npc', n.x, n.y, plan.ang, plan.shoot ? 1 : 0.75);
+      else if (late) s.cue = null;
+      return;
+    }
+
+    // Mastery: the dagger, thrown away from the target so the gold lands behind the bot.
+    if (!this.painSlot('npc') || s.offer || s.lunge) return;
+    if (n.hp / Math.max(1, n.maxHp) < NPC_PAIN_HP || this.now - s.painAt < PAIN_COOLDOWN_MS) return;
+    const t = this.targetsOf('npc')[0];
+    if (t) this.tryPain('npc', t.x, t.y);
   }
 
-  /** The mastery card: held short of full until the purse holds 20 gold to throw away. */
-  getRagsCooldownRatio(): number {
-    const s = this.sides.player;
-    const cd = Phaser.Math.Clamp((this.now - s.ragsAt) / RAGS_COOLDOWN_MS, 0, 1);
-    const paid = Phaser.Math.Clamp(s.gold / RAGS_MIN_GOLD, 0, 1);
-    return Math.min(cd, paid >= 1 ? 1 : paid * 0.95);
+  /**
+   * The bot's reading of the table. It wants a ball that, struck from where the bot stands, runs
+   * at the target: the ball whose shooting stance (behind it, on the line through the target) is
+   * nearest. Inside the cane's reach of the target itself, the cane is the shot. Side-effect-free.
+   */
+  private npcCuePlan(): CuePlan | null {
+    const n = this.api.npc;
+    if (!this.sides.npc.cue || !this.alive(n)) return null;
+    const p = this.targetsOf('npc')[0];
+    if (!p) return null;
+    const toP = Math.atan2(p.y - n.y, p.x - n.x);
+    if (Phaser.Math.Distance.Between(n.x, n.y, p.x, p.y) <= CUE_REACH + this.bodyR(p) - 6) {
+      return { ang: toP, inReach: true, shoot: true, stance: null };
+    }
+    let best: Ball<Owner> | null = null;
+    let stance = { x: n.x, y: n.y };
+    let bestD = Infinity;
+    for (const b of this.balls) {
+      if (b.owner !== 'npc') continue;
+      const d = Phaser.Math.Distance.Between(b.x, b.y, p.x, p.y) || 1;
+      const sx = b.x - ((p.x - b.x) / d) * NPC_CUE_STANCE;
+      const sy = b.y - ((p.y - b.y) / d) * NPC_CUE_STANCE;
+      const far = Phaser.Math.Distance.Between(n.x, n.y, sx, sy);
+      if (far < bestD) { bestD = far; best = b; stance = { x: this.clampX(sx), y: this.clampY(sy) }; }
+    }
+    if (!best) return { ang: toP, inReach: false, shoot: false, stance: null };
+    const nb = Phaser.Math.Distance.Between(n.x, n.y, best.x, best.y) || 1;
+    const bp = Phaser.Math.Distance.Between(best.x, best.y, p.x, p.y) || 1;
+    const align = ((best.x - n.x) / nb) * ((p.x - best.x) / bp) + ((best.y - n.y) / nb) * ((p.y - best.y) / bp);
+    const inReach = nb > 8 && nb <= CUE_REACH + BALL_R - 2;
+    return { ang: Math.atan2(best.y - n.y, best.x - n.x), inReach, shoot: inReach && align >= NPC_CUE_ALIGN, stance };
   }
 
-  /** Which slot the bot gave up for Rags to Riches, so its rotation leaves that key alone. */
-  npcRagsSlot(): 'r' | 'f' | 'q' | undefined {
-    return this.ragsSlot('npc') ?? undefined;
+  /** The mastery card: cooling down, and greyed while the dagger would be the killing blow. */
+  getPainCooldownRatio(): number {
+    return Phaser.Math.Clamp((this.now - this.sides.player.painAt) / PAIN_COOLDOWN_MS, 0, 1);
+  }
+
+  /** Which slot the bot gave up for No Pain, No Gain, so its rotation leaves that key alone. */
+  npcPainSlot(): 'r' | 'f' | 'q' | undefined {
+    return this.painSlot('npc') ?? undefined;
   }
 
   // ── Painting ───────────────────────────────────────────────────────────────
 
   private paint(): void {
     const fg = this.floorGfx;
-    const pg = this.plumeGfx;
-    const gg = this.giltGfx;
+    const tg = this.tycoonGfx;
+    const bg = this.ballGfx;
     const ag = this.airGfx;
     const hg = this.hudGfx;
-    if (!fg || !pg || !gg || !ag || !hg) return;
-    fg.clear(); pg.clear(); gg.clear(); ag.clear(); hg.clear();
-    const goldSide: Owner = this.isGold('player') ? 'player' : 'npc';
+    if (!fg || !tg || !bg || !ag || !hg) return;
+    fg.clear(); tg.clear(); bg.clear(); ag.clear(); hg.clear();
+    this.npcTycoonGfx?.clear();
 
+    // Mastery: blood, setting into gold.
     for (const p of this.patches) {
-      const a = Phaser.Math.Clamp((this.now - p.born) / 300, 0, 1);
-      goldFloor(fg, this.col(goldSide), p.x, p.y, p.r, 0.85 * a, p.seed, this.vizT);
-    }
-    for (const l of this.loot) {
-      const fade = Phaser.Math.Clamp((LOOT_LIFE_MS - (this.now - l.born)) / 1500, 0, 1);
-      if (l.kind === 'statue') {
-        goldStatue(fg, this.col(l.by), l.x, l.y, l.r, fade, l.seed, this.vizT);
-        continue;
-      }
-      // A coin still dropping is drawn by its FX; it lands here.
-      if (this.now - l.born < COIN_DROP_MS) continue;
-      goldCoin(fg, this.col(l.by), l.x, l.y, l.r, this.vizT * 2 + l.seed, fade);
+      const a = Phaser.Math.Clamp((this.now - p.born) / 140, 0, 1);
+      const gild = Phaser.Math.Clamp((this.now - p.gildAt) / PAIN_GILD_MS, 0, 1);
+      bloodBlot(fg, this.col(p.owner), p.x, p.y, p.r * (0.6 + 0.4 * a), p.seed, gild, this.vizT, 0.9 * a);
     }
 
-    // Click+: the blades on the floor. A blade a burst has picked shivers and brightens first.
-    for (const p of this.pile) {
-      const stir = p.launchAt ? Phaser.Math.Clamp(1 - (p.launchAt - this.now) / BURST_WARN_MS, 0, 1) : 0;
-      const sx = stir ? (Math.random() - 0.5) * 3 * stir : 0;
-      const sy = stir ? -stir * 3 : 0;
-      const len = PILE_BLADE_LEN;
-      const rx = p.x - Math.cos(p.ang) * len * 0.5 + sx;
-      const ry = p.y - Math.sin(p.ang) * len * 0.5 + sy;
-      const a = Phaser.Math.Clamp((this.now - p.born) / 200, 0, 1);
-      fg.fillStyle(this.col(p.owner)(FOR.ink), 0.3 * a);
-      fg.fillEllipse(p.x, p.y + 3, len, 3);
-      grassBlade(fg, this.col(p.owner), rx, ry, p.ang, len, 1, a);
-      if (stir > 0) {
-        fg.fillStyle(this.col(p.owner)(FOR.goldLit), 0.35 * stir);
-        fg.fillCircle(p.x, p.y, 6 + stir * 4);
-      }
-    }
+    this.paintTycoons();
 
-    for (const pl of this.plumes) {
-      const born = Phaser.Math.Clamp((this.now - pl.born) / 260, 0, 1);
-      const life = Phaser.Math.Clamp((pl.until - this.now) / 700, 0, 1);
-      const r = pl.r * (0.7 + 0.3 * born);
-      goldPlume(pg, this.col(pl.owner), pl.x, pl.y, r, 0.9 * born * life, this.vizT, pl.seed);
-      if (pl.cloak) glitterMotes(pg, this.col(pl.owner), pl.x, pl.y, r, born * life, this.vizT, pl.seed);
+    for (const b of this.balls) {
+      const fade = Phaser.Math.Clamp((b.until - this.now) / BALL_FADE_MS, 0, 1);
+      poolBall(bg, this.col(b.owner), b.x, b.y, BALL_R, b.n, b.roll, fade);
     }
-
-    for (const [v, c] of this.curses) {
-      if (!v.active || v.alpha <= 0.05) continue;
-      const prog = Phaser.Math.Clamp((this.now - c.start) / MIDAS_MS, 0, 1);
-      midasGilt(gg, this.col(c.by), v.x, v.y, 0.15 + prog * 0.85, this.vizT, v.alpha);
-    }
-    for (const [v, st] of this.statues) {
-      if (!v.active) continue;
-      const left = v.goldStatueUntil - this.now;
-      const melt = Phaser.Math.Clamp(1 - left / STATUE_MELT_MS, 0, 1);
-      const a = Math.max(0.4, v.alpha);
-      statueRays(gg, this.col(st.by), v.x, v.y, a * (1 - melt * 0.7), this.vizT);
-      goldStatueShell(gg, this.col(st.by), v.x, v.y, a, this.vizT, melt, st.hit);
-    }
-    for (const owner of BOTH) {
-      const f = this.fighter(owner);
-      if (!this.side(owner).cloaked || !this.alive(f) || !this.up(owner, 'r')) continue;
-      glitterCloak(gg, this.col(owner), f.x, f.y, f.alpha, this.vizT);
+    for (const t of this.tosses) {
+      const u = Phaser.Math.Clamp((this.now - t.start) / TOSS_MS, 0, 1);
+      t.spots.forEach((p, i) => {
+        const x = t.fx + (p.x - t.fx) * u;
+        const y = t.fy + (p.y - t.fy) * u;
+        poolBall(ag, this.col(t.owner), x, y, BALL_R, i + 1, u * 9 + i, 1, Math.sin(u * Math.PI));
+      });
     }
 
     for (const b of this.blades) {
@@ -1951,11 +1977,19 @@ export class FortuneKit {
       const fade = Phaser.Math.Clamp((FRAY_LIFE_MS - (this.now - b.born)) / 300, 0, 1);
       grassBlade(ag, this.col(b.owner), b.x, b.y, Math.atan2(b.vy, b.vx), FRAY_BLADE_LEN, gild, fade);
     }
-    for (const b of this.bags) {
-      const u = Phaser.Math.Clamp((this.now - b.start) / BAG_MS, 0, 1);
-      const x = b.fx + (b.tx - b.fx) * u;
-      const y = b.fy + (b.ty - b.fy) * u - Math.sin(u * Math.PI) * 60;
-      powderBag(ag, this.col(b.owner), x, y, u * 9, 1);
+
+    // The cue's sight: yours in full, the enemy's faint — enough to see where it is pointing.
+    for (const owner of BOTH) {
+      const s = this.side(owner);
+      const f = this.fighter(owner);
+      if (!s.cue || this.now < s.cue.readyAt || !this.alive(f) || this.isReplica(owner)) continue;
+      const aim = this.cueAim(owner);
+      const ball = cueTarget(this.balls, owner, f.x, f.y, Math.cos(aim.ang), Math.sin(aim.ang), CUE_REACH, CUE_HALF_W);
+      const left = Phaser.Math.Clamp((s.cue.until - this.now) / 600, 0, 1);
+      cueSight(
+        ag, this.col(owner), f.x, f.y, aim.ang, CUE_REACH, aim.power,
+        ball ? { x: ball.x, y: ball.y, r: BALL_R } : null, (owner === 'player' ? 1 : 0.45) * left, this.vizT,
+      );
     }
 
     for (const [f, h] of this.hearts) {
@@ -1964,6 +1998,69 @@ export class FortuneKit {
     }
 
     this.paintOffers(hg);
+  }
+
+  /** Both strips, their pad prices, and a caption for whichever pad the cursor is on. */
+  private paintTycoons(): void {
+    let used = 0;
+    let caption = '';
+    let capX = 0;
+    let capY = 0;
+    for (const owner of BOTH) {
+      if (!this.tycoonShown(owner)) continue;
+      const s = this.side(owner);
+      const o = this.tycoonOrigin(owner);
+      const g = owner === 'player' ? this.tycoonGfx : this.npcTycoonGfx;
+      if (!g) continue;
+      g.setPosition(o.x, o.y);
+      const pads = this.padsOf(owner);
+      const hover = owner === 'player' ? this.padUnder('player', s.aimX, s.aimY) : null;
+      // A dead alchemist's factory stands idle, dimmed.
+      const alpha = this.alive(this.fighter(owner)) ? 1 : 0.45;
+      paintTycoon(g, this.col(owner), s.tycoon, 0, 0, this.vizT, alpha, pads, (p) => this.canPay(owner, p), hover?.id ?? null);
+      for (const pad of pads) {
+        const t = this.padLabel(used++);
+        const ok = this.canPay(owner, pad);
+        t.setText(pad.currency === 'shards' ? `${pad.price}◆` : `${pad.price}`)
+          .setPosition(o.x + pad.x * TYCOON_SCALE, o.y + (pad.y - 1) * TYCOON_SCALE).setAlpha(alpha).setVisible(true)
+          .setColor(pad.currency === 'shards' ? '#eaf8ff' : ok ? '#f4fff0' : '#ffd0d0');
+      }
+      if (owner !== 'player') continue;
+      capX = o.x + (TYCOON_W * TYCOON_SCALE) / 2;
+      capY = o.y + TYCOON_H * TYCOON_SCALE + 8;
+      if (hover) {
+        const unit = hover.currency === 'shards' ? 'shards' : 'gold';
+        caption = `${hover.name.toUpperCase()}  ·  ${PAD_BLURB[hover.id]}  ·  ${hover.price} ${unit}`;
+      } else if (this.canRebirth('player') && !this.painBoundOverQ()) {
+        caption = 'TYCOON COMPLETE  ·  Q: REBIRTH';
+      } else if (s.tycoon.lifeSupport) {
+        caption = 'LIFE-SUPPORT  ·  RIGHT CLICK TO EARN GOLD AGAIN';
+      }
+    }
+    for (let i = used; i < this.padLabels.length; i++) this.padLabels[i].setVisible(false);
+    if (!caption) {
+      this.padCaption?.setVisible(false);
+      return;
+    }
+    if (!this.padCaption) {
+      this.padCaption = this.api.scene.add.text(0, 0, '', {
+        fontSize: '9px', fontFamily: FONT_UI, fontStyle: 'bold', color: '#fff3c4', align: 'center',
+        stroke: '#17110a', strokeThickness: 3,
+      }).setOrigin(0.5).setDepth(15).setScrollFactor(0);
+    }
+    this.padCaption.setText(caption).setPosition(capX, capY).setVisible(true);
+  }
+
+  private painBoundOverQ(): boolean { return this.painSlot('player') === 'q'; }
+
+  private padLabel(i: number): Phaser.GameObjects.Text {
+    while (this.padLabels.length <= i) {
+      this.padLabels.push(this.api.scene.add.text(0, 0, '', {
+        fontSize: '8px', fontFamily: FONT_DISPLAY, color: '#f4fff0', align: 'center',
+        stroke: '#17110a', strokeThickness: 2,
+      }).setOrigin(0.5).setDepth(2.7).setScrollFactor(0).setVisible(false));
+    }
+    return this.padLabels[i];
   }
 
   private paintOffers(g: Phaser.GameObjects.Graphics): void {
@@ -2055,25 +2152,45 @@ export class FortuneKit {
         const t = this.targetsOf('npc')[0];
         if (t) { s.aimX = t.x; s.aimY = t.y; }
       }
-      av.setFacing(Math.atan2(s.aimY - f.y, s.aimX - f.x));
+      // With the cane out he faces down the shot.
+      const cueOut = !!s.cue && this.now >= s.cue.readyAt;
+      const aim = cueOut ? this.cueAim(owner) : null;
+      av.setFacing(aim ? aim.ang : Math.atan2(s.aimY - f.y, s.aimX - f.x));
+      av.setCue(aim ? aim.ang : null, aim ? aim.power : 0);
       av.setGlowHand(Math.max(s.glow, s.offer ? 0.7 : 0));
       av.setGold(Math.min(1, s.gold / 30));
       av.setMastered(this.masteryOn(owner));
-      av.setGilding(s.riches);
+      av.setGilding(s.rebirths * REBIRTH_PLATES);
+      av.setRebirthFlash(Phaser.Math.Clamp(1 - (this.now - s.rebirthAt) / REBIRTH_FLASH_MS, 0, 1));
       av.update(delta, f.x, f.y, f.alpha);
     }
   }
 
   private pushStatuses(playerIs: boolean): void {
     const s = this.sides.player;
+    const p = this.api.player;
     this.api.setStatusIndicator('gold-purse', playerIs ? {
       name: 'Gold', emoji: '🪙', color: FOR.gold, priority: 150,
-      description: `Your purse. Advance (E) spends ${ADVANCE_COST}. Earned standing in your own Gold Plume (${PLUME_GOLD_PER_SEC}/s), from a gold-hearted enemy (1 per ${DAMAGE_PER_GOLD} damage they take), from Midas gold floor (1 every ${FLOOR_GOLD_MS / 1000}s on it), and from the coins and statues a cursed enemy leaves behind.`,
+      description: `Your purse. The tycoon along the top of the screen fills it: every piece of ore that reaches the refiner pays. Click a pad to buy the next machine with it, or spend ${ADVANCE_COST} on Advance (E). A gold-hearted enemy also pays 1 per ${DAMAGE_PER_GOLD} damage they take.`,
       count: s.gold,
+    } : null);
+    this.api.setStatusIndicator('gold-rebirth', playerIs && s.rebirths > 0 ? {
+      name: 'Reborn', emoji: '👑', color: FOR.goldLit, priority: 150.5,
+      description: `Reborn ${s.rebirths} of ${REBIRTH_MAX} times: +${Math.round(REBIRTH_GOLD * 100 * s.rebirths)}% gold, +${Math.round(REBIRTH_MIGHT * 100 * s.rebirths)}% damage, and ${Math.round((1 - Math.pow(REBIRTH_HIDE, s.rebirths)) * 100)}% less damage taken.`,
+      count: s.rebirths,
+    } : null);
+    this.api.setStatusIndicator('gold-health', playerIs && p?.goldHp >= 1 ? {
+      name: 'Gold Health', emoji: '💛', color: FOR.gold, priority: 150.6,
+      description: `Health made of gold, spent before your own. Every ${GOLD_HP_PER_COIN} of it an enemy cuts away pays you 1 gold.`,
+      count: Math.round(p.goldHp),
+    } : null);
+    this.api.setStatusIndicator('gold-life', playerIs && s.tycoon.lifeSupport ? {
+      name: 'Life-support', emoji: '➕', color: FOR.bloodLit, priority: 150.7,
+      description: `The refiner is paying health instead of gold — ${LIFE_HP_PER_GOLD} HP for every gold it would have made — and your droppers run ${Math.round((1 - LIFE_SUPPORT_RATE) * 100)}% slower. Right click to switch back.`,
     } : null);
     this.api.setStatusIndicator('gold-floor', playerIs && s.onFloor ? {
       name: 'Gold Floor', emoji: '✨', color: FOR.goldLit, priority: 151,
-      description: `Standing on gilded floor: ${Math.round((FLOOR_SPEED - 1) * 100)}% faster, and 1 gold every ${FLOOR_GOLD_MS / 1000} seconds.`,
+      description: `Standing on your own gilded blood: 1 gold every ${FLOOR_GOLD_MS / 1000} seconds.`,
     } : null);
     for (const st of STATS) {
       const n = playerIs ? s.stats[st.kind] : 0;
@@ -2084,18 +2201,9 @@ export class FortuneKit {
         count: shown,
       } : null);
     }
-    this.api.setStatusIndicator('gold-cloak', playerIs && this.api.player?.goldCloakDodge > 0 ? {
-      name: 'Glittery Cloak', emoji: '✨', color: FOR.goldLit, priority: 151.5,
-      description: `Standing in your own glittery plume: ${Math.round(CLOAK_DODGE * 100)}% of incoming attacks miss you.`,
-    } : null);
     this.api.setStatusIndicator('gold-augment', playerIs && s.augment ? {
       name: 'Gilded Augment', emoji: '✨', color: FOR.goldLit, priority: 151.2,
-      description: `Gold Mastery: the purse is paying for your life — ${Math.round(AUGMENT_HPS * (1 + RAGS_AUGMENT_HEAL * s.riches))} HP a second and ${Math.round((AUGMENT_SPEED - 1) * 100)}% faster, until you are back to ${Math.round(AUGMENT_TO * 100)}%. The price climbs the longer it runs.`,
-    } : null);
-    this.api.setStatusIndicator('gold-riches', playerIs && s.riches > 0 ? {
-      name: 'Rags to Riches', emoji: '👑', color: FOR.gold, priority: 151.8,
-      description: `Gold Mastery: ${s.riches} plate${s.riches > 1 ? 's' : ''} of you are solid gold — +${Math.round(RAGS_MIGHT * 100 * s.riches)}% damage, +${Math.round(RAGS_GREED * 100 * s.riches)}% gold, and Gilded Augment heals ${Math.round(RAGS_AUGMENT_HEAL * 100 * s.riches)}% more for ${Math.round((1 - Math.pow(RAGS_AUGMENT_DISCOUNT, s.riches)) * 100)}% less.`,
-      count: s.riches,
+      description: `Gold Mastery: the purse is buying you gold health — ${AUGMENT_HPS} a second, and ${Math.round((AUGMENT_SPEED - 1) * 100)}% faster — until health and gold health together are back to ${Math.round(AUGMENT_TO * 100)}%. The price climbs the longer it runs.`,
     } : null);
     const rubies = RUBY_KINDS.filter((k) => s.ruby[k] > 0);
     this.api.setStatusIndicator('gold-ruby', playerIs && rubies.length ? {
@@ -2109,10 +2217,9 @@ export class FortuneKit {
 
   private speedFor(owner: Owner): number {
     const s = this.side(owner);
-    return (1 + STRIDE_STEP * s.stats.stride) * (s.onFloor ? FLOOR_SPEED : 1) * (s.augment ? AUGMENT_SPEED : 1);
+    return (1 + STRIDE_STEP * s.stats.stride) * (s.augment ? AUGMENT_SPEED : 1);
   }
 
-  /** Stride, the gold floor, Gilded Augment and a heart attack, pulled by ArenaScene's speed block. */
   /** Memory's Rebirth: the struck side loses part of what it has built up. Returns a label, or null. */
   rebirthDrain(owner: Owner): string | null {
     const s = this.side(owner);
@@ -2122,6 +2229,7 @@ export class FortuneKit {
     return `−${take} 🪙`;
   }
 
+  /** Stride, Gilded Augment and a heart attack, pulled by ArenaScene's speed block. */
   getPlayerSpeedMult(): number {
     const p = this.api.player;
     if (!p) return 1;
@@ -2143,16 +2251,14 @@ export class FortuneKit {
 
   coinsOf(owner: Owner): number { return this.side(owner).gold; }
 
-  /** True while the bot can afford Advance and is not already choosing. */
+  /**
+   * True while the bot can afford Advance, is not already choosing, and would not be spending
+   * the tycoon's money: until the tycoon is complete, the next pad's price is kept back.
+   */
   npcCanAdvance(): boolean {
     const s = this.sides.npc;
-    if (s.offer || s.gold < ADVANCE_COST) return false;
-    // Mastery: every other purse is saved up for Rags to Riches instead of spent ten at a time.
-    if (this.ragsSlot('npc')) {
-      const picks = STATS.reduce((n, st) => n + s.plain[st.kind], 0) + s.gems.length;
-      if (s.riches * 2 <= picks) return false;
-    }
-    return true;
+    if (s.offer) return false;
+    return s.gold >= ADVANCE_COST + (s.tycoon.cheapest()?.price ?? 0);
   }
 
   npcLunging(): boolean { return !!this.sides.npc.lunge; }
@@ -2164,20 +2270,13 @@ export class FortuneKit {
     return !!h && h.by === 'npc' && this.now < p.goldHeartUntil;
   }
 
-  /**
-   * Q+ Full Metal Alchemy, for the bot: its statue is standing and it would rather have the three
-   * coins than the double damage — it is short of an Advance. Side-effect-free.
-   */
-  npcStatueHold(): boolean {
-    const p = this.api.player;
-    const st = p ? this.statues.get(p) : undefined;
-    return !!st && st.live && st.by === 'npc' && !st.hit && this.sides.npc.gold < ADVANCE_COST;
+  /** Synergy: the bot's tycoon is complete and it has a rebirth left. Side-effect-free. */
+  npcCanRebirth(): boolean {
+    return this.isGold('npc') && this.canRebirth('npc');
   }
 
-  npcMidasLive(): boolean {
-    const p = this.api.player;
-    return !!p && this.curses.get(p)?.by === 'npc' && this.now < p.midasUntil;
-  }
+  /** The bot's cane is out: the click is the cue's, and the kit takes the shot. */
+  npcCueOut(): boolean { return !!this.sides.npc.cue; }
 
   /**
    * Fray falls, so aiming at the body throws under it. The aim point that puts the clump's middle
@@ -2193,66 +2292,48 @@ export class FortuneKit {
     return { x: p.x, y: p.y - 0.5 * FRAY_GRAVITY * t * t };
   }
 
-  /** Where the bot's plume should go: on a gold-hearted target (they have to walk out), else at its own feet toward them. */
-  npcPlumeAt(): { x: number; y: number } | undefined {
-    const n = this.api.npc;
-    const p = this.api.player;
-    if (!this.alive(n) || !this.alive(p)) return undefined;
-    if (this.npcHeartLive()) return { x: p.x, y: p.y };
-    const a = Math.atan2(p.y - n.y, p.x - n.x);
-    const d = Math.min(PLUME_RANGE, Phaser.Math.Distance.Between(n.x, n.y, p.x, p.y) * 0.45);
-    return { x: n.x + Math.cos(a) * d, y: n.y + Math.sin(a) * d };
-  }
-
   /**
-   * Somewhere worth standing: its own plume while it lasts, loot it can pick up, or gold floor
-   * while Midas is laying it. Side-effect-free.
+   * Somewhere worth standing: behind the ball it means to shoot while the cane is out, otherwise
+   * on its own gilded blood. Side-effect-free.
    */
   npcSeekPoint(): { x: number; y: number } | undefined {
     const n = this.api.npc;
     if (!this.alive(n) || !this.isGold('npc')) return undefined;
     const s = this.sides.npc;
+    if (s.cue) {
+      const st = this.npcCuePlan()?.stance;
+      return st && Phaser.Math.Distance.Between(n.x, n.y, st.x, st.y) > 8 ? st : undefined;
+    }
+    if (s.onFloor) return undefined;
     let best: { x: number; y: number } | undefined;
-    let bestD = Infinity;
-    for (const pl of this.plumes) {
-      if (pl.owner !== 'npc' || pl.until - this.now < 1500) continue;
-      const d = Phaser.Math.Distance.Between(n.x, n.y, pl.x, pl.y);
-      if (d < pl.r * 0.6) return undefined;
-      if (d < NPC_PLUME_SEEK_R && d < bestD) { bestD = d; best = { x: pl.x, y: pl.y }; }
-    }
-    if (best) return best;
-    for (const l of this.loot) {
-      if (l.by !== 'npc') continue;
-      const d = Phaser.Math.Distance.Between(n.x, n.y, l.x, l.y);
-      if (d < NPC_LOOT_SEEK_R && d < bestD) { bestD = d; best = { x: l.x, y: l.y }; }
-    }
-    if (best) return best;
-    if (!s.onFloor && this.npcMidasLive()) {
-      for (const p of this.patches) {
-        const d = Phaser.Math.Distance.Between(n.x, n.y, p.x, p.y - 10);
-        if (d < NPC_FLOOR_SEEK_R && d < bestD) { bestD = d; best = { x: p.x, y: p.y - 10 }; }
-      }
+    let bestD = NPC_FLOOR_SEEK_R;
+    for (const p of this.patches) {
+      if (p.owner !== 'npc' || p.r < 12) continue;
+      const d = Phaser.Math.Distance.Between(n.x, n.y, p.x, p.y - 10);
+      if (d < bestD) { bestD = d; best = { x: p.x, y: p.y - 10 }; }
     }
     return best;
   }
 
   /**
-   * Ability tray fill. Advance shows how close the purse is to the price; Midas counts the curse
-   * down while it is on someone.
+   * Ability tray fill. Advance shows how close the purse is to the price, Billiards counts the
+   * cane down while it is out, and Rebirth fills with the tycoon — and stays empty once the third
+   * rebirth is spent.
    */
   getBarRatio(abilityId: string, time: number): number {
     const p = this.api.player;
     void time;
     const cd = p.getCooldownRatio(abilityId);
+    const s = this.sides.player;
     if (abilityId === 'fortune-advance') {
-      return Math.min(cd, Phaser.Math.Clamp(this.sides.player.gold / ADVANCE_COST, 0, 1));
+      return Math.min(cd, Phaser.Math.Clamp(s.gold / ADVANCE_COST, 0, 1));
     }
-    if (abilityId === 'fortune-midas') {
-      for (const [v, c] of this.curses) {
-        if (c.by === 'player' && this.now < v.midasUntil) {
-          return 0.1 + 0.9 * Phaser.Math.Clamp((v.midasUntil - this.now) / MIDAS_MS, 0, 1);
-        }
-      }
+    if (abilityId === 'fortune-billiards' && s.cue) {
+      return 0.1 + 0.9 * Phaser.Math.Clamp((s.cue.until - this.now) / CUE_MS, 0, 1);
+    }
+    if (abilityId === 'fortune-rebirth') {
+      if (s.rebirths >= REBIRTH_MAX) return 0;
+      return s.tycoon.complete ? cd : Math.min(cd, s.tycoon.progress * 0.95);
     }
     return cd;
   }

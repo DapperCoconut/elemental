@@ -137,103 +137,7 @@ export function grassBlade(
 
 // ── Powder bag (R) ────────────────────────────────────────────────────────
 
-/** A small leather pouch, drawstring-tied, gold dust leaking from its neck. ~10px. */
-export function powderBag(
-  g: Phaser.GameObjects.Graphics, tint: FortuneColorFn,
-  x: number, y: number, spin: number, alpha: number,
-): void {
-  if (alpha <= 0.01) return;
-  const c = Math.cos(spin), s = Math.sin(spin);
-  const rot = (px: number, py: number): Phaser.Geom.Point => P(x + px * c - py * s, y + px * s + py * c);
-  // Shadow body, then the bag itself: a round belly that pinches to a neck.
-  const belly: Phaser.Geom.Point[] = [];
-  for (let i = 0; i <= 14; i++) {
-    const a = Math.PI * 0.18 + (i / 14) * Math.PI * 1.64;
-    belly.push(rot(Math.cos(a + Math.PI / 2) * 9, Math.sin(a + Math.PI / 2) * 8.5 + 2));
-  }
-  g.fillStyle(tint(FOR.soot), alpha * 0.9);
-  g.fillPoints(belly.map((p) => P(p.x + 1, p.y + 1.5)), true);
-  g.fillStyle(tint(FOR.leather), alpha);
-  g.fillPoints(belly, true);
-  // Lit side.
-  g.fillStyle(tint(FOR.leatherLit), alpha * 0.9);
-  const lit = rot(-3, 2);
-  g.fillEllipse(lit.x, lit.y, 7, 9);
-  // Stitched seam.
-  g.lineStyle(0.9, tint(FOR.ink), alpha * 0.6);
-  const s0 = rot(0, -3), s1 = rot(0.6, 9);
-  g.lineBetween(s0.x, s0.y, s1.x, s1.y);
-  // Neck and the gold drawstring.
-  const n0 = rot(-3.4, -6.5), n1 = rot(3.4, -6.5), n2 = rot(2, -9.5), n3 = rot(-2, -9.5);
-  g.fillStyle(tint(FOR.leather), alpha);
-  g.fillPoints([n0, n1, n2, n3], true);
-  g.lineStyle(1.6, tint(FOR.gold), alpha);
-  const k0 = rot(-4, -6.6), k1 = rot(4, -6.6);
-  g.lineBetween(k0.x, k0.y, k1.x, k1.y);
-  const tie = rot(4.5, -6.6);
-  g.fillStyle(tint(FOR.goldLit), alpha);
-  g.fillCircle(tie.x, tie.y, 1.5);
-  // A wisp of dust out of the mouth.
-  const m = rot(0, -11);
-  g.fillStyle(tint(FOR.dust), alpha * 0.6);
-  g.fillCircle(m.x, m.y, 2.2);
-  twinkle(g, tint(FOR.hot), m.x + 2, m.y - 2, 2.2, alpha * 0.8);
-}
-
 // ── Gold plume (R, persistent) ────────────────────────────────────────────
-
-/**
- * The cloud of fine golden dust. Soft overlapping puffs that drift on their own slow orbits,
- * a denser core, and specks that sparkle in and out. Drawn under the fighters.
- */
-export function goldPlume(
-  g: Phaser.GameObjects.Graphics, tint: FortuneColorFn,
-  x: number, y: number, r: number, alpha: number, t: number, seed: number,
-): void {
-  if (alpha <= 0.01) return;
-  // Ground haze.
-  g.fillStyle(tint(FOR.brass), alpha * 0.12);
-  g.fillCircle(x, y, r * 1.02);
-  g.fillStyle(tint(FOR.dust), alpha * 0.1);
-  g.fillCircle(x, y, r * 0.86);
-  // Puffs.
-  const puffs = 13;
-  for (let i = 0; i < puffs; i++) {
-    const j = jitter(seed, i);
-    const a = (i / puffs) * TAU + t * (0.15 + j * 0.25) * (i % 2 ? 1 : -1);
-    const d = r * (0.25 + 0.55 * jitter(seed, i + 40));
-    const pr = r * (0.26 + 0.16 * jitter(seed, i + 80)) * (1 + 0.08 * Math.sin(t * 1.7 + i));
-    const px = x + Math.cos(a) * d;
-    const py = y + Math.sin(a) * d * 0.85;
-    g.fillStyle(tint(i % 3 === 0 ? FOR.gold : FOR.dust), alpha * 0.16);
-    g.fillCircle(px, py, pr);
-    g.fillStyle(tint(FOR.goldLit), alpha * 0.08);
-    g.fillCircle(px - pr * 0.25, py - pr * 0.25, pr * 0.55);
-  }
-  // Rim: a faint ragged edge so the boundary that hurts is readable.
-  g.lineStyle(1.2, tint(FOR.gold), alpha * 0.35);
-  g.beginPath();
-  const seg = Math.max(24, Math.round(r / 3));
-  for (let i = 0; i <= seg; i++) {
-    const a = (i / seg) * TAU;
-    const rr = r * (0.94 + 0.06 * Math.sin(a * 5 + t * 1.3 + seed));
-    const px = x + Math.cos(a) * rr, py = y + Math.sin(a) * rr;
-    if (i === 0) g.moveTo(px, py); else g.lineTo(px, py);
-  }
-  g.strokePath();
-  // Sparkling specks.
-  const specks = 22;
-  for (let i = 0; i < specks; i++) {
-    const a = jitter(seed, i + 120) * TAU + t * 0.4 * (jitter(seed, i + 7) - 0.5);
-    const d = r * Math.sqrt(jitter(seed, i + 160)) * 0.95;
-    const tw = 0.5 + 0.5 * Math.sin(t * (3 + jitter(seed, i) * 4) + i * 1.7);
-    const px = x + Math.cos(a) * d;
-    const py = y + Math.sin(a) * d - ((t * 9 + i * 5) % 14);
-    g.fillStyle(tint(FOR.goldLit), alpha * 0.7 * tw);
-    g.fillCircle(px, py, 1.1);
-    if (tw > 0.85) twinkle(g, tint(FOR.hot), px, py, 2.8, alpha * (tw - 0.85) * 5);
-  }
-}
 
 // ── Golden heart (F) ──────────────────────────────────────────────────────
 
@@ -312,182 +216,7 @@ export function goldenHeart(
   }
 }
 
-// ── Midas floor, coins, statues (Q) ───────────────────────────────────────
-
-/** One patch of floor turned to gold: an irregular plate with a bevel, seams and a glint. */
-export function goldFloor(
-  g: Phaser.GameObjects.Graphics, tint: FortuneColorFn,
-  x: number, y: number, r: number, alpha: number, seed: number, t: number,
-): void {
-  if (alpha <= 0.01) return;
-  const n = 11;
-  const pts: Phaser.Geom.Point[] = [];
-  const inner: Phaser.Geom.Point[] = [];
-  for (let i = 0; i < n; i++) {
-    const a = (i / n) * TAU + jitter(seed, i) * 0.3;
-    const rr = r * (0.78 + 0.22 * jitter(seed, i + 20));
-    pts.push(P(x + Math.cos(a) * rr, y + Math.sin(a) * rr * 0.92));
-    inner.push(P(x + Math.cos(a) * rr * 0.8 - 1, y + Math.sin(a) * rr * 0.74 - 1.5));
-  }
-  g.fillStyle(tint(FOR.brass), alpha * 0.85);
-  g.fillPoints(pts, true);
-  g.fillStyle(tint(FOR.gold), alpha * 0.75);
-  g.fillPoints(inner, true);
-  // Seams, as if the floorboards themselves set into metal.
-  g.lineStyle(1, tint(FOR.brass), alpha * 0.7);
-  for (let i = 0; i < 2; i++) {
-    const a = jitter(seed, i + 50) * Math.PI;
-    const l = r * 0.6;
-    g.lineBetween(x - Math.cos(a) * l, y - Math.sin(a) * l * 0.9, x + Math.cos(a) * l, y + Math.sin(a) * l * 0.9);
-  }
-  // Lit crescent and a slow glint that wanders across the plate.
-  g.fillStyle(tint(FOR.goldLit), alpha * 0.4);
-  g.fillEllipse(x - r * 0.2, y - r * 0.25, r * 0.7, r * 0.3);
-  const gl = (Math.sin(t * 0.9 + seed * 3) * 0.5 + 0.5);
-  if (gl > 0.8) twinkle(g, tint(FOR.hot), x + r * 0.3 * Math.cos(seed), y - r * 0.2, 4, alpha * (gl - 0.8) * 5);
-}
-
-/** A dropped coin lying on the floor: milled rim, a face with a stamped mark, a glint. */
-export function goldCoin(
-  g: Phaser.GameObjects.Graphics, tint: FortuneColorFn,
-  x: number, y: number, r: number, spin: number, alpha: number,
-): void {
-  if (alpha <= 0.01) return;
-  // Spinning about the vertical axis: the width breathes, never quite to nothing.
-  const w = Math.max(0.18, Math.abs(Math.cos(spin)));
-  g.fillStyle(tint(FOR.ink), alpha * 0.35);
-  g.fillEllipse(x + 1, y + r * 0.8, r * 2 * Math.max(0.6, w), r * 0.6);
-  // Edge (visible when edge-on).
-  g.fillStyle(tint(FOR.brass), alpha);
-  g.fillEllipse(x, y, r * 2 * w + 2, r * 2);
-  // Milled teeth.
-  const teeth = 14;
-  g.fillStyle(tint(FOR.brass), alpha);
-  for (let i = 0; i < teeth; i++) {
-    const a = (i / teeth) * TAU;
-    g.fillCircle(x + Math.cos(a) * r * w, y + Math.sin(a) * r, Math.max(0.6, r * 0.16));
-  }
-  g.fillStyle(tint(FOR.gold), alpha);
-  g.fillEllipse(x, y, r * 1.7 * w, r * 1.7);
-  // The stamp: a little alembic-flask mark.
-  if (w > 0.45) {
-    g.fillStyle(tint(FOR.brass), alpha * 0.9);
-    g.fillEllipse(x, y + r * 0.2, r * 0.8 * w, r * 0.7);
-    g.fillRect(x - r * 0.12 * w, y - r * 0.5, r * 0.24 * w, r * 0.5);
-  }
-  g.fillStyle(tint(FOR.goldLit), alpha * 0.8);
-  g.fillEllipse(x - r * 0.3 * w, y - r * 0.35, r * 0.5 * w, r * 0.4);
-  twinkle(g, tint(FOR.hot), x - r * 0.35 * w, y - r * 0.45, r * 0.55, alpha * (0.4 + 0.6 * w));
-}
-
-/**
- * A summon that tried to happen near a Midas-cursed body: a solid lump of gold in roughly the
- * shape of a figure on a plinth, faceted so it reads as metal rather than paint.
- */
-export function goldStatue(
-  g: Phaser.GameObjects.Graphics, tint: FortuneColorFn,
-  x: number, y: number, r: number, alpha: number, seed: number, t: number,
-): void {
-  if (alpha <= 0.01) return;
-  g.fillStyle(tint(FOR.ink), alpha * 0.35);
-  g.fillEllipse(x, y + r * 0.95, r * 2.1, r * 0.55);
-  // Plinth.
-  g.fillStyle(tint(FOR.brass), alpha);
-  g.fillRect(x - r * 0.9, y + r * 0.45, r * 1.8, r * 0.45);
-  g.fillStyle(tint(FOR.gold), alpha);
-  g.fillRect(x - r * 0.9, y + r * 0.45, r * 1.8, r * 0.14);
-  // The figure: a frozen lump — torso, head, one raised limb, all faceted.
-  const lean = (jitter(seed, 1) - 0.5) * 0.5;
-  const torso = [
-    P(x - r * 0.55, y + r * 0.45), P(x + r * 0.55, y + r * 0.45),
-    P(x + r * 0.45 + lean * r, y - r * 0.25), P(x - r * 0.4 + lean * r, y - r * 0.3),
-  ];
-  g.fillStyle(tint(FOR.brass), alpha);
-  g.fillPoints(torso, true);
-  g.fillStyle(tint(FOR.gold), alpha);
-  g.fillPoints([torso[0], P(x + r * 0.05, y + r * 0.45), P(x + lean * r, y - r * 0.28), torso[3]], true);
-  const hx = x + lean * r * 1.2, hy = y - r * 0.58;
-  g.fillStyle(tint(FOR.brass), alpha);
-  g.fillCircle(hx, hy, r * 0.34);
-  g.fillStyle(tint(FOR.gold), alpha);
-  g.fillCircle(hx - r * 0.07, hy - r * 0.06, r * 0.26);
-  // A raised limb, whatever it was.
-  const side = jitter(seed, 2) < 0.5 ? -1 : 1;
-  g.lineStyle(r * 0.22, tint(FOR.brass), alpha);
-  g.lineBetween(x + side * r * 0.4, y - r * 0.1, x + side * r * 0.85, y - r * 0.7);
-  g.fillStyle(tint(FOR.gold), alpha);
-  g.fillCircle(x + side * r * 0.85, y - r * 0.7, r * 0.15);
-  // Glints that drift up the metal.
-  g.fillStyle(tint(FOR.goldLit), alpha * 0.7);
-  g.fillEllipse(x - r * 0.25, y, r * 0.18, r * 0.5);
-  const tw = 0.5 + 0.5 * Math.sin(t * 2.3 + seed);
-  twinkle(g, tint(FOR.hot), hx - r * 0.15, hy - r * 0.15, r * 0.35, alpha * tw);
-  // Ground sparkle: it is worth picking up.
-  twinkle(g, tint(FOR.goldLit), x + r * 0.9, y + r * 0.3, r * 0.28, alpha * (1 - tw) * 0.8);
-}
-
-/**
- * The curse, drawn on its victim. Gold rises from the feet of a 22px body toward the crown as
- * `progress` goes 0→1, with a molten, wavering leading edge and flecks lifting off it. At full
- * progress the whole body is a gold shell with a single crack of light.
- */
-export function midasGilt(
-  g: Phaser.GameObjects.Graphics, tint: FortuneColorFn,
-  x: number, y: number, progress: number, t: number, alpha: number,
-): void {
-  if (alpha <= 0.01) return;
-  const p = Phaser.Math.Clamp(progress, 0, 1);
-  const R = 22;
-  // The fill line in body coordinates, bottom (+R) to top (-R).
-  const lineY = y + R - p * R * 2;
-  const pts: Phaser.Geom.Point[] = [];
-  const steps = 18;
-  // Lower arc of the body circle below the line, plus a wavy top edge.
-  const top = (px: number): number =>
-    lineY + Math.sin(px * 0.35 + t * 4) * 1.6 + Math.sin(px * 0.9 - t * 6) * 0.8;
-  for (let i = 0; i <= steps; i++) {
-    const px = x - R + (i / steps) * R * 2;
-    const dy = Math.sqrt(Math.max(0, R * R - (px - x) * (px - x)));
-    const ty = Math.max(top(px), y - dy);
-    pts.push(P(px, Math.min(ty, y + dy)));
-  }
-  for (let i = steps; i >= 0; i--) {
-    const px = x - R + (i / steps) * R * 2;
-    const dy = Math.sqrt(Math.max(0, R * R - (px - x) * (px - x)));
-    pts.push(P(px, y + dy));
-  }
-  g.fillStyle(tint(FOR.brass), alpha * 0.85);
-  g.fillPoints(pts, true);
-  g.fillStyle(tint(FOR.gold), alpha * 0.6);
-  g.fillPoints(pts.map((pt) => P(x + (pt.x - x) * 0.82 - 1.5, pt.y + (pt.y > y ? -2 : 0.5))), true);
-  // The molten edge.
-  if (p < 0.98) {
-    g.lineStyle(1.6, tint(FOR.goldLit), alpha * 0.95);
-    g.beginPath();
-    let started = false;
-    for (let i = 0; i <= steps; i++) {
-      const px = x - R + (i / steps) * R * 2;
-      const dy = Math.sqrt(Math.max(0, R * R - (px - x) * (px - x)));
-      const ty = top(px);
-      if (ty < y - dy || ty > y + dy) { started = false; continue; }
-      if (!started) { g.moveTo(px, ty); started = true; } else g.lineTo(px, ty);
-    }
-    g.strokePath();
-    // Flecks lifting off it.
-    for (let i = 0; i < 4; i++) {
-      const ph = (t * 0.9 + i * 0.25) % 1;
-      const fx = x + Math.sin(i * 2.4 + t) * R * 0.6;
-      g.fillStyle(tint(FOR.goldLit), alpha * (1 - ph) * 0.8);
-      g.fillCircle(fx, lineY - ph * 10, 1.2);
-    }
-  } else {
-    // Fully gilded: one crack of light down the shell.
-    g.lineStyle(1.2, tint(FOR.hot), alpha * (0.5 + 0.5 * Math.sin(t * 5)));
-    g.lineBetween(x - 3, y - 14, x + 2, y - 2);
-    g.lineBetween(x + 2, y - 2, x - 1, y + 10);
-  }
-  twinkle(g, tint(FOR.hot), x - 8, Math.max(lineY + 4, y - 12), 3 + p * 2, alpha * p * 0.9);
-}
+// ── Coins ─────────────────────────────────────────────────────────────────
 
 // ── Advance cards (E) ─────────────────────────────────────────────────────
 
@@ -721,6 +450,39 @@ function statGlyph(
 
 // ── The cane (F, and the rig's secondary) ─────────────────────────────────
 
+/** A dropped coin lying on the floor: milled rim, a face with a stamped mark, a glint. */
+export function goldCoin(
+  g: Phaser.GameObjects.Graphics, tint: FortuneColorFn,
+  x: number, y: number, r: number, spin: number, alpha: number,
+): void {
+  if (alpha <= 0.01) return;
+  // Spinning about the vertical axis: the width breathes, never quite to nothing.
+  const w = Math.max(0.18, Math.abs(Math.cos(spin)));
+  g.fillStyle(tint(FOR.ink), alpha * 0.35);
+  g.fillEllipse(x + 1, y + r * 0.8, r * 2 * Math.max(0.6, w), r * 0.6);
+  // Edge (visible when edge-on).
+  g.fillStyle(tint(FOR.brass), alpha);
+  g.fillEllipse(x, y, r * 2 * w + 2, r * 2);
+  // Milled teeth.
+  const teeth = 14;
+  g.fillStyle(tint(FOR.brass), alpha);
+  for (let i = 0; i < teeth; i++) {
+    const a = (i / teeth) * TAU;
+    g.fillCircle(x + Math.cos(a) * r * w, y + Math.sin(a) * r, Math.max(0.6, r * 0.16));
+  }
+  g.fillStyle(tint(FOR.gold), alpha);
+  g.fillEllipse(x, y, r * 1.7 * w, r * 1.7);
+  // The stamp: a little alembic-flask mark.
+  if (w > 0.45) {
+    g.fillStyle(tint(FOR.brass), alpha * 0.9);
+    g.fillEllipse(x, y + r * 0.2, r * 0.8 * w, r * 0.7);
+    g.fillRect(x - r * 0.12 * w, y - r * 0.5, r * 0.24 * w, r * 0.5);
+  }
+  g.fillStyle(tint(FOR.goldLit), alpha * 0.8);
+  g.fillEllipse(x - r * 0.3 * w, y - r * 0.35, r * 0.5 * w, r * 0.4);
+  twinkle(g, tint(FOR.hot), x - r * 0.35 * w, y - r * 0.45, r * 0.55, alpha * (0.4 + 0.6 * w));
+}
+
 /**
  * A golden walking cane held at `(x, y)` (the grip) and extending along `ang` for `len`: a
  * crook handle behind the hand, a ringed collar, a tapering shaft and a bright ferrule tip.
@@ -762,6 +524,41 @@ export function caneShape(
   g.beginPath();
   g.arc(hx + nx * 4, hy + ny * 4, 4.2, ang + Math.PI * 0.8, ang + Math.PI * 1.4, false);
   g.strokePath();
+}
+
+// ── Mastery: No Pain, No Gain ─────────────────────────────────────────────
+
+/** The golden dagger: a leaf blade with a fuller, a crossguard, a wrapped grip and a ruby pommel. */
+export function goldenDagger(g: Phaser.GameObjects.Graphics, tint: FortuneColorFn, x: number, y: number, ang: number, len: number, alpha: number): void {
+  if (alpha <= 0.01) return;
+  const cx = Math.cos(ang);
+  const cy = Math.sin(ang);
+  const nx = -cy;
+  const ny = cx;
+  const at = (f: number, l: number): Phaser.Geom.Point => P(x + cx * f + nx * l, y + cy * f + ny * l);
+  const blade = len * 0.62;
+  g.fillStyle(tint(FOR.brass), alpha);
+  g.fillPoints([at(0, 3), at(blade * 0.55, 3.4), at(blade, 0), at(blade * 0.55, -3.4), at(0, -3)], true);
+  g.fillStyle(tint(FOR.goldLit), alpha);
+  g.fillPoints([at(0, 2), at(blade * 0.55, 2.3), at(blade - 2, 0), at(0, 0)], true);
+  g.lineStyle(0.8, tint(FOR.brass), alpha);
+  g.lineBetween(at(1, 0).x, at(1, 0).y, at(blade * 0.8, 0).x, at(blade * 0.8, 0).y);
+  // Guard.
+  g.fillStyle(tint(FOR.gold), alpha);
+  g.fillPoints([at(-1.6, 6.5), at(1.2, 6.5), at(1.2, -6.5), at(-1.6, -6.5)], true);
+  // Grip and pommel.
+  g.fillStyle(tint(FOR.leather), alpha);
+  g.fillPoints([at(-1.6, 1.8), at(-len * 0.3, 1.6), at(-len * 0.3, -1.6), at(-1.6, -1.8)], true);
+  g.lineStyle(0.8, tint(FOR.leatherLit), alpha);
+  for (let i = 1; i <= 3; i++) {
+    const f = -1.6 - (len * 0.3 - 1.6) * (i / 4);
+    g.lineBetween(at(f, 1.7).x, at(f, 1.7).y, at(f - 1.2, -1.7).x, at(f - 1.2, -1.7).y);
+  }
+  g.fillStyle(tint(FOR.blood), alpha);
+  g.fillCircle(at(-len * 0.34, 0).x, at(-len * 0.34, 0).y, 2.3);
+  g.fillStyle(tint(FOR.bloodLit), alpha);
+  g.fillCircle(at(-len * 0.34, 0).x - 0.6, at(-len * 0.34, 0).y - 0.6, 0.9);
+  twinkle(g, tint(FOR.hot), at(blade * 0.7, 1).x, at(blade * 0.7, 1).y, 2.6, alpha * 0.9);
 }
 
 // ── Upgrades ──────────────────────────────────────────────────────────────
@@ -881,144 +678,157 @@ export function jewelGem(
   }
 }
 
-/**
- * R+ Glittery Cloak: the cloud has gold leaf in it. Flakes of leaf drift and turn inside the
- * radius, flashing as they catch the light, so a cloaked plume reads apart from a plain one.
- */
-export function glitterMotes(
-  g: Phaser.GameObjects.Graphics, tint: FortuneColorFn,
-  x: number, y: number, r: number, alpha: number, t: number, seed: number,
-): void {
-  if (alpha <= 0.01) return;
-  for (let i = 0; i < 16; i++) {
-    const a0 = jitter(seed, i) * TAU;
-    const d = r * (0.15 + 0.8 * jitter(seed, i + 40));
-    const a = a0 + t * (0.25 + jitter(seed, i + 80) * 0.4) * (i % 2 ? 1 : -1);
-    const px = x + Math.cos(a) * d;
-    const py = y + Math.sin(a) * d * 0.8 - ((t * 9 + i * 7) % 14);
-    const flash = Math.max(0, Math.sin(t * (2.5 + jitter(seed, i + 120) * 3) + i * 1.7));
-    // A tumbling flake of leaf: a little rhombus that narrows as it turns edge-on.
-    const turn = Math.cos(t * 3 + i);
-    const w = 2.4 * Math.abs(turn) + 0.4;
-    g.fillStyle(tint(flash > 0.85 ? FOR.hot : FOR.goldLit), alpha * (0.45 + 0.5 * flash));
-    g.fillPoints([P(px, py - 2.6), P(px + w, py), P(px, py + 2.6), P(px - w, py)], true);
-    if (flash > 0.92) twinkle(g, tint(FOR.hot), px, py, 4.5, alpha * (flash - 0.92) * 12);
-  }
-}
-
-/** The cloak itself, on the alchemist while he stands in his own glitter: a shimmering shell. */
-export function glitterCloak(
-  g: Phaser.GameObjects.Graphics, tint: FortuneColorFn,
-  x: number, y: number, alpha: number, t: number,
-): void {
-  if (alpha <= 0.01) return;
-  const R = 27;
-  g.lineStyle(1.2, tint(FOR.goldLit), alpha * 0.5);
-  for (let i = 0; i < 3; i++) {
-    const s = t * 1.6 + (i * TAU) / 3;
-    g.beginPath();
-    g.arc(x, y, R, s, s + 1.1, false);
-    g.strokePath();
-  }
-  for (let i = 0; i < 6; i++) {
-    const a = -t * 0.9 + (i / 6) * TAU;
-    const tw = Math.max(0, Math.sin(t * 4 + i * 2.1));
-    twinkle(g, tint(FOR.hot), x + Math.cos(a) * R, y + Math.sin(a) * R, 2 + tw * 3, alpha * (0.3 + 0.7 * tw));
-  }
-}
-
-/**
- * Q+ Full Metal Alchemy, behind the statue: the light coming off solid gold. Long, thin, slowly
- * turning rays of alternating length, brightest at the root, with a hot bloom at the centre.
- */
-export function statueRays(
-  g: Phaser.GameObjects.Graphics, tint: FortuneColorFn,
-  x: number, y: number, alpha: number, t: number,
-): void {
-  if (alpha <= 0.01) return;
-  const n = 10;
-  for (let i = 0; i < n; i++) {
-    const a = t * 0.35 + (i / n) * TAU;
-    const len = (i % 2 ? 46 : 70) * (0.85 + 0.15 * Math.sin(t * 2.2 + i));
-    const half = i % 2 ? 0.06 : 0.09;
-    const r0 = 18;
-    const pts = [
-      P(x + Math.cos(a - half * 2.2) * r0, y + Math.sin(a - half * 2.2) * r0),
-      P(x + Math.cos(a) * len, y + Math.sin(a) * len),
-      P(x + Math.cos(a + half * 2.2) * r0, y + Math.sin(a + half * 2.2) * r0),
-    ];
-    g.fillStyle(tint(FOR.goldLit), alpha * 0.32);
-    g.fillPoints(pts, true);
-    g.fillStyle(tint(FOR.hot), alpha * 0.4);
-    g.fillPoints([pts[0], P(x + Math.cos(a) * len * 0.55, y + Math.sin(a) * len * 0.55), pts[2]], true);
-  }
-  g.fillStyle(tint(FOR.gold), alpha * 0.25);
-  g.fillCircle(x, y, 30);
-  g.fillStyle(tint(FOR.hot), alpha * 0.18);
-  g.fillCircle(x, y, 22);
-}
-
-/**
- * The statue itself, over the body: a solid gold shell with a plinth under it and two bright
- * facets. `melt` 0→1 over the statue's last second: the shell sags, and drips run off it into a
- * pool at its feet.
- */
-export function goldStatueShell(
-  g: Phaser.GameObjects.Graphics, tint: FortuneColorFn,
-  x: number, y: number, alpha: number, t: number, melt: number, cracked: boolean,
-): void {
-  if (alpha <= 0.01) return;
-  const m = Phaser.Math.Clamp(melt, 0, 1);
-  const R = 23;
-  // Plinth, then the pool that grows under it as it melts.
-  g.fillStyle(tint(FOR.ink), alpha * 0.4);
-  g.fillEllipse(x, y + R + 3, R * 2.4, 9);
-  g.fillStyle(tint(FOR.brass), alpha);
-  g.fillRect(x - R * 0.95, y + R - 4, R * 1.9, 7);
-  g.fillStyle(tint(FOR.gold), alpha);
-  g.fillRect(x - R * 0.95, y + R - 4, R * 1.9, 2);
-  if (m > 0) {
-    g.fillStyle(tint(FOR.gold), alpha * 0.9);
-    g.fillEllipse(x, y + R + 4, R * (1.2 + m * 1.6), 6 + m * 5);
-    g.fillStyle(tint(FOR.goldLit), alpha * 0.6);
-    g.fillEllipse(x - 4, y + R + 3, R * (0.6 + m), 2 + m * 2);
-  }
-  // The shell, sagging as it goes.
-  const sag = m * 7;
-  g.fillStyle(tint(FOR.brass), alpha);
-  g.fillEllipse(x, y + sag * 0.5, R * 2 * (1 + m * 0.12), R * 2 - sag);
-  g.fillStyle(tint(FOR.gold), alpha);
-  g.fillEllipse(x - 2, y - 1 + sag * 0.5, R * 1.7 * (1 + m * 0.12), R * 1.75 - sag);
-  // Two facets catching the light.
-  g.fillStyle(tint(FOR.goldLit), alpha * 0.85);
-  g.fillPoints([P(x - 13, y - 9 + sag), P(x - 4, y - 16 + sag), P(x - 2, y - 7 + sag), P(x - 10, y - 2 + sag)], true);
-  g.fillStyle(tint(FOR.hot), alpha * 0.7);
-  g.fillEllipse(x + 8, y - 10 + sag, 5, 9);
-  // Drips running off the shell.
-  if (m > 0) {
-    for (let i = 0; i < 5; i++) {
-      const px = x - R * 0.7 + i * R * 0.35;
-      const len = (4 + jitter(3, i) * 10) * m;
-      g.fillStyle(tint(FOR.gold), alpha);
-      g.fillRect(px - 1.4, y + R * 0.4, 2.8, len);
-      g.fillCircle(px, y + R * 0.4 + len, 2);
-    }
-  }
-  if (cracked) {
-    // Hit: the chance for free gold is gone. A dark crack across the shell.
-    g.lineStyle(1.4, tint(FOR.ink), alpha * 0.85);
-    g.lineBetween(x - 9, y - 14, x - 2, y - 3);
-    g.lineBetween(x - 2, y - 3, x - 7, y + 8);
-    g.lineBetween(x - 2, y - 3, x + 8, y + 2);
-  }
-  const tw = 0.5 + 0.5 * Math.sin(t * 3.1);
-  twinkle(g, tint(FOR.hot), x - 9, y - 12 + sag, 4 + tw * 3, alpha * (1 - m * 0.6));
-  twinkle(g, tint(FOR.hot), x + 12, y + 4 + sag, 2 + (1 - tw) * 3, alpha * (1 - m * 0.6));
-}
-
 // ── FortuneFx ─────────────────────────────────────────────────────────────
 
 export class FortuneFx extends FxBase {
+  // ── Billiards (R) ──
+
+  /** The cane going out along the shot: a hard gold streak the length of the thrust. */
+  cueThrust(x: number, y: number, ang: number, reach: number): void {
+    const cx = Math.cos(ang), cy = Math.sin(ang);
+    const nx = -cy, ny = cx;
+    this.anim(8, 180, (g, t) => {
+      const head = reach * easeOut(Math.min(1, t * 2.2));
+      const tail = reach * easeOut(t) * 0.7;
+      const a = 1 - t;
+      g.fillStyle(this.tint(FOR.brass), a * 0.5);
+      g.fillPoints([P(x + cx * tail + nx * 1, y + cy * tail + ny * 1), P(x + cx * head + nx * 3.4, y + cy * head + ny * 3.4),
+        P(x + cx * head - nx * 3.4, y + cy * head - ny * 3.4), P(x + cx * tail - nx * 1, y + cy * tail - ny * 1)], true);
+      g.fillStyle(this.tint(FOR.hot), a * 0.9);
+      g.fillPoints([P(x + cx * tail, y + cy * tail), P(x + cx * head + nx * 1.2, y + cy * head + ny * 1.2),
+        P(x + cx * head - nx * 1.2, y + cy * head - ny * 1.2)], true);
+    });
+  }
+
+  /** Cue tip on ball: a chalk puff thrown back toward the striker and a star on the contact. */
+  cueHit(x: number, y: number, ang: number, power: number): void {
+    this.flashIn(x, y, 7 + power * 8, FOR.hot, FOR.gold, 12);
+    this.anim(12, 260, (g, t) => {
+      for (let i = 0; i < 5; i++) {
+        const a = ang + Math.PI + (i - 2) * 0.32;
+        const d = 4 + (14 + power * 16) * easeOut(t);
+        g.fillStyle(this.tint(FOR.dust), (1 - t) * 0.5);
+        g.fillCircle(x + Math.cos(a) * d, y + Math.sin(a) * d, 2.4 + t * 3);
+      }
+      twinkle(g, this.tint(FOR.hot), x, y, (6 + power * 6) * (1 - t * 0.5), 1 - t);
+    });
+  }
+
+  /** Ball on ball, or ball on wall: a quick pair of opposed sparks, sized by how hard. */
+  ballClack(x: number, y: number, k: number): void {
+    const rot = Math.random() * TAU;
+    this.anim(8, 160, (g, t) => {
+      const r = (4 + k * 10) * easeOut(t);
+      g.lineStyle(1.4 * (1 - t), this.tint(FOR.hot), 1 - t);
+      for (let i = 0; i < 4; i++) {
+        const a = rot + (i / 4) * TAU;
+        g.lineBetween(x + Math.cos(a) * r * 0.4, y + Math.sin(a) * r * 0.4, x + Math.cos(a) * r, y + Math.sin(a) * r);
+      }
+    });
+  }
+
+  /** A ball finding a body: a gold ring off the contact and a spray of flecks. */
+  ballHit(x: number, y: number, k: number): void {
+    this.flashIn(x, y, 8 + k * 10, FOR.hot, FOR.gold, 12);
+    this.ring(x, y, 5, 20 + k * 22, 300, FOR.goldLit, 2.5, 12);
+    this.sparkle(x, y, 4 + Math.round(k * 5), 18 + k * 16, 340, 12);
+  }
+
+  /** R+ Billiard Blitz: the cane is back. A ring closes on the hand and a cue-shaped glint snaps across it. */
+  blitz(x: number, y: number): void {
+    this.anim(13, 320, (g, t) => {
+      const r = 34 * (1 - easeOut(t)) + 10;
+      g.lineStyle(2.4, this.tint(FOR.hot), 1 - t);
+      g.strokeCircle(x, y, r);
+      g.lineStyle(1.2, this.tint(FOR.gold), (1 - t) * 0.8);
+      g.strokeCircle(x, y, r + 5);
+    });
+    this.sparkle(x, y - 6, 6, 26, 380, 13);
+  }
+
+  // ── Rebirth (Q) ──
+
+  /**
+   * Rebirth: he whites out — a column of light, rays wheeling round it — and the light then
+   * shatters outward as shards of ore, leaving him standing in what is left.
+   */
+  rebirth(x: number, y: number, level: number): void {
+    const k = 1 + level * 0.12;
+    const rays = Array.from({ length: 12 }, (_, i) => ({ a: (i / 12) * TAU, w: 0.08 + jitter(level * 3 + 1, i) * 0.1, l: 60 + jitter(level, i) * 50 }));
+    this.anim(14, 900, (g, t) => {
+      const rise = easeOut(Math.min(1, t * 2.5));
+      const fall = Math.max(0, (t - 0.55) / 0.45);
+      const a = (1 - fall) * rise;
+      // The column.
+      g.fillStyle(this.tint(FOR.gold), a * 0.35);
+      g.fillRect(x - 26 * k, y - 220, 52 * k, 250);
+      g.fillStyle(this.tint(FOR.hot), a * 0.55);
+      g.fillRect(x - 12 * k, y - 220, 24 * k, 250);
+      // Rays, turning.
+      for (const r of rays) {
+        const ang = r.a + t * 1.6;
+        const len = r.l * k * rise;
+        g.fillStyle(this.tint(FOR.goldLit), a * 0.5);
+        g.fillPoints([P(x, y), P(x + Math.cos(ang - r.w) * len, y + Math.sin(ang - r.w) * len),
+          P(x + Math.cos(ang + r.w) * len, y + Math.sin(ang + r.w) * len)], true);
+      }
+      // The whiteout over the body itself.
+      g.fillStyle(this.tint(FOR.hot), a);
+      g.fillCircle(x, y, 26 * k * (0.7 + 0.3 * rise));
+    });
+    this.scene.time.delayedCall(480, () => {
+      this.ring(x, y, 14, 120 * k, 620, FOR.hot, 5, 13);
+      this.ring(x, y, 10, 86 * k, 520, FOR.gold, 3, 13);
+      const chips = Array.from({ length: 14 }, (_, i) => ({
+        a: (i / 14) * TAU + Math.random() * 0.3, d: 40 + Math.random() * 60, r: 2.5 + Math.random() * 3, s: Math.random() * 99,
+      }));
+      this.anim(13, 620, (g, t) => {
+        for (const c of chips) {
+          const d = c.d * k * easeOut(t);
+          const px = x + Math.cos(c.a) * d;
+          const py = y + Math.sin(c.a) * d + t * t * 26;
+          const rot = c.s + t * 9;
+          g.fillStyle(this.tint(FOR.brass), 1 - t);
+          g.fillPoints([P(px + Math.cos(rot) * c.r, py + Math.sin(rot) * c.r), P(px + Math.cos(rot + 2.1) * c.r, py + Math.sin(rot + 2.1) * c.r),
+            P(px + Math.cos(rot + 4.2) * c.r, py + Math.sin(rot + 4.2) * c.r)], true);
+          g.fillStyle(this.tint(FOR.goldLit), (1 - t) * 0.9);
+          g.fillCircle(px, py, c.r * 0.45);
+        }
+      });
+      this.sparkle(x, y, 12, 60 * k, 700, 15);
+    });
+  }
+
+  // ── No Pain, No Gain (mastery) ──
+
+  /**
+   * The dagger goes in on the cursor's side: it swings in from `ang`, sinks to the guard, and a
+   * jet of blood leaves by the other side of the body.
+   */
+  painStab(x: number, y: number, ang: number): void {
+    const cx = Math.cos(ang), cy = Math.sin(ang);
+    this.anim(13, 420, (g, t) => {
+      // In fast, held, then drawn.
+      const inT = easeOut(Math.min(1, t / 0.25));
+      const out = Math.max(0, (t - 0.7) / 0.3);
+      const d = 44 - 30 * inT + 16 * out;
+      goldenDagger(g, this.tint, x + cx * d, y + cy * d, ang + Math.PI, 26, 1 - out * 0.8);
+    });
+    this.scene.time.delayedCall(90, () => {
+      this.flashIn(x - cx * 8, y - cy * 8, 12, FOR.bloodLit, FOR.blood, 12);
+      const drops = Array.from({ length: 12 }, (_, i) => ({
+        a: ang + Math.PI + (jitter(i + 5, 3) - 0.5) * 0.9, d: 30 + Math.random() * 90, r: 1.6 + Math.random() * 2.6,
+      }));
+      this.anim(12, 420, (g, t) => {
+        for (const p of drops) {
+          const d = 10 + p.d * easeOut(t);
+          g.fillStyle(this.tint(t < 0.5 ? FOR.bloodLit : FOR.blood), 1 - t * 0.8);
+          g.fillCircle(x + Math.cos(p.a) * d, y + Math.sin(p.a) * d - Math.sin(t * Math.PI) * 10, p.r * (1 - t * 0.4));
+        }
+      });
+    });
+  }
+
   /** A gold radial burst of four-point twinkles — the shared signature of "it became gold". */
   private sparkle(x: number, y: number, count: number, spread: number, ms: number, depth: number): void {
     const seeds = Array.from({ length: count }, (_, i) => ({
@@ -1089,43 +899,6 @@ export class FortuneFx extends FxBase {
         g.fillPoints([P(px, py - 1.6), P(px + Math.cos(f.s + t * 9) * 2.2, py), P(px, py + 1.6)], true);
       }
     });
-  }
-
-  /** A fallen blade lying where it dropped, glinting once and fading into the floor. */
-  bladeLand(x: number, y: number, ang: number): void {
-    this.anim(3, 700, (g, t) => {
-      const a = (1 - t) * 0.9;
-      grassBlade(g, this.tint, x - Math.cos(ang) * 5, y - Math.sin(ang) * 5, ang, 10, 1, a);
-      if (t < 0.4) twinkle(g, this.tint(FOR.hot), x, y, 3 * (1 - t * 2.5), (0.4 - t) * 2.5);
-    });
-  }
-
-  /** The bag bursting open: a hot pop, scraps of leather, a boiling puff of dust spreading to `r`. */
-  bagBurst(x: number, y: number, r: number): void {
-    this.flashIn(x, y, 14, FOR.hot, FOR.gold, 12);
-    const puffs = Array.from({ length: 10 }, (_, i) => ({
-      a: (i / 10) * TAU + Math.random() * 0.5, d: r * (0.5 + Math.random() * 0.5), s: 0.5 + Math.random() * 0.4,
-    }));
-    this.anim(11, 520, (g, t) => {
-      const e = easeOut(t);
-      for (const p of puffs) {
-        const px = x + Math.cos(p.a) * p.d * e, py = y + Math.sin(p.a) * p.d * e;
-        g.fillStyle(this.tint(FOR.dust), (1 - t) * 0.45);
-        g.fillCircle(px, py, r * 0.3 * p.s * (0.5 + e));
-        g.fillStyle(this.tint(FOR.goldLit), (1 - t) * 0.35);
-        g.fillCircle(px - 3, py - 3, r * 0.14 * p.s * (0.5 + e));
-      }
-    });
-    const scraps = Array.from({ length: 5 }, () => ({ a: Math.random() * TAU, d: 20 + Math.random() * 26, s: Math.random() * TAU }));
-    this.anim(12, 460, (g, t) => {
-      for (const s of scraps) {
-        const px = x + Math.cos(s.a) * s.d * easeOut(t), py = y + Math.sin(s.a) * s.d * easeOut(t) + easeIn(t) * 10;
-        g.fillStyle(this.tint(FOR.leather), 1 - t);
-        g.fillPoints([P(px - 2.5, py), P(px, py - 2 + Math.sin(s.s + t * 8)), P(px + 2.5, py + 1)], true);
-      }
-    });
-    this.ring(x, y, 8, r, 420, FOR.gold, 3, 11);
-    this.sparkle(x, y, 10, r * 0.8, 600, 12);
   }
 
   /** The cane lunge: a tapered gold comet from start to end, a launch puff, a hot tip. */
@@ -1212,53 +985,6 @@ export class FortuneFx extends FxBase {
     this.sparkle(x, y - 6, 3, 12, 400, 15);
   }
 
-  /** A projectile turning into a coin: a flash where it was, then the coin hops down to the floor. */
-  coinDrop(fromX: number, fromY: number, toX: number, toY: number): void {
-    this.flashIn(fromX, fromY, 8, FOR.hot, FOR.gold, 12);
-    this.anim(12, 420, (g, t) => {
-      const px = fromX + (toX - fromX) * t;
-      // A small upward hop, then down onto the floor.
-      const hop = Math.sin(t * Math.PI) * 14;
-      const py = fromY + (toY - fromY) * easeIn(t) - hop;
-      goldCoin(g, this.tint, px, py, 5, t * 14, 1);
-    });
-    this.scene.time.delayedCall(400, () => this.sparkle(toX, toY, 3, 8, 260, 12));
-  }
-
-  /**
-   * Mastery — Rags to Riches: the purse goes up as a spray of coins, they fall back into the body,
-   * and a gilding wave washes over it. Bigger with every stack.
-   */
-  ragsToRiches(x: number, y: number, level: number): void {
-    const k = Math.min(1.6, 1 + level * 0.1);
-    const coins = Array.from({ length: 10 }, (_, i) => ({
-      a: -Math.PI / 2 + (i / 9 - 0.5) * 2.4 + (Math.random() - 0.5) * 0.3,
-      h: 46 + Math.random() * 30, spin: Math.random() * TAU,
-    }));
-    this.anim(15, 700, (g, t) => {
-      for (const c of coins) {
-        // Up and out, then pulled back into him.
-        const out = Math.sin(Math.min(1, t * 1.6) * Math.PI * 0.5) * (1 - easeIn(Math.max(0, (t - 0.45) / 0.55)));
-        const px = x + Math.cos(c.a) * c.h * out * k;
-        const py = y + Math.sin(c.a) * c.h * out * k;
-        goldCoin(g, this.tint, px, py, 4.2, c.spin + t * 16, 1 - Math.max(0, t - 0.85) / 0.15);
-      }
-    });
-    this.scene.time.delayedCall(380, () => {
-      this.flashIn(x, y, 26 * k, FOR.hot, FOR.gold, 14);
-      this.ring(x, y, 12, 74 * k, 560, FOR.gold, 4, 13);
-      this.ring(x, y, 8, 52 * k, 460, FOR.goldLit, 2.5, 13);
-      // The gilding wave: a bright band sweeping down the body.
-      this.anim(14, 420, (g, t) => {
-        const yy = y - 22 + t * 44;
-        const w = Math.sqrt(Math.max(0, 22 * 22 - (yy - y) * (yy - y))) * 2;
-        g.fillStyle(this.tint(FOR.hot), (1 - t) * 0.85);
-        g.fillRect(x - w / 2, yy - 2.5, w, 5);
-      });
-      this.sparkle(x, y, 10, 40 * k, 620, 15);
-    });
-  }
-
   /** Mastery — Gilded Augment kicking in: a ring of gold closing on the body. */
   augmentStart(x: number, y: number): void {
     this.ring(x, y, 48, 18, 380, FOR.goldLit, 3, 13);
@@ -1274,77 +1000,6 @@ export class FortuneFx extends FxBase {
       goldCoin(g, this.tint, x + ox, y + oy + 10 - e * 26, 3.2 * (1 - t * 0.6), t * 12, 1 - t);
       twinkle(g, this.tint(FOR.hot), x + ox, y + oy - e * 30, 2.4 * (1 - t), 1 - t);
     });
-  }
-
-  /** A coin or statue collected: it streaks up into the collector as a column of glints. */
-  pickup(x: number, y: number): void {
-    this.anim(14, 360, (g, t) => {
-      const a = 1 - t;
-      g.fillStyle(this.tint(FOR.gold), a * 0.5);
-      g.fillRect(x - 2, y - 30 * t, 4, 30 * t + 2);
-      twinkle(g, this.tint(FOR.hot), x, y - 30 * easeOut(t), 5 * a, a);
-    });
-    this.ring(x, y, 4, 20, 300, FOR.goldLit, 2, 12);
-    this.sparkle(x, y, 5, 14, 380, 13);
-  }
-
-  /** The ultimate going off from the caster: a gold shockwave rolling out, with a sigil circle. */
-  midasCast(x: number, y: number): void {
-    this.flashIn(x, y, 24, FOR.hot, FOR.gold, 13);
-    this.ring(x, y, 14, 160, 700, FOR.gold, 5, 12);
-    this.ring(x, y, 10, 110, 560, FOR.goldLit, 2.4, 12);
-    const rot = Math.random() * TAU;
-    this.anim(3, 900, (g, t) => {
-      const a = t < 0.2 ? t * 5 : 1 - (t - 0.2) / 0.8;
-      const r = 46;
-      g.lineStyle(2, this.tint(FOR.gold), a * 0.8);
-      g.strokeCircle(x, y, r);
-      g.strokeCircle(x, y, r * 0.72);
-      // A triangle and its inverse — the alchemist's sign.
-      for (const off of [0, Math.PI]) {
-        const pts = [0, 1, 2].map((i) => {
-          const aa = rot + off + t * 1.4 + (i * TAU) / 3;
-          return P(x + Math.cos(aa) * r * 0.72, y + Math.sin(aa) * r * 0.72);
-        });
-        g.lineStyle(1.4, this.tint(FOR.goldLit), a * 0.7);
-        g.strokePoints(pts, true);
-      }
-    });
-    this.sparkle(x, y, 16, 90, 800, 13);
-    this.scene.cameras.main.shake(180, 0.004);
-  }
-
-  /** The curse arriving on its target: a gold column slams down and a band of gilt flashes over it. */
-  midasStrike(x: number, y: number): void {
-    this.anim(13, 520, (g, t) => {
-      const a = 1 - t;
-      const h = 120 * (1 - easeOut(Math.min(1, t * 2)));
-      g.fillStyle(this.tint(FOR.gold), a * 0.5);
-      g.fillRect(x - 10, y - h - 20, 20, h + 20);
-      g.fillStyle(this.tint(FOR.hot), a * 0.8);
-      g.fillRect(x - 3.5, y - h - 20, 7, h + 20);
-      midasGilt(g, this.tint, x, y, Math.min(1, t * 2), t * 4, a);
-    });
-    this.ring(x, y, 10, 60, 480, FOR.gold, 3.5, 12);
-    this.sparkle(x, y, 10, 34, 600, 13);
-  }
-
-  /** A summon becoming a statue: a gold flash from below, sheets of gilt, a ring. */
-  transmuteSummon(x: number, y: number, r: number): void {
-    this.flashIn(x, y, r * 0.9, FOR.hot, FOR.gold, 12);
-    this.anim(12, 420, (g, t) => {
-      const a = 1 - t;
-      for (let i = 0; i < 6; i++) {
-        const aa = (i / 6) * TAU + t * 2;
-        const d = r * (0.4 + easeOut(t) * 0.9);
-        g.fillStyle(this.tint(FOR.goldLit), a * 0.8);
-        g.fillPoints([P(x + Math.cos(aa) * d, y + Math.sin(aa) * d),
-          P(x + Math.cos(aa + 0.2) * d * 0.6, y + Math.sin(aa + 0.2) * d * 0.6),
-          P(x + Math.cos(aa - 0.2) * d * 0.6, y + Math.sin(aa - 0.2) * d * 0.6)], true);
-      }
-    });
-    this.ring(x, y, r * 0.5, r * 1.8, 460, FOR.gold, 3, 12);
-    this.sparkle(x, y, 8, r * 1.2, 520, 13);
   }
 
   /** Ten gold spent: coins spiral up out of the purse into a bright point over the head. */
@@ -1381,58 +1036,6 @@ export class FortuneFx extends FxBase {
     });
   }
 
-  /** Click+ Accumulation: the pile stirs and a burst of blades leaves the floor. */
-  pileBurst(x: number, y: number, w: number): void {
-    this.anim(8, 420, (g, t) => {
-      const a = 1 - t;
-      g.fillStyle(this.tint(FOR.gold), a * 0.35);
-      g.fillEllipse(x, y, w * (0.6 + t * 0.6), 10 + t * 6);
-      for (let i = 0; i < 6; i++) {
-        const px = x + (i / 5 - 0.5) * w;
-        const h = 26 * easeOut(t) * (0.5 + jitter(x, i));
-        g.lineStyle(2, this.tint(FOR.goldLit), a * 0.8);
-        g.lineBetween(px, y, px + (jitter(y, i) - 0.5) * 8, y - h);
-      }
-    });
-    this.sparkle(x, y - 6, 8, w * 0.5, 460, 9);
-  }
-
-  /** R+ Glittery Cloak: a hit that found only glitter. */
-  cloakDodge(x: number, y: number): void {
-    this.ring(x, y, 14, 34, 300, FOR.goldLit, 2, 12);
-    this.sparkle(x, y, 7, 26, 420, 13);
-  }
-
-  /** Q+ Full Metal Alchemy: the curse finishes — a flash, and the body is solid gold. */
-  statueForm(x: number, y: number): void {
-    this.flashIn(x, y, 30, FOR.hot, FOR.gold, 13);
-    this.ring(x, y, 16, 60, 520, FOR.gold, 4, 12);
-    this.sparkle(x, y, 12, 40, 600, 13);
-  }
-
-  /** The statue melts down untouched: a gold pool, and three coins popping out of it. */
-  statueMelt(x: number, y: number): void {
-    this.anim(4, 520, (g, t) => {
-      const a = 1 - t;
-      g.fillStyle(this.tint(FOR.gold), a * 0.8);
-      g.fillEllipse(x, y + 26, 60 + t * 20, 10);
-    });
-    this.sparkle(x, y + 20, 8, 30, 500, 12);
-  }
-
-  /** The statue is struck: shards of gold leaf fly off it. */
-  statueCrack(x: number, y: number): void {
-    const shards = Array.from({ length: 7 }, () => ({ a: Math.random() * TAU, d: 18 + Math.random() * 20 }));
-    this.anim(13, 380, (g, t) => {
-      const e = easeOut(t);
-      for (const s of shards) {
-        const px = x + Math.cos(s.a) * s.d * e;
-        const py = y + Math.sin(s.a) * s.d * e + t * t * 14;
-        g.fillStyle(this.tint(FOR.gold), 1 - t);
-        g.fillTriangle(px, py - 3, px + 3, py + 2, px - 3, py + 2);
-      }
-    });
-  }
 }
 
 // ── Avatar ────────────────────────────────────────────────────────────────
@@ -1465,7 +1068,7 @@ const FORTUNE_AVATAR: AvatarSpec = {
  * lit lenses, gold eyes, wider coronas and a richer glow.
  */
 /**
- * Rags to Riches plates, in the order they gild: [dx, dy, radius, rotation]. The lower body goes
+ * Rebirth plates, in the order they turn to gold: [dx, dy, radius, rotation]. The lower body goes
  * first; the face band (eyes sit about y-4) is left clear so the rig still reads.
  */
 const GILD_PLATES: [number, number, number, number][] = [
@@ -1481,8 +1084,16 @@ export class FortuneAvatar extends BaseAvatar {
   /** 0..1 while the cane is being thrust (dash gesture). */
   private thrust = 0;
   private thrustAngle = 0;
-  /** Rags to Riches stacks. */
+  /** Rebirths, as plates of raw gold set into the body. */
   private gilding = 0;
+  /** R: the cane held as a cue along this angle, or null when it is the walking stick again. */
+  private cueAng: number | null = null;
+  private cuePull = 0;
+  /** 1→0 over the cue's thrust. */
+  private jabT = 0;
+  private jabAngle = 0;
+  /** 1→0: the whiteout a rebirth leaves fading on the body. */
+  private rebirthFlash = 0;
 
   constructor(scene: Phaser.Scene, tint: FortuneColorFn, depth = 6) {
     super(scene, tint, depth, FORTUNE_AVATAR);
@@ -1498,8 +1109,24 @@ export class FortuneAvatar extends BaseAvatar {
   /** 0–1: purse fullness. Drives the under-glow and the goggle-lens glint. */
   setGold(v: number): void { this.wealthTarget = Phaser.Math.Clamp(v, 0, 1); }
 
-  /** Mastery — Rags to Riches stacks: how many plates of the body have turned to solid gold. */
+  /** Rebirth: how many plates of the body have turned to raw gold. */
   setGilding(level: number): void { this.gilding = Math.max(0, Math.floor(level)); }
+
+  /** R: hold the cane as a cue along `ang`, drawn back by `pull` (0–1). Null puts it away. */
+  setCue(ang: number | null, pull: number): void {
+    this.cueAng = ang;
+    this.cuePull = Phaser.Math.Clamp(pull, 0, 1);
+    this.setHold(ang === null ? null : 'reach', ang ?? undefined);
+  }
+
+  /** R: the shot — the cane snaps forward along `ang`. */
+  jab(ang: number): void {
+    this.jabT = 1;
+    this.jabAngle = ang;
+  }
+
+  /** Q: 0–1 whiteout over the body, fading after a rebirth. */
+  setRebirthFlash(v: number): void { this.rebirthFlash = Phaser.Math.Clamp(v, 0, 1); }
 
   play(gesture: ArmGesture, angle?: number, duration?: number): void {
     if (gesture === 'dash') {
@@ -1514,6 +1141,7 @@ export class FortuneAvatar extends BaseAvatar {
     this.glowHand = Math.max(this.glowTarget, this.glowHand - delta / 420);
     this.glowTarget = Math.max(0, this.glowTarget - delta / 900);
     this.thrust = Math.max(0, this.thrust - delta / 360);
+    this.jabT = Math.max(0, this.jabT - delta / 200);
     this.wealth += (this.wealthTarget - this.wealth) * Math.min(1, delta / 500);
     super.update(delta, x, y, alpha);
   }
@@ -1572,7 +1200,7 @@ export class FortuneAvatar extends BaseAvatar {
   }
 
   /**
-   * Rags to Riches: the soft orb turning to minted metal, a plate at a time. Each stack sets one
+   * Rebirth: the soft orb turning to raw gold, a plate at a time. Each plate sets one
    * more polished ingot-plate into the body — hard brass seam, mirror-bright face, a specular
    * streak that sweeps across it — filling the lower body first and climbing toward the goggles.
    * Past the eighth plate the seams fuse and the whole body takes a slow running sheen.
@@ -1724,7 +1352,17 @@ export class FortuneAvatar extends BaseAvatar {
     // ── The cane, in the right hand ──
     const hx = this.armX[1], hy = this.armY[1];
     if (!Number.isFinite(hx)) return;
-    if (this.thrust > 0) {
+    if (this.jabT > 0 || this.cueAng !== null) {
+      // A cue: the cane lies along the shot through the bridge hand, butt behind the body. Drawn
+      // back it slides away from the ball; on the shot it snaps out past where it started.
+      const ang = this.jabT > 0 ? this.jabAngle : this.cueAng ?? 0;
+      // At rest the tip is 30px in front of him and the butt well behind; drawn back, the tip comes
+      // in to the body; on the shot it runs out to the full 112px reach.
+      const slide = this.jabT > 0 ? Math.sin(this.jabT * Math.PI) * 82 : -this.cuePull * 30;
+      const bx = x + Math.cos(ang) * (slide - 66) - Math.sin(ang) * 5;
+      const by = y + Math.sin(ang) * (slide - 66) + Math.cos(ang) * 5;
+      caneShape(g, this.tint, bx, by, ang, 96, alpha);
+    } else if (this.thrust > 0) {
       // Thrust out along the lunge: the cane leads, extended past the hand.
       const e = Math.sin(this.thrust * Math.PI * 0.5);
       caneShape(g, this.tint, hx, hy, this.thrustAngle, 26 + e * 14, alpha);
@@ -1736,5 +1374,12 @@ export class FortuneAvatar extends BaseAvatar {
     }
 
     if (m) this.coinRing(g, x, y, alpha, true);
+
+    if (this.rebirthFlash > 0) {
+      g.fillStyle(this.tint(FOR.hot), alpha * this.rebirthFlash * 0.9);
+      g.fillCircle(x, y, 21);
+      g.fillStyle(this.tint(FOR.goldLit), alpha * this.rebirthFlash * 0.35);
+      g.fillCircle(x, y, 30);
+    }
   }
 }

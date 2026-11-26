@@ -907,14 +907,9 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
     ],
     enhancements: [
       {
-        id: 'vpn',
-        name: 'VPN',
-        description: 'Passive: your connection tunnels through a private route — the longer you keep moving, the faster you get, ramping smoothly to +50% movement speed over 5 seconds. A binary datastream trails behind you, growing longer, brighter and wider as the boost climbs. The moment you stop moving the tunnel drops: the whole boost is gone and you start again from zero.',
-      },
-      {
         id: 'glitch-abuse',
         name: 'Glitch Abuse',
-        description: 'Passive: keep walking into the arena wall for about half a second and the collision gives up — you flicker in and out of the wall like a real clip, then get launched across the arena in the direction of your cursor. Anyone you pass through on the way takes 15 damage. Aim into the wall and you are thrown straight out of it instead. 3.5 second cooldown between launches.',
+        description: 'Passive: keep walking into any edge of the arena — a side wall, the ceiling or the floor — for about half a second and the collision gives up — you flicker in and out of the wall like a real clip, then get launched across the arena in the direction of your cursor. Anyone you pass through on the way takes 15 damage. Aim into the wall and you are thrown straight out of it instead. 8 second cooldown between launches.',
       },
     ],
   },
@@ -1960,7 +1955,7 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
       {
         key: 'goldMade',
         label: 'Prospector',
-        howTo: 'Earn 100 gold — stand in your Gold Plume, gild hearts, walk Midas floor and pick up coins',
+        howTo: 'Earn 100 gold — build up your tycoon, gild hearts and lose gold health',
         target: 100,
       },
       {
@@ -1976,9 +1971,9 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
         target: 20,
       },
       {
-        key: 'statuesBroken',
-        label: 'Iconoclast',
-        howTo: 'Break open golden statues by hitting them before they melt (needs the Q+ Full Metal Alchemy corrupt upgrade)',
+        key: 'rebirths',
+        label: 'Born Again',
+        howTo: 'Complete your tycoon and Rebirth (Q)',
         target: 5,
       },
     ],
@@ -1986,14 +1981,14 @@ export const MASTERY_DEFS: Record<string, MasteryDef> = {
       {
         id: 'gilded-augment',
         name: 'Gilded Augment',
-        description: 'Passive: the purse pays for your life. Drop below **30% HP** and the alchemist starts **spending gold to heal**, automatically — **16 HP a second** — and moves **30% faster** while it works, until you are back to 55%.\n\nIt starts cheap (about **2 gold a second**) and gets **dearer the longer it runs**: the price climbs every second it has to keep you standing. Run out of gold and it stops.',
+        description: 'Passive: the purse pays for your life. Drop below **30% HP** and the alchemist starts **spending gold on gold health**, automatically — **16 a second** — and moves **30% faster** while it works, until your health and gold health together are back to 55%.\n\n**Gold health** is spent before your own, and every 10 of it an enemy cuts away **pays you 1 gold back**.\n\nIt starts cheap (about **2 gold a second**) and gets **dearer the longer it runs**: the price climbs every second it has to keep you standing. Run out of gold and it stops.',
       },
       {
-        id: 'rags-to-riches',
-        name: 'Rags to Riches',
+        id: 'no-pain-no-gain',
+        name: 'No Pain, No Gain',
         bindable: true,
-        hudDescription: 'Needs 20 gold. Spend ALL of it: your body turns further to gold — +20% damage, +50% gold earned, and Gilded Augment heals more for less. Stacks forever',
-        description: 'Empty the purse — **every coin**, not just twenty — and turn a little more of yourself into gold. **Needs at least 20 gold.**\n\nEach time, for the rest of the match:\n\n• **+20% damage** on everything the kit does.\n• **+50% gold** from every source.\n• **Gilded Augment** heals **35% faster** and costs **25% less**.\n\nIt can be used **again and again**, and every use stacks — the body gilds a plate at a time until there is very little alchemist left. The trade is always the same: everything you have now, for more of everything later.',
+        hudDescription: 'Stab yourself for 18. Your blood sprays out behind you, away from the cursor, and turns to gold. Stand on it: 1 gold every 2 seconds',
+        description: 'Stab yourself with a **golden dagger** for **18 damage** (it never kills you). The blood **sprays out the other side of you** — away from your cursor — in a rough, widening splatter, and a moment later **every drop of it turns to gold**.\n\n**Stand on your gold** and it pays **1 gold every 2 seconds**. The gold stays for the rest of the match, and you can lay more.\n\nGold health takes the dagger first — and gold health pays you when it is cut.\n\n**7 second cooldown.**',
       },
     ],
   },

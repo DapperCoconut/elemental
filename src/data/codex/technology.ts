@@ -4,7 +4,7 @@ import { ElementCodex } from '../AbilityCodex';
  * Technology — a computer, being used against you.
  *
  * Verified against `src/elements/technology.ts`, `kits/TechnologyKit.ts`, the five shop upgrades
- * in `data/Upgrades.ts`, the Adrenaline perk in `data/Perks.ts` and the two mastery enhancements
+ * in `data/Upgrades.ts`, the Adrenaline perk in `data/Perks.ts` and the mastery enhancement
  * in `data/Mastery.ts`.
  */
 const technology: ElementCodex = {
@@ -254,37 +254,20 @@ const technology: ElementCodex = {
   },
 
   mastery: {
-    vpn: {
-      basics:
-        'Continuous movement ramps you smoothly up to +50% move speed over 5 seconds, and the entire '
-        + 'boost is lost the moment you stop — not decayed, lost, with no partial credit. A binary '
-        + 'datastream behind you grows from a short faint tail to a long bright one, so the boost is '
-        + 'readable off the art rather than off a bar.',
-      effects: [
-        { tag: 'movement', label: 'The ramp', detail: 'Smoothly up to +50% move speed over 5 seconds of continuous movement.' },
-        { tag: 'cost', label: 'The drop', detail: 'The entire boost is lost the moment you stop, not decayed. There is no partial credit.' },
-        { tag: 'utility', label: 'The trail', detail: 'A binary datastream that grows from a short faint tail to a long bright one — the boost is readable off the art rather than off a bar.' },
-      ],
-      notes: [
-        'It rewards exactly the playstyle Technology otherwise cannot support: this is a kit full of things you have to stand still and click on, and VPN pays you for not doing that.',
-        'It stacks with Adrenaline, so a Technology player who is both hitting shots and never stopping is very fast indeed.',
-      ],
-    },
     'glitch-abuse': {
       basics:
-        'Walk into the arena wall and keep walking: after 0.45 seconds the collision gives up. You '
+        'Walk into any edge of the arena — a side wall, the ceiling or the floor — and keep walking: after 0.45 seconds the collision gives up. You '
         + 'flicker in and out of the wall for 0.5 seconds, then you are launched across the arena at '
         + '1500 px/s in the direction of your cursor, dealing 15 damage to anyone you pass through. '
-        + 'Aim into the wall and you are thrown straight out of it instead. 3.5 seconds between launches.',
+        + 'Aim into the wall and you are thrown straight out of it instead. 8 seconds between launches.',
       effects: [
-        { tag: 'utility', label: 'The trigger', detail: '0.45 seconds of pushing against a wall, then 0.5 seconds of clipping in and out of it.' },
+        { tag: 'utility', label: 'The trigger', detail: '0.45 seconds of pushing against a side wall, the ceiling or the floor, then 0.5 seconds of clipping in and out of it.' },
         { tag: 'movement', label: 'The launch', detail: '1500 px/s toward the cursor until you hit the far wall — the width of the arena in well under 1 second.' },
         { tag: 'damage', label: 'On the way', detail: '15 damage to every enemy within 38px of your path, once each.' },
-        { tag: 'cost', label: 'The cooldown', detail: '3.5 seconds after landing before a wall will give again.' },
+        { tag: 'cost', label: 'The cooldown', detail: '8 seconds after landing before a wall, ceiling or floor will give again.' },
       ],
       notes: [
         'It turns the worst place to be — pinned on a wall — into the fastest exit in the kit.',
-        'A launch counts as continuous movement, so VPN keeps its ramp through it.',
       ],
     },
   },

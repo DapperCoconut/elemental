@@ -5,17 +5,20 @@ import { PRICE } from './prices';
 /**
  * Midas Vein — Gold's gene tree (element id `fortune`).
  *
- * Gold is an alchemist with a purse: Fray throws a clump of grass gilded in the air (every
- * 520ms, held), Advance spends ten gold on one of three stat cards kept all match, Gold Plume
- * bursts a 6s cloud that burns foes and pays you to stand in it, Heart of Gold lunges with the
- * cane and plants a heart that bursts if they move too much, and Midas Curse turns the foe and
- * the floor under them to gold for 10s. Three lines: **Gilt** (the blades and the cane — the
- * hands that hurt), **Purse** (Advance and the Plume — the gold coming in and going out) and
- * **Bullion** (a hide gone heavy and yellow, and the curse).
+ * Gold is an alchemist with a factory: a tycoon along the top of the screen fills his purse all
+ * match. Fray throws a clump of grass gilded in the air (every 520ms, held), Advance spends ten
+ * gold on one of three stat cards kept all match, Billiards racks five golden pool balls and
+ * brings the cane out as a cue, Heart of Gold lunges with the cane and plants a heart that bursts
+ * if they move too much, and Rebirth trades a finished tycoon for a better alchemist (three times
+ * at most). Three lines: **Gilt** (the blades and the cane — the hands that hurt), **Purse**
+ * (Advance and the table — the gold going out and the balls coming back) and **Bullion** (a hide
+ * gone heavy and yellow, and the rebirth).
  *
  * Advance is refused before the press when the purse is short (and while cards are still up),
  * so its rules only pay out on ten gold actually spent. Fray's window is 0.52s — its cooldown —
- * so it never stacks. Nothing here can mint gold: the purse is the kit's own arithmetic.
+ * so it never stacks. Rebirth is refused before the press unless the tycoon is complete, so its
+ * rules pay out three times a fight at most — they are sized for that. Nothing here can mint
+ * gold: the purse is the kit's own arithmetic.
  */
 export const GOLD_GENE_TREE: GeneTree = {
   element: 'fortune',
@@ -72,15 +75,15 @@ export const GOLD_GENE_TREE: GeneTree = {
         grant: onCast('f', { burst: { damage: 16, radius: 90 } }),
       },
     }),
-    /** Golden Dust: what settles in the lungs settles in the wounds. */
+    /** Chalk Dust: gold chalk off the cue gets into everything, wounds included. */
     gene({
-      id: 'gene-gold-golden-dust', name: 'Golden Dust', tier: 1, col: 1, needs: ['gene-gold-compound-interest'],
-      text: 'Gold Plume casts make the foe take +3% damage for the 6s the cloud hangs',
+      id: 'gene-gold-golden-dust', name: 'Chalk Dust', tier: 1, col: 1, needs: ['gene-gold-compound-interest'],
+      text: 'Billiards casts make the foe take +3% damage for 6s — long enough to take the shot',
       maxLevel: 4, cost: PRICE.t1,
       grant: cast('r', (lv) => ({ damageMult: gain(0.03)(lv), ms: 6000 })),
       mastery: {
-        name: 'Breathe It In', cost: PRICE.t1Mastery,
-        text: 'Gold Plume casts heal you 8 — the alchemist has long since stopped coughing',
+        name: 'Table Stakes', cost: PRICE.t1Mastery,
+        text: 'Billiards casts heal you 8 — the house always takes a little off the top',
         grant: onCast('r', { heal: 8 }),
       },
     }),
@@ -118,7 +121,7 @@ export const GOLD_GENE_TREE: GeneTree = {
       grant: stat((lv) => ({ cooldownMult: cut(0.03)(lv) })),
       mastery: {
         name: 'Reinvest', cost: PRICE.t2Mastery,
-        text: 'Gold Plume casts shave 600ms off every other cooldown — the dust is working capital',
+        text: 'Billiards casts shave 600ms off every other cooldown — every rack is working capital',
         grant: onCast('r', { refundOthers: 600 }),
       },
     }),
@@ -136,15 +139,15 @@ export const GOLD_GENE_TREE: GeneTree = {
     }),
 
     // ── Tier 3 ────────────────────────────────────────────────────────
-    /** Midas Touch: the curse comes easier to a hand that has done it before. */
+    /** Midas Touch: whatever comes back from a rebirth comes back plated. */
     gene({
       id: 'gene-gold-midas-touch', name: 'Midas Touch', tier: 3, col: 0, needs: ['gene-gold-karat'],
-      text: '−5% Midas Curse (ultimate) cost',
+      text: 'Rebirth casts give you 12 shield HP',
       maxLevel: 3, cost: PRICE.t3,
-      grant: stat((lv) => ({ ultimateCooldownMult: cut(0.05)(lv) })),
+      grant: cast('q', (lv) => ({ shield: flat(12)(lv) })),
       mastery: {
         name: 'Gilded Flare', cost: PRICE.t3Mastery,
-        text: 'Midas Curse casts flash the floor gold round you: 22 to everything within 130px',
+        text: 'Rebirth casts flash the floor gold round you: 22 to everything within 130px',
         grant: onCast('q', { burst: { damage: 22, radius: 130 } }),
       },
     }),
@@ -161,12 +164,12 @@ export const GOLD_GENE_TREE: GeneTree = {
         grant: effect({ reviveHpFrac: 0.25 }),
       },
     }),
-    /** Gold Standard: while the floor turns gold, the alchemist walks on it like a king. */
+    /** Gold Standard: reborn, and for a while he walks like it. */
     gene({
       id: 'gene-gold-gold-standard', name: 'Gold Standard', tier: 3, col: 2, needs: ['gene-gold-solid-gold'],
-      text: 'Midas Curse casts make you 4% faster for the curse\'s 10s',
+      text: 'Rebirth casts make you 4% faster for 20s',
       maxLevel: 3, cost: PRICE.t3,
-      grant: cast('q', (lv) => ({ speedMult: gain(0.04)(lv), ms: 10000 })),
+      grant: cast('q', (lv) => ({ speedMult: gain(0.04)(lv), ms: 20000 })),
       mastery: {
         name: 'Bullion Hide', cost: PRICE.t3Mastery,
         text: '−6% damage taken',

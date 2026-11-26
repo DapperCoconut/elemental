@@ -1653,8 +1653,8 @@ export const ALL_UPGRADES: ElementUpgrades[] = [
       {
         slot: 'click',
         displayKey: 'Click',
-        name: 'Accumulation',
-        description: 'Golden blades that miss and fall all the way to the bottom of the arena stay there. The more of them pile up, the more often the pile bursts — a burst lifts a handful of blades, plus a third of the pile, and throws them up through the enemy nearest the floor for 3 each. Six blades have to be down before it stirs.',
+        name: 'Life-support',
+        description: 'Right click switches your tycoon into Life-support: droppers drop 25% slower, but the refiner pays health instead of gold — 1.5 HP for every gold it would have made. Right click again to switch back. A blue pad also appears under your first dropper: it makes that dropper drop ore worth 3 times as much for the rest of the match, and it costs 10 shards — real shards, not gold.',
         price: 100,
         currency: 'corrupt',
       },
@@ -1669,8 +1669,8 @@ export const ALL_UPGRADES: ElementUpgrades[] = [
       {
         slot: 'r',
         displayKey: 'R',
-        name: 'Glittery Cloak',
-        description: 'Your Gold Plume is 20% larger and full of gold leaf. Standing in it, 15% of attacks aimed at you miss. Enemies standing in it shoot wide.',
+        name: 'Billiard Blitz',
+        description: 'Hitting an enemy with a pool ball lets you go again: the cane comes straight back for another shot, and your balls stay on the floor at least 6 seconds longer. Keep hitting and you keep shooting.',
         price: 350,
         currency: 'corrupt',
       },
@@ -1685,8 +1685,8 @@ export const ALL_UPGRADES: ElementUpgrades[] = [
       {
         slot: 'q',
         displayKey: 'Q',
-        name: 'Full Metal Alchemy',
-        description: 'When the Midas Curse runs its full 10 seconds, the enemy is turned to solid gold for 3 seconds: stunned in place, shining. Hit the statue while it stands and everything you do to it deals double damage — or leave it alone, and it melts into 3 gold coins for you.',
+        name: 'Golden Glory',
+        description: 'Every Rebirth also adds one special machine to your tycoon, picked at random, already built — and it survives every later rebirth. Midas Dropper: one piece on the belt at a time, worth 14. Mega Drill: a near-constant stream of tiny pieces. Dragon Upgrader: triples a piece, but burns 1 in 4. Tunnel of Fortune: +2 and then x1.25 in one upgrader. Shredder: pieces no upgrader has touched are refined for 3 times as much. Flaming Furnace: heats up as ore is fed in, paying up to double, and cools when the belt runs dry.',
         price: 750,
         currency: 'corrupt',
       },

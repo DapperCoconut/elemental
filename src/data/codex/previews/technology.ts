@@ -116,14 +116,12 @@ const ADRENALINE_MAX_STACKS = 5;
 const ADRENALINE_SPEED_PER_STACK = 0.10;
 const ADRENALINE_WIRED_CD_MULT = 0.5;
 
-const VPN_RAMP_MS = 5000;
-const VPN_MAX_BONUS = 0.5;
 
 const GLITCH_RUB_MS = 450;
 const GLITCH_WINDUP_MS = 520;
 const GLITCH_LAUNCH_SPEED = 1500;
 const GLITCH_LAUNCH_MAX_MS = 1100;
-const GLITCH_COOLDOWN_MS = 3500;
+const GLITCH_COOLDOWN_MS = 8000;
 const GLITCH_DAMAGE = 15;
 const GLITCH_HIT_RADIUS = 38;
 
@@ -1703,63 +1701,6 @@ export const perkAdrenaline: PreviewScript = {
 };
 
 // ── Mastery ───────────────────────────────────────────────────────────
-
-export const masteryVpn: PreviewScript = {
-  duration: 9000,
-  scale: 0.9,
-  bodyTexture: '',
-  caption: 'Keep moving and you accelerate to +50% over five seconds. Stop once and it is all gone',
-  run(ctx) {
-    const home: Mark = { x: ctx.w * 0.2, y: ctx.h * 0.6 };
-    const s = drivenCaster(ctx, home);
-    let boost = 0;
-    let moving = true;
-
-    const trail: Mark[] = [];
-    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(D_FLOOR));
-    ctx.onFrame((dt, elapsed) => {
-      const t = elapsed / 1000;
-      const step = dt / 1000;
-      // The ramp, and the cliff.
-      boost = moving
-        ? Math.min(VPN_MAX_BONUS, boost + (VPN_MAX_BONUS / VPN_RAMP_MS) * dt)
-        : 0;
-      s.tav?.setVpn(boost / VPN_MAX_BONUS);
-      if (moving) {
-        home.x += 150 * (1 + boost) * step;
-        if (home.x > ctx.w - 20) home.x = 20;
-        trail.push({ x: home.x, y: home.y });
-      }
-      while (trail.length > 4 + Math.floor((boost / VPN_MAX_BONUS) * 18)) trail.shift();
-      g.clear();
-      trail.forEach((p, i) => {
-        const k = i / Math.max(1, trail.length - 1);
-        bitTileLayered(g, ctx.tint, p.x, p.y, 0, 4 + (boost / VPN_MAX_BONUS) * 4,
-          (i + Math.floor(t * 10)) % 2 === 0, TECH.phosphor, k * (0.3 + boost));
-      });
-    });
-
-    const meter = ctx.adopt(ctx.scene.add.text(ctx.w * 0.5, 14, '', {
-      fontSize: '11px', fontFamily: '"Trebuchet MS", "Segoe UI", Tahoma, sans-serif',
-    }).setOrigin(0.5).setDepth(21));
-    ctx.onFrame(() => {
-      meter.setText(`+${Math.round(boost * 100)}% move speed`);
-      meter.setColor(hex(boost >= VPN_MAX_BONUS ? TECH.ice : TECH.phosphor));
-    });
-
-    ctx.at(VPN_RAMP_MS + 800, () => {
-      moving = false;
-      trail.length = 0;
-      s.fx.glitch(home.x, home.y, 40, 30, TECH.rust, 320, D_WORLD);
-      tick(ctx, home.x, home.y - 40, 'TUNNEL DROPPED', TECH.rust);
-      tick(ctx, home.x, home.y - 58, 'ALL OF IT, AT ONCE', TECH.alert);
-    });
-    ctx.at(VPN_RAMP_MS + 2400, () => { moving = true; });
-
-    label(ctx, ctx.w * 0.5, ctx.h - 8,
-      `${VPN_RAMP_MS / 1000}s to full · no partial credit, and the trail is the readout`, TECH.wire);
-  },
-};
 
 export const masteryGlitchAbuse: PreviewScript = {
   duration: 6000,

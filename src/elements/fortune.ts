@@ -5,10 +5,10 @@ import { Ability, CastContext } from './Ability';
  * Gold — a test element, reachable only from a cheat-mode save for now. The id is still
  * `fortune` (it replaced the old shopkeeper of that name), so saves and campaign data keep it.
  *
- * An alchemist who has stopped pretending the work is about anything but gold. One hand throws
- * whatever is nearest; the other turns it to gold on the way. His purse is the element's one
- * resource, and every ability is either a way to fill it or the one way to spend it — Advance,
- * three stat cards over his head, ten gold a pick, kept for the match.
+ * An alchemist who has stopped pretending the work is about anything but gold, and built a
+ * factory to prove it: a tycoon runs along the top of the screen all match, droppers feeding a
+ * conveyor feeding a refiner, paying into his purse. The purse buys more factory, or Advance —
+ * three stat cards over his head, ten gold a pick — and a finished factory buys a Rebirth.
  *
  * Every `cast` below is a one-line delegate; the whole simulation lives in FortuneKit.
  */
@@ -16,7 +16,7 @@ import { Ability, CastContext } from './Ability';
 const fray: Ability = {
   id: 'fortune-fray',
   name: 'Fray',
-  description: 'Throw a clump of 7 grass blades forward; your other hand turns them to gold in the air. Then they fall toward the bottom of the screen as if the arena had gravity. 3 damage a blade — small alone, a lot when the whole clump lands. Hold to keep throwing.',
+  description: 'Throw a clump of 7 grass blades forward; your other hand turns them to gold in the air. Then they fall toward the bottom of the screen as if the arena had gravity. 2 damage a blade — small alone, a lot when the whole clump lands. Hold to keep throwing.',
   displayKey: 'Click',
   cooldown: 520,
   cast(ctx: CastContext) { ctx.fortuneFray(ctx.targetX, ctx.targetY); },
@@ -31,13 +31,13 @@ const advance: Ability = {
   cast(ctx: CastContext) { ctx.fortuneAdvance(); },
 };
 
-const plume: Ability = {
-  id: 'fortune-plume',
-  name: 'Gold Plume',
-  description: 'Throw a bag of powder that bursts into a cloud of fine golden dust for 6 seconds. Enemies inside take 9 damage a second. Standing inside it yourself earns 2 gold a second.',
+const billiards: Ability = {
+  id: 'fortune-billiards',
+  name: 'Billiards',
+  description: 'Throw a handful of 5 golden pool balls onto the floor ahead and pull out your cane as a cue. Aim with the mouse, hold to draw the cue back (the longer, the harder), release to strike: the first ball in line shoots off, knocks into the others and bounces off the walls. A ball hits for 5 to 22 depending on its speed. The cane itself pokes anyone in its line for 8 to 18.',
   displayKey: 'R',
-  cooldown: 9000,
-  cast(ctx: CastContext) { ctx.fortunePlume(ctx.targetX, ctx.targetY); },
+  cooldown: 12000,
+  cast(ctx: CastContext) { ctx.fortuneBilliards(ctx.targetX, ctx.targetY); },
 };
 
 const heart: Ability = {
@@ -49,14 +49,15 @@ const heart: Ability = {
   cast(ctx: CastContext) { ctx.fortuneHeart(ctx.targetX, ctx.targetY); },
 };
 
-const midas: Ability = {
-  id: 'fortune-midas',
-  name: 'Midas Curse',
-  description: 'For 10 seconds the enemy nearest your cursor slowly turns to gold, and so does the floor they walk on — permanently. On gold floor you are 50% faster and earn 1 gold every 3 seconds. Their shots turn into gold coins that drop to the ground (+1 gold each when you pick them up), and anything they summon or build turns into a golden statue on the spot (+2 gold).',
+const rebirth: Ability = {
+  id: 'fortune-rebirth',
+  name: 'Rebirth',
+  description: 'Only when your tycoon is complete — every pad bought. You flash white and come back a little more golden, and the tycoon is reset to its first dropper. Each rebirth: +25% gold earned, +15% damage, 15% less damage taken, and 150 gold health — spent before your own, and it pays you 1 gold for every 10 an enemy cuts away. Three rebirths at most.',
   displayKey: 'Q',
   isUltimate: true,
-  cooldown: 30000,
-  cast(ctx: CastContext) { ctx.fortuneMidas(ctx.targetX, ctx.targetY); },
+  // Gated by the tycoon, not by time: short enough that it is never a charged ultimate.
+  cooldown: 1000,
+  cast(ctx: CastContext) { ctx.fortuneRebirth(); },
 };
 
 export const fortuneElement: Element = {
@@ -64,5 +65,5 @@ export const fortuneElement: Element = {
   name: 'Gold',
   color: 0xd8a531,
   emoji: '🪙',
-  abilities: [fray, advance, plume, heart, midas],
+  abilities: [fray, advance, billiards, heart, rebirth],
 };

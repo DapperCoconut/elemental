@@ -462,16 +462,16 @@ export const PREVIEWS: Record<string, PreviewScript> = {
   // ── Fortune ──
   'fortune:fortune-fray': fortune.fray,
   'fortune:fortune-advance': fortune.advance,
-  'fortune:fortune-plume': fortune.goldPlumeShow,
+  'fortune:fortune-billiards': fortune.billiards,
   'fortune:fortune-heart': fortune.heartOfGold,
-  'fortune:fortune-midas': fortune.midasCurse,
+  'fortune:fortune-rebirth': fortune.rebirth,
   'fortune:mastery:gilded-augment': fortune.masteryAugment,
-  'fortune:mastery:rags-to-riches': fortune.masteryRags,
-  'fortune:fortune-fray:up': fortune.frayUpgraded,
+  'fortune:mastery:no-pain-no-gain': fortune.masteryPain,
+  'fortune:fortune-fray:up': fortune.lifeSupport,
   'fortune:fortune-advance:up': fortune.advanceUpgraded,
-  'fortune:fortune-plume:up': fortune.goldPlumeUpgraded,
+  'fortune:fortune-billiards:up': fortune.billiardBlitz,
   'fortune:fortune-heart:up': fortune.heartUpgraded,
-  'fortune:fortune-midas:up': fortune.midasUpgraded,
+  'fortune:fortune-rebirth:up': fortune.goldenGlory,
 
   // ── Cloth ──
   'cloth:cloth-scarf-hand': cloth.scarfHandBase,
@@ -866,7 +866,7 @@ export const PREVIEWS: Record<string, PreviewScript> = {
   'magma:passive:the-roll-shot': magma.theRollShot,
   'dune:passive:the-jump': dune.theJump,
   'dune:passive:courses-and-falling': dune.coursesAndFalling,
-  'fortune:passive:the-purse': fortune.thePurse,
+  'fortune:passive:the-tycoon': fortune.theTycoon,
   'cloth:passive:the-scarf-hand': cloth.theScarfHand,
   'cloth:passive:the-smack': cloth.theSmack,
   'marrow:passive:the-bone-bar': marrow.theBoneBar,
@@ -1025,7 +1025,6 @@ export const PREVIEWS: Record<string, PreviewScript> = {
   'rubber:mastery:atom-nhilego': rubber.masteryAtomNhilego,
   'fate:mastery:cycle': fate.masteryCycle,
   'fate:mastery:tarot-of-fate': fate.masteryTarotOfFate,
-  'technology:mastery:vpn': technology.masteryVpn,
   'technology:mastery:glitch-abuse': technology.masteryGlitchAbuse,
 };
 

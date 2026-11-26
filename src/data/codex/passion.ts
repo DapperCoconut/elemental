@@ -168,7 +168,7 @@ const passion: ElementCodex = {
       notes: [
         'Planted on your own feet it is a sanctuary nobody can step into.',
         'Shots still fly on through it — the aura taxes them, it does not stop them.',
-        'Ruin\'s Spikes of Ruin and Gold\'s Midas Curse treat it as a structure.',
+        'Ruin\'s Spikes of Ruin treats it as a structure.',
       ],
     },
 

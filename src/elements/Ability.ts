@@ -326,9 +326,9 @@ export interface CastContext {
   // Gold (element id `fortune`; test element: cheat mode only for now)
   fortuneFray: (tx: number, ty: number) => void;
   fortuneAdvance: () => void;
-  fortunePlume: (tx: number, ty: number) => void;
+  fortuneBilliards: (tx: number, ty: number) => void;
   fortuneHeart: (tx: number, ty: number) => void;
-  fortuneMidas: (tx: number, ty: number) => void;
+  fortuneRebirth: () => void;
   // Cloth: the scarf hand, needles, the bola, the pincushion and Burning Man
   clothGrab: (tx: number, ty: number) => void;
   clothNeedles: (tx: number, ty: number) => void;

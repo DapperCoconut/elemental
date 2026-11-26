@@ -270,27 +270,27 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
    */
   public goldHeartUntil = 0;
   public goldHeartStress = 0;
-  /** Gold's Midas Curse: scene time the curse lifts. Mirrored online like the heart. */
-  public midasUntil = 0;
   /**
-   * Gold upgrades. The two timers are scene time and mirrored online like the heart; the rest are
+   * Gold upgrades. The timer is scene time and mirrored online like the heart; the rest are
    * written every frame by FortuneKit (its one writer) and handed back by its `reset()`.
    *
    * - `goldHexUntil` (F+ Gold Hex): every cooling ability on this body recharges at half speed.
-   * - `goldStatueUntil` (Q+ Full Metal Alchemy): a solid gold statue — no moving, no casting.
    * - `goldCooldownMult` (E+ Ruby Haste): every cooldown stretched. Relayed online through `cd`.
    * - `goldVigorCut` (E+ Ruby Vigor): max HP taken away. The kit applies it as a delta.
    * - `goldSpeedMult` (E+ Ruby Stride): read by Husk.moveSpeed; the duel pair is slowed through the
    *   kit's own speed mults instead, which is also what reaches an online victim.
-   * - `goldCloakDodge` (R+ Glittery Cloak): the chance a hit is dodged; `goldCloakDodges` counts
-   *   them so the kit can say so.
    */
   public goldHexUntil = 0;
-  public goldStatueUntil = 0;
   public goldCooldownMult = 1;
   public goldVigorCut = 0;
   public goldSpeedMult = 1;
-  public goldCloakDodge = 0;
+  /**
+   * Gold's Rebirth (and Gilded Augment): gold health, a layer of its own spent after Sap HP and
+   * before clotted HP. Like Sap it is health, not a shield — what it loses is damage taken — and
+   * whatever it loses is reported to {@link onGoldHpAbsorb}, which is how it pays the alchemist.
+   */
+  public goldHp = 0;
+  public onGoldHpAbsorb: ((spent: number) => void) | null = null;
   /**
    * Magnet Mastery (Mag-Lev): a magnetised body caught on the magnet's maglev ground is held back.
    * Written every frame by MagnetKit (its one writer), read by Husk.moveSpeed; the duel pair is
@@ -310,10 +310,9 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
   public dreamSlowMult = 1;
   /**
    * Dream E+ (Lucid Dream): the chance a hit misses a dreamer who has dreamt themselves stronger.
-   * Rolled on the body's own machine, like the cloak's; DreamKit is its one writer.
+   * Rolled on the body's own machine; DreamKit is its one writer.
    */
   public dreamLucidDodge = 0;
-  public goldCloakDodges = 0;
   /**
    * Ruin (Unstoppable Decay): 1.1^stacks of rot on this fighter, times 0.9^stacks carried by
    * whoever is hitting it — the victim-side stand-in for "the decayed deal less", since
@@ -1683,13 +1682,6 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     // True damage is pierce that Thick Skin cannot revoke.
     const pierce = trueDamage || (!!opts?.pierce && !this.pierceImmune);
     if (!pierce && this.isInvincible) return;
-    // Gold's Glittery Cloak: a hit that never finds the body in the glitter. Rolled on the body's
-    // own machine (a replica's chance is always 0), so a relayed hit is dodged by the victim.
-    if (!pierce && !opts?.selfInflicted && amount > 0 && this.goldCloakDodge > 0 && Math.random() < this.goldCloakDodge) {
-      this.goldCloakDodges++;
-      this.lastIncomingDamage = 0;
-      return;
-    }
     // Fate's Dice of Doom: a banked sure-dodge first, then the rolled chance. Same rules.
     if (!pierce && !opts?.selfInflicted && amount > 0 && (this.fateSureDodges > 0 || (this.fateDodge > 0 && Math.random() < this.fateDodge))) {
       if (this.fateSureDodges > 0) this.fateSureDodges--;
@@ -1892,6 +1884,14 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
       this.sapHp -= sapSpent;
       amount -= sapSpent;
       if (sapSpent > 0) this.onSapAbsorb?.(sapSpent, opts);
+    }
+    // Gold: gold health, the same kind of layer. Counted with the sap below as part of the hit.
+    if (!pierce && this.goldHp > 0 && amount > 0) {
+      const goldSpent = Math.min(this.goldHp, amount);
+      this.goldHp -= goldSpent;
+      amount -= goldSpent;
+      sapSpent += goldSpent;
+      this.onGoldHpAbsorb?.(goldSpent);
     }
 
     // Metal R+ (Blood Clottage): clotted HP is spent before normal HP and soaks
@@ -2485,7 +2485,7 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     super.preUpdate(time, delta);
     // Weak HP decays steadily at 3/s.
     if (this.weakHp > 0) this.weakHp = Math.max(0, this.weakHp - 3 * (delta / 1000));
-    this.healthBar.update(this.x, this.y, this.hp, this.shieldHp, this.chargeRatio, this.clottedHp, this.weakHp, this.chargeColor, this.sapHp);
+    this.healthBar.update(this.x, this.y, this.hp, this.shieldHp, this.chargeRatio, this.clottedHp, this.weakHp, this.chargeColor, this.sapHp, this.goldHp);
   }
 
   destroy(fromScene?: boolean): void {

@@ -154,22 +154,13 @@ const ADMIN_CODE: Record<AdminCmd, string[]> = {
   ban: [';ban enemy', 'DataStore:SetAsync(uid, { banned = true })', 'enemy:Kick("Banned by admin")'],
 };
 
-// ── Technology Mastery — VPN (passive) ────────────────────────────────────
-/** Continuous movement time needed to reach the full speed boost. */
-const VPN_RAMP_MS = 5000;
-const VPN_MAX_BONUS = 0.5;
-/** Per-frame distance under which the player counts as standing still. */
-const VPN_MOVE_EPSILON = 0.35;
-const VPN_TRAIL_MAX_MS = 120;
-const VPN_TRAIL_MIN_MS = 34;
-
 // ── Technology Mastery — Glitch Abuse (passive) ───────────────────────────
-/** How long you have to grind against a wall before the collision gives up. */
+/** How long you have to grind against an edge of the arena — a side wall, the ceiling or the floor — before the collision gives up. */
 const GLITCH_RUB_MS = 450;
 const GLITCH_WINDUP_MS = 520;
 const GLITCH_LAUNCH_SPEED = 1500;
 const GLITCH_LAUNCH_MAX_MS = 1100;
-const GLITCH_COOLDOWN_MS = 3500;
+const GLITCH_COOLDOWN_MS = 8000;
 const GLITCH_DAMAGE = 15;
 const GLITCH_HIT_RADIUS = 38;
 
@@ -474,14 +465,6 @@ export class TechnologyKit {
 
   // Mastery requirement tracking
   private cruncherStreak = 0;
-
-  // Technology Mastery — VPN (passive)
-  private vpnRamp = 0;
-  private vpnTrailAccum = 0;
-  private vpnLastX = 0;
-  private vpnLastY = 0;
-  private vpnHasLastPos = false;
-  private vpnIndicatorShown = false;
 
   // Technology Mastery — Glitch Abuse (passive)
   private glitch = freshGlitchState();
@@ -795,14 +778,6 @@ export class TechnologyKit {
 
     this.cruncherStreak = 0;
 
-    this.vpnRamp = 0;
-    this.vpnTrailAccum = 0;
-    this.vpnHasLastPos = false;
-    if (this.vpnIndicatorShown) {
-      this.arena.setStatusIndicator('vpn', null);
-      this.vpnIndicatorShown = false;
-    }
-
     this.glitch = freshGlitchState();
 
     for (const [f, st] of this.lagged) {
@@ -862,7 +837,6 @@ export class TechnologyKit {
     this.updateBrowser(delta);
     this.updateAdmin(time);
     this.updateJail(time);
-    this.updateVpn(time, delta);
     this.updateLag(time, delta);
     this.updateRestart(time);
     this.updateGlitchAbuse(time, delta);
@@ -1160,14 +1134,6 @@ export class TechnologyKit {
       if (time >= st.until) continue;
       run(`lag-${f === this.arena.player ? 'p' : 'n'}`, 'lag', f, this.pcol, 20, D_UI, 1, 0);
     }
-    // Mastery — VPN: the ramp is only ever the local player's, and it streams behind them.
-    if (this.arena.masteryActive && this.vpnRamp > 0.05) {
-      const p = this.arena.player;
-      const body = p.body as Phaser.Physics.Arcade.Body | null;
-      const heading = body ? Math.atan2(body.velocity.y, body.velocity.x) : 0;
-      run('player-vpn', 'vpn', p, this.pcol, 22, D_FLOOR + 2, this.vpnRamp, heading);
-    }
-
     for (const id of [...this.auras.keys()]) if (!live.has(id)) this.dropAura(id);
   }
 
@@ -1181,7 +1147,6 @@ export class TechnologyKit {
       const av = this.playerAvatar;
       av.setFacing(Math.atan2(pointer.worldY - player.y, pointer.worldX - player.x));
       av.setMastered(this.arena.masteryActive);
-      av.setVpn(this.vpnRamp);
       // The console visibly swells the rig — you are inside the machine while it is open.
       av.setIntensity(this.admin.player.open ? 1.25 : 1);
       av.update(delta, player.x, player.y - this.flyLift('player'), player.forceInvisible ? 0 : player.alpha);
@@ -1202,11 +1167,11 @@ export class TechnologyKit {
     }
   }
 
-  /** The VPN mastery ramp, the Adrenaline dose and the console's Fly / Speed — read in ArenaScene's speed-mult block. */
+  /** The Adrenaline dose and the console's Fly / Speed — read in ArenaScene's speed-mult block. */
   getPlayerSpeedMult(): number {
     const time = this.arena.scene.time.now;
     const adrenaline = 1 + this.adrenalineStacksFor('player', time) * ADRENALINE_SPEED_PER_STACK;
-    return (1 + this.vpnRamp * VPN_MAX_BONUS) * adrenaline * this.adminSpeedMult('player', time);
+    return adrenaline * this.adminSpeedMult('player', time);
   }
 
   private adminSpeedMult(owner: Owner, time: number): number {
@@ -2851,78 +2816,6 @@ export class TechnologyKit {
     }
   }
 
-
-  // ── Technology Mastery — VPN (passive) ────────────────────────────────
-
-  /**
-   * Ramps a movement speed bonus while the player keeps moving and drops it the instant
-   * they stop. Caster-local: online opponents replicate by position, so there is nothing
-   * to mirror on the victim sim.
-   */
-  private updateVpn(time: number, delta: number): void {
-    void time;
-    if (!this.arena.masteryActive) {
-      if (this.vpnIndicatorShown) {
-        this.arena.setStatusIndicator('vpn', null);
-        this.vpnIndicatorShown = false;
-      }
-      this.vpnRamp = 0;
-      this.vpnHasLastPos = false;
-      return;
-    }
-
-    const player = this.arena.player;
-    const moved = this.vpnHasLastPos
-      ? Math.hypot(player.x - this.vpnLastX, player.y - this.vpnLastY)
-      : 0;
-    this.vpnLastX = player.x;
-    this.vpnLastY = player.y;
-    this.vpnHasLastPos = true;
-
-    // Scale the epsilon by frame length so a slow frame isn't mistaken for movement.
-    if (moved > VPN_MOVE_EPSILON * (delta / 16.67)) {
-      this.vpnRamp = Math.min(1, this.vpnRamp + delta / VPN_RAMP_MS);
-      this.spawnVpnTrail(delta);
-    } else {
-      this.vpnRamp = 0;
-      this.vpnTrailAccum = 0;
-    }
-
-    const pct = Math.round(this.vpnRamp * VPN_MAX_BONUS * 100);
-    if (pct > 0) {
-      this.arena.setStatusIndicator('vpn', {
-        name: 'VPN', emoji: '🌐', color: 0x2288cc,
-        description: 'Private tunnel: your speed climbs the longer you keep moving. Stop and it resets to zero.',
-        count: pct, suffix: '%', priority: 120,
-      });
-      this.vpnIndicatorShown = true;
-    } else if (this.vpnIndicatorShown) {
-      this.arena.setStatusIndicator('vpn', null);
-      this.vpnIndicatorShown = false;
-    }
-  }
-
-  /** Datastream behind the player — denser, larger, brighter and longer-lived as the ramp climbs. */
-  private spawnVpnTrail(delta: number): void {
-    const r = this.vpnRamp;
-    this.vpnTrailAccum += delta;
-    const interval = VPN_TRAIL_MAX_MS - (VPN_TRAIL_MAX_MS - VPN_TRAIL_MIN_MS) * r;
-    if (this.vpnTrailAccum < interval) return;
-    this.vpnTrailAccum = 0;
-
-    const scene = this.arena.scene;
-    const player = this.arena.player;
-    // One column at rest, up to three side-by-side at full tunnel speed.
-    const columns = 1 + Math.floor(r * 2.99);
-    const life = 400 + 700 * r;
-    const size = 11 + Math.round(5 * r);
-    const color = r > 0.85 ? TECH.ice : r > 0.5 ? TECH.mint : TECH.phosphor;
-    for (let i = 0; i < columns; i++) {
-      const spread = columns === 1 ? 0 : (i - (columns - 1) / 2) * (10 + 8 * r);
-      this.pfx.bit(player.x + spread, player.y + Phaser.Math.Between(-6, 6), color, 9, size, life);
-    }
-    void scene;
-  }
 
   // ── Technology Mastery — Glitch Abuse (passive) ───────────────────────
 

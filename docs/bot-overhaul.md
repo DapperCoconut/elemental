@@ -434,24 +434,23 @@ fate, creation, growth, rubber, acid, hunt, time; then the remainder). For each 
   queue) and `Fighter.dodgingAt` for Space. Synergy: the 0.6s stun leaves the target
   stationary, so `planNpc`'s led slide/blast lands on it without a dedicated field.
 
-- **Gold (id `fortune`, 2026-10-15 rework), steps 3–5.** The shopkeeper was replaced by an
-  alchemist and `doFortuneAbilities` rewritten around kit-published fields. Synergies checked
-  first: `npcGoldHeartLive` → Plume thrown onto the gold-hearted target (`npcGoldPlumeAt`) so it
-  has to walk out and fill its heart; Midas cast inside 420px while the target is above 30%;
-  `npcGoldCanAdvance` gates E (the kit picks the card itself in `npcChoose`). `goldSeekPoint` is
-  a soft seek to its own plume, its loot, or Midas floor while the curse is live.
-  `npcGoldFrayAim` is the gravity-corrected aim for the falling grass. Movement profile is now a
-  150–300px skirmisher. No mastery exists yet.
-  **Upgrades (2026-10-16):** Accumulation (Click+), Glittery Cloak (R+) and Gold Hex (F+) are
-  passives the kit runs for the bot; Artisan (E+) is played in `npcChoose`, which scores jeweled
-  cards by their worth (Jade by how many jades it owns) and never picks one it cannot pay for.
-  Full Metal Alchemy (Q+) publishes `npcGoldStatueHold` (its statue is up, uncracked, and the bot is
-  short of an Advance) → `doFortuneAbilities` returns before anything else so the statue melts into
-  its 3 coins, which `goldSeekPoint` then walks it to.
-  **Mastery (2026-10-17):** Nightmare binds Rags to Riches over Q (Midas Curse). The kit fires it
-  in `updateNpcMastery` once 20 gold is banked and the bot is above half HP (the gold is its Gilded
-  Augment heal otherwise); `npcCanAdvance` saves every other purse for it (riches×2 ≤ picks → save).
-  The rotation reads `npcGoldRagsSlot` and leaves the bound key alone. Gilded Augment runs itself.
+- **Gold (id `fortune`, 2026-11-25 tycoon rework).** Plume, Midas and their upgrades are gone;
+  the bot's non-cast play lives in the kit's `updateNpc()`, not in `doFortuneAbilities`:
+  it shops the tycoon (cheapest pad the moment the purse covers it, every 0.5s; Click+ shard pad
+  free after 8s since the bot has no shards), throws Click+ life-support on below 45% HP and off
+  above 80%, and takes its own cue shots — `npcCuePlan()` picks the ball whose shooting stance
+  (44px behind it on the line through the target) is nearest, publishes that stance as
+  `goldSeekPoint` (8px hard-ish seek while `npcGoldCueOut`), shoots when the ball lines up
+  (cos ≥ 0.86) after a 0.35s wind-up, takes any in-reach shot after 2.6s, else puts the cane
+  away. Billiard Blitz (R+) needs nothing extra: a hit hands the cane back and the plan re-runs.
+  Rotation, synergies first: `npcGoldCanRebirth` → Q; `npcGoldCueOut` → return (the click is the
+  kit's); `npcGoldHeartLive` → Billiards (a hearted target must walk out of the balls' way);
+  `npcGoldCanAdvance` → E (keeps the next pad's price back until the tycoon is complete). Then
+  cane inside 185px, Billiards at 150–400px, Fray at `npcGoldFrayAim`.
+  **Mastery:** Nightmare binds No Pain, No Gain over Q (Rebirth). The kit stabs (aimed at the
+  target, so the gold lands behind the bot) whenever it is above 60% HP and off cooldown; the soft
+  seek then walks it onto its gold. `npcGoldPainSlot` keeps the rotation off the bound key.
+  Verified by `.verify-gold.mjs` [5]: a Gold bot builds and rebirths twice inside two minutes.
 
 - **Magnet (2026-10-15 scrap rework), steps 3–4; movement profile untouched.** Rods, Magnetize,
   Protect and Atom Smasher are gone; `doMagnetAbilities` was rewritten around MagnetKit's fields,

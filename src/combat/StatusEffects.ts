@@ -444,22 +444,10 @@ export const STATUS_DESCRIPTORS: StatusDescriptor[] = [
     write: (f, t) => { f.goldHeartUntil = t; },
   },
   {
-    id: 'midas', name: 'Midas Curse', emoji: '👑', color: 0xffd34d, priority: 46.4, kind: 'timer',
-    description: 'You are turning to gold, and so is the floor you walk on — it stays gold, and the alchemist runs faster and earns on it. Every shot you fire drops as a gold coin, and anything you summon or build turns into a golden statue the moment it appears.',
-    read: (f) => f.midasUntil,
-    write: (f, t) => { f.midasUntil = t; },
-  },
-  {
     id: 'gold-hex', name: 'Gold Hex', emoji: '⏳', color: 0xd8a531, priority: 46.3, kind: 'timer',
     description: 'The alchemist\'s golden heart hexed you. Every ability you have charges at half speed until this runs out — 5 seconds after the heart itself.',
     read: (f) => f.goldHexUntil,
     write: (f, t) => { f.goldHexUntil = t; },
-  },
-  {
-    id: 'gold-statue', name: 'Solid Gold', emoji: '🗿', color: 0xffe066, priority: 46.5, kind: 'timer',
-    description: 'The Midas Curse finished its work: you are a solid gold statue. You cannot move or cast until the gold melts. Everything the alchemist hits you with in the meantime does double damage.',
-    read: (f) => f.goldStatueUntil,
-    write: (f, t) => { f.goldStatueUntil = t; },
   },
   {
     id: 'devotion-faith', name: 'Faith', emoji: '🙏', color: 0xf5e08a, priority: 46.7, kind: 'amount',

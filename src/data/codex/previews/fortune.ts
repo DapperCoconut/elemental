@@ -1,15 +1,18 @@
 import Phaser from 'phaser';
 import { PreviewScript, PreviewCtx } from '../../../ui/AbilityPreview';
+import type { BaseAvatar } from '../../../elements/kits/ElementVisuals';
 import {
-  FOR, FortuneAvatar, FortuneFx, Jewel, StatKind, advanceCard, glitterCloak, glitterMotes, goldCoin, goldFloor,
-  goldPlume, goldStatue, goldStatueShell, goldenHeart, grassBlade, jewelGem, midasGilt, powderBag, statueRays,
+  FOR, FortuneAvatar, FortuneFx, Jewel, StatKind, advanceCard, goldenHeart, grassBlade, jewelGem, jitter,
 } from '../../../elements/kits/FortuneVisuals';
+import { bloodBlot, paintTycoon, poolBall } from '../../../elements/kits/FortuneTycoonVisuals';
+import { GloryId, PART_PRICE, PARTS, PartId, TYCOON_W, Tycoon, TycoonPad } from '../../../elements/kits/FortuneTycoon';
+import { BALL_R, Ball, cueTarget, rackSpots, stepBalls } from '../../../elements/kits/FortuneBilliards';
 
 /**
  * Gold's showcases.
  *
  * Every loop keeps the same small records the kit keeps (blades with a velocity and a birth time,
- * a plume, a heart's stress, floor patches, loot) and paints them with the kit's own exported
+ * a heart's stress, a real Tycoon, real pool-ball physics) and paints them with the kit's own exported
  * painters. One-shots go through a real `FortuneFx` with a sticky sink. Numbers are the kit's.
  */
 
@@ -17,7 +20,6 @@ import {
 const FRAY_SPEED = 485;
 const FRAY_GRAVITY = 900;
 const FRAY_GILD_MS = 180;
-const PLUME_R = 105;
 const HEART_TRAVEL = 420;
 
 // ── Staging ───────────────────────────────────────────────────────────
@@ -103,7 +105,7 @@ function bladeLayer(
 export const fray: PreviewScript = {
   duration: 6500,
   scale: 0.9,
-  caption: 'Click — 7 grass blades, gilded in flight by the other hand, then falling under gravity. 3 a blade',
+  caption: 'Click — 7 grass blades, gilded in flight by the other hand, then falling under gravity. 2 a blade',
   run(ctx) {
     const fx = fxOf(ctx);
     const av = ctx.useAvatar(() => new FortuneAvatar(ctx.scene, ctx.tint));
@@ -117,7 +119,7 @@ export const fray: PreviewScript = {
     bladeLayer(ctx, blades,
       (b) => Phaser.Math.Distance.Between(b.x, b.y, target.x, target.y) < 24,
       (b) => {
-        float(ctx, target.x + (Math.random() - 0.5) * 20, target.y - 24, '3', hex(FOR.goldLit), 12);
+        float(ctx, target.x + (Math.random() - 0.5) * 20, target.y - 24, '2', hex(FOR.goldLit), 12);
         ctx.capture(() => fx.bladeHit(b.x, b.y, Math.atan2(b.vy, b.vx)));
       });
 
@@ -140,7 +142,7 @@ export const fray: PreviewScript = {
     throwAt(2500, 1);
     throwAt(3400, 1);
     throwAt(4300, 1);
-    ctx.at(5300, () => readout.setText('7 blades, 3 each — small alone, a lot when the whole clump lands'));
+    ctx.at(5300, () => readout.setText('7 blades, 2 each — small alone, a lot when the whole clump lands'));
   },
 };
 
@@ -239,71 +241,152 @@ export const advance: PreviewScript = {
   },
 };
 
-// ══ R — Gold Plume ═════════════════════════════════════════════════════
+// ── Tycoon and table staging ──────────────────────────────────────────
 
-export const goldPlumeShow: PreviewScript = {
-  duration: 8000,
+/**
+ * Run a real `Tycoon` in the box, painted with the kit's own painter and scaled to fit across the
+ * top. `paid` gets every piece the refiner takes; `shardPad` shows the Click+ pad.
+ */
+function tycoonStrip(
+  ctx: PreviewCtx, ty: Tycoon,
+  o: { paid?: (v: number) => void; shardPad?: boolean; canPay?: (p: TycoonPad) => boolean; y?: number } = {},
+): { x: number; y: number; s: number } {
+  const s = Math.min(0.85, (ctx.w - 24) / TYCOON_W);
+  const x = (ctx.w - TYCOON_W * s) / 2;
+  const y = o.y ?? 26;
+  const g = ctx.adopt(ctx.scene.add.graphics().setDepth(3).setPosition(x, y).setScale(s));
+  const prices: Phaser.GameObjects.Text[] = [];
+  ctx.onFrame((dt, e) => {
+    ty.update(dt, { paid: (v) => o.paid?.(v) });
+    g.clear();
+    const pads = ty.pads(!!o.shardPad);
+    paintTycoon(g, ctx.tint, ty, 0, 0, e / 1000, 1, pads, (p) => o.canPay?.(p) ?? true, null);
+    pads.forEach((p, i) => {
+      const t = prices[i] ?? (prices[i] = ctx.adopt(ctx.scene.add.text(0, 0, '', {
+        fontSize: '8px', fontFamily: 'Arial Black', color: '#f4fff0', stroke: '#17110a', strokeThickness: 2,
+      }).setOrigin(0.5).setDepth(4)));
+      t.setText(p.currency === 'shards' ? `${p.price}◆` : `${p.price}`)
+        .setPosition(x + p.x * s, y + (p.y - 1) * s).setVisible(true);
+    });
+    for (let i = pads.length; i < prices.length; i++) prices[i].setVisible(false);
+  });
+  return { x, y, s };
+}
+
+/** Buy every part on `ty` straight away. */
+function completeTycoon(ty: Tycoon): void {
+  for (const id of PARTS) ty.buy(id);
+}
+
+interface Table {
+  balls: Ball<'me'>[];
+  /** Strike the first ball in line from `(x, y)` along `ang`; returns it, or null. */
+  strike(x: number, y: number, ang: number, power: number): Ball<'me'> | null;
+}
+
+/**
+ * A pool table the kit's way: real `stepBalls` physics against the box walls and one dummy body,
+ * painted with `poolBall`. `onHit` fires for a ball that reaches the body fast enough to hurt.
+ */
+function poolTable(
+  ctx: PreviewCtx, fx: FortuneFx, body: { x: number; y: number }, onHit: (b: Ball<'me'>, speed: number) => void,
+): Table {
+  const balls: Ball<'me'>[] = [];
+  const g = ctx.adopt(ctx.scene.add.graphics().setDepth(4.5));
+  const hitAt = new Map<Ball<'me'>, number>();
+  let now = 0;
+  ctx.onFrame((dt, e) => {
+    now = e;
+    stepBalls(balls, dt / 1000, { left: 8, right: ctx.w - 8, top: 30, bottom: ctx.h - 8 },
+      () => [{ x: body.x, y: body.y, r: 17, ref: 0 }], {
+        onClack: (x, y, v) => { if (v > 70) ctx.capture(() => fx.ballClack(x, y, Math.min(1, v / 800))); },
+        onBody: (b, _r, v) => {
+          if (v < 130 || now - (hitAt.get(b) ?? -1e9) < 350) return;
+          hitAt.set(b, now);
+          ctx.capture(() => fx.ballHit(b.x, b.y, Math.min(1, (v - 130) / 770)));
+          onHit(b, v);
+        },
+      });
+    g.clear();
+    for (const b of balls) poolBall(g, ctx.tint, b.x, b.y, BALL_R, b.n, b.roll, 1);
+  });
+  return {
+    balls,
+    strike(x, y, ang, power) {
+      const b = cueTarget(balls, 'me', x, y, Math.cos(ang), Math.sin(ang), 112, 5);
+      ctx.capture(() => fx.cueThrust(x, y, ang, b ? Math.hypot(b.x - x, b.y - y) - BALL_R : 112));
+      if (!b) return null;
+      const v = 300 + 750 * power;
+      b.vx = Math.cos(ang) * v;
+      b.vy = Math.sin(ang) * v;
+      ctx.capture(() => fx.cueHit(b.x - Math.cos(ang) * BALL_R, b.y - Math.sin(ang) * BALL_R, ang, power));
+      return b;
+    },
+  };
+}
+
+/** Lob a rack of `n` balls from the caster to `(x, y)` and set them down on `table`. */
+function rack(ctx: PreviewCtx, table: Table, at: { x: number; y: number }, ang: number, n = 5): void {
+  const from = ctx.casterAt();
+  const spots = rackSpots(at.x, at.y, ang, n);
+  const air = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
+  const start = { t: -1 };
+  ctx.onFrame((_dt, e) => {
+    if (start.t < 0) start.t = e;
+    const u = Math.min(1, (e - start.t) / 380);
+    air.clear();
+    if (u >= 1) {
+      if (spots.length) {
+        spots.forEach((p, i) => table.balls.push({ owner: 'me', x: p.x, y: p.y, vx: 0, vy: 0, n: i + 1, roll: i, born: e, until: e + 14000 }));
+        spots.length = 0;
+      }
+      return;
+    }
+    spots.forEach((p, i) => poolBall(air, ctx.tint, from.x + (p.x - from.x) * u, from.y + (p.y - from.y) * u, BALL_R, i + 1, u * 9 + i, 1, Math.sin(u * Math.PI)));
+  });
+}
+
+/** Line the caster up behind `b` for a shot at `at`, then draw the cue back and shoot. */
+function lineUp(ctx: PreviewCtx, av: BaseAvatar, table: Table, b: () => Ball<'me'> | undefined, at: { x: number; y: number }, ms: number): void {
+  const ball = b();
+  if (!ball) return;
+  const ang = Math.atan2(at.y - ball.y, at.x - ball.x);
+  const stand = { x: ball.x - Math.cos(ang) * 44, y: ball.y - Math.sin(ang) * 44 };
+  ctx.glideCaster({ to: stand, ms: 400, ease: 'out' });
+  ctx.at(ms + 420, () => alch(av)?.setCue(ang, 0));
+  for (let i = 1; i <= 6; i++) ctx.at(ms + 420 + i * 90, () => alch(av)?.setCue(ang, i / 6));
+  ctx.at(ms + 1100, () => {
+    alch(av)?.setCue(null, 0);
+    alch(av)?.jab(ang);
+    const p = ctx.casterAt();
+    table.strike(p.x, p.y, ang, 1);
+  });
+}
+
+// ══ R — Billiards ═════════════════════════════════════════════════════
+
+export const billiards: PreviewScript = {
+  duration: 9000,
   scale: 0.9,
-  caption: 'R — a bag of powder bursts into golden dust for 6s: 9 damage a second inside, and 2 gold a second to you standing in it',
+  caption: 'R — throw 5 golden pool balls and pull out the cane: aim, hold to draw it back, release. Balls hit for 5–22 by speed, the cane pokes for 8–18',
   run(ctx) {
     const fx = fxOf(ctx);
     const av = ctx.useAvatar(() => new FortuneAvatar(ctx.scene, ctx.tint));
     av.setFacing(ctx.aim);
     const readout = label(ctx, ctx.w * 0.5, 12, '#e8dcb8', 11);
-    let gold = 0;
-    purse(ctx, () => gold);
-    const target = { x: ctx.cx + 230, y: ctx.cy };
+    const target = { x: ctx.cx + 260, y: ctx.cy };
     dummyAt(ctx, target);
-    const land = { x: ctx.cx + 200, y: ctx.cy };
-
-    const ground = ctx.adopt(ctx.scene.add.graphics().setDepth(3.5));
-    const air = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
-    let bagAt = -1;
-    let plumeAt = -1;
-    let lastTick = 0;
-    let lastSec = 0;
-    let dmgAcc = 0;
-    ctx.onFrame((dt, e) => {
-      ground.clear(); air.clear();
-      if (bagAt >= 0 && plumeAt < 0) {
-        const u = Phaser.Math.Clamp((e - bagAt) / 450, 0, 1);
-        const x = ctx.cx + (land.x - ctx.cx) * u;
-        const y = ctx.cy + (land.y - ctx.cy) * u - Math.sin(u * Math.PI) * 60;
-        powderBag(air, ctx.tint, x, y, u * 9, 1);
-        if (u >= 1) {
-          plumeAt = e;
-          lastTick = e;
-          lastSec = e;
-          ctx.capture(() => fx.bagBurst(land.x, land.y, PLUME_R));
-        }
-      }
-      if (plumeAt >= 0 && e - plumeAt < 6000) {
-        const born = Phaser.Math.Clamp((e - plumeAt) / 260, 0, 1);
-        const life = Phaser.Math.Clamp((6000 - (e - plumeAt)) / 700, 0, 1);
-        goldPlume(ground, ctx.tint, land.x, land.y, PLUME_R * (0.7 + 0.3 * born), 0.9 * born * life, e / 1000, 3);
-        while (e - lastTick >= 250) { lastTick += 250; dmgAcc += 2.25; }
-        if (e - lastSec >= 1000) {
-          lastSec += 1000;
-          float(ctx, target.x, target.y - 26, `${Math.round(dmgAcc)}`, '#ffb3aa', 13);
-          dmgAcc = 0;
-          const at = ctx.casterAt();
-          if (Phaser.Math.Distance.Between(at.x, at.y, land.x, land.y) <= PLUME_R) {
-            float(ctx, at.x + 18, at.y - 34, '+2 🪙', hex(FOR.goldLit), 11);
-            ctx.capture(() => fx.goldGain(at.x, at.y - 10, 2));
-          }
-        }
-        const at = ctx.casterAt();
-        if (Phaser.Math.Distance.Between(at.x, at.y, land.x, land.y) <= PLUME_R) gold += 2 * dt / 1000;
-      }
+    const table = poolTable(ctx, fx, target, (b, v) => {
+      void b;
+      float(ctx, target.x, target.y - 26, `${Math.round(5 + 17 * Math.min(1, (v - 130) / 770))}`, '#ffb3aa', 13);
     });
-
-    ctx.at(200, () => readout.setText('the bag is thrown at the cursor and bursts where it lands'));
-    ctx.at(500, () => { av.play('sweep', ctx.aim); bagAt = 500; });
-    ctx.at(1600, () => readout.setText('anything of theirs in the dust takes 9 a second'));
-    ctx.at(3200, () => {
-      readout.setText('walk in yourself and the dust pays you 2 gold a second');
-      ctx.glideCaster({ to: { x: land.x - 70, y: land.y + 20 }, ms: 700, ease: 'out' });
-    });
+    const spot = { x: ctx.cx + 110, y: ctx.cy };
+    ctx.at(200, () => readout.setText('a handful of golden pool balls, thrown ahead'));
+    ctx.at(400, () => { av.play('sweep', ctx.aim); rack(ctx, table, spot, 0); });
+    ctx.at(1300, () => readout.setText('the cane comes out as a cue: aim it, and hold to draw it back for power'));
+    lineUp(ctx, av, table, () => table.balls.slice().sort((a, b) => a.x - b.x)[0], target, 1500);
+    ctx.at(3000, () => readout.setText('release — the balls break off each other and the walls'));
+    ctx.at(5600, () => readout.setText('anything fast enough hurts: the harder it arrives, the more'));
   },
 };
 
@@ -382,158 +465,107 @@ export const heartOfGold: PreviewScript = {
   },
 };
 
-// ══ Q — Midas Curse ═══════════════════════════════════════════════════
+// ══ Q — Rebirth ═══════════════════════════════════════════════════════
 
-export const midasCurse: PreviewScript = {
-  duration: 10000,
+export const rebirth: PreviewScript = {
+  duration: 9000,
   scale: 0.9,
-  caption: 'Q — the target turns to gold, and so does the floor they walk. Their shots drop as coins, their summons stand as statues',
+  caption: 'Q — only with a complete tycoon: flash, come back more golden, and start the factory over. +25% gold, +15% damage, -15% taken, 150 gold health. Three times',
   run(ctx) {
     const fx = fxOf(ctx);
     const av = ctx.useAvatar(() => new FortuneAvatar(ctx.scene, ctx.tint));
     av.setFacing(ctx.aim);
     const readout = label(ctx, ctx.w * 0.5, 12, '#e8dcb8', 11);
+    const stats = label(ctx, ctx.cx, ctx.cy + 40, hex(FOR.goldLit), 10);
+    const ty = new Tycoon();
+    completeTycoon(ty);
     let gold = 0;
+    tycoonStrip(ctx, ty, { paid: (v) => { gold += v; } });
     purse(ctx, () => gold);
-    const target = { x: ctx.cx + 260, y: ctx.cy - 20 };
-    dummyAt(ctx, target);
-
-    const floor = ctx.adopt(ctx.scene.add.graphics().setDepth(2));
-    const gilt = ctx.adopt(ctx.scene.add.graphics().setDepth(5.6));
-    const summonG = ctx.adopt(ctx.scene.add.graphics().setDepth(4));
-    const patches: { x: number; y: number; r: number; seed: number; born: number }[] = [];
-    const loot: { kind: 'coin' | 'statue'; x: number; y: number; born: number; seed: number }[] = [];
-    let cursedAt = -1;
-    let walkT = 0;
-    let last = { x: target.x, y: target.y };
-    let shot: { x: number; y: number } | null = null;
-    let summon: { x: number; y: number; born: number } | null = null;
-    const home = { x: target.x, y: target.y };
-
-    ctx.onFrame((dt, e) => {
-      floor.clear(); gilt.clear(); summonG.clear();
-      if (cursedAt >= 0) {
-        walkT += dt / 1000;
-        target.x = home.x - Math.sin(walkT * 0.9) * 140;
-        target.y = home.y + Math.sin(walkT * 1.8) * 30;
-        if (Phaser.Math.Distance.Between(last.x, last.y, target.x, target.y) >= 26) {
-          last = { x: target.x, y: target.y };
-          patches.push({ x: target.x, y: target.y + 10, r: 30 * (0.85 + Math.random() * 0.3), seed: Math.random() * 999, born: e });
-        }
-      }
-      for (const p of patches) goldFloor(floor, ctx.tint, p.x, p.y, p.r, 0.85 * Phaser.Math.Clamp((e - p.born) / 300, 0, 1), p.seed, e / 1000);
-      for (const l of loot) {
-        if (l.kind === 'statue') goldStatue(floor, ctx.tint, l.x, l.y, 15, 1, l.seed, e / 1000);
-        else if (e - l.born > 360) goldCoin(floor, ctx.tint, l.x, l.y, 6, e / 500 + l.seed, 1);
-      }
-      if (cursedAt >= 0) midasGilt(gilt, ctx.tint, target.x, target.y, 0.15 + Phaser.Math.Clamp((e - cursedAt) / 10000, 0, 1) * 0.85, e / 1000, 1);
-      if (shot) {
-        shot.x -= 380 * dt / 1000;
-        summonG.fillStyle(0x9a4fd6, 1); summonG.fillCircle(shot.x, shot.y, 6);
-        summonG.fillStyle(0xe6c6ff, 1); summonG.fillCircle(shot.x, shot.y, 2.6);
-        if (shot.x < target.x - 70) {
-          const s = shot;
-          shot = null;
-          const tx = s.x - 4;
-          const ty = s.y + 18;
-          ctx.capture(() => fx.coinDrop(s.x, s.y, tx, ty));
-          loot.push({ kind: 'coin', x: tx, y: ty, born: e, seed: 1 });
-        }
-      }
-      if (summon) {
-        const a = Phaser.Math.Clamp((e - summon.born) / 120, 0, 1);
-        summonG.fillStyle(0x3c4254, a); summonG.fillRect(summon.x - 12, summon.y - 16, 24, 26);
-        summonG.fillStyle(0x8e97ad, a); summonG.fillRect(summon.x - 8, summon.y - 12, 16, 6);
-      }
-      // The alchemist collects anything it walks over.
-      const at = ctx.casterAt();
-      for (let i = loot.length - 1; i >= 0; i--) {
-        const l = loot[i];
-        if (l.kind === 'coin' && e - l.born < 360) continue;
-        if (Phaser.Math.Distance.Between(at.x, at.y, l.x, l.y) > 34) continue;
-        loot.splice(i, 1);
-        const v = l.kind === 'coin' ? 1 : 2;
-        gold += v;
-        ctx.capture(() => fx.pickup(l.x, l.y));
-        float(ctx, at.x + 18, at.y - 34, `+${v} 🪙`, hex(FOR.goldLit), 11);
+    let flashAt = -1;
+    let n = 0;
+    const bar = ctx.adopt(ctx.scene.add.graphics().setDepth(10));
+    let ghp = 0;
+    ctx.onFrame((_dt, e) => {
+      alch(av)?.setRebirthFlash(flashAt < 0 ? 0 : Math.max(0, 1 - (e - flashAt) / 900));
+      bar.clear();
+      const bx = ctx.cx - 26;
+      const by = ctx.cy - 38;
+      const span = Math.max(400, 400 + ghp);
+      bar.fillStyle(0x111111, 0.85); bar.fillRect(bx - 1, by - 1, 54, 9);
+      bar.fillStyle(0x22dd55, 1); bar.fillRect(bx, by, 52 * 400 / span, 7);
+      if (ghp > 0) {
+        bar.fillStyle(0xf0c33c, 1); bar.fillRect(bx + 52 * 400 / span, by, 52 * ghp / span, 7);
+        bar.fillStyle(0xfffbe6, 0.9); bar.fillRect(bx + 52 * 400 / span, by, 52 * ghp / span, 2);
       }
     });
-
-    ctx.at(200, () => readout.setText('the curse lands on whoever is nearest the cursor'));
-    ctx.at(500, () => {
-      av.play('raise');
-      ctx.capture(() => fx.midasCast(ctx.cx, ctx.cy));
+    const reborn = (ms: number): void => ctx.at(ms, () => {
+      n++;
+      flashAt = ms;
+      ctx.capture(() => fx.rebirth(ctx.cx, ctx.cy, n));
+      alch(av)?.play('raise');
+      alch(av)?.setGilding(n * 3);
+      ty.rebirth();
+      ghp += 150;
+      stats.setText(`+${n * 25}% gold · +${n * 15}% damage · -${Math.round((1 - Math.pow(0.85, n)) * 100)}% taken`);
     });
-    ctx.at(800, () => {
-      cursedAt = 800;
-      ctx.capture(() => fx.midasStrike(target.x, target.y));
-      float(ctx, target.x, target.y - 50, '👑 MIDAS CURSE', hex(FOR.goldLit), 13);
-    });
-    ctx.at(1500, () => readout.setText('every step they take turns the floor to gold — for the rest of the match'));
-    ctx.at(3300, () => { readout.setText('they shoot — and the shot drops out of the air as a coin'); shot = { x: target.x - 20, y: target.y }; });
-    ctx.at(5200, () => {
-      readout.setText('they summon — and it is a golden statue the instant it appears');
-      summon = { x: target.x + 40, y: target.y + 30, born: 5200 };
-    });
-    ctx.at(5650, () => {
-      if (!summon) return;
-      const s = summon;
-      summon = null;
-      ctx.capture(() => fx.transmuteSummon(s.x, s.y, 22));
-      loot.push({ kind: 'statue', x: s.x, y: s.y, born: 5650, seed: 7 });
-    });
-    ctx.at(6600, () => {
-      readout.setText('on gold floor you are 50% faster; pick up the coin (+1) and the statue (+2)');
-      const first = loot[0];
-      if (first) ctx.glideCaster({ to: { x: first.x, y: first.y }, ms: 900, ease: 'out' });
-    });
-    ctx.at(7700, () => {
-      const next = loot[0];
-      if (next) ctx.glideCaster({ to: { x: next.x, y: next.y }, ms: 700, ease: 'out' });
-    });
+    ctx.at(200, () => readout.setText('every pad bought: the tycoon is complete, and Q lights up'));
+    reborn(1600);
+    ctx.at(2100, () => readout.setText('he comes back more golden — and the factory goes back to one dropper'));
+    ctx.at(3600, () => readout.setText('150 gold health on top of his own: spent first, and it pays 1 gold per 10 lost'));
+    ctx.at(5000, () => { completeTycoon(ty); readout.setText('build it all again for the next one — three rebirths at most'); });
+    reborn(6200);
   },
 };
 
-// ══ Passive — The Purse ═══════════════════════════════════════════════
+// ══ Passive — The Tycoon ══════════════════════════════════════════════
 
-export const thePurse: PreviewScript = {
-  duration: 7000,
+export const theTycoon: PreviewScript = {
+  duration: 11000,
   scale: 0.9,
-  caption: 'The Purse — gold from your own plume, a hearted enemy\'s blood, the Midas floor and its loot. Advance spends it',
+  caption: 'The Tycoon — droppers, a belt and a refiner along the top of the screen, paying gold all match. Click a pad to build the next machine',
   run(ctx) {
     const fx = fxOf(ctx);
     const av = ctx.useAvatar(() => new FortuneAvatar(ctx.scene, ctx.tint));
     av.setFacing(ctx.aim);
     const readout = label(ctx, ctx.w * 0.5, 12, '#e8dcb8', 11);
+    const ty = new Tycoon();
     let gold = 0;
-    purse(ctx, () => gold);
-    const ground = ctx.adopt(ctx.scene.add.graphics().setDepth(3));
-    const at0 = { x: ctx.cx, y: ctx.cy };
-    let sec = 0;
-    ctx.onFrame((dt, e) => {
-      ground.clear();
-      goldPlume(ground, ctx.tint, at0.x, at0.y, PLUME_R * 0.9, 0.8, e / 1000, 5);
-      gold += 2 * dt / 1000;
-      alch(av)?.setGold(Math.min(1, gold / 30));
-      if (e - sec >= 1000) {
-        sec += 1000;
-        float(ctx, at0.x + 18, at0.y - 34, '+2 🪙', hex(FOR.goldLit), 11);
-        ctx.capture(() => fx.goldGain(at0.x, at0.y - 10, 2));
-      }
+    const strip = tycoonStrip(ctx, ty, {
+      paid: (v) => { gold += v; },
+      canPay: (p) => gold >= p.price,
     });
-    ctx.at(200, () => readout.setText('standing in your own Gold Plume: 2 gold a second'));
-    ctx.at(3000, () => readout.setText('a gold-hearted enemy: 1 per 20 damage · Midas floor: 1 per 3s · coins 1, statues 2'));
-    ctx.at(5500, () => readout.setText('the purse fills, the under-glow swells — and Advance spends it ten at a time'));
+    purse(ctx, () => gold);
+    ctx.onFrame(() => alch(av)?.setGold(Math.min(1, gold / 30)));
+    // Sped up for the showcase: the purse is topped up so the pads go in on cue.
+    const buy = (ms: number, id: PartId): void => ctx.at(ms, () => {
+      ty.buy(id);
+      gold = Math.max(0, gold - PART_PRICE[id]);
+      const pad = { x: strip.x + 200 * strip.s, y: strip.y + 40 * strip.s };
+      ctx.capture(() => fx.goldGain(pad.x, pad.y, 1));
+    });
+    ctx.at(200, () => readout.setText('one dropper to start: a piece worth 1 gold every 2 seconds'));
+    ctx.at(2600, () => { gold += 30; readout.setText('click a green pad to build the next machine'); });
+    buy(3000, 'drop2');
+    buy(3700, 'up1');
+    buy(4400, 'drop3');
+    ctx.at(5400, () => { gold += 90; readout.setText('upgraders add to every piece that passes under them'); });
+    buy(5800, 'up2');
+    buy(6400, 'ref2');
+    buy(7000, 'drop4');
+    buy(7600, 'up3');
+    buy(8200, 'ref3');
+    ctx.at(8400, () => readout.setText('all eight bought: the tycoon is complete — Rebirth (Q) is ready'));
   },
 };
 
 // ══ Mastery ═══════════════════════════════════════════════════════════
 
-/** Gilded Augment: below 30% HP the purse heals you, dearer every second it runs. */
+/** Gilded Augment: below 30%, the purse buys gold health, dearer every second it runs. */
 export const masteryAugment: PreviewScript = {
   duration: 9000,
   scale: 0.9,
-  caption: 'Gilded Augment — below 30% HP, spend gold to heal 16 HP a second and run 30% faster. The price climbs the longer it runs',
+  caption: 'Gilded Augment — below 30%, spend gold on 16 gold health a second and run 30% faster. The price climbs the longer it runs',
   run(ctx) {
     const fx = fxOf(ctx);
     const av = ctx.useAvatar(() => new FortuneAvatar(ctx.scene, ctx.tint));
@@ -545,33 +577,26 @@ export const masteryAugment: PreviewScript = {
     purse(ctx, () => gold);
     const bar = ctx.adopt(ctx.scene.add.graphics().setDepth(10));
     let hp = 0.6;
+    let ghp = 0;
     let since = -1;
     let debt = 0;
-    let spent = 0;
-    let popAt = 0;
     ctx.onFrame((dt, e) => {
       const s = dt / 1000;
       if (e > 600 && e < 1400) hp = Math.max(0.24, hp - s * 0.5);
-      const healing = since >= 0 ? hp < 0.55 && gold > 0 : hp < 0.3 && gold > 0 && e > 1400;
-      if (healing && since < 0) {
+      const total = hp + ghp;
+      const running = since >= 0 ? total < 0.55 && gold > 0 : total < 0.3 && gold > 0 && e > 1400;
+      if (running && since < 0) {
         since = e;
         ctx.capture(() => fx.augmentStart(ctx.cx, ctx.cy));
-        float(ctx, ctx.cx, ctx.cy - 54, '✨ GILDED AUGMENT', hex(FOR.goldLit), 12);
       }
-      if (!healing) since = -1;
-      if (healing) {
-        const run = (e - since) / 1000;
-        const r = 2 * (1 + run / 2.5);
+      if (!running) since = -1;
+      if (running) {
+        const r = 2 * (1 + (e - since) / 1000 / 2.5);
         rate.setText(`${r.toFixed(1)} 🪙/s`);
         debt += r * s;
-        while (debt >= 1 && gold > 0) { debt--; gold--; spent++; }
-        hp = Math.min(1, hp + (16 / 400) * s);
+        while (debt >= 1 && gold > 0) { debt--; gold--; }
+        ghp += (16 / 400) * s;
         if (Math.random() < s * 8) ctx.capture(() => fx.augmentMote(ctx.cx, ctx.cy));
-        if (e >= popAt && spent > 0) {
-          popAt = e + 600;
-          float(ctx, ctx.cx - 18, ctx.cy - 34, `-${spent} 🪙`, hex(FOR.gold), 11);
-          spent = 0;
-        }
       } else {
         rate.setText('');
       }
@@ -580,141 +605,174 @@ export const masteryAugment: PreviewScript = {
       const by = ctx.cy - 38;
       bar.fillStyle(0x111111, 0.85); bar.fillRect(bx - 1, by - 1, 54, 9);
       bar.fillStyle(hp < 0.3 ? 0xff5a5a : 0xffcc00, 1); bar.fillRect(bx, by, 52 * hp, 7);
+      bar.fillStyle(0xf0c33c, 1); bar.fillRect(bx + 52 * hp, by, 52 * Math.min(ghp, 1 - hp), 7);
+      bar.fillStyle(0xfffbe6, 0.9); bar.fillRect(bx + 52 * hp, by, 52 * Math.min(ghp, 1 - hp), 2);
       bar.lineStyle(1, 0xffffff, 0.5); bar.lineBetween(bx + 52 * 0.3, by - 2, bx + 52 * 0.3, by + 9);
     });
     ctx.at(700, () => readout.setText('a heavy hit takes you under 30%...'));
-    ctx.at(1600, () => readout.setText('...and the purse starts buying it back: 16 HP a second, 30% faster'));
-    ctx.at(4400, () => readout.setText('the longer it has to keep you standing, the more each second costs'));
+    ctx.at(1600, () => readout.setText('...and the purse buys gold health: 16 a second, and 30% faster'));
+    ctx.at(4400, () => readout.setText('the longer it runs, the more each second costs — gold health cut away pays a little back'));
   },
 };
 
-/** Rags to Riches: the whole purse for another plate of solid gold, again and again. */
-export const masteryRags: PreviewScript = {
-  duration: 10000,
+/** No Pain, No Gain: a dagger in your own side, and the blood thrown out the far side sets into gold. */
+export const masteryPain: PreviewScript = {
+  duration: 9000,
   scale: 0.9,
-  caption: 'Rags to Riches — needs 20 gold, spends all of it: +20% damage, +50% gold and a stronger Gilded Augment, for good. Stacks',
+  caption: 'No Pain, No Gain — stab yourself for 18. The blood sprays away from the cursor and turns to gold: stand on it for 1 gold every 2 seconds',
   run(ctx) {
     const fx = fxOf(ctx);
     const av = ctx.useAvatar(() => new FortuneAvatar(ctx.scene, ctx.tint));
-    av.setFacing(ctx.aim);
     alch(av)?.setMastered(true);
     const readout = label(ctx, ctx.w * 0.5, 12, '#e8dcb8', 11);
-    const stats = label(ctx, ctx.cx, ctx.cy + 40, hex(FOR.goldLit), 10);
     let gold = 0;
-    let riches = 0;
     purse(ctx, () => gold);
-    const ground = ctx.adopt(ctx.scene.add.graphics().setDepth(3));
+    const ground = ctx.adopt(ctx.scene.add.graphics().setDepth(2));
+    const at = { x: ctx.cx + 140, y: ctx.cy };
+    // The cursor is to the left, so the blood goes right.
+    const aim = Math.PI;
+    interface Blot { x: number; y: number; r: number; seed: number; born: number; gildAt: number }
+    const blots: Blot[] = [];
+    let floorMs = 0;
     ctx.onFrame((dt, e) => {
       ground.clear();
-      goldPlume(ground, ctx.tint, ctx.cx, ctx.cy, PLUME_R * 0.9, 0.7, e / 1000, 5);
-      // Plume pay, sped up for the showcase, and richer with every stack.
-      gold += 8 * (1 + 0.5 * riches) * dt / 1000;
-      alch(av)?.setGold(Math.min(1, gold / 30));
-      alch(av)?.setGilding(riches);
-      stats.setText(riches ? `+${riches * 20}% damage · +${riches * 50}% gold` : '');
+      for (const b of blots) {
+        const a = Math.min(1, Math.max(0, (e - b.born) / 140));
+        const gild = Math.min(1, Math.max(0, (e - b.gildAt) / 700));
+        bloodBlot(ground, ctx.tint, b.x, b.y, b.r * (0.6 + 0.4 * a), b.seed, gild, e / 1000, 0.9 * a);
+      }
+      const p = ctx.casterAt();
+      const on = blots.some((b) => e > b.gildAt + 700 && Math.hypot(b.x - p.x, b.y - (p.y + 10)) <= b.r);
+      if (!on) return;
+      floorMs += dt;
+      while (floorMs >= 2000) {
+        floorMs -= 2000;
+        gold++;
+        float(ctx, p.x + 18, p.y - 34, '+1', hex(FOR.goldLit), 11);
+        ctx.capture(() => fx.goldGain(p.x, p.y - 10, 1));
+      }
     });
-    const cash = (ms: number): void => ctx.at(ms, () => {
-      const paid = Math.floor(gold);
-      gold = 0;
-      riches++;
-      ctx.capture(() => fx.ragsToRiches(ctx.cx, ctx.cy, riches));
-      alch(av)?.play('flex');
-      float(ctx, ctx.cx, ctx.cy - 56, riches > 1 ? `👑 RAGS TO RICHES ×${riches}` : '👑 RAGS TO RICHES', hex(FOR.goldLit), 13);
-      float(ctx, ctx.cx, ctx.cy - 40, `-${paid} 🪙`, hex(FOR.gold), 11);
+    ctx.moveCaster(at.x, at.y, { facing: aim });
+    ctx.at(200, () => readout.setText('the dagger goes in on the cursor\'s side...'));
+    ctx.at(600, () => {
+      ctx.capture(() => fx.painStab(at.x, at.y, aim));
+      alch(av)?.play('clap', aim);
+      float(ctx, at.x, at.y - 30, '18', '#ffb3aa', 13);
+      // The kit's own splatter: a widening fan, drifting to one side, plus a few strays.
+      const seed = 37;
+      const back = aim + Math.PI;
+      const drift = (jitter(seed, 99) - 0.5) * 0.5;
+      for (let i = 0; i < 14; i++) {
+        const stray = i >= 11;
+        const u = stray ? 0.35 + jitter(seed, i + 40) * 0.65 : (i + 0.5) / 11;
+        const half = stray ? 0.75 : 0.14 + u * 0.4;
+        const a = back + drift * u + (jitter(seed, i) * 2 - 1) * half;
+        const d = 24 + Math.pow(u, 0.85) * 165 * (0.82 + jitter(seed, i + 20) * 0.3);
+        const r = stray ? 5 + jitter(seed, i + 60) * 4 : 23 - u * 10 + jitter(seed, i + 60) * 5;
+        blots.push({ x: at.x + Math.cos(a) * d, y: at.y + Math.sin(a) * d, r, seed: seed + i * 7.3, born: 600 + u * 140, gildAt: 600 + 450 + u * 500 });
+      }
     });
-    ctx.at(200, () => readout.setText('the purse fills to twenty...'));
-    cash(2700);
-    ctx.at(2900, () => readout.setText('...and all of it goes: a plate of the body turns to solid gold'));
-    cash(5000);
-    cash(6800);
-    cash(8400);
-    ctx.at(5200, () => readout.setText('every stack fills the next purse faster — and gilds a little more of him'));
+    ctx.at(1300, () => readout.setText('...the blood leaves by the other side, and sets into gold'));
+    ctx.at(3000, () => {
+      readout.setText('stand on it: 1 gold every 2 seconds, for the rest of the match');
+      ctx.glideCaster({ to: { x: at.x + 70, y: at.y - 10 }, ms: 600, ease: 'out' });
+    });
   },
 };
 
 // ══ Shop upgrades ══════════════════════════════════════════════════════
 
-export const frayUpgraded: PreviewScript = {
-  duration: 9000,
+export const lifeSupport: PreviewScript = {
+  duration: 10000,
   scale: 0.9,
-  caption: 'Click+ Accumulation — misses pile up on the floor; the bigger the pile, the more often it bursts up through them',
+  caption: 'Click+ Life-support — right click: droppers run 25% slower, and the refiner pays health instead of gold. Plus a 10-shard pad that triples your first dropper',
+  run(ctx) {
+    const av = ctx.useAvatar(() => new FortuneAvatar(ctx.scene, ctx.tint));
+    av.setFacing(ctx.aim);
+    const readout = label(ctx, ctx.w * 0.5, 12, '#e8dcb8', 11);
+    const ty = new Tycoon();
+    ty.buy('drop2');
+    ty.buy('up1');
+    let gold = 0;
+    let hp = 0.35;
+    tycoonStrip(ctx, ty, {
+      shardPad: true,
+      paid: (v) => {
+        if (!ty.lifeSupport) { gold += v; return; }
+        hp = Math.min(1, hp + (v * 1.5) / 400);
+        const p = ctx.casterAt();
+        float(ctx, p.x, p.y - 44, `+${Math.round(v * 1.5)}`, '#8dffa0', 12);
+      },
+    });
+    purse(ctx, () => gold);
+    const bar = ctx.adopt(ctx.scene.add.graphics().setDepth(10));
+    ctx.onFrame(() => {
+      bar.clear();
+      const p = ctx.casterAt();
+      bar.fillStyle(0x111111, 0.85); bar.fillRect(p.x - 27, p.y - 39, 54, 9);
+      bar.fillStyle(hp > 0.5 ? 0x22dd55 : hp > 0.25 ? 0xffcc00 : 0xff3300, 1); bar.fillRect(p.x - 26, p.y - 38, 52 * hp, 7);
+    });
+    ctx.at(200, () => readout.setText('earning gold, as usual...'));
+    ctx.at(2800, () => { ty.lifeSupport = true; readout.setText('right click: life-support — the refiner goes red and pays health'); });
+    ctx.at(6400, () => { ty.lifeSupport = false; readout.setText('right click again to go back to gold'); });
+    ctx.at(7800, () => { ty.shardDropper = true; readout.setText('the blue pad: 10 real shards for a first dropper worth 3 a piece'); });
+  },
+};
+
+export const billiardBlitz: PreviewScript = {
+  duration: 9500,
+  scale: 0.9,
+  caption: 'R+ Billiard Blitz — a ball that hits an enemy gives the cane straight back for another shot, and keeps the balls on the floor longer',
   run(ctx) {
     const fx = fxOf(ctx);
     const av = ctx.useAvatar(() => new FortuneAvatar(ctx.scene, ctx.tint));
     av.setFacing(ctx.aim);
     const readout = label(ctx, ctx.w * 0.5, 12, '#e8dcb8', 11);
-    const target = { x: ctx.cx + 250, y: ctx.cy + 10 };
+    const target = { x: ctx.cx + 260, y: ctx.cy };
     dummyAt(ctx, target);
-    const floorY = ctx.h - 16;
-    const air = ctx.adopt(ctx.scene.add.graphics().setDepth(9));
-    const ground = ctx.adopt(ctx.scene.add.graphics().setDepth(2));
-    const blades: (Blade & { gold?: boolean })[] = [];
-    const pile: { x: number; ang: number; lift: number }[] = [];
-    let now = 0;
-    ctx.onFrame((dt, e) => {
-      now = e;
-      air.clear(); ground.clear();
-      ground.lineStyle(1, 0x3a3326, 0.8);
-      ground.lineBetween(0, floorY + 4, ctx.w, floorY + 4);
-      const s = dt / 1000;
-      for (const b of blades) {
-        if (!b.alive) continue;
-        b.vy += FRAY_GRAVITY * s;
-        b.x += b.vx * s;
-        b.y += b.vy * s;
-        if (Phaser.Math.Distance.Between(b.x, b.y, target.x, target.y) < 24) {
-          b.alive = false;
-          float(ctx, target.x + (Math.random() - 0.5) * 20, target.y - 24, '3', hex(FOR.goldLit), 12);
-          ctx.capture(() => fx.bladeHit(b.x, b.y, Math.atan2(b.vy, b.vx)));
-          continue;
-        }
-        if (b.vy > 0 && b.y >= floorY) {
-          b.alive = false;
-          pile.push({ x: b.x, ang: (Math.random() < 0.5 ? 0 : Math.PI) + (Math.random() - 0.5) * 0.5, lift: 0 });
-          ctx.capture(() => fx.bladeLand(b.x, floorY, Math.atan2(b.vy, b.vx)));
-          continue;
-        }
-        const gild = b.gold ? 1 : Phaser.Math.Clamp((e - b.born) / FRAY_GILD_MS, 0, 1);
-        grassBlade(air, ctx.tint, b.x, b.y, Math.atan2(b.vy, b.vx), 15, gild, 1);
-      }
-      for (const p of pile) {
-        const sx = p.lift > 0 ? (Math.random() - 0.5) * 3 : 0;
-        grassBlade(ground, ctx.tint, p.x - Math.cos(p.ang) * 6.5 + sx, floorY - Math.sin(p.ang) * 6.5 - p.lift * 3, p.ang, 13, 1, 1);
-      }
+    const table = poolTable(ctx, fx, target, (b, v) => {
+      float(ctx, target.x, target.y - 26, `${Math.round(5 + 17 * Math.min(1, (v - 130) / 770))}`, '#ffb3aa', 13);
+      void b;
+      const p = ctx.casterAt();
+      ctx.capture(() => fx.blitz(p.x, p.y));
     });
-    const throwLow = (at: number): void => ctx.at(at, () => {
-      const ang = -0.05;
-      av.setFacing(ang);
-      av.play('punch', ang);
-      alch(av)?.setGlowHand(1);
-      throwClump(ctx, blades, ctx.cx, ctx.cy, ang, now);
-    });
-    const burst = (at: number, n: number): void => {
-      ctx.at(at, () => {
-        const pick = pile.slice().sort((a, b) => Math.abs(a.x - target.x) - Math.abs(b.x - target.x)).slice(0, n);
-        for (const p of pick) p.lift = 1;
-        const xs = pick.map((p) => p.x);
-        ctx.capture(() => fx.pileBurst((Math.min(...xs) + Math.max(...xs)) / 2, floorY, Math.max(30, Math.max(...xs) - Math.min(...xs))));
-      });
-      ctx.at(at + 280, () => {
-        const lifted = pile.filter((p) => p.lift > 0);
-        for (const p of lifted) {
-          pile.splice(pile.indexOf(p), 1);
-          const T = 0.5 + Math.random() * 0.25;
-          const tx = target.x + (Math.random() - 0.5) * 30;
-          const ty = target.y + (Math.random() - 0.5) * 30;
-          blades.push({ x: p.x, y: floorY - 2, vx: (tx - p.x) / T, vy: (ty - floorY - 0.5 * FRAY_GRAVITY * T * T) / T, born: now - FRAY_GILD_MS, alive: true, gold: true });
-        }
-        float(ctx, target.x, target.y - 50, 'BURST', hex(FOR.goldLit), 13);
-      });
-    };
-    ctx.at(200, () => readout.setText('the clumps that fall short land on the floor — and stay there'));
-    for (const at of [400, 1100, 1800, 2500]) throwLow(at);
-    ctx.at(3600, () => readout.setText('the bigger the pile, the more often it stirs and bursts up through them'));
-    burst(4000, 8);
-    throwLow(5200);
-    throwLow(5900);
-    burst(6900, 10);
+    ctx.at(300, () => { av.play('sweep', ctx.aim); rack(ctx, table, { x: ctx.cx + 110, y: ctx.cy }, 0); });
+    ctx.at(600, () => readout.setText('a ball finds them...'));
+    lineUp(ctx, av, table, () => table.balls.slice().sort((a, b) => a.x - b.x)[0], target, 900);
+    ctx.at(2600, () => readout.setText('...and the cane comes straight back: go again'));
+    lineUp(ctx, av, table, () => table.balls.filter((b) => Math.hypot(b.vx, b.vy) < 1)
+      .sort((a, b) => Math.hypot(a.x - target.x, a.y - target.y) - Math.hypot(b.x - target.x, b.y - target.y))[0], target, 4200);
+    ctx.at(6000, () => readout.setText('keep hitting, keep shooting'));
+  },
+};
+
+export const goldenGlory: PreviewScript = {
+  duration: 12000,
+  scale: 0.9,
+  caption: 'Q+ Golden Glory — every Rebirth builds one of six machines you cannot buy, and it stays through every later rebirth',
+  run(ctx) {
+    const fx = fxOf(ctx);
+    const av = ctx.useAvatar(() => new FortuneAvatar(ctx.scene, ctx.tint));
+    av.setFacing(ctx.aim);
+    const readout = label(ctx, ctx.w * 0.5, 12, '#e8dcb8', 11);
+    const ty = new Tycoon();
+    completeTycoon(ty);
+    let gold = 0;
+    tycoonStrip(ctx, ty, { paid: (v) => { gold += v; } });
+    purse(ctx, () => gold);
+    const lines: [GloryId, string][] = [
+      ['dragon', 'Dragon Upgrader: triples a piece — and burns 1 in 4'],
+      ['midas', 'Midas Dropper: one piece at a time, worth 14'],
+      ['furnace', 'Flaming Furnace: heats up as ore pours in, paying up to double'],
+    ];
+    lines.forEach(([g, text], i) => ctx.at(600 + i * 3600, () => {
+      ctx.capture(() => fx.rebirth(ctx.cx, ctx.cy, i + 1));
+      alch(av)?.setGilding((i + 1) * 3);
+      ty.rebirth();
+      ty.glory.add(g);
+      completeTycoon(ty);
+      readout.setText(text);
+    }));
   },
 };
 
@@ -818,76 +876,6 @@ export const advanceUpgraded: PreviewScript = {
   },
 };
 
-export const goldPlumeUpgraded: PreviewScript = {
-  duration: 8000,
-  scale: 0.9,
-  caption: 'R+ Glittery Cloak — a bigger plume full of gold leaf: 15% of attacks miss you inside it, and enemies in it shoot wide',
-  run(ctx) {
-    const fx = fxOf(ctx);
-    const av = ctx.useAvatar(() => new FortuneAvatar(ctx.scene, ctx.tint));
-    av.setFacing(ctx.aim);
-    const readout = label(ctx, ctx.w * 0.5, 12, '#e8dcb8', 11);
-    const target = { x: ctx.cx + 300, y: ctx.cy };
-    dummyAt(ctx, target);
-    const R = PLUME_R * 1.2;
-    const ground = ctx.adopt(ctx.scene.add.graphics().setDepth(3.5));
-    const over = ctx.adopt(ctx.scene.add.graphics().setDepth(6));
-    const shots: { x: number; y: number; vx: number; vy: number; alive: boolean; dodge: boolean }[] = [];
-    let plumeAt = -1;
-    let enemyPlumeAt = -1;
-    ctx.onFrame((dt, e) => {
-      ground.clear(); over.clear();
-      const at = ctx.casterAt();
-      if (plumeAt >= 0) {
-        const born = Phaser.Math.Clamp((e - plumeAt) / 260, 0, 1);
-        goldPlume(ground, ctx.tint, ctx.cx, ctx.cy, R * (0.7 + 0.3 * born), 0.9 * born, e / 1000, 3);
-        glitterMotes(ground, ctx.tint, ctx.cx, ctx.cy, R * (0.7 + 0.3 * born), born, e / 1000, 3);
-        glitterCloak(over, ctx.tint, at.x, at.y, born, e / 1000);
-      }
-      if (enemyPlumeAt >= 0) {
-        const born = Phaser.Math.Clamp((e - enemyPlumeAt) / 260, 0, 1);
-        goldPlume(ground, ctx.tint, target.x, target.y, R * (0.7 + 0.3 * born), 0.9 * born, e / 1000, 8);
-        glitterMotes(ground, ctx.tint, target.x, target.y, R * (0.7 + 0.3 * born), born, e / 1000, 8);
-      }
-      for (const sh of shots) {
-        if (!sh.alive) continue;
-        sh.x += sh.vx * dt / 1000;
-        sh.y += sh.vy * dt / 1000;
-        if (sh.x < -20 || sh.y < -20 || sh.y > ctx.h + 20) { sh.alive = false; continue; }
-        if (Phaser.Math.Distance.Between(sh.x, sh.y, at.x, at.y) < 20) {
-          sh.alive = false;
-          if (sh.dodge) {
-            ctx.capture(() => fx.cloakDodge(at.x, at.y));
-            float(ctx, at.x, at.y - 44, '✨ DODGE', hex(FOR.goldLit), 12);
-          } else float(ctx, at.x, at.y - 30, '8', '#ffb3aa', 13);
-          continue;
-        }
-        over.fillStyle(0x9aa3b8, 1); over.fillCircle(sh.x, sh.y, 5);
-      }
-    });
-    const fire = (at: number, wide: boolean, dodge: boolean): void => ctx.at(at, () => {
-      const a = Math.PI + (wide ? (Math.random() < 0.5 ? -1 : 1) * (0.25 + Math.random() * 0.15) : 0);
-      shots.push({ x: target.x - 20, y: target.y, vx: Math.cos(a) * 340, vy: Math.sin(a) * 340, alive: true, dodge });
-    });
-    ctx.at(200, () => readout.setText('the plume is 20% bigger, and full of gold leaf'));
-    ctx.at(400, () => { av.play('sweep', ctx.aim); ctx.capture(() => fx.bagBurst(ctx.cx, ctx.cy, R)); plumeAt = 400; });
-    ctx.at(1300, () => readout.setText('standing in it, 15% of the attacks aimed at you miss'));
-    fire(1600, false, false);
-    fire(2300, false, true);
-    fire(3000, false, false);
-    ctx.at(3900, () => {
-      readout.setText('throw one on them, and their shots go wide');
-      av.play('sweep', ctx.aim);
-      ctx.capture(() => fx.bagBurst(target.x, target.y, R));
-      enemyPlumeAt = 3900;
-    });
-    fire(4600, true, false);
-    fire(5200, true, false);
-    fire(5800, true, false);
-    fire(6400, true, false);
-  },
-};
-
 export const heartUpgraded: PreviewScript = {
   duration: 9000,
   scale: 0.9,
@@ -940,72 +928,5 @@ export const heartUpgraded: PreviewScript = {
     });
     ctx.at(5900, () => readout.setText('the heart is gone — the hex lasts 5 seconds longer'));
     ctx.at(8300, () => readout.setText('and the bars charge normally again'));
-  },
-};
-
-export const midasUpgraded: PreviewScript = {
-  duration: 10000,
-  scale: 0.9,
-  caption: 'Q+ Full Metal Alchemy — when the curse runs out they are solid gold for 3s: hit them for double damage, or let them melt into 3 coins',
-  run(ctx) {
-    const fx = fxOf(ctx);
-    const av = ctx.useAvatar(() => new FortuneAvatar(ctx.scene, ctx.tint));
-    av.setFacing(ctx.aim);
-    const readout = label(ctx, ctx.w * 0.5, 12, '#e8dcb8', 11);
-    let gold = 0;
-    purse(ctx, () => gold);
-    const target = { x: ctx.cx + 240, y: ctx.cy };
-    dummyAt(ctx, target);
-    const gilt = ctx.adopt(ctx.scene.add.graphics().setDepth(5.6));
-    const floor = ctx.adopt(ctx.scene.add.graphics().setDepth(2));
-    const coins: { x: number; y: number; born: number }[] = [];
-    let cursedAt = -1;
-    let statueAt = -1;
-    ctx.onFrame((_dt, e) => {
-      gilt.clear(); floor.clear();
-      if (cursedAt >= 0 && statueAt < 0) {
-        midasGilt(gilt, ctx.tint, target.x, target.y, 0.15 + Phaser.Math.Clamp((e - cursedAt) / 2600, 0, 1) * 0.85, e / 1000, 1);
-      }
-      if (statueAt >= 0 && e - statueAt < 3000) {
-        const melt = Phaser.Math.Clamp((e - statueAt - 2000) / 1000, 0, 1);
-        statueRays(gilt, ctx.tint, target.x, target.y, 1 - melt * 0.7, e / 1000);
-        goldStatueShell(gilt, ctx.tint, target.x, target.y, 1, e / 1000, melt, false);
-      }
-      for (const c of coins) if (e - c.born > 360) goldCoin(floor, ctx.tint, c.x, c.y, 6, e / 500 + c.x, 1);
-      const at = ctx.casterAt();
-      for (let i = coins.length - 1; i >= 0; i--) {
-        const c = coins[i];
-        if (e - c.born < 360 || Phaser.Math.Distance.Between(at.x, at.y, c.x, c.y) > 34) continue;
-        coins.splice(i, 1);
-        gold += 1;
-        ctx.capture(() => fx.pickup(c.x, c.y));
-        float(ctx, at.x + 18, at.y - 34, '+1 🪙', hex(FOR.goldLit), 11);
-      }
-    });
-    ctx.at(200, () => readout.setText('the Midas Curse runs its course (sped up here)'));
-    ctx.at(400, () => {
-      av.play('raise');
-      ctx.capture(() => fx.midasCast(ctx.cx, ctx.cy));
-      ctx.capture(() => fx.midasStrike(target.x, target.y));
-      cursedAt = 400;
-    });
-    ctx.at(3100, () => {
-      statueAt = 3100;
-      ctx.capture(() => fx.statueForm(target.x, target.y));
-      float(ctx, target.x, target.y - 56, '🗿 SOLID GOLD', hex(FOR.goldLit), 14);
-      readout.setText('solid gold: stunned 3s. Hit it for double damage — or wait');
-    });
-    ctx.at(6100, () => {
-      ctx.capture(() => fx.statueMelt(target.x, target.y));
-      readout.setText('left alone, it melts into 3 gold coins');
-      for (let i = 0; i < 3; i++) {
-        const tx = target.x + (i - 1) * 16;
-        const ty = target.y + 26;
-        ctx.capture(() => fx.coinDrop(target.x, target.y, tx, ty));
-        coins.push({ x: tx, y: ty, born: 6100 });
-      }
-    });
-    ctx.at(6900, () => ctx.glideCaster({ to: { x: target.x - 16, y: target.y + 26 }, ms: 900, ease: 'out' }));
-    ctx.at(7900, () => ctx.glideCaster({ to: { x: target.x + 18, y: target.y + 26 }, ms: 500, ease: 'out' }));
   },
 };

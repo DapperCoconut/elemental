@@ -321,14 +321,14 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   'paper-climax': ['spellbook', 1.0, 0.75],
 
   // ── Gold (id `fortune`) ──
-  // A rustle of grass, a till for the purse, a thrown sack, the cane's thrust and a great bell.
+  // A rustle of grass, a till for the purse, a handful of balls thrown, the cane's thrust and a fanfare.
   'fortune-fray': ['whoosh', 0.35, 1.7],
   'fortune-advance': ['money', 0.7, 1.15],
-  'fortune-plume': ['whoosh', 0.6, 0.85],
+  'fortune-billiards': ['whoosh', 0.6, 0.85],
   'fortune-heart': ['hit-heavy', 0.55, 1.3],
-  'fortune-midas': ['beam-charge', 0.95, 0.7],
-  // Gold Mastery: the kit plays the purse going up itself.
-  'rags-to-riches': null,
+  'fortune-rebirth': ['beam-charge', 0.95, 0.7],
+  // Gold Mastery: the kit plays the dagger itself.
+  'no-pain-no-gain': null,
 
   // ── Tempest ──
   'tempest-gale': ['gust', 1.3, 0.75],
@@ -573,7 +573,6 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   'steel-shield': ['shield-up', 0.85, 1.1],
   'mortar-command': 'mortar-launch',
   'vulcanization': ['boing', 0.75, 1.15],
-  'vpn': ['upload', 0.9],
   'fireworks': ['explosion-small', 1.3, 0.9],
   'killer-kebab': 'spear-throw',
   'echo-bloom': ['echo-ping', 0.7, 1.15],

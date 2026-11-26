@@ -713,20 +713,18 @@ export interface NpcAiState {
   npcGoldCanAdvance?: boolean;
   /** The cane lunge is carrying the body; nothing else is worth pressing until it lands. */
   npcGoldLunging?: boolean;
-  /** Synergy: the target wears the bot's gold heart, so a plume on top of them makes them walk. */
+  /** Synergy: the target wears the bot's gold heart, so balls rolling at them make them walk. */
   npcGoldHeartLive?: boolean;
-  /** Synergy: Midas is laying gold floor under the target — worth chasing them across it. */
-  npcGoldMidasLive?: boolean;
-  /** Q+ Full Metal Alchemy: the bot's statue is up and it wants the three coins it melts into — hold fire. */
-  npcGoldStatueHold?: boolean;
+  /** Synergy: the bot's tycoon is complete and it has a rebirth left — Q is worth pressing now. */
+  npcGoldCanRebirth?: boolean;
+  /** Synergy: the cane is out as a cue. The kit lines the shot up and takes it; nothing else is pressed. */
+  npcGoldCueOut?: boolean;
   /** Fray falls: the kit's gravity-corrected aim point that puts the clump through the target. */
   npcGoldFrayAim?: { x: number; y: number };
-  /** Where the plume should land: on a hearted target, otherwise at the bot's own feet toward them. */
-  npcGoldPlumeAt?: { x: number; y: number };
-  /** Its own plume to stand in, loot to collect, or gold floor to run on. Soft seek. */
+  /** Where to stand: behind the ball it means to shoot, or on its own gilded blood. Soft seek. */
   goldSeekPoint?: { x: number; y: number };
-  /** Gold Mastery: which of R/F/Q Rags to Riches was bound over. The kit fires it; the rotation leaves that key alone. */
-  npcGoldRagsSlot?: 'r' | 'f' | 'q';
+  /** Gold Mastery: which of R/F/Q No Pain, No Gain was bound over. The kit fires it; the rotation leaves that key alone. */
+  npcGoldPainSlot?: 'r' | 'f' | 'q';
 
   // Creation
   /** Synergy: the player is inside the blast of one of the bot's own builds (or the Nexus) — Self-Destruct now. */
@@ -1541,14 +1539,14 @@ export class NpcOpponent extends Fighter {
       }
     }
 
-    // ── Gold: its own plume, the loot, the Midas floor ───────────
+    // ── Gold: the stance behind a pool ball, or its own gilded blood ───────────
     // Same soft shape as the other seeks here: worth walking into, not worth abandoning the
     // fight for, so it only steers while the bot is outside and lets the movement state run once
-    // it arrives.
+    // it arrives. With the cue out the spot is exact — a shot is only as straight as the stance.
     if (aiState.goldSeekPoint) {
       const seek = aiState.goldSeekPoint;
       const d = Phaser.Math.Distance.Between(this.x, this.y, seek.x, seek.y);
-      if (d > 24) {
+      if (d > (aiState.npcGoldCueOut ? 8 : 24)) {
         const a = Phaser.Math.Angle.Between(this.x, this.y, seek.x, seek.y);
         body.setVelocity(Math.cos(a) * this.speed, Math.sin(a) * this.speed);
       }
@@ -2517,20 +2515,21 @@ export class NpcOpponent extends Fighter {
   /**
    * Gold (element id `fortune`). The kit's synergies are checked first, in the order they pay:
    *
-   * 1. **Heart → Plume.** A gold-hearted target standing in a burning cloud has to walk out of
-   *    it, and walking is what fills the heart. So the plume goes on top of them the moment the
-   *    heart is live.
-   * 2. **Midas → the floor.** The curse is cast at a range the bot can follow; the floor it lays
-   *    is the bot's road (the kit publishes `goldSeekPoint` and the soft seek walks it there).
-   * 3. **Gold → Advance.** Ten gold is always spent — the kit gates the press and picks the card
-   *    (with Artisan, a jeweled one when it can pay for it).
-   * 0. **Midas → statue → coins** (Q+). The kit says when the statue is worth more melted than hit.
-   * M. **Purse → Rags to Riches** (mastery). The kit fires it itself once 20 gold is banked and the
-   *    bot is healthy enough not to need that gold for Gilded Augment, and `npcCanAdvance` saves
-   *    every other purse for it. The rotation only leaves the bound key alone.
+   * 1. **Tycoon → Rebirth.** The kit shops the pads itself (cheapest first) and says when the
+   *    tycoon is complete; the bot presses Q the moment it is.
+   * 2. **Balls → cue.** While the cane is out the click belongs to the cue: the kit publishes where
+   *    to stand (`goldSeekPoint`, behind the ball that lines up with the target) and takes the
+   *    shot itself, and with Billiard Blitz takes the next one too. Nothing else is pressed.
+   * 3. **Heart → Billiards.** A gold-hearted target has to move to get out of the way of the
+   *    balls, and moving is what fills the heart — so the rack goes down the moment a heart is live.
+   * 4. **Gold → Advance.** The kit gates the press (it keeps the next pad's price back until the
+   *    tycoon is complete) and picks the card.
+   * K. **Click+ life-support** and **No Pain, No Gain** (mastery) are the kit's too: it throws the
+   *    switch when the bot is hurt, and stabs when it is healthy; the soft seek then walks the bot
+   *    onto its own gold. The rotation only leaves the bound key alone.
    *
-   * After those the rotation is ordinary: the cane inside its reach, a plume at its own feet so it
-   * can stand in it and earn, and grass thrown at the kit's gravity-corrected aim.
+   * After those the rotation is ordinary: the cane inside its reach, a rack thrown at mid range,
+   * and grass thrown at the kit's gravity-corrected aim.
    */
   private doFortuneAbilities(
     target: Fighter,
@@ -2544,30 +2543,28 @@ export class NpcOpponent extends Fighter {
   ): string | null {
     void target;
     void time;
+    void hpRatio;
     if (aiState.npcGoldLunging) return null;
-    // 0. Full Metal Alchemy: a statue left alone melts into three coins. Short of an Advance, the
-    // bot leaves it be — anything it threw now would crack the statue and spend the coins.
-    if (aiState.npcGoldStatueHold) return null;
-    // Mastery: the key Rags to Riches was bound over is the kit's now.
-    const bound = aiState.npcGoldRagsSlot;
-    const plume = bound !== 'r';
+    // 2. The cue is out: the kit has the click.
+    if (aiState.npcGoldCueOut) return null;
+    // Mastery: the key No Pain, No Gain was bound over is the kit's now.
+    const bound = aiState.npcGoldPainSlot;
+    const billiards = bound !== 'r';
     const heart = bound !== 'f';
-    const midas = bound !== 'q';
+    const rebirth = bound !== 'q';
     const skipSpecials = this.difficulty.castSkipChance > 0 && Math.random() < this.difficulty.castSkipChance;
 
-    // 1. Heart → Plume.
-    const plumeAt = aiState.npcGoldPlumeAt;
-    if (plume && aiState.npcGoldHeartLive && plumeAt && dist < 380) {
-      if (this.castAbility('fortune-plume', buildContext(plumeAt.x, plumeAt.y))) return 'fortune-plume';
+    // 1. Tycoon → Rebirth.
+    if (rebirth && aiState.npcGoldCanRebirth) {
+      if (this.castAbility('fortune-rebirth', buildContext(aimX, aimY))) return 'fortune-rebirth';
     }
 
-    // 2. Midas, at a range the bot can follow the floor it lays. Saved for a fight that is going
-    // to last — a nearly dead target is not worth a 30-second ultimate.
-    if (midas && !skipSpecials && !aiState.npcGoldMidasLive && dist < 420 && (target.hp / Math.max(1, target.maxHp) > 0.3 || hpRatio < 0.4)) {
-      if (this.castAbility('fortune-midas', buildContext(aimX, aimY))) return 'fortune-midas';
+    // 3. Heart → Billiards.
+    if (billiards && aiState.npcGoldHeartLive && dist > 110 && dist < 420) {
+      if (this.castAbility('fortune-billiards', buildContext(aimX, aimY))) return 'fortune-billiards';
     }
 
-    // 3. Spend the purse.
+    // 4. Spend the purse.
     if (aiState.npcGoldCanAdvance) {
       if (this.castAbility('fortune-advance', buildContext(aimX, aimY))) return 'fortune-advance';
     }
@@ -2577,9 +2574,9 @@ export class NpcOpponent extends Fighter {
       if (this.castAbility('fortune-heart', buildContext(aimX, aimY))) return 'fortune-heart';
     }
 
-    // A plume to stand in and earn from, between the bot and the target.
-    if (plume && !skipSpecials && plumeAt && dist < 460) {
-      if (this.castAbility('fortune-plume', buildContext(plumeAt.x, plumeAt.y))) return 'fortune-plume';
+    // A rack between the bot and the target: far enough to walk round it, near enough to reach.
+    if (billiards && !skipSpecials && dist > 150 && dist < 400) {
+      if (this.castAbility('fortune-billiards', buildContext(aimX, aimY))) return 'fortune-billiards';
     }
 
     // Grass: the falling clump is only worth throwing inside the range it can still reach.
