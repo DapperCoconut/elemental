@@ -40,7 +40,7 @@ const NPC_MASTERY_BINDS: Record<string, { enhId: string; slot: MasterySlot }> = 
   gravity: { enhId: 'starfall', slot: 'f' },
   sand: { enhId: 'time-bomb', slot: 'f' },
   // Magnet has no mastery since its 2026-10-15 scrap rework, so nothing to bind.
-  growth: { enhId: 'syringe-shot', slot: 'f' },
+  // Growth's bindable is Plague Pal (2026-11-25), which the growth bot does not drive yet — passive-only.
   // Venom keeps its bomb (it is what earns the shed milestones) and its ultimate; Shed Skin goes over Burrow (F).
   slime: { enhId: 'shed-skin', slot: 'f' },
   metal: { enhId: 'steel-shield', slot: 'f' },

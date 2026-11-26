@@ -540,7 +540,7 @@ export const ABILITY_SOUNDS: Record<string, Entry | null> = {
   'corpse-prince': 'status-buff',
   'reputation-repair': 'curse-cast',
   'cycle': 'card-shuffle',
-  'syringe-shot': ['stab', 1.45, 0.9],
+  'plague-pal': ['stab', 0.8, 0.9],
   'acid-walker': 'sizzle',
   'natural-clot': 'status-regen',
   'springboard': ['boing', 1.1],

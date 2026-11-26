@@ -868,6 +868,8 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
    * every frame; kept here so the status tray and any future reader can see it.
    */
   public windDodge = 0;
+  /** Growth Mastery — Plague Pal's Jelly Membrane: the chance a hit misses outright. Written every frame by GrowthKit; rolled by the victim. */
+  public growthPalDodge = 0;
   /** Timestamp after which the fighter can cast abilities again (Disarm effect). */
   public disarmedUntil = 0;
   /**
@@ -1481,6 +1483,8 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
    * Growth Mastery — Syringe Shot: sick until this `scene.time.now` timestamp. Deliberately a
    * single field: every sickness upgrade (extra ticks, vulnerability, slows, weakening, spread)
    * rides on this one effect rather than adding its own status box.
+   * Dormant since 2026-11-25 (Plague Pal replaced Syringe Shot): nothing sets it any more, but it
+   * stays so the status-tray and net-sync entries keyed on it keep their shape.
    */
   public sicknessUntil = 0;
   /** Growth Mastery — Carrier: permanent leftovers of a survived sickness. Never clears. */
@@ -1691,6 +1695,11 @@ export class Fighter extends Phaser.Physics.Arcade.Sprite {
     }
     // Savor's Fruit Punch. Same rules: the victim rolls.
     if (!pierce && !opts?.selfInflicted && amount > 0 && this.savorDodge > 0 && Math.random() < this.savorDodge) {
+      this.lastIncomingDamage = 0;
+      return;
+    }
+    // Growth's Plague Pal — Jelly Membrane. Same rules: the victim rolls.
+    if (!pierce && !opts?.selfInflicted && amount > 0 && this.growthPalDodge > 0 && Math.random() < this.growthPalDodge) {
       this.lastIncomingDamage = 0;
       return;
     }

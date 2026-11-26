@@ -4,7 +4,7 @@ import { CastContext } from '../Ability';
 import { Projectile } from '../../combat/Projectile';
 import { HealthBar } from '../../combat/HealthBar';
 import {
-  CULTURE_TONES, GROWTH, GrowthAvatar, GrowthColorFn, GrowthCulture, GrowthFx,
+  CULTURE_TONES, GROWTH, GrowthAvatar, GrowthColorFn, GrowthCulture, GrowthFx, GrowthTones,
   NPC_TONES, SICK_TONES, growthPod, tonesFor,
 } from './GrowthVisuals';
 import {
@@ -22,10 +22,10 @@ import {
   GROWTH_SECRET_UPGRADES,
   GROWTH_SECRET_COST,
   GROWTH_SECRET_ROLL_COUNT,
-  GROWTH_SICK_NODES,
-  GROWTH_SICK_PATHS,
-  GROWTH_SICK_ULTIMATE_PREREQ,
-  GROWTH_SICK_ULTIMATE_IDS,
+  GROWTH_PAL_NODES,
+  GROWTH_PAL_PATHS,
+  GROWTH_PAL_ULTIMATE_PREREQ,
+  GROWTH_PAL_ULTIMATE_IDS,
   GrowthNodeDef,
   GrowthEvolveNodeDef,
   growthEvolveNodeCost,
@@ -34,13 +34,13 @@ import {
 } from '../../data/GrowthEvolve';
 import { meterGain } from '../../combat/Meters';
 import { FONT_DISPLAY, FONT_UI } from '../../ui/Theme';
-import { BaseAvatar } from './ElementVisuals';
+import { BaseAvatar, easeOut } from './ElementVisuals';
 import { makeSkinAvatar } from './skins/SkinAvatars';
 import { MonkeyAvatar } from './skins/MonkeyAvatar';
 import {
   MONKEY_NODES, MONKEY_PATH_LABEL, MONKEY_PATH_ORDER, MonkeyAnims, MonkeyExtraView, MonkeyPathView,
   bloonColor, bloonLayer, buildDart, buildSpikePile, buildTacks, drawBloon, drawBloontoniumGauge,
-  renderUpgradePanel,
+  drawTack, drawTackShooter, renderUpgradePanel, TACK_NODES, TACK_PATH_ORDER,
 } from './skins/MonkeyFx';
 
 // ── HUD drawing helpers (DNA helix chart) ───────────────────────────────
@@ -135,6 +135,8 @@ function drawDnaHelix(
 }
 
 type Owner = 'player' | 'npc';
+type EvolveTab = 'body' | 'pal';
+type SideTab = 'pal';
 type CloneVariant = 'yellow' | 'blue' | 'red';
 
 // ── Constants ────────────────────────────────────────────────────────────
@@ -151,9 +153,8 @@ const BACT_TIMEOUT = 2000;
 const BACT_LOCATOR_RADIUS = 70;
 const BACT_LOCATOR_TURN_RATE = 6; // steering strength per second (Click+ homing)
 
-const CLAW_RANGE = 90;
-const CLAW_DAMAGE = 35;
-const CLAW_HALF_ARC = Math.PI / 3;
+/** Swarm (offensive ultimate): radians between the three bacteria of a click. */
+const SWARM_SPREAD = 0.16;
 
 const VIRUS_DAMAGE = 10;
 const VIRUS_SPEED = 430;
@@ -224,8 +225,12 @@ const VARIANT_DMG_MULT = 1.25;     // red
 const PLAYER_COLOR = 0x55cc44;
 const NPC_COLOR = 0xcc6644;
 
-// ── Mastery: Secret Upgrades passive + Syringe Shot bindable ─────────────
-const BROOD_SPREAD = 0.1;             // radians between the two Brood bacteria
+// ── Mastery: Secret Upgrades passive + Plague Pal bindable ───────────────
+// Brood (secret): red bacteria — slow and heavy, and with Chemotaxis they lock on from far off.
+const BROOD_SPEED_MULT = 0.6;
+const BROOD_DAMAGE_MULT = 2;
+const BROOD_LOCATOR_RADIUS = 220;
+const BROOD_COLOR = 0xdd3030;
 const RULER_CLONE_CAP = 2;
 const VIRAL_BOOST_MS = 3000;
 const VIRAL_BOOST_MULT = 1.2;
@@ -238,33 +243,33 @@ const R_SPEC_SPEED = 1.25;
 const K_SPEC_SIZE = 1.3;
 const K_SPEC_HP = 50;
 
-const SYRINGE_BASE_CD = 8000;
-const SYRINGE_SPEED = 980;
-const SYRINGE_HIT_RADIUS = 18;
-const SYRINGE_TIMEOUT = 1600;
-const SYRINGE_COLOR = 0xdd2233;
-
-const SICK_BASE_MS = 10000;
-const SICK_BASE_DPS = 2;
-const SICK_TICK_MS = [1000, 800, 600, 500];   // indexed by Brutal tier
-const SICK_CRIPPLE_EVERY = 5;                 // every Nth tick Crippling adds its bonus
-const FATAL_HP_RATIO = 0.1;
-
-const SNEEZE_INTERVAL_MS = 4000;
-const SNEEZE_RANGE = 170;
-const SNEEZE_HALF_ARC = Math.PI / 5;
-const SNEEZE_BASE_MS = 6000;
-const CONTACT_INFECT_BASE_MS = 3000;
-const CONTACT_INFECT_RANGE = 44;
-const BLOOD_DAMAGE_THRESHOLD = 50;
-const BLOOD_LIFESPAN = 5000;
-const BLOOD_RADIUS = 32;
-const BLOOD_INFECT_BASE_MS = 3000;
-const SHATTER_RADIUS = 120;
-const COMPROMISE_RADIUS = 95;
-const CARRIER_DPS = 1;
-const CARRIER_SPEED_MULT = 0.95;
-const CARRIER_DAMAGE_MULT = 0.95;
+// ── Mastery: Plague Pal ──────────────────────────────────────────────────
+const PAL_BASE_CD = 7000;
+const PAL_MIN_CD = 1500;
+const PAL_DAMAGE = 18;
+const PAL_RADIUS = 13;               // body radius before Shell growth
+const PAL_LASH_RADIUS = 85;          // tentacle reach from the Pal's centre
+const PAL_DASH_DIST = 150;
+const PAL_DASH_SPEED = 620;
+const PAL_FOLLOW_SPEED = 300;
+const PAL_FOLLOW_GAP = 38;
+const PAL_LASH_MS = 380;
+const PAL_RAGE_MS = 6000;
+const PAL_ZOO_MS = 2000;
+const PAL_ZOO_RANGE = 520;
+const PAL_BLAST_RADIUS = 70;
+const PAL_DIGEST_MS = 3000;
+const PAL_HELP_DELAY = 2000;
+const PAL_SYM_DR = 0.75;
+const PAL_SYM_DASH_SPEED = 900;
+const PAL_SYM_DASH_MS = 260;
+const PAL_SYM_RADIUS = 26;
+const PAL_TENTACLES = 7;
+/** The Pal's own shades: a bruised violet capsid with lime granules. */
+const PAL_TONES: GrowthTones = {
+  shell: 0x2a1438, body: 0x6a3a8a, cyto: 0x9a5fc4, lit: 0xc9a0ff, spark: 0xd8ffb0,
+};
+const PAL_RAGE_BODY = 0xb8325e;
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -296,6 +301,8 @@ interface Bacterium {
   dmg: number;
   spawnedAt: number;
   wigglePhase: number;
+  /** Brood (secret): a slow, heavy red bacterium. */
+  red: boolean;
 }
 
 /** Body-tree nodes, longest name first — for swapping names inside a sentence. */
@@ -376,6 +383,8 @@ interface SporeWall {
   maxHp: number;
   spawnedAt: number;
   matured: boolean;
+  /** Flung out by a Spore Blast — never blasts again, so one dash can't chain the whole field. */
+  noBlast: boolean;
   /** Monkey skin: the bloon layer it showed last frame, so dropping one pops it off. */
   bloonLayer?: number;
 }
@@ -386,6 +395,7 @@ interface PendingSpore {
   spikedTier: number;
   gutTier: number;
   spawnAt: number;
+  noBlast?: boolean;
 }
 
 
@@ -406,48 +416,6 @@ interface SoupPuddle {
   levels: Record<string, number>;
 }
 
-interface Syringe {
-  container: Phaser.GameObjects.Container;
-  owner: Owner;
-  x: number; y: number; vx: number; vy: number;
-  /** Sickness duration this syringe carries, snapshotted at launch. */
-  durationMs: number;
-  spawnedAt: number;
-}
-
-/**
- * One active Sickness. All of the Syringe tree's upgrades are folded into this single
- * effect — the tray only ever shows one 🩸 box no matter how deep the tree goes.
- */
-interface Sickness {
-  target: Fighter;
-  owner: Owner;
-  startedAt: number;
-  until: number;
-  nextTickAt: number;
-  tickIndex: number;
-  nextSneezeAt: number;
-  /** Blood Spread accumulator: damage this target has taken while sick. */
-  bloodAccum: number;
-  /** Listener bound to the target's `damaged` event — detached when the sickness ends. */
-  onDamaged: (amount: number) => void;
-}
-
-interface BloodPuddle {
-  gfx: Phaser.GameObjects.Container;
-  owner: Owner;
-  x: number; y: number;
-  infectMs: number;
-  expiresAt: number;
-}
-
-/** Tracked multipliers this kit has written onto a fighter, so writes stay composable. */
-interface SickMods {
-  vuln: number;
-  weaken: number;
-  slow: number;
-}
-
 interface Clone {
   sprite: Phaser.GameObjects.Sprite;
   healthBar: HealthBar;
@@ -463,6 +431,23 @@ interface Clone {
   nextStrafeDirChangeAt: number;
   contactNext: Map<Fighter, number>;
   chitinRing: Phaser.GameObjects.Arc | null;
+}
+
+/** One Plague Pal — the player may field two (Mitosis); a remote growth player gets one. */
+interface Pal {
+  owner: Owner;
+  index: number;
+  gfx: Phaser.GameObjects.Graphics;
+  x: number; y: number;
+  mode: 'follow' | 'dash' | 'lash' | 'symDash';
+  modeAt: number;
+  fromX: number; fromY: number; toX: number; toY: number;
+  dashMs: number;
+  lastZooAt: number;
+  /** Mouth: projectiles being eaten, and the heal each pays when it is done. */
+  digest: { heal: number; doneAt: number; ang: number }[];
+  /** Fixes this Pal's wobble so two Pals never move in lockstep. */
+  seed: number;
 }
 
 // ── Arena API ────────────────────────────────────────────────────────────
@@ -511,8 +496,8 @@ export interface GrowthArenaApi {
 
 // ── GrowthKit ────────────────────────────────────────────────────────────
 // Growth Mastery: Secret Upgrades (passive — two single-tier rolls added to the
-// Evolve menu each match) + Syringe Shot (bindable — inflicts Sickness and opens
-// a second Evolve tree that upgrades that one effect).
+// Evolve menu each match) + Plague Pal (bindable — a virus pet with its own
+// Evolve tree).
 
 export class GrowthKit {
   // ── Visuals ───────────────────────────────────────────────────────────
@@ -570,25 +555,27 @@ export class GrowthKit {
   private evolveLabels: Phaser.GameObjects.Text[] = [];
   private evolveAreas: Array<{ id: string; x: number; y: number; w: number; h: number }> = [];
   private evolveRightWasDown = false;
-  /** Which tree the Evolve menu is showing. The sickness tab only exists with Syringe Shot bound. */
-  private evolveTab: 'body' | 'sickness' = 'body';
+  /** Which tree the Evolve menu is showing. The Pal tab only exists with Plague Pal bound. */
+  private evolveTab: EvolveTab = 'body';
 
   // ── Mastery state ───────────────────────────────────────────────────
   /** The Secret Upgrades rolled for this match (ids into GROWTH_SECRET_UPGRADES). */
   private secretRoll: string[] = [];
   private secretOwned: Set<string> = new Set();
-  /** Sickness tree levels. Player-only, and shared across bodies — the syringe is yours, not your flesh's. */
-  private sickLevels: Record<string, number> = {};
-  private syringes: Syringe[] = [];
-  private sicknesses: Sickness[] = [];
-  private bloodPuddles: BloodPuddle[] = [];
-  private syringeLastCastAt = -SYRINGE_BASE_CD;
-  private sickMods: Map<Fighter, SickMods> = new Map();
-  private carriers: Map<Fighter, number> = new Map();  // fighter -> tick accumulator (ms)
   private viralBoostUntil = 0;
   private cloneCycle = 0;
-  /** Guards Compromising from chaining off its own eruption damage. */
-  private compromiseBusy = false;
+
+  // ── Plague Pal (mastery bindable) ─────────────────────────────────────
+  /** Pal tree levels. Player-only, shared across bodies — the pet follows you, not your flesh. */
+  private palLevels: Record<string, number> = {};
+  private pals: Pal[] = [];
+  /** Banked casts, fractional while recharging. Big Brain 3 lets it bank 2. */
+  private palCharge = 1;
+  private palRageUntil = 0;
+  /** Helping Hand: hp last frame (a drop means you were hurt) and when that last happened. */
+  private palLastHp = 0;
+  private palLastHurtAt = 0;
+  private palHealAccum = 0;
 
   private npcDnaBarGfx: Phaser.GameObjects.Graphics | null = null;
   /** The DNA double-helix gauge pinned under the HP bar — one Graphics, redrawn per frame. */
@@ -666,31 +653,16 @@ export class GrowthKit {
     this.vomitClouds = [];
     this.emesisNextAt = { player: 0, npc: 0 };
     this.forcedVomits = new Map<Fighter, { left: number; nextAt: number }>();
-    for (const s of this.syringes) s.container.destroy();
-    this.syringes = [];
-    for (const s of this.sicknesses) this.detachSickness(s);
-    this.sicknesses = [];
-    for (const b of this.bloodPuddles) b.gfx.destroy();
-    this.bloodPuddles = [];
-
-    // Hand back every multiplier this kit wrote, then forget the fighters entirely.
-    for (const [f, mods] of this.sickMods) {
-      if (f.active) {
-        f.incomingDamageMultiplier /= mods.vuln;
-        f.outgoingDamageMult /= mods.weaken;
-        if (f !== this.arena.player && f !== this.arena.npc) f.walkSpeedMult /= mods.slow;
-      }
-    }
-    this.sickMods = new Map();
-    for (const f of this.carriers.keys()) if (f.active) f.sicknessCarrier = false;
-    this.carriers = new Map();
-    this.arena.player.sicknessUntil = 0;
-    this.arena.npc.sicknessUntil = 0;
-    this.syringeLastCastAt = -SYRINGE_BASE_CD;
     this.viralBoostUntil = 0;
     this.cloneCycle = 0;
-    this.compromiseBusy = false;
-    this.sickLevels = {};
+    for (const p of this.pals) p.gfx.destroy();
+    this.pals = [];
+    this.palLevels = {};
+    this.palCharge = 1;
+    this.palRageUntil = 0;
+    this.palLastHp = 0;
+    this.palLastHurtAt = 0;
+    this.palHealAccum = 0;
     this.secretOwned = new Set();
     this.evolveTab = 'body';
     this.rollSecretUpgrades();
@@ -781,7 +753,7 @@ export class GrowthKit {
 
   /** After a successful castAbility, shave the cooldown down to the body's effective one. */
   private shaveCooldown(abilityId: string): void {
-    const factor = this.cdFactor(abilityId, this.fighterBody);
+    const factor = this.cdFactor(abilityId, this.fighterBody) * this.assistCdMult();
     if (factor >= 1) return;
     const base = BASE_COOLDOWNS[abilityId];
     if (!base) return;
@@ -822,7 +794,10 @@ export class GrowthKit {
 
   /** Viral Consumption's +20% move speed, read by ArenaScene's speed chokepoint. */
   getPlayerSpeedMult(): number {
-    return this.arena.scene.time.now < this.viralBoostUntil ? VIRAL_BOOST_MULT : 1;
+    let m = this.arena.scene.time.now < this.viralBoostUntil ? VIRAL_BOOST_MULT : 1;
+    // Plague Pal — Assistance: the pet hurries you along.
+    if (this.palOn()) m *= 1 + 0.05 * this.palTier('assistance');
+    return m;
   }
 
   /** How many bodies this owner may field at once — Ruler lifts the player's cap to 2. */
@@ -863,425 +838,599 @@ export class GrowthKit {
     this.floatText(player.x, player.y - 30, `🧫 ${def.name}!`, '#ffdd66');
   }
 
-  // ── Mastery: Syringe Shot / Sickness ─────────────────────────────────
+  // ── Mastery: Plague Pal ──────────────────────────────────────────────
+  // A virus pet that tags along behind you. The bound key sends it dashing ahead, where it
+  // throws every tentacle out at once. Its own Evolve tab upgrades it; those levels are the
+  // player's only (a remote growth player's Pal is the base one, like their other trees).
 
-  private syringeSlot(): 'r' | 'f' | 'q' | null {
+  private palSlot(): 'r' | 'f' | 'q' | null {
     for (const s of ['r', 'f', 'q'] as const) {
-      if (this.arena.masteryBindFor(s) === 'syringe-shot') return s;
+      if (this.arena.masteryBindFor(s) === 'plague-pal') return s;
     }
     return null;
   }
 
-  /** Sickness-tree tier for an owner. Only the local player has a tree; the NPC's is flat. */
-  private sickTier(owner: Owner, id: string): number {
-    return owner === 'player' ? (this.sickLevels[id] ?? 0) : 0;
+  /** Pal-tree tier. Only the local player has a tree. */
+  private palTier(id: string, owner: Owner = 'player'): number {
+    return owner === 'player' ? (this.palLevels[id] ?? 0) : 0;
   }
 
-  private syringeCooldown(): number {
-    const cd = SYRINGE_BASE_CD - 1000 * this.sickTier('player', 'quick-fire');
-    return Math.max(1000, cd * this.arena.player.cooldownMult);
+  /** The local player is fielding a Pal this match. */
+  private palOn(): boolean {
+    return this.arena.masteryActive && this.palSlot() !== null;
   }
 
-  getSyringeCooldownRatio(time: number): number {
-    return Math.min(1, (time - this.syringeLastCastAt) / this.syringeCooldown());
+  private palSymbiosis(): boolean {
+    return this.palOn() && this.palTier('symbiosis') > 0;
   }
 
-  private tryCastSyringe(time: number, mouseX: number, mouseY: number): void {
-    if (time - this.syringeLastCastAt < this.syringeCooldown()) return;
-    this.syringeLastCastAt = time;
+  /** Assistance: −5% on every one of your cooldowns per tier, while the Pal is with you. */
+  private assistCdMult(): number {
+    return this.palOn() ? 1 - 0.05 * this.palTier('assistance') : 1;
+  }
+
+  private palMaxCharges(): number {
+    return this.palTier('big-brain') >= 3 ? 2 : 1;
+  }
+
+  private palCooldown(): number {
+    const cd = PAL_BASE_CD * (1 - 0.12 * this.palTier('reflexes')) * this.assistCdMult();
+    return Math.max(PAL_MIN_CD, cd * this.arena.player.cooldownMult);
+  }
+
+  /** HUD bar: full while a charge is banked, otherwise the next one's progress. */
+  getPalCooldownRatio(): number {
+    return Math.min(1, this.palCharge);
+  }
+
+  private palRaged(time: number): boolean {
+    return time < this.palRageUntil;
+  }
+
+  private palRadius(pal: Pal): number {
+    // Shell: buying it again grows the body — the first tier only hardens it.
+    return PAL_RADIUS * (1 + 0.2 * Math.max(0, this.palTier('shell', pal.owner) - 1));
+  }
+
+  private palLashRadius(owner: Owner): number {
+    return PAL_LASH_RADIUS + 15 * this.palTier('big-brain', owner);
+  }
+
+  private palDashDist(owner: Owner): number {
+    return PAL_DASH_DIST + 40 * this.palTier('big-brain', owner);
+  }
+
+  private palDashSpeed(owner: Owner): number {
+    return PAL_DASH_SPEED * (1 + 0.25 * this.palTier('big-brain', owner));
+  }
+
+  private palDamage(owner: Owner, time: number): number {
+    let d = PAL_DAMAGE + 5 * this.palTier('beak', owner) + 7 * this.palTier('hardened-beak', owner);
+    if (owner === 'player' && this.palRaged(time)) d *= 1 + 0.15 * this.palTier('viral-rage');
+    return Math.round(d * this.dmgBoost(owner));
+  }
+
+  private palBlocks(pal: Pal): boolean {
+    return pal.owner === 'player' && !this.palSymbiosis()
+      && (this.palTier('shell') > 0 || this.palTier('mouth') > 0);
+  }
+
+  private tryCastPal(time: number, mouseX: number, mouseY: number): void {
+    if (this.palCharge < 1) return;
+    const mine = this.pals.filter((p) => p.owner === 'player');
+    if (mine.length === 0) return;
+    this.palCharge -= 1;
+    const p = this.arena.player;
     // triggerCooldown stamps the cast for the HUD and broadcasts it online, where the
-    // peer routes the unknown id through ArenaScene.replayNpcMastery → doNpcSyringeShot.
-    this.arena.player.triggerCooldown('syringe-shot');
-    this.launchSyringe(mouseX, mouseY, 'player');
-  }
+    // peer routes the unknown id through ArenaScene.replayNpcMastery → doNpcPlaguePal.
+    p.triggerCooldown('plague-pal');
 
-  /** Online replay: the remote growth player fired a syringe at (tx, ty). */
-  doNpcSyringeShot(tx: number, ty: number): void {
-    this.launchSyringe(tx, ty, 'npc');
-  }
-
-  /** Full sickness duration a freshly-fired syringe carries (Remaining only boosts the syringe). */
-  private syringeDuration(owner: Owner): number {
-    return SICK_BASE_MS + 2000 * this.sickTier(owner, 'remaining');
-  }
-
-  private launchSyringe(tx: number, ty: number, owner: Owner): void {
-    const { scene } = this.arena;
-    const caster = this.fighterOf(owner);
-    const ox = caster.x, oy = caster.y;
-    const dx = tx - ox, dy = ty - oy;
-    const len = Math.sqrt(dx * dx + dy * dy) || 1;
-    const aim = Math.atan2(dy, dx);
-
-    // A real syringe: glass barrel with a fluid column, plunger stem, thumb rest, steel needle.
-    // Jabbed, not thrown — the arm drives it forward along the aim.
-    this.avatarOf(owner)?.play('punch', aim);
-    this.fx(owner).muzzleBud(ox + Math.cos(aim) * 18, oy + Math.sin(aim) * 18, aim, 1.2, 7, SICK_TONES);
-
-    const container = scene.add.container(ox, oy).setDepth(7);
-    const needle = scene.add.rectangle(16, 0, 16, 2, this.col(owner)(0xdde4ee), 1);
-    const tip = scene.add.triangle(25, 0, 0, -1.5, 5, 0, 0, 1.5, this.col(owner)(0xffffff), 1);
-    const barrel = scene.add.rectangle(2, 0, 22, 9, this.col(owner)(0xf0f6ff), 0.55).setStrokeStyle(1, this.col(owner)(0xaabbcc), 0.9);
-    const fluid = scene.add.rectangle(4, 0, 15, 6, this.col(owner)(SYRINGE_COLOR), 0.95);
-    const stem = scene.add.rectangle(-14, 0, 12, 2.5, this.col(owner)(0xdddddd), 1);
-    const thumb = scene.add.rectangle(-21, 0, 3, 11, this.col(owner)(0xeeeeee), 1);
-    container.add([needle, tip, barrel, fluid, stem, thumb]);
-    container.setRotation(aim);
-
-    this.syringes.push({
-      container, owner,
-      x: ox, y: oy,
-      vx: (dx / len) * SYRINGE_SPEED, vy: (dy / len) * SYRINGE_SPEED,
-      durationMs: this.syringeDuration(owner),
-      spawnedAt: scene.time.now,
-    });
-    this.floatText(ox, oy - 34, '💉 SYRINGE', '#ff8899');
-  }
-
-  private updateSyringes(time: number, delta: number): void {
-    const dt = delta / 1000;
-    const W = this.arena.scene.scale.width, H = this.arena.scene.scale.height;
-    for (let i = this.syringes.length - 1; i >= 0; i--) {
-      const s = this.syringes[i];
-      s.x += s.vx * dt;
-      s.y += s.vy * dt;
-      s.container.setPosition(s.x, s.y);
-
-      if (s.x < -30 || s.x > W + 30 || s.y < -30 || s.y > H + 30 || time - s.spawnedAt > SYRINGE_TIMEOUT) {
-        s.container.destroy();
-        this.syringes.splice(i, 1);
-        continue;
-      }
-      // Spore walls stop syringes like any other projectile.
-      if (this.hitOpposingSpore(s.owner, s.x, s.y, 0)) {
-        s.container.destroy();
-        this.syringes.splice(i, 1);
-        continue;
-      }
-
-      let struck: Fighter | null = null;
-      for (const t of this.targetsOf(s.owner)) {
-        if (!t.active || t.hp <= 0) continue;
-        if (Phaser.Math.Distance.Between(s.x, s.y, t.x, t.y) <= SYRINGE_HIT_RADIUS) { struck = t; break; }
-      }
-      if (!struck) continue;
-
-      // No damage of its own — the syringe only ever delivers the plague.
-      this.applySickness(struck, s.owner, s.durationMs, true, time);
-      this.arena.spawnHitFlash(struck.x, struck.y, this.col(s.owner)(SYRINGE_COLOR));
-      // Snap on application, so Sickness has a moment as well as a state.
-      this.fx(s.owner).ring(struck.x, struck.y, 6, 34, GROWTH.flush, 320, 3, 8);
-      this.fx(s.owner).motes(struck.x, struck.y, 6, {
-        speed: 90, size: 2.4, life: 460, rise: 12, depth: 8, tones: SICK_TONES,
-      });
-      if (this.sickTier(s.owner, 'syringe-shatter') > 0) {
-        this.shatterSyringe(struck, s, time);
-      }
-      s.container.destroy();
-      this.syringes.splice(i, 1);
+    let ax = mouseX, ay = mouseY;
+    // Big Brain: it picks its own target if one is in reach.
+    if (this.palTier('big-brain') > 0) {
+      const reach = this.palDashDist('player') + this.palLashRadius('player') + 60;
+      const t = this.nearestOf(p.x, p.y, this.targetsOf('player'));
+      if (t && Phaser.Math.Distance.Between(p.x, p.y, t.x, t.y) <= reach) { ax = t.x; ay = t.y; }
     }
-  }
 
-  /** Syringe Shatter (ultimate): the glass bursts, misting half the dose over everyone nearby. */
-  private shatterSyringe(struck: Fighter, s: Syringe, time: number): void {
-    const { scene } = this.arena;
-    // The dose mists outward as a blood-toned bloom, and the glass goes with it.
-    this.fx(s.owner).burst(struck.x, struck.y, SHATTER_RADIUS, {
-      pods: 14, haze: 3, duration: 420, tones: SICK_TONES, depth: 6,
-    });
-    for (let k = 0; k < 7; k++) {
-      const a = Math.random() * Math.PI * 2;
-      const shard = scene.add.rectangle(struck.x, struck.y, 4, 1.5, this.col(s.owner)(0xf0f6ff), 0.9).setDepth(7);
-      shard.setRotation(a);
-      scene.tweens.add({
-        targets: shard, x: struck.x + Math.cos(a) * 46, y: struck.y + Math.sin(a) * 46, alpha: 0,
-        duration: 300, onComplete: () => shard.destroy(),
-      });
-    }
-    const splash = Math.round(s.durationMs * 0.5);
-    for (const t of this.targetsOf(s.owner)) {
-      if (t === struck || !t.active || t.hp <= 0) continue;
-      if (Phaser.Math.Distance.Between(struck.x, struck.y, t.x, t.y) > SHATTER_RADIUS) continue;
-      this.applySickness(t, s.owner, splash, false, time);
-    }
-  }
-
-  /**
-   * Put (or top up) Sickness on a target. `refresh` is reserved for the syringe itself —
-   * every spread route (sneeze, contact, blood, shatter) leaves an existing timer alone.
-   */
-  private applySickness(target: Fighter, owner: Owner, durationMs: number, refresh: boolean, time: number): void {
-    const existing = this.sicknesses.find((s) => s.target === target);
-    if (existing) {
-      if (!refresh) return;
-      existing.until = Math.max(existing.until, time + durationMs);
-      existing.owner = owner;
-      target.sicknessUntil = existing.until;
+    if (this.palSymbiosis()) {
+      // You are the Pal now: you get flung, and the tentacles come out of you.
+      const a = Math.atan2(ay - p.y, ax - p.x);
+      this.arena.buildPlayerContext(ax, ay).dashCaster(Math.cos(a) * PAL_SYM_DASH_SPEED, Math.sin(a) * PAL_SYM_DASH_SPEED);
+      this.playerAvatar?.play('punch', a);
+      const pal = mine[0];
+      pal.mode = 'symDash';
+      pal.modeAt = time;
       return;
     }
-    const entry: Sickness = {
-      target, owner,
-      startedAt: time,
-      until: time + durationMs,
-      nextTickAt: time + this.sickTickInterval(owner),
-      tickIndex: 0,
-      nextSneezeAt: time + SNEEZE_INTERVAL_MS,
-      bloodAccum: 0,
-      onDamaged: () => {},
+    mine.forEach((pal, i) => this.dashPal(pal, ax, ay, mine.length > 1 ? (i === 0 ? -0.3 : 0.3) : 0, time));
+  }
+
+  /** Online replay: the remote growth player sent their Pal at (tx, ty). */
+  doNpcPlaguePal(tx: number, ty: number): void {
+    if (this.arena.npcElementId !== 'growth') return;
+    let pal = this.pals.find((p) => p.owner === 'npc');
+    if (!pal) {
+      pal = this.makePal('npc', 0);
+      this.pals.push(pal);
+    }
+    this.dashPal(pal, tx, ty, 0, this.arena.scene.time.now);
+  }
+
+  private dashPal(pal: Pal, ax: number, ay: number, off: number, time: number): void {
+    const host = this.fighterOf(pal.owner);
+    const W = this.arena.scene.scale.width, H = this.arena.scene.scale.height;
+    const a = Math.atan2(ay - host.y, ax - host.x) + off;
+    const want = Phaser.Math.Distance.Between(host.x, host.y, ax, ay);
+    const dist = Math.min(this.palDashDist(pal.owner), Math.max(70, want));
+    pal.fromX = pal.x;
+    pal.fromY = pal.y;
+    pal.toX = Phaser.Math.Clamp(host.x + Math.cos(a) * dist, 20, W - 20);
+    pal.toY = Phaser.Math.Clamp(host.y + Math.sin(a) * dist, 20, H - 20);
+    const travel = Phaser.Math.Distance.Between(pal.fromX, pal.fromY, pal.toX, pal.toY);
+    pal.dashMs = Math.max(120, (travel / this.palDashSpeed(pal.owner)) * 1000);
+    pal.mode = 'dash';
+    pal.modeAt = time;
+    if (!this.monkey(pal.owner)) {
+      this.fx(pal.owner).motes(pal.x, pal.y, 5, {
+        angle: a + Math.PI, spread: 0.7, speed: 80, size: 2.2, life: 320, depth: 5, tones: PAL_TONES,
+      });
+    }
+  }
+
+  private makePal(owner: Owner, index: number): Pal {
+    const host = this.fighterOf(owner);
+    return {
+      owner, index,
+      gfx: this.arena.scene.add.graphics().setDepth(6),
+      x: host.x - 30, y: host.y + 10,
+      mode: 'follow', modeAt: 0,
+      fromX: 0, fromY: 0, toX: 0, toY: 0, dashMs: 1,
+      lastZooAt: 0,
+      digest: [],
+      seed: Math.random() * 10,
     };
-    entry.onDamaged = (amount: number) => this.onSickTargetDamaged(entry, amount);
-    target.on('damaged', entry.onDamaged);
-    target.sicknessUntil = entry.until;
-    this.sicknesses.push(entry);
-    this.floatText(target.x, target.y - 44, '🩸 SICKNESS', '#ff5566');
   }
 
-  private detachSickness(s: Sickness): void {
-    s.target.off('damaged', s.onDamaged);
-    if (s.target.active) s.target.sicknessUntil = 0;
-  }
-
-  private sickTickInterval(owner: Owner): number {
-    return SICK_TICK_MS[Math.min(SICK_TICK_MS.length - 1, this.sickTier(owner, 'brutal'))];
-  }
-
-  private updateSickness(time: number, delta: number): void {
-    for (let i = this.sicknesses.length - 1; i >= 0; i--) {
-      const s = this.sicknesses[i];
-      const t = s.target;
-      if (!t.active || t.hp <= 0 || time >= s.until) {
-        // Carrier: the plague never fully leaves a body that survived it.
-        if (t.active && t.hp > 0 && this.sickTier(s.owner, 'carrier') > 0 && !t.sicknessCarrier) {
-          t.sicknessCarrier = true;
-          this.carriers.set(t, 0);
-          this.floatText(t.x, t.y - 44, '🦠 CARRIER', '#aadd55');
-        }
-        this.detachSickness(s);
-        this.sicknesses.splice(i, 1);
-        continue;
-      }
-
-      if (time >= s.nextTickAt) {
-        s.nextTickAt = time + this.sickTickInterval(s.owner);
-        s.tickIndex++;
-        this.tickSickness(s);
-        if (!t.active || t.hp <= 0) continue;
-      }
-
-      // Sneeze: the host coughs a cone of plague down whatever they are facing.
-      if (this.sickTier(s.owner, 'sneeze') > 0 && time >= s.nextSneezeAt) {
-        s.nextSneezeAt = time + SNEEZE_INTERVAL_MS;
-        this.doSneeze(s, time);
-      }
-
-      // Contact: bodies touching a sick host catch it.
-      const contactTier = this.sickTier(s.owner, 'contact');
-      if (contactTier > 0) {
-        const dur = CONTACT_INFECT_BASE_MS + 2000 * (contactTier - 1);
-        for (const other of this.targetsOf(s.owner)) {
-          if (other === t || !other.active || other.hp <= 0) continue;
-          if (Phaser.Math.Distance.Between(t.x, t.y, other.x, other.y) > CONTACT_INFECT_RANGE) continue;
-          this.applySickness(other, s.owner, dur, false, time);
-        }
+  /** Field the right number of Pals: none unbound, one normally, two with Mitosis. */
+  private syncPals(): void {
+    const want = this.palOn() ? (this.palTier('pal-mitosis') > 0 ? 2 : 1) : 0;
+    const mine = this.pals.filter((p) => p.owner === 'player');
+    for (let i = mine.length; i < want; i++) this.pals.push(this.makePal('player', i));
+    for (let i = want; i < mine.length; i++) {
+      mine[i].gfx.destroy();
+      this.pals.splice(this.pals.indexOf(mine[i]), 1);
+    }
+    if (this.arena.npcElementId !== 'growth') {
+      for (let i = this.pals.length - 1; i >= 0; i--) {
+        if (this.pals[i].owner !== 'npc') continue;
+        this.pals[i].gfx.destroy();
+        this.pals.splice(i, 1);
       }
     }
-    this.updateCarriers(delta);
-    this.syncSickModifiers(time);
   }
 
-  private tickSickness(s: Sickness): void {
-    const t = s.target;
-    const owner = s.owner;
-    const crippling = this.sickTier(owner, 'crippling');
-    let dmg = SICK_BASE_DPS + this.sickTier(owner, 'deadly') + crippling;
-    if (crippling > 0 && s.tickIndex % SICK_CRIPPLE_EVERY === 0) dmg += 2 * crippling;
-    dmg = Math.round(dmg * this.dmgBoost(owner));
+  private updatePals(time: number, delta: number): void {
+    this.syncPals();
+    const on = this.palOn();
+    const p = this.arena.player;
+    // Jelly Membrane: rolled by the victim in Fighter.takeDamage.
+    p.growthPalDodge = on ? 0.04 * this.palTier('jelly-membrane') : 0;
+    if (on) {
+      const max = this.palMaxCharges();
+      if (this.palCharge < max) {
+        // Viral Rage: the Pal's own cooldown (and only that one) runs faster while enraged.
+        const rate = 1 + (this.palRaged(time) ? 0.25 * this.palTier('viral-rage') : 0);
+        this.palCharge = Math.min(max, this.palCharge + (delta * rate) / this.palCooldown());
+      }
+      this.updatePalHelpingHand(time, delta);
+    }
+    const dt = delta / 1000;
+    for (const pal of this.pals) this.updatePal(pal, time, dt);
+  }
 
-    t.takeDamage(dmg);
-    this.arena.spawnHitFlash(t.x, t.y, this.col(owner)(SYRINGE_COLOR));
-    this.registerDamage(owner, t, dmg);
-
-    // Fatal (ultimate): once sickness has them on the ropes, it finishes the job.
-    if (this.sickTier(owner, 'fatal') > 0 && t.active && t.hp > 0 && t.hp <= t.maxHp * FATAL_HP_RATIO) {
-      this.floatText(t.x, t.y - 40, '☠️ FATAL', '#ff2233');
-      t.takeDamage(9999, { pierce: true });
+  /** Helping Hand: 2s without a scratch and the Pal starts patching you up. */
+  private updatePalHelpingHand(time: number, delta: number): void {
+    const p = this.arena.player;
+    if (p.hp < this.palLastHp) this.palLastHurtAt = time;
+    this.palLastHp = p.hp;
+    const tier = this.palTier('helping-hand');
+    if (tier <= 0 || p.hp <= 0 || p.hp >= p.maxHp || time - this.palLastHurtAt < PAL_HELP_DELAY) return;
+    this.palHealAccum += tier * (delta / 1000);
+    // Paid out in 3s chunks so the heal numbers don't tick every frame.
+    if (this.palHealAccum >= 3) {
+      const amt = Math.floor(this.palHealAccum);
+      this.palHealAccum -= amt;
+      p.heal(amt);
+      this.palLastHp = p.hp;
     }
   }
 
-  /**
-   * Which way a fighter is "looking". `facingAngle` is only kept current in Silence matches
-   * and online, so fall back to the direction they are actually travelling, then to whoever
-   * poisoned them — a sneeze cone stuck pointing right would be worse than useless.
-   */
-  private facingOf(f: Fighter): number {
-    const body = f.body as Phaser.Physics.Arcade.Body | null;
-    if (body && (Math.abs(body.velocity.x) > 5 || Math.abs(body.velocity.y) > 5)) {
-      return Math.atan2(body.velocity.y, body.velocity.x);
-    }
-    if (f.facingAngle !== 0) return f.facingAngle;
-    const foe = this.nearestOf(f.x, f.y, f === this.arena.player ? [this.arena.npc] : [this.arena.player]);
-    return foe ? Math.atan2(foe.y - f.y, foe.x - f.x) : 0;
-  }
+  private updatePal(pal: Pal, time: number, dt: number): void {
+    const host = this.fighterOf(pal.owner);
+    if (!host.active || host.hp <= 0) { pal.gfx.clear(); return; }
+    const sym = pal.owner === 'player' && this.palSymbiosis();
 
-  /** Sneeze cone: infects anyone caught in it, but never resets a timer already running. */
-  private doSneeze(s: Sickness, time: number): void {
-    const t = s.target;
-    const tier = this.sickTier(s.owner, 'sneeze');
-    const dur = SNEEZE_BASE_MS + 2000 * (tier - 1);
-    const aim = this.facingOf(t);
-
-    // The cone expands out of the sneezer rather than appearing whole, and the droplets are
-    // pods so the spray reads as living material rather than as confetti.
-    const tint = this.col(s.owner);
-    this.fx(s.owner).anim(6, 420, (g, ft) => {
-      const fade = 1 - ft * ft;
-      const punch = Math.min(1, ft * 2);
-      const reach = SNEEZE_RANGE * (1 - (1 - punch) * (1 - punch));
-      g.fillStyle(tint(GROWTH.spring), 0.28 * fade);
-      g.slice(t.x, t.y, reach, aim - SNEEZE_HALF_ARC, aim + SNEEZE_HALF_ARC, false);
-      g.fillPath();
-      g.lineStyle(2 * fade, tint(GROWTH.pollen), 0.6 * fade);
-      g.beginPath();
-      g.arc(t.x, t.y, reach, aim - SNEEZE_HALF_ARC, aim + SNEEZE_HALF_ARC);
-      g.strokePath();
-    });
-    this.fx(s.owner).motes(t.x, t.y, 10, {
-      angle: aim, spread: SNEEZE_HALF_ARC, speed: SNEEZE_RANGE * 1.5,
-      size: 2.6, life: 420, rise: 6, depth: 7, tones: SICK_TONES,
-    });
-    this.floatText(t.x, t.y - 30, '🤧', '#ccee88');
-
-    for (const other of this.targetsOf(s.owner)) {
-      if (other === t || !other.active || other.hp <= 0) continue;
-      const d = Phaser.Math.Distance.Between(t.x, t.y, other.x, other.y);
-      if (d > SNEEZE_RANGE) continue;
-      const ang = Math.abs(Phaser.Math.Angle.Wrap(Math.atan2(other.y - t.y, other.x - t.x) - aim));
-      if (ang > SNEEZE_HALF_ARC) continue;
-      this.applySickness(other, s.owner, dur, false, time);
-    }
-  }
-
-  /** Compromising + Blood Spread both key off damage a sick body takes, from any source. */
-  private onSickTargetDamaged(s: Sickness, amount: number): void {
-    if (amount <= 0 || this.compromiseBusy) return;
-    const t = s.target;
-    const time = this.arena.scene.time.now;
-
-    const bloodTier = this.sickTier(s.owner, 'blood-spread');
-    if (bloodTier > 0) {
-      s.bloodAccum += amount;
-      while (s.bloodAccum >= BLOOD_DAMAGE_THRESHOLD) {
-        s.bloodAccum -= BLOOD_DAMAGE_THRESHOLD;
-        this.spawnBloodPuddle(t.x, t.y, s.owner, BLOOD_INFECT_BASE_MS + 2000 * (bloodTier - 1), time);
+    if (sym) {
+      pal.x = host.x;
+      pal.y = host.y;
+      if (pal.mode === 'dash') pal.mode = 'follow';
+      if (pal.mode === 'symDash' && time - pal.modeAt >= PAL_SYM_DASH_MS) {
+        pal.mode = 'lash';
+        pal.modeAt = time;
+        this.palLash(pal, time);
       }
+    } else if (pal.mode === 'dash') {
+      const k = Math.min(1, (time - pal.modeAt) / pal.dashMs);
+      const e = easeOut(k);
+      pal.x = pal.fromX + (pal.toX - pal.fromX) * e;
+      pal.y = pal.fromY + (pal.toY - pal.fromY) * e;
+      if (pal.owner === 'player') this.palSporeBlast(pal, time);
+      if (k >= 1) {
+        pal.mode = 'lash';
+        pal.modeAt = time;
+        this.palLash(pal, time);
+      }
+    } else if (pal.mode === 'follow' || pal.mode === 'symDash') {
+      pal.mode = 'follow';
+      // Tag along just behind you, off to one side (Mitosis Pals take a side each).
+      const foe = pal.owner === 'player' ? null : this.arena.player;
+      const face = foe
+        ? Math.atan2(foe.y - host.y, foe.x - host.x)
+        : Math.atan2((this.aimY || host.y) - host.y, (this.aimX || host.x + 1) - host.x);
+      const twins = this.pals.filter((o) => o.owner === pal.owner).length > 1;
+      const side = twins && pal.index === 1 ? -1 : 1;
+      const ang = face + Math.PI - 0.75 * side;
+      const tx = host.x + Math.cos(ang) * PAL_FOLLOW_GAP;
+      const ty = host.y + Math.sin(ang) * PAL_FOLLOW_GAP + Math.sin(time / 380 + pal.seed) * 4;
+      const dx = tx - pal.x, dy = ty - pal.y;
+      const d = Math.sqrt(dx * dx + dy * dy);
+      if (d > 0.5) {
+        const spd = PAL_FOLLOW_SPEED * (1 + 0.25 * this.palTier('big-brain', pal.owner));
+        // Catches up harder the further it has fallen behind.
+        const step = Math.min(d, Math.max(spd, d * 5) * dt);
+        pal.x += (dx / d) * step;
+        pal.y += (dy / d) * step;
+      }
+    } else if (pal.mode === 'lash' && time - pal.modeAt >= PAL_LASH_MS) {
+      pal.mode = 'follow';
     }
 
-    const compTier = this.sickTier(s.owner, 'compromising');
-    if (compTier > 0) this.erupt(t, s.owner, amount, compTier);
+    if (pal.owner === 'player') {
+      this.palViralRage(pal, time);
+      if (this.palBlocks(pal)) this.palBlockProjectiles(pal, time);
+      this.palDigest(pal, time);
+      this.palZoochosis(pal, time);
+    }
+    this.drawPal(pal, time, sym);
   }
 
-  /** The sick body bursts. Everything nearby eats it — except the body it came out of. */
-  private erupt(source: Fighter, owner: Owner, amount: number, tier: number): void {
-    const dmg = Math.round(amount * (1 + 0.1 * tier));
-    // Higher tiers erupt harder rather than merely wider — the content scales, not the radius.
-    this.fx(owner).burst(source.x, source.y, COMPROMISE_RADIUS, {
-      pods: 10 + tier * 4, haze: 2 + tier, duration: 380 + tier * 80,
-      tones: SICK_TONES, depth: 6,
-    });
-
-    this.compromiseBusy = true;
+  /** The payoff: every tentacle out at once, hitting everything in reach. */
+  private palLash(pal: Pal, time: number): void {
+    const owner = pal.owner;
+    const r = this.palLashRadius(owner);
+    const dmg = this.palDamage(owner, time);
+    const monkey = this.monkey(owner);
+    let dealt = 0;
     for (const t of this.targetsOf(owner)) {
-      if (t === source || !t.active || t.hp <= 0) continue;
-      if (Phaser.Math.Distance.Between(source.x, source.y, t.x, t.y) > COMPROMISE_RADIUS) continue;
+      if (!t.active || t.hp <= 0) continue;
+      if (Phaser.Math.Distance.Between(pal.x, pal.y, t.x, t.y) > r + 16) continue;
       t.takeDamage(dmg);
-      this.arena.spawnHitFlash(t.x, t.y, this.col(owner)(GROWTH.flush));
+      this.arena.spawnHitFlash(t.x, t.y, monkey ? 0xe6ecf2 : this.col(owner)(PAL_TONES.lit));
       this.registerDamage(owner, t, dmg);
-    }
-    this.compromiseBusy = false;
-  }
-
-  private spawnBloodPuddle(x: number, y: number, owner: Owner, infectMs: number, time: number): void {
-    const { scene } = this.arena;
-    const container = scene.add.container(x, y).setDepth(2);
-    container.add(scene.add.ellipse(0, 0, BLOOD_RADIUS * 2, BLOOD_RADIUS * 1.4, this.col(owner)(0x8a0f1c), 0.75));
-    container.add(scene.add.ellipse(-8, 4, BLOOD_RADIUS, BLOOD_RADIUS * 0.7, this.col(owner)(0xb31624), 0.8));
-    for (let i = 0; i < 4; i++) {
-      const a = Math.random() * Math.PI * 2;
-      const d = BLOOD_RADIUS * (0.7 + Math.random() * 0.5);
-      container.add(scene.add.circle(Math.cos(a) * d, Math.sin(a) * d * 0.6, 2 + Math.random() * 3, this.col(owner)(0x8a0f1c), 0.7));
-    }
-    this.bloodPuddles.push({ gfx: container, owner, x, y, infectMs, expiresAt: time + BLOOD_LIFESPAN });
-  }
-
-  private updateBloodPuddles(time: number): void {
-    for (let i = this.bloodPuddles.length - 1; i >= 0; i--) {
-      const b = this.bloodPuddles[i];
-      if (time >= b.expiresAt) {
-        b.gfx.destroy();
-        this.bloodPuddles.splice(i, 1);
-        continue;
+      dealt += dmg;
+      if (!monkey) {
+        const a = Math.atan2(t.y - pal.y, t.x - pal.x);
+        this.fx(owner).motes(t.x, t.y, 5, { angle: a, spread: 0.8, speed: 100, size: 2.3, life: 360, depth: 8, tones: PAL_TONES });
       }
-      const left = b.expiresAt - time;
-      b.gfx.setAlpha(left < 900 ? left / 900 : 1);
-      for (const t of this.targetsOf(b.owner)) {
+    }
+    // Blood Drink: the tentacles feed you.
+    const drink = this.palTier('blood-drink', owner);
+    if (owner === 'player' && drink > 0 && dealt > 0) {
+      this.arena.player.heal(Math.max(1, Math.round(dealt * (0.05 + 0.1 * drink))));
+    }
+
+    if (monkey) {
+      // Tack Shooter: a full ring of tacks spat out to the edge of its reach.
+      const n = 8 + 4 * Math.min(2, Math.floor(this.palTier('reflexes', owner) / 2 + this.palTier('assistance', owner) / 2));
+      const ox = pal.x, oy = pal.y;
+      const raged = owner === 'player' && this.palRaged(time);
+      this.fx(owner).anim(8, 230, (g, t) => {
+        const d = 10 + (r - 10) * easeOut(t);
+        for (let i = 0; i < n; i++) {
+          const a = (i / n) * Math.PI * 2;
+          const x = ox + Math.cos(a) * d, y = oy + Math.sin(a) * d;
+          if (raged) {
+            g.fillStyle(0xff8a2a, 0.35 * (1 - t));
+            g.fillCircle(x, y, 5);
+          }
+          drawTack(g, x, y, a, 10, 1 - t * 0.6);
+        }
+      });
+    } else {
+      this.fx(owner).ring(pal.x, pal.y, 8, r, PAL_TONES.lit, 300, 3, 5);
+    }
+  }
+
+  /** Viral Rage: brushing through one of your own viruses sets the Pal off for 6s. */
+  private palViralRage(pal: Pal, time: number): void {
+    if (this.palTier('viral-rage') <= 0) return;
+    const reach = this.palRadius(pal) + FLOOR_VIRUS_HIT_RADIUS;
+    const touches = this.floorViruses.some((fv) => fv.owner === 'player'
+      && Phaser.Math.Distance.Between(pal.x, pal.y, fv.x, fv.y) <= reach)
+      || this.viruses.some((v) => v.owner === 'player'
+      && Phaser.Math.Distance.Between(pal.x, pal.y, v.x, v.y) <= reach);
+    if (!touches) return;
+    if (!this.palRaged(time)) {
+      if (!this.monkey('player')) this.fx('player').ring(pal.x, pal.y, 4, 36, PAL_RAGE_BODY, 280, 3, 7);
+    }
+    this.palRageUntil = time + PAL_RAGE_MS;
+  }
+
+  /** Spore Blast: a dash through your own spore wall pops it into a ring of new ones. */
+  private palSporeBlast(pal: Pal, time: number): void {
+    const tier = this.palTier('spore-blast');
+    if (tier <= 0) return;
+    for (let i = this.spores.length - 1; i >= 0; i--) {
+      const s = this.spores[i];
+      if (s.owner !== 'player' || s.noBlast) continue;
+      const sr = this.sporeRadius(s);
+      if (Phaser.Math.Distance.Between(pal.x, pal.y, s.x, s.y) > sr + this.palRadius(pal)) continue;
+
+      const dmg = Math.round((8 + 4 * tier) * this.dmgBoost('player'));
+      for (const t of this.targetsOf('player')) {
         if (!t.active || t.hp <= 0) continue;
-        if (Phaser.Math.Distance.Between(b.x, b.y, t.x, t.y) > BLOOD_RADIUS) continue;
-        this.applySickness(t, b.owner, b.infectMs, false, time);
+        if (Phaser.Math.Distance.Between(s.x, s.y, t.x, t.y) > PAL_BLAST_RADIUS + sr) continue;
+        t.takeDamage(dmg);
+        this.arena.spawnHitFlash(t.x, t.y, this.col('player')(GROWTH.lime));
+        this.registerDamage('player', t, dmg);
       }
-    }
-  }
-
-  /** Carrier's permanent 1 HP/s drain. The slow and damage cut ride in syncSickModifiers. */
-  private updateCarriers(delta: number): void {
-    for (const [f, accum] of this.carriers) {
-      if (!f.active || f.hp <= 0) { this.carriers.delete(f); continue; }
-      const next = accum + delta;
-      if (next >= 1000) {
-        this.carriers.set(f, next - 1000);
-        f.takeDamage(CARRIER_DPS);
+      if (this.monkey('player')) {
+        this.monkeyAnims.pop(s.x, s.y, sr * 1.4, bloonColor(Math.max(1, s.hp)));
       } else {
-        this.carriers.set(f, next);
+        this.fx('player').burst(s.x, s.y, PAL_BLAST_RADIUS + sr, { pods: 12, haze: 2, duration: 380, tones: CULTURE_TONES });
+      }
+      const n = 2 + tier;
+      const spin = Math.random() * Math.PI * 2;
+      for (let k = 0; k < n; k++) {
+        const a = spin + (k / n) * Math.PI * 2;
+        const d = 56 + Math.random() * 22;
+        this.pendingSpores.push({
+          x: s.x + Math.cos(a) * d, y: s.y + Math.sin(a) * d,
+          owner: 'player', spikedTier: s.spikedTier, gutTier: s.gutTier,
+          spawnAt: time + 40 + k * 50, noBlast: true,
+        });
+      }
+      s.gfx.destroy();
+      this.spores.splice(i, 1);
+    }
+  }
+
+  /** Shell: opposing arena projectiles stop dead against the Pal's body. */
+  private palBlockProjectiles(pal: Pal, time: number): void {
+    const r = this.palRadius(pal);
+    for (const child of this.arena.projectiles.getChildren()) {
+      const p = child as Projectile;
+      if (!p.active || p.isFromPlayer) continue;
+      const body = p.body as Phaser.Physics.Arcade.Body;
+      const pr = body.isCircle ? body.radius : Math.max(body.halfWidth, body.halfHeight);
+      if (Phaser.Math.Distance.Between(p.x, p.y, pal.x, pal.y) > r + pr) continue;
+      this.palEat(pal, p.damage, Math.atan2(p.y - pal.y, p.x - pal.x), time);
+      p.setActive(false).setVisible(false);
+      body.stop();
+    }
+  }
+
+  /** A hostile shot at (x, y) against any of the player's blocking Pals. */
+  private palCatchAt(x: number, y: number, radius: number, dmg: number): boolean {
+    const time = this.arena.scene.time.now;
+    for (const pal of this.pals) {
+      if (!this.palBlocks(pal)) continue;
+      if (Phaser.Math.Distance.Between(x, y, pal.x, pal.y) > this.palRadius(pal) + radius) continue;
+      this.palEat(pal, dmg, Math.atan2(y - pal.y, x - pal.x), time);
+      return true;
+    }
+    return false;
+  }
+
+  /** Mouth: what the shell stops goes down the hatch, and pays out as a heal 3s later. */
+  private palEat(pal: Pal, dmg: number, ang: number, time: number): void {
+    this.arena.spawnHitFlash(pal.x + Math.cos(ang) * this.palRadius(pal), pal.y + Math.sin(ang) * this.palRadius(pal),
+      this.monkey('player') ? 0xe6ecf2 : this.col('player')(PAL_TONES.lit));
+    const mouth = this.palTier('mouth');
+    if (mouth <= 0 || dmg <= 0) return;
+    pal.digest.push({ heal: Math.max(2, Math.round(dmg * (0.15 + 0.15 * mouth))), doneAt: time + PAL_DIGEST_MS, ang });
+  }
+
+  private palDigest(pal: Pal, time: number): void {
+    for (let i = pal.digest.length - 1; i >= 0; i--) {
+      if (time < pal.digest[i].doneAt) continue;
+      this.arena.player.heal(pal.digest[i].heal);
+      pal.digest.splice(i, 1);
+    }
+  }
+
+  /** Zoochosis: the Pal fires bacteria of its own at whoever is closest. */
+  private palZoochosis(pal: Pal, time: number): void {
+    if (this.palTier('zoochosis') <= 0 || time - pal.lastZooAt < PAL_ZOO_MS) return;
+    const t = this.nearestOf(pal.x, pal.y, this.targetsOf('player'));
+    if (!t || Phaser.Math.Distance.Between(pal.x, pal.y, t.x, t.y) > PAL_ZOO_RANGE) return;
+    pal.lastZooAt = time;
+    this.launchBacterium(pal.x, pal.y, t.x, t.y, 'player', this.fighterBody, true);
+  }
+
+  // ── Plague Pal: drawing ──────────────────────────────────────────────
+
+  private drawPal(pal: Pal, time: number, sym: boolean): void {
+    const g = pal.gfx;
+    g.clear();
+    const host = this.fighterOf(pal.owner);
+    const alpha = host.forceInvisible ? 0 : host.alpha;
+    if (alpha <= 0.01) return;
+    const owner = pal.owner;
+    const raged = owner === 'player' && this.palRaged(time);
+    const lashK = pal.mode === 'lash' ? Math.min(1, (time - pal.modeAt) / PAL_LASH_MS) : -1;
+    const foe = this.nearestOf(pal.x, pal.y, this.targetsOf(owner));
+    const look = foe ? Math.atan2(foe.y - pal.y, foe.x - pal.x) : 0;
+    const r = sym ? PAL_SYM_RADIUS : this.palRadius(pal);
+
+    if (this.monkey(owner)) {
+      this.drawTackPal(g, pal, time, sym, r, raged, lashK, alpha, look);
+      return;
+    }
+
+    const tint = this.col(owner);
+    const T = PAL_TONES;
+    const t = time / 1000 + pal.seed;
+    g.setAlpha(alpha);
+
+    // Rage: a hot aura boiling off it.
+    if (raged) {
+      g.fillStyle(tint(PAL_RAGE_BODY), 0.18 + 0.08 * Math.sin(t * 9));
+      g.fillCircle(pal.x, pal.y, r * 1.9);
+    }
+
+    // Tentacles, behind the body: dangling and curling at rest, whipped out straight on a lash.
+    const reach = this.palLashRadius(owner);
+    for (let i = 0; i < PAL_TENTACLES; i++) {
+      const base = (i / PAL_TENTACLES) * Math.PI * 2 + t * 0.4;
+      let len: number, curl: number;
+      if (lashK >= 0) {
+        const ext = lashK < 0.3 ? easeOut(lashK / 0.3) : 1 - ((lashK - 0.3) / 0.7) * 0.85;
+        len = r + (reach - r) * ext;
+        curl = 0.12;
+      } else {
+        len = r * 1.75 + Math.sin(t * 3 + i * 1.3) * 3;
+        curl = 0.55;
+      }
+      const segs = 9;
+      let px = pal.x + Math.cos(base) * r * 0.7;
+      let py = pal.y + Math.sin(base) * r * 0.7;
+      for (let k = 1; k <= segs; k++) {
+        const f = k / segs;
+        const a = base + Math.sin(t * 4 + i * 1.7 + f * 3) * curl * f;
+        const d = r * 0.7 + (len - r * 0.7) * f;
+        const nx = pal.x + Math.cos(a) * d, ny = pal.y + Math.sin(a) * d;
+        const w = Math.max(1, (1 - f * 0.8) * 4.2 * (r / PAL_RADIUS) * (sym ? 0.8 : 1));
+        g.lineStyle(w + 1.5, tint(T.shell), 0.8);
+        g.lineBetween(px, py, nx, ny);
+        g.lineStyle(w, tint(raged ? PAL_RAGE_BODY : f < 0.5 ? T.body : T.cyto), 0.95);
+        g.lineBetween(px, py, nx, ny);
+        px = nx; py = ny;
+      }
+      // Suckers along a lashing tentacle, and a barbed tip that does the damage.
+      if (lashK >= 0) {
+        g.fillStyle(tint(T.spark), 0.9);
+        g.fillCircle(px, py, 2.6);
+        g.fillStyle(tint(T.lit), 0.7);
+        g.fillCircle((px + pal.x) / 2 + Math.cos(base) * 2, (py + pal.y) / 2 + Math.sin(base) * 2, 1.6);
+      }
+    }
+
+    // Symbiosis: the Pal is a translucent membrane over you, not a second creature.
+    const bodyAlpha = sym ? 0.32 : 1;
+    const pts: Phaser.Geom.Point[] = [];
+    const outer: Phaser.Geom.Point[] = [];
+    for (let k = 0; k < 22; k++) {
+      const a = (k / 22) * Math.PI * 2;
+      const rr = r * (1 + 0.08 * Math.sin(a * 3 + t * 5) + 0.05 * Math.sin(a * 5 - t * 3));
+      pts.push(new Phaser.Geom.Point(pal.x + Math.cos(a) * rr, pal.y + Math.sin(a) * rr));
+      outer.push(new Phaser.Geom.Point(pal.x + Math.cos(a) * rr * 1.13, pal.y + Math.sin(a) * rr * 1.13));
+    }
+    g.fillStyle(tint(T.shell), 0.95 * bodyAlpha);
+    g.fillPoints(outer, true);
+    g.fillStyle(tint(raged ? PAL_RAGE_BODY : T.body), bodyAlpha);
+    g.fillPoints(pts, true);
+
+    // Capsid knobs: little stalked spikes all the way round — what makes it read as a virus.
+    for (let k = 0; k < 9; k++) {
+      const a = (k / 9) * Math.PI * 2 - t * 0.3;
+      const x0 = pal.x + Math.cos(a) * r * 1.05, y0 = pal.y + Math.sin(a) * r * 1.05;
+      const x1 = pal.x + Math.cos(a) * r * 1.42, y1 = pal.y + Math.sin(a) * r * 1.42;
+      g.lineStyle(1.6, tint(T.cyto), 0.9 * (sym ? 0.6 : 1));
+      g.lineBetween(x0, y0, x1, y1);
+      g.fillStyle(tint(T.spark), 0.95 * (sym ? 0.6 : 1));
+      g.fillCircle(x1, y1, 2.1 * (r / PAL_RADIUS) * (sym ? 0.7 : 1));
+    }
+    if (sym) return;
+
+    // Shell: a hard, faceted rim.
+    if (this.palTier('shell', owner) > 0) {
+      g.lineStyle(2.5, tint(0xe6d8ff), 0.75);
+      g.strokeCircle(pal.x, pal.y, r * 1.02);
+      g.lineStyle(1, tint(T.shell), 0.6);
+      for (let k = 0; k < 6; k++) {
+        const a = (k / 6) * Math.PI * 2 + 0.3;
+        g.lineBetween(pal.x + Math.cos(a) * r * 0.62, pal.y + Math.sin(a) * r * 0.62,
+          pal.x + Math.cos(a) * r * 1.0, pal.y + Math.sin(a) * r * 1.0);
+      }
+    }
+    // Granules floating in the cytoplasm, and a membrane sheen on top.
+    for (let k = 0; k < 4; k++) {
+      const a = pal.seed * 3 + k * 1.9 + t * 0.6;
+      g.fillStyle(tint(T.spark), 0.55);
+      g.fillCircle(pal.x + Math.cos(a) * r * 0.5, pal.y + Math.sin(a) * r * 0.5 + 2, 1.4);
+    }
+    g.fillStyle(0xffffff, 0.16);
+    g.fillEllipse(pal.x - r * 0.3, pal.y - r * 0.42, r * 0.9, r * 0.45);
+
+    // Mouth: a little maw that works while it is eating something.
+    if (this.palTier('mouth', owner) > 0) {
+      const chew = pal.digest.length > 0 ? 0.5 + 0.5 * Math.abs(Math.sin(t * 8)) : 0.25;
+      const mx = pal.x + Math.cos(look) * r * 0.35, my = pal.y + r * 0.42;
+      g.fillStyle(tint(T.shell), 1);
+      g.fillEllipse(mx, my, r * 0.62, r * 0.42 * chew + 1);
+      g.fillStyle(0xf5f0dd, 0.9);
+      g.fillTriangle(mx - r * 0.2, my - 1, mx - r * 0.1, my - 1, mx - r * 0.15, my + 2);
+      g.fillTriangle(mx + r * 0.1, my - 1, mx + r * 0.2, my - 1, mx + r * 0.15, my + 2);
+    }
+    // Whatever it is eating, shrinking inside it.
+    for (const d of pal.digest) {
+      const left = Phaser.Math.Clamp((d.doneAt - time) / PAL_DIGEST_MS, 0, 1);
+      g.fillStyle(0x221122, 0.55);
+      g.fillCircle(pal.x + Math.cos(d.ang) * r * 0.3 * left, pal.y + Math.sin(d.ang) * r * 0.3 * left, 1 + 3.5 * left);
+    }
+
+    // Eyes, tracking whoever it is about to hit. Angry brows while enraged.
+    const ex = Math.cos(look), ey = Math.sin(look);
+    for (const side of [-1, 1]) {
+      const cx = pal.x + ex * r * 0.18 + side * r * 0.32;
+      const cy = pal.y - r * 0.12 + ey * r * 0.1;
+      g.fillStyle(0xffffff, 1);
+      g.fillCircle(cx, cy, r * 0.26);
+      g.fillStyle(0x140a1a, 1);
+      g.fillCircle(cx + ex * r * 0.1, cy + ey * r * 0.1, r * 0.13);
+      if (raged) {
+        g.lineStyle(2, tint(T.shell), 1);
+        g.lineBetween(cx - side * r * 0.28, cy - r * 0.36, cx + side * r * 0.12, cy - r * 0.22);
       }
     }
   }
 
-  /**
-   * Recompute the three multiplier debuffs sickness owns and apply them as deltas, so other
-   * systems writing the same fields keep composing. Speed for the player/npc is handed to
-   * ArenaScene's speed chokepoint instead (see getSickSpeedMult).
-   */
-  private syncSickModifiers(time: number): void {
-    const touched = new Set<Fighter>();
-    for (const s of this.sicknesses) touched.add(s.target);
-    for (const f of this.carriers.keys()) touched.add(f);
-    for (const f of this.sickMods.keys()) touched.add(f);
-
-    for (const f of touched) {
-      const s = this.sicknesses.find((e) => e.target === f);
-      const carrier = f.sicknessCarrier;
-      let vuln = 1, weaken = 1, slow = 1;
-      if (s) {
-        const secs = Math.max(0, (time - s.startedAt) / 1000);
-        vuln = 1 + 0.01 * this.sickTier(s.owner, 'sick-vuln') * secs;
-        weaken = Math.max(0.1, 1 - 0.1 * this.sickTier(s.owner, 'sick-weaken'));
-        slow = Math.max(0.1, 1 - 0.12 * this.sickTier(s.owner, 'slowing'));
-      }
-      if (carrier) { weaken *= CARRIER_DAMAGE_MULT; slow *= CARRIER_SPEED_MULT; }
-
-      const prev = this.sickMods.get(f) ?? { vuln: 1, weaken: 1, slow: 1 };
-      const isDuelist = f === this.arena.player || f === this.arena.npc;
-      if (!f.active) { this.sickMods.delete(f); continue; }
-      if (vuln !== prev.vuln) f.incomingDamageMultiplier *= vuln / prev.vuln;
-      if (weaken !== prev.weaken) f.outgoingDamageMult *= weaken / prev.weaken;
-      if (!isDuelist && slow !== prev.slow) f.walkSpeedMult *= slow / prev.slow;
-      if (vuln === 1 && weaken === 1 && slow === 1) this.sickMods.delete(f);
-      else this.sickMods.set(f, { vuln, weaken, slow });
+  /** Monkey skin: the Pal is a Tack Shooter on little wheels that rolls after you. */
+  private drawTackPal(
+    g: Phaser.GameObjects.Graphics, pal: Pal, time: number, sym: boolean, r: number,
+    raged: boolean, lashK: number, alpha: number, look: number,
+  ): void {
+    g.setAlpha(sym ? 0.5 * alpha : alpha);
+    const owner = pal.owner;
+    const nozzles = 8 + 2 * Math.min(4, Math.floor((this.palTier('reflexes', owner) + this.palTier('assistance', owner)
+      + this.palTier('jelly-membrane', owner) + this.palTier('big-brain', owner)) / 3));
+    const heat = raged ? 0.75 + 0.25 * Math.sin(time / 90) : Math.min(0.5, 0.12 * this.palTier('hardened-beak', owner));
+    const recoil = lashK >= 0 ? 1 - lashK : 0;
+    const spin = pal.mode === 'dash' ? time / 60 : look * 0.1;
+    drawTackShooter(g, pal.x, pal.y, (sym ? r * 1.1 : r) / 11, 1, spin, heat, recoil, nozzles);
+    if (sym) return;
+    // Long Range Tacks: a scope ring. Blade Maelstrom: its catch tray grinding what it stopped.
+    if (this.palTier('shell', owner) > 0) {
+      g.lineStyle(2, 0xe6ecf2, 0.7);
+      g.strokeCircle(pal.x, pal.y, r * 1.35);
     }
-  }
-
-  /** Sickness/Carrier move-speed factor for the two duelists, read by ArenaScene. */
-  getSickSpeedMult(f: Fighter): number {
-    return this.sickMods.get(f)?.slow ?? 1;
+    for (const d of pal.digest) {
+      const left = Phaser.Math.Clamp((d.doneAt - time) / PAL_DIGEST_MS, 0, 1);
+      drawTack(g, pal.x + Math.cos(d.ang + time / 120) * r * 0.5, pal.y + Math.sin(d.ang + time / 120) * r * 0.5,
+        d.ang + time / 80, 4 + 6 * left, 0.9);
+    }
   }
 
   // ── Input ─────────────────────────────────────────────────────────────
@@ -1311,13 +1460,14 @@ export class GrowthKit {
       this.swapBodies(playerClones[this.cloneCycle]);
     }
 
-    // Syringe Shot (mastery) takes over one of R/F/Q — that slot's base ability is
+    // Plague Pal (mastery) takes over one of R/F/Q — that slot's base ability is
     // suppressed below, so the kit owns the keypress for it.
-    const syrSlot = this.arena.masteryActive ? this.syringeSlot() : null;
-    if (syrSlot) {
-      const key = syrSlot === 'r' ? rKey : syrSlot === 'f' ? fKey : qKey;
-      if (Phaser.Input.Keyboard.JustDown(key)) this.tryCastSyringe(time, mouseX, mouseY);
+    const palSlot = this.arena.masteryActive ? this.palSlot() : null;
+    if (palSlot) {
+      const key = palSlot === 'r' ? rKey : palSlot === 'f' ? fKey : qKey;
+      if (Phaser.Input.Keyboard.JustDown(key)) this.tryCastPal(time, mouseX, mouseY);
     }
+    const taken = (slot: 'r' | 'f' | 'q') => palSlot === slot;
 
     // Cached for the avatar rig, which runs in update() and has no pointer of its own.
     this.aimX = mouseX;
@@ -1326,9 +1476,9 @@ export class GrowthKit {
     const ctx = () => this.arena.buildPlayerContext(mouseX, mouseY);
     if (pointer.isDown && player.castAbility('growth-click', ctx())) this.shaveCooldown('growth-click');
     if (Phaser.Input.Keyboard.JustDown(eKey)) player.castAbility('growth-evolve', ctx());
-    if (syrSlot !== 'r' && Phaser.Input.Keyboard.JustDown(rKey)) this.castChargeable('growth-virus', time, mouseX, mouseY);
-    if (syrSlot !== 'f' && Phaser.Input.Keyboard.JustDown(fKey)) this.castChargeable('spore-spray', time, mouseX, mouseY);
-    if (syrSlot !== 'q' && Phaser.Input.Keyboard.JustDown(qKey)) {
+    if (!taken('r') && Phaser.Input.Keyboard.JustDown(rKey)) this.castChargeable('growth-virus', time, mouseX, mouseY);
+    if (!taken('f') && Phaser.Input.Keyboard.JustDown(fKey)) this.castChargeable('spore-spray', time, mouseX, mouseY);
+    if (!taken('q') && Phaser.Input.Keyboard.JustDown(qKey)) {
       if (this.playerDna < AUX_COST) {
         this.floatText(player.x, player.y - 30, 'Not enough DNA', '#ff6666');
       } else if (this.cloneSlotsFull('player')) {
@@ -1382,9 +1532,7 @@ export class GrowthKit {
     this.updateContactDamage(time);
     this.updateChitin(time);
     this.updateSweatCharges(time);
-    this.updateSyringes(time, delta);
-    this.updateSickness(time, delta);
-    this.updateBloodPuddles(time);
+    this.updatePals(time, delta);
     this.updateEmesis(time, delta);
     // The open tree is a menu: while it is up, incoming damage lands at 5% (Fighter.menuGuards).
     this.arena.player.setMenuGuard('growth-evolve', this.evolveOpen);
@@ -1603,7 +1751,8 @@ export class GrowthKit {
   private syncFighterMods(): void {
     const p = this.arena.player;
     const b = this.fighterBody;
-    const inMult = (1 - 0.1 * this.lvl(b, 'thick-flesh')) * (b.variant === 'blue' ? VARIANT_DR_MULT : 1);
+    const inMult = (1 - 0.1 * this.lvl(b, 'thick-flesh')) * (b.variant === 'blue' ? VARIANT_DR_MULT : 1)
+      * (this.palSymbiosis() ? PAL_SYM_DR : 1);
     const spMult = b.variant === 'yellow' ? VARIANT_SPEED_MULT : 1;
     p.incomingDamageMultiplier *= inMult / this.appliedFighterInMult;
     this.appliedFighterInMult = inMult;
@@ -1661,6 +1810,11 @@ export class GrowthKit {
   trySporeBlock(defender: Owner, proj: Projectile): boolean {
     const body = proj.body as Phaser.Physics.Arcade.Body;
     const projRadius = body.isCircle ? body.radius : Math.max(body.halfWidth, body.halfHeight);
+    if (defender === 'player' && this.palCatchAt(proj.x, proj.y, projRadius, proj.damage)) {
+      proj.setActive(false).setVisible(false);
+      body.stop();
+      return true;
+    }
     for (const s of this.spores) {
       if (s.owner !== defender) continue;
       const r = this.sporeRadius(s) + projRadius;
@@ -1677,18 +1831,11 @@ export class GrowthKit {
   // ── Click attack: bacterium / claw ───────────────────────────────────
 
   private launchClickAttack(ox: number, oy: number, tx: number, ty: number, owner: Owner, srcBody: BodyState): void {
-    if (this.lvl(srcBody, 'claws') > 0) {
-      const near = this.nearestOf(ox, oy, this.targetsOf(owner));
-      if (near && Phaser.Math.Distance.Between(ox, oy, near.x, near.y) <= CLAW_RANGE) {
-        this.clawSwipe(ox, oy, tx, ty, owner, srcBody);
-        return;
-      }
-    }
-    // Brood (secret): the culture splits, so every click puts two in the air.
-    if (owner === 'player' && this.hasSecret('brood')) {
+    // Swarm (offensive ultimate): every click is a fan of three.
+    if (this.lvl(srcBody, 'swarm') > 0) {
       const aim = Math.atan2(ty - oy, tx - ox);
       const dist = Phaser.Math.Distance.Between(ox, oy, tx, ty) || 1;
-      for (const off of [-BROOD_SPREAD, BROOD_SPREAD]) {
+      for (const off of [-SWARM_SPREAD, 0, SWARM_SPREAD]) {
         this.launchBacterium(ox, oy, ox + Math.cos(aim + off) * dist, oy + Math.sin(aim + off) * dist, owner, srcBody);
       }
       return;
@@ -1696,40 +1843,51 @@ export class GrowthKit {
     this.launchBacterium(ox, oy, tx, ty, owner, srcBody);
   }
 
-  private launchBacterium(ox: number, oy: number, tx: number, ty: number, owner: Owner, srcBody: BodyState): void {
+  /** `fromPal`: Zoochosis — the Pal spits it, so the caster's arms stay still. */
+  private launchBacterium(
+    ox: number, oy: number, tx: number, ty: number, owner: Owner, srcBody: BodyState, fromPal = false,
+  ): void {
     const { scene } = this.arena;
     const dx = tx - ox, dy = ty - oy;
     const len = Math.sqrt(dx * dx + dy * dy) || 1;
     const nx = dx / len, ny = dy / len;
-    const speed = BACT_SPEED * (1 + 0.2 * this.lvl(srcBody, 'enhanced-flagellum'));
+    const red = owner === 'player' && this.hasSecret('brood');
+    const speed = BACT_SPEED * (1 + 0.2 * this.lvl(srcBody, 'enhanced-flagellum')) * (red ? BROOD_SPEED_MULT : 1);
+    const dmg = Math.round(this.bacteriumDamage(srcBody, owner) * (red ? BROOD_DAMAGE_MULT : 1));
 
     // The cell pinches off a hand: arms jab, then a bud tears loose where it left.
     const aim = Math.atan2(ny, nx);
-    const avatar = this.avatarOf(owner);
+    const avatar = fromPal ? null : this.avatarOf(owner);
     avatar?.play('punch', aim);
     const hand = avatar?.castHand() ?? { x: ox, y: oy };
     const container = scene.add.container(ox, oy).setDepth(6);
     if (this.monkey(owner)) {
       // A dart: no flagellum to wiggle, so the tail list stays empty.
-      container.add(buildDart(scene));
+      const dart = buildDart(scene);
+      // Brood: a heavy red dart, a size up.
+      if (red) dart.setScale(1.3);
+      container.add(dart);
       container.setRotation(aim);
       this.bacteria.push({
         container, tail: [], owner, srcBody,
         x: ox, y: oy, vx: nx * speed, vy: ny * speed,
-        dmg: this.bacteriumDamage(srcBody, owner),
+        dmg,
         spawnedAt: scene.time.now,
         wigglePhase: 0,
+        red,
       });
       return;
     }
     this.fx(owner).muzzleBud(hand.x, hand.y, aim, 1, 7, tonesFor(owner));
 
-    const color = this.col(owner)(owner === 'player' ? PLAYER_COLOR : NPC_COLOR);
-    const bodyGfx = scene.add.ellipse(0, 0, 16, 9, color, 0.95);
-    const nucleus = scene.add.circle(2, 0, 2.5, this.col(owner)(0x1a4a1a), 1) as Phaser.GameObjects.Arc;
+    const color = this.col(owner)(red ? BROOD_COLOR : owner === 'player' ? PLAYER_COLOR : NPC_COLOR);
+    // Brood bacteria are bigger, darker-cored and lumber along on a heavier tail.
+    const k = red ? 1.35 : 1;
+    const bodyGfx = scene.add.ellipse(0, 0, 16 * k, 9 * k, color, 0.95);
+    const nucleus = scene.add.circle(2 * k, 0, 2.5 * k, this.col(owner)(red ? 0x4a0a0a : 0x1a4a1a), 1) as Phaser.GameObjects.Arc;
     const tail: Phaser.GameObjects.Arc[] = [];
     for (let i = 0; i < 3; i++) {
-      const seg = scene.add.circle(-10 - i * 4.5, 0, 2.4 - i * 0.5, color, 0.8) as Phaser.GameObjects.Arc;
+      const seg = scene.add.circle((-10 - i * 4.5) * k, 0, (2.4 - i * 0.5) * k, color, 0.8) as Phaser.GameObjects.Arc;
       tail.push(seg);
     }
     container.add([...tail, bodyGfx, nucleus]);
@@ -1738,52 +1896,11 @@ export class GrowthKit {
     this.bacteria.push({
       container, tail, owner, srcBody,
       x: ox, y: oy, vx: nx * speed, vy: ny * speed,
-      dmg: this.bacteriumDamage(srcBody, owner),
+      dmg,
       spawnedAt: scene.time.now,
       wigglePhase: Math.random() * Math.PI * 2,
+      red,
     });
-  }
-
-  private clawSwipe(ox: number, oy: number, tx: number, ty: number, owner: Owner, srcBody: BodyState): void {
-    const aim = Math.atan2(ty - oy, tx - ox);
-    const dmg = Math.round(CLAW_DAMAGE * (srcBody.variant === 'red' ? VARIANT_DMG_MULT : 1) * this.dmgBoost(owner));
-
-    // Three claws raked across the arc, each leading its own wound trail. Drawn from scratch
-    // every frame so the swipe travels rather than fading in place.
-    const tones = tonesFor(owner);
-    const tint = this.col(owner);
-    this.avatarOf(owner)?.play('sweep', aim);
-    this.fx(owner).anim(7, 240, (g, t) => {
-      const fade = 1 - t * t;
-      const sweep = aim - CLAW_HALF_ARC * 0.7 + t * CLAW_HALF_ARC * 1.4;
-      g.fillStyle(tint(tones.spark), 0.35 * fade);
-      g.slice(ox, oy, CLAW_RANGE, aim - CLAW_HALF_ARC * 0.7, sweep, false);
-      g.fillPath();
-      for (let i = -1; i <= 1; i++) {
-        const a = sweep + i * 0.2;
-        g.lineStyle(3.5 * fade, tint(i === 0 ? tones.spark : tones.lit), 0.9 * fade);
-        g.beginPath();
-        g.moveTo(ox + Math.cos(a) * 18, oy + Math.sin(a) * 18);
-        g.lineTo(ox + Math.cos(a) * CLAW_RANGE, oy + Math.sin(a) * CLAW_RANGE);
-        g.strokePath();
-        // A bead of cytoplasm running off each claw tip.
-        g.fillStyle(tint(tones.cyto), 0.8 * fade);
-        growthPod(g, ox + Math.cos(a) * CLAW_RANGE * 0.75, oy + Math.sin(a) * CLAW_RANGE * 0.75, a, 16 * fade, 3 * fade, 0);
-      }
-    });
-
-    for (const t of this.targetsOf(owner)) {
-      if (!t.active || t.hp <= 0) continue;
-      const d = Phaser.Math.Distance.Between(ox, oy, t.x, t.y);
-      if (d > CLAW_RANGE + 16) continue;
-      const angDiff = Math.abs(Phaser.Math.Angle.Wrap(Math.atan2(t.y - oy, t.x - ox) - aim));
-      if (angDiff > CLAW_HALF_ARC) continue;
-      t.takeDamage(dmg);
-      this.arena.spawnHitFlash(t.x, t.y, this.col(owner)(GROWTH.pollen));
-      this.fx(owner).motes(t.x, t.y, 5, { angle: aim, spread: 0.8, speed: 110, size: 2.4, life: 380, depth: 8, tones });
-      this.registerDamage(owner, t, dmg);
-      this.onClickDamage(owner, srcBody, dmg);
-    }
   }
 
   // ── Emesis (divine perk) ──────────────────────────────────────────────
@@ -1947,7 +2064,9 @@ export class GrowthKit {
       // Click+ : bacteria that barely miss curve back onto a nearby foe.
       if (b.owner === 'player' && this.arena.hasUpgrade('click')) {
         const nearest = this.nearestOf(b.x, b.y, this.targetsOf(b.owner));
-        if (nearest && Phaser.Math.Distance.Between(b.x, b.y, nearest.x, nearest.y) < BACT_LOCATOR_RADIUS) {
+        // Brood's red bacteria smell prey from much farther off.
+        const sense = b.red ? BROOD_LOCATOR_RADIUS : BACT_LOCATOR_RADIUS;
+        if (nearest && Phaser.Math.Distance.Between(b.x, b.y, nearest.x, nearest.y) < sense) {
           const dx = nearest.x - b.x, dy = nearest.y - b.y;
           const dlen = Math.sqrt(dx * dx + dy * dy) || 1;
           const speed = Math.sqrt(b.vx * b.vx + b.vy * b.vy);
@@ -1982,7 +2101,7 @@ export class GrowthKit {
         if (!t.active || t.hp <= 0) continue;
         if (Phaser.Math.Distance.Between(b.x, b.y, t.x, t.y) <= BACT_HIT_RADIUS) {
           t.takeDamage(b.dmg);
-          this.arena.spawnHitFlash(t.x, t.y, this.col(b.owner)(PLAYER_COLOR));
+          this.arena.spawnHitFlash(t.x, t.y, this.col(b.owner)(b.red ? BROOD_COLOR : PLAYER_COLOR));
           this.registerDamage(b.owner, t, b.dmg);
           this.onClickDamage(b.owner, b.srcBody, b.dmg);
           hit = true;
@@ -2264,17 +2383,19 @@ export class GrowthKit {
       const p = this.pendingSpores[i];
       if (time < p.spawnAt) continue;
       this.pendingSpores.splice(i, 1);
-      this.spawnSpore(p.x, p.y, p.owner, p.spikedTier, p.gutTier, time);
+      this.spawnSpore(p.x, p.y, p.owner, p.spikedTier, p.gutTier, time, !!p.noBlast);
     }
   }
 
-  private spawnSpore(x: number, y: number, owner: Owner, spikedTier: number, gutTier: number, time: number): void {
+  private spawnSpore(
+    x: number, y: number, owner: Owner, spikedTier: number, gutTier: number, time: number, noBlast = false,
+  ): void {
     if (this.spores.length >= SPORE_MAX_COUNT) return;
     const { scene } = this.arena;
     this.spores.push({
       gfx: scene.add.graphics().setDepth(5), owner, spikedTier, gutTier, x, y,
       hp: SPORE_BASE_HP, maxHp: SPORE_BASE_HP,
-      spawnedAt: time, matured: false,
+      spawnedAt: time, matured: false, noBlast,
     });
     // The sac isn't placed — it erupts out of the floor. (A bloon just appears, inflated.)
     if (this.monkey(owner)) return;
@@ -2425,6 +2546,8 @@ export class GrowthKit {
 
   /** Kit-internal projectiles (bacteria/viruses) also get stopped by opposing spore walls. */
   private hitOpposingSpore(owner: Owner, x: number, y: number, dmg: number): boolean {
+    // Plague Pal — Shell: the pet's body is a wall too.
+    if (owner === 'npc' && this.palCatchAt(x, y, 6, dmg)) return true;
     for (const s of this.spores) {
       if (s.owner === owner) continue;
       if (Phaser.Math.Distance.Between(x, y, s.x, s.y) <= this.sporeRadius(s) + 6) {
@@ -2487,6 +2610,10 @@ export class GrowthKit {
     if (owner === 'player' && this.hasSecret('mitosis') && Math.random() < MITOSIS_CHANCE) {
       amount *= 2;
       this.floatText(this.arena.player.x, this.arena.player.y - 36, '🧬 MITOSIS', '#66ffcc');
+    }
+    // Plague Pal — Jelly Membrane: the pet's goo copies strands too.
+    if (owner === 'player' && this.palOn() && Math.random() < 0.08 * this.palTier('jelly-membrane')) {
+      amount *= 2;
     }
     // Ruin's Combo Breaker halves every meter in the game — the DNA bar included.
     amount = meterGain(owner === 'player' ? this.arena.player : this.arena.npc, amount);
@@ -2915,12 +3042,26 @@ export class GrowthKit {
     this.evolveAreas = [];
   }
 
-  /** True while a second, cyclable tree exists — i.e. Syringe Shot is bound this match. */
-  private hasSickTree(): boolean {
-    return this.arena.masteryActive && this.syringeSlot() !== null;
+  /** Every tab the Evolve screen offers right now — the body tree, plus one per bound mastery tree. */
+  private evolveTabs(): EvolveTab[] {
+    const tabs: EvolveTab[] = ['body'];
+    if (this.palOn()) tabs.push('pal');
+    return tabs;
   }
 
-  /** Apex (secret) shaves DNA off third tiers and Ultimates in both trees. */
+  /** A mastery tree beside the body tree — today only Plague Pal's. */
+  private sideTree(tab: SideTab): {
+    nodes: GrowthNodeDef[];
+    paths: { id: string; name: string; color: number }[];
+    prereq: Record<string, string>;
+    ultIds: string[];
+    levels: Record<string, number>;
+  } {
+    void tab;
+    return { nodes: GROWTH_PAL_NODES, paths: GROWTH_PAL_PATHS, prereq: GROWTH_PAL_ULTIMATE_PREREQ, ultIds: GROWTH_PAL_ULTIMATE_IDS, levels: this.palLevels };
+  }
+
+  /** Apex (secret) shaves DNA off third tiers and Ultimates in every tree. */
   private apexOwned(): boolean {
     return this.hasSecret('apex');
   }
@@ -2941,9 +3082,19 @@ export class GrowthKit {
     gfx.fillStyle(0x000000, 0.78);
     gfx.fillRect(0, 0, W, H);
 
-    const showTabs = this.hasSickTree();
-    if (!showTabs) this.evolveTab = 'body';
-    const sickTab = this.evolveTab === 'sickness';
+    const tabs = this.evolveTabs();
+    const showTabs = tabs.length > 1;
+    if (!tabs.includes(this.evolveTab)) this.evolveTab = 'body';
+    const tab = this.evolveTab;
+    const sideTab = tab !== 'body';
+
+    const theme = tab === 'pal'
+      ? { accent: 0x6a3a8a, bg: 0x0f0816, grid: 0x231430, band: 0x24102e, rim: 0xd9a8ff, title: '🦠 PLAGUE PAL', titleColor: '#d9a8ff' }
+      : {
+          accent: 0x4a8a2a, bg: 0x08140a, grid: 0x10261a, band: 0x0f2a16, rim: 0x9cffcf,
+          title: body.isCloneBody ? '🧬 EVOLVE — CLONE BODY' : '🧬 EVOLVE',
+          titleColor: body.isCloneBody ? '#ffcc88' : '#aaffcc',
+        };
 
     const panelW = Math.min(660, W - 30);
     const panelX = W / 2 - panelW / 2;
@@ -2954,37 +3105,37 @@ export class GrowthKit {
     const rowGap = 64;
     const hasUltimateUpgrade = this.arena.hasUpgrade('e');
     const rows = hasUltimateUpgrade ? 5 : 4;
-    const extraRows = sickTab ? 0
+    const extraRows = sideTab ? 0
       : (body.isCloneBody ? 1 : 0) + (this.arena.masteryActive && this.secretRoll.length > 0 ? 1 : 0);
     const panelH = 66 + (showTabs ? 26 : 0) + rows * rowGap + extraRows * (rowGap + 10) + 34;
 
-    const accent = sickTab ? 0x8a2a2a : 0x4a8a2a;
+    const accent = theme.accent;
     const ppx = panelX - 10, ppy = panelY - 6, ppw = panelW + 20;
     // Drop shadow, then the chart sheet itself.
     gfx.fillStyle(0x000000, 0.45);
     gfx.fillRoundedRect(ppx + 4, ppy + 6, ppw, panelH, 14);
-    gfx.fillStyle(sickTab ? 0x170707 : 0x08140a, 0.97);
+    gfx.fillStyle(theme.bg, 0.97);
     gfx.fillRoundedRect(ppx, ppy, ppw, panelH, 14);
     // Lab-chart graph paper: fine grid plus a heavier line every fifth cell.
     for (let gx = ppx + 12, i = 0; gx < ppx + ppw - 6; gx += 12, i++) {
-      gfx.lineStyle(1, sickTab ? 0x2a1010 : 0x10261a, i % 5 === 0 ? 0.9 : 0.45);
+      gfx.lineStyle(1, theme.grid, i % 5 === 0 ? 0.9 : 0.45);
       gfx.lineBetween(gx, ppy + 8, gx, ppy + panelH - 8);
     }
     for (let gy = ppy + 12, i = 0; gy < ppy + panelH - 6; gy += 12, i++) {
-      gfx.lineStyle(1, sickTab ? 0x2a1010 : 0x10261a, i % 5 === 0 ? 0.9 : 0.45);
+      gfx.lineStyle(1, theme.grid, i % 5 === 0 ? 0.9 : 0.45);
       gfx.lineBetween(ppx + 8, gy, ppx + ppw - 8, gy);
     }
     // Header band with a helix running behind the title.
-    gfx.fillStyle(sickTab ? 0x2a0c0c : 0x0f2a16, 0.95);
+    gfx.fillStyle(theme.band, 0.95);
     gfx.fillRoundedRect(ppx + 6, ppy + 4, ppw - 12, 40, 10);
     drawDnaHelix(gfx, ppx + 18, panelY + 20, ppw - 36, 9,
-      sickTab ? 0 : Math.min(1, this.playerDna / DNA_CAP), 0, 11, 2);
-    gfx.fillStyle(sickTab ? 0x2a0c0c : 0x0f2a16, 0.82);
+      sideTab ? 0 : Math.min(1, this.playerDna / DNA_CAP), 0, 11, 2);
+    gfx.fillStyle(theme.band, 0.82);
     gfx.fillRoundedRect(W / 2 - 120, panelY - 2, 240, 42, 10);
     // Double rim — bright outer, dark inner bevel.
     gfx.lineStyle(3, accent, 1);
     gfx.strokeRoundedRect(ppx, ppy, ppw, panelH, 14);
-    gfx.lineStyle(1, sickTab ? 0xff8899 : 0x9cffcf, 0.35);
+    gfx.lineStyle(1, theme.rim, 0.35);
     gfx.strokeRoundedRect(ppx + 4, ppy + 4, ppw - 8, panelH - 8, 11);
     // Corner nucleus rivets.
     for (const [rx, ry] of [[ppx + 10, ppy + 10], [ppx + ppw - 10, ppy + 10], [ppx + 10, ppy + panelH - 10], [ppx + ppw - 10, ppy + panelH - 10]]) {
@@ -2994,11 +3145,9 @@ export class GrowthKit {
       gfx.fillCircle(rx - 1, ry - 1, 1.5);
     }
 
-    const titleText = sickTab ? '🩸 SICKNESS'
-      : body.isCloneBody ? '🧬 EVOLVE — CLONE BODY' : '🧬 EVOLVE';
-    const title = scene.add.text(W / 2, panelY + 10, titleText, {
+    const title = scene.add.text(W / 2, panelY + 10, theme.title, {
       fontSize: '18px', fontFamily: FONT_DISPLAY,
-      color: sickTab ? '#ff8899' : body.isCloneBody ? '#ffcc88' : '#aaffcc',
+      color: theme.titleColor,
       stroke: '#020a04', strokeThickness: 5,
     }).setOrigin(0.5).setDepth(41);
     const dnaText = scene.add.text(W / 2, panelY + 30, `\u{1F9EC} DNA: ${this.playerDna}/${DNA_CAP}`, {
@@ -3009,12 +3158,12 @@ export class GrowthKit {
 
     let topY = panelY + 48;
     if (showTabs) {
-      this.drawEvolveTabs(gfx, W, panelY + 50);
+      this.drawEvolveTabs(gfx, W, panelY + 50, tabs);
       topY += 26;
     }
 
-    const bottomY = sickTab
-      ? this.renderSickTree(gfx, panelX, topY, colW, cardW, cardH, rowGap, hasUltimateUpgrade)
+    const bottomY = tab !== 'body'
+      ? this.renderSideTree(tab, gfx, panelX, topY, colW, cardW, cardH, rowGap, hasUltimateUpgrade)
       : this.renderBodyTree(gfx, panelX, topY, colW, cardW, cardH, rowGap, hasUltimateUpgrade, W);
 
     const hint = scene.add.text(W / 2, bottomY + 2,
@@ -3027,9 +3176,10 @@ export class GrowthKit {
   }
 
   /**
-   * Monkey skin: the same two trees, drawn as the dart monkey's three-path upgrade panel. Every
-   * cost, lock and click id is computed exactly as the stock chart computes them, so
-   * `handleEvolveClick` and the buy/sell rules run unchanged underneath it.
+   * Monkey skin: the same trees, drawn as the monkeys' three-path upgrade panel — the dart
+   * monkey's for the body, the Tack Shooter's for Plague Pal. Every cost, lock and click id is
+   * computed exactly as the stock chart computes them, so `handleEvolveClick` and the buy/sell
+   * rules run unchanged underneath it.
    */
   private renderMonkeyPanel(): void {
     const { scene } = this.arena;
@@ -3037,24 +3187,29 @@ export class GrowthKit {
     const gfx = scene.add.graphics().setDepth(40);
     this.evolveGfx = gfx;
     const body = this.fighterBody;
-    const showTabs = this.hasSickTree();
-    if (!showTabs) this.evolveTab = 'body';
-    const sickTab = this.evolveTab === 'sickness';
+    const tabList = this.evolveTabs();
+    const showTabs = tabList.length > 1;
+    if (!tabList.includes(this.evolveTab)) this.evolveTab = 'body';
+    const tab = this.evolveTab;
+    const side = tab !== 'body' ? this.sideTree(tab) : null;
+    const palTab = tab === 'pal';
     const hasUlt = this.arena.hasUpgrade('e');
     const fastTier = this.lvl(body, 'fast-evolution');
     const apex = this.apexOwned();
 
-    const levelOf = (id: string) => (sickTab ? this.sickLevels[id] ?? 0 : this.lvl(body, id));
-    const nodes: GrowthNodeDef[] = sickTab ? GROWTH_SICK_NODES : GROWTH_EVOLVE_NODES;
-    const ultIds = sickTab ? GROWTH_SICK_ULTIMATE_IDS : GROWTH_EVOLVE_ULTIMATE_IDS;
-    const prereqOf = (path: string) => (sickTab
-      ? GROWTH_SICK_ULTIMATE_PREREQ[path as keyof typeof GROWTH_SICK_ULTIMATE_PREREQ]
+    const levelOf = (id: string) => (side ? side.levels[id] ?? 0 : this.lvl(body, id));
+    const nodes: GrowthNodeDef[] = side ? side.nodes : GROWTH_EVOLVE_NODES;
+    const ultIds = side ? side.ultIds : GROWTH_EVOLVE_ULTIMATE_IDS;
+    const prereqOf = (path: string) => (side
+      ? side.prereq[path]
       : GROWTH_EVOLVE_ULTIMATE_PREREQ[path as keyof typeof GROWTH_EVOLVE_ULTIMATE_PREREQ]);
-    const pathDefs: { id: string; name: string; color: number }[] = sickTab
-      ? GROWTH_SICK_PATHS
-      : MONKEY_PATH_ORDER.map((id) => GROWTH_EVOLVE_PATHS.find((p) => p.id === id)!);
+    const pathDefs: { id: string; name: string; color: number }[] = palTab
+      ? TACK_PATH_ORDER.map((id) => GROWTH_PAL_PATHS.find((p) => p.id === id)!)
+      : side ? side.paths
+        : MONKEY_PATH_ORDER.map((id) => GROWTH_EVOLVE_PATHS.find((p) => p.id === id)!);
+    const rename = (id: string) => (palTab ? TACK_NODES[id] : side ? undefined : MONKEY_NODES[id]);
 
-    const paths: MonkeyPathView[] = pathDefs.map((path) => {
+    const paths: MonkeyPathView[] = pathDefs.map((path, pi) => {
       const prereqMaxed = levelOf(prereqOf(path.id)) >= GROWTH_EVOLVE_MAX_LEVEL;
       const tiers = nodes.filter((n) => n.path === path.id).sort((a, b) => a.row - b.row).map((node) => {
         const level = levelOf(node.id);
@@ -3065,7 +3220,7 @@ export class GrowthKit {
         const prereqLocked = !!node.isUltimate && level < maxLevel && !prereqMaxed;
         const otherChosen = !!node.isUltimate && level < maxLevel && prereqMaxed
           && ultIds.some((oid) => oid !== node.id && levelOf(oid) > 0);
-        const m = sickTab ? null : MONKEY_NODES[node.id];
+        const m = rename(node.id);
         return {
           id: node.id,
           name: m?.name ?? node.name,
@@ -3077,15 +3232,15 @@ export class GrowthKit {
         };
       });
       return {
-        key: sickTab ? 'sick' : path.id,
-        label: sickTab ? path.name.toUpperCase() : MONKEY_PATH_LABEL[path.id],
+        key: palTab ? `tack-${path.id}` : side ? 'sick' : path.id,
+        label: palTab ? ['TOP', 'MIDDLE', 'BOTTOM'][pi] : side ? path.name.toUpperCase() : MONKEY_PATH_LABEL[path.id],
         color: path.color,
         tiers,
       };
     });
 
     const extras: MonkeyExtraView[] = [];
-    if (!sickTab && body.isCloneBody) {
+    if (!side && body.isCloneBody) {
       const level = this.lvl(body, GROWTH_CLONE_MATURITY_ID);
       const maxed = level >= GROWTH_CLONE_MATURITY_MAX_LEVEL;
       extras.push({
@@ -3095,7 +3250,7 @@ export class GrowthKit {
         owned: maxed, affordable: !maxed && this.playerDna >= GROWTH_CLONE_MATURITY_COST,
       });
     }
-    if (!sickTab && this.arena.masteryActive) {
+    if (!side && this.arena.masteryActive) {
       for (const id of this.secretRoll) {
         const def = GROWTH_SECRET_UPGRADES.find((x) => x.id === id);
         if (!def) continue;
@@ -3108,14 +3263,14 @@ export class GrowthKit {
       }
     }
 
-    const code = MONKEY_PATH_ORDER.map((p) => this.pathTier(body, p)).join('-');
+    const tabLabel: Record<EvolveTab, string> = { body: '🐒 MONKEY', pal: '📌 TACKS' };
+    const code = palTab
+      ? TACK_PATH_ORDER.map((p) => this.sideTierOf('pal', p)).join('-')
+      : MONKEY_PATH_ORDER.map((p) => this.pathTier(body, p)).join('-');
     const { labels, areas } = renderUpgradePanel(scene, gfx, W, H, {
-      title: sickTab ? 'BLOON SICKNESS' : body.isCloneBody ? 'SIDEKICK MONKEY' : 'DART MONKEY',
+      title: palTab ? 'TACK SHOOTER' : body.isCloneBody ? 'SIDEKICK MONKEY' : 'DART MONKEY',
       currency: this.playerDna, cap: DNA_CAP,
-      tabs: showTabs ? [
-        { id: 'body', label: '🐒 MONKEY', on: !sickTab },
-        { id: 'sickness', label: '🎈 SICKNESS', on: sickTab },
-      ] : null,
+      tabs: showTabs ? tabList.map((id) => ({ id, label: tabLabel[id], on: id === tab })) : null,
       paths,
       extrasTitle: body.isCloneBody ? 'SIDEKICK' : 'MONKEY KNOWLEDGE',
       extras,
@@ -3128,17 +3283,26 @@ export class GrowthKit {
     this.evolveAreas = areas;
   }
 
-  private drawEvolveTabs(gfx: Phaser.GameObjects.Graphics, W: number, y: number): void {
+  /** Highest row bought on one path of a side tree, 0–5 (the Tack Shooter's crosspath code). */
+  private sideTierOf(tab: SideTab, path: string): number {
+    const tree = this.sideTree(tab);
+    let tier = 0;
+    for (const n of tree.nodes) if (n.path === path && (tree.levels[n.id] ?? 0) > 0) tier = Math.max(tier, n.row);
+    return tier;
+  }
+
+  private drawEvolveTabs(gfx: Phaser.GameObjects.Graphics, W: number, y: number, ids: EvolveTab[]): void {
     const { scene } = this.arena;
     const tabW = 130, tabH = 22;
-    const tabs: Array<{ id: 'body' | 'sickness'; label: string; color: number }> = [
-      { id: 'body', label: '🧬 BODY', color: 0x4a8a2a },
-      { id: 'sickness', label: '🩸 SICKNESS', color: 0x8a2a2a },
-    ];
-    tabs.forEach((t, i) => {
-      const cx = W / 2 + (i - 0.5) * (tabW + 8);
+    const all: Record<EvolveTab, { label: string; color: number }> = {
+      body: { label: '🧬 BODY', color: 0x4a8a2a },
+      pal: { label: '🦠 PLAGUE PAL', color: 0x6a3a8a },
+    };
+    ids.forEach((id, i) => {
+      const t = all[id];
+      const cx = W / 2 + (i - (ids.length - 1) / 2) * (tabW + 8);
       const bx = cx - tabW / 2;
-      const on = this.evolveTab === t.id;
+      const on = this.evolveTab === id;
       gfx.fillStyle(on ? t.color : 0x111611, on ? 0.95 : 0.85);
       gfx.fillRoundedRect(bx, y - tabH / 2, tabW, tabH, 11);
       if (on) {
@@ -3151,7 +3315,7 @@ export class GrowthKit {
         fontSize: '11px', fontFamily: '"Arial Black", "Segoe UI Black", Impact, sans-serif', color: on ? '#ffffff' : '#999999',
       }).setOrigin(0.5).setDepth(41);
       this.evolveLabels.push(lbl);
-      this.evolveAreas.push({ id: `__tab:${t.id}`, x: bx, y: y - tabH / 2, w: tabW, h: tabH });
+      this.evolveAreas.push({ id: `__tab:${id}`, x: bx, y: y - tabH / 2, w: tabW, h: tabH });
     });
   }
 
@@ -3354,16 +3518,19 @@ export class GrowthKit {
     return bottomY;
   }
 
-  private renderSickTree(
+  /** The Plague Pal tree — same cards and rules as the body tree, its own levels. */
+  private renderSideTree(
+    tab: SideTab,
     gfx: Phaser.GameObjects.Graphics,
     panelX: number, topY: number, colW: number, cardW: number, cardH: number,
     rowGap: number, hasUltimateUpgrade: boolean,
   ): number {
     const { scene } = this.arena;
+    const tree = this.sideTree(tab);
     const fastTier = this.lvl(this.fighterBody, 'fast-evolution');
     const apex = this.apexOwned();
 
-    GROWTH_SICK_PATHS.forEach((path, colIdx) => {
+    tree.paths.forEach((path, colIdx) => {
       const cx = panelX + colW * colIdx + colW / 2;
       const cssColor = `#${path.color.toString(16).padStart(6, '0')}`;
       const pathLabel = scene.add.text(cx, topY, path.name.toUpperCase(), {
@@ -3371,14 +3538,14 @@ export class GrowthKit {
       }).setOrigin(0.5).setDepth(41);
       this.evolveLabels.push(pathLabel);
 
-      const prereqMaxed = (this.sickLevels[GROWTH_SICK_ULTIMATE_PREREQ[path.id]] ?? 0) >= GROWTH_EVOLVE_MAX_LEVEL;
-      const nodes = GROWTH_SICK_NODES
+      const prereqMaxed = (tree.levels[tree.prereq[path.id]] ?? 0) >= GROWTH_EVOLVE_MAX_LEVEL;
+      const nodes = tree.nodes
         .filter((n) => n.path === path.id && (!n.isUltimate || hasUltimateUpgrade))
         .sort((a, b) => a.row - b.row);
 
       nodes.forEach((node, rowIdx) => {
         const ny = topY + 18 + rowIdx * rowGap;
-        const level = this.sickLevels[node.id] ?? 0;
+        const level = tree.levels[node.id] ?? 0;
         const maxLevel = node.isUltimate ? 1 : GROWTH_EVOLVE_MAX_LEVEL;
         const cost = node.isUltimate
           ? growthEvolveUltimateCost(fastTier, apex)
@@ -3392,7 +3559,7 @@ export class GrowthKit {
           level, maxLevel, cost,
           prereqLocked: !!node.isUltimate && level < maxLevel && !prereqMaxed,
           otherChosenLocked: !!node.isUltimate && level < maxLevel && prereqMaxed
-            && GROWTH_SICK_ULTIMATE_IDS.some((oid) => oid !== node.id && (this.sickLevels[oid] ?? 0) > 0),
+            && tree.ultIds.some((oid) => oid !== node.id && (tree.levels[oid] ?? 0) > 0),
           pathColor: path.color,
         });
       });
@@ -3404,17 +3571,18 @@ export class GrowthKit {
   private handleEvolveClick(px: number, py: number, isSell: boolean): void {
     for (const area of this.evolveAreas) {
       if (px < area.x || px > area.x + area.w || py < area.y || py > area.y + area.h) continue;
+      const tab = this.evolveTab;
       if (area.id.startsWith('__tab:')) {
-        if (!isSell) this.evolveTab = area.id.slice(6) as 'body' | 'sickness';
+        if (!isSell) this.evolveTab = area.id.slice(6) as EvolveTab;
       } else if (area.id.startsWith('__secret:')) {
         if (isSell) {
           this.floatText(this.arena.player.x, this.arena.player.y - 30, 'Permanent — cannot sell', '#ff6666');
         } else {
           this.buySecretUpgrade(area.id.slice(9));
         }
-      } else if (this.evolveTab === 'sickness') {
-        if (isSell) this.sellSickNode(area.id);
-        else this.buySickNode(area.id);
+      } else if (tab !== 'body') {
+        if (isSell) this.sellSideNode(tab, area.id);
+        else this.buySideNode(tab, area.id);
       } else if (isSell) {
         this.sellEvolveNode(area.id);
       } else {
@@ -3425,23 +3593,25 @@ export class GrowthKit {
     }
   }
 
-  // ── Sickness tree: buy / sell ────────────────────────────────────────
+  // ── Plague Pal tree: buy / sell ─────────────────────────────────
 
-  private buySickNode(id: string): void {
+  private buySideNode(tab: SideTab, id: string): void {
     const { player } = this.arena;
-    const def = GROWTH_SICK_NODES.find((n) => n.id === id);
+    const tree = this.sideTree(tab);
+    const def = tree.nodes.find((n) => n.id === id);
     if (!def) return;
-    const level = this.sickLevels[id] ?? 0;
+    const level = tree.levels[id] ?? 0;
     const fastTier = this.lvl(this.fighterBody, 'fast-evolution');
     const apex = this.apexOwned();
 
     if (def.isUltimate) {
       if (level > 0) return;
-      if ((this.sickLevels[GROWTH_SICK_ULTIMATE_PREREQ[def.path]] ?? 0) < GROWTH_EVOLVE_MAX_LEVEL) {
+      if (!this.arena.hasUpgrade('e')) return;
+      if ((tree.levels[tree.prereq[def.path]] ?? 0) < GROWTH_EVOLVE_MAX_LEVEL) {
         this.floatText(player.x, player.y - 30, 'Max Tier 4 first', '#ff6666');
         return;
       }
-      if (GROWTH_SICK_ULTIMATE_IDS.some((oid) => oid !== id && (this.sickLevels[oid] ?? 0) > 0)) {
+      if (tree.ultIds.some((oid) => oid !== id && (tree.levels[oid] ?? 0) > 0)) {
         this.floatText(player.x, player.y - 30, 'Already chose an Ultimate', '#ff6666');
         return;
       }
@@ -3451,7 +3621,8 @@ export class GrowthKit {
         return;
       }
       this.playerDna -= cost;
-      this.sickLevels[id] = 1;
+      tree.levels[id] = 1;
+      this.onSideNodeChanged(tab, id);
       this.arena.recordMasteryStat('upgrades', 1);
       this.floatText(player.x, player.y - 30, `${def.name} unlocked!`, '#ffdd44');
       return;
@@ -3464,14 +3635,16 @@ export class GrowthKit {
       return;
     }
     this.playerDna -= cost;
-    this.sickLevels[id] = level + 1;
+    tree.levels[id] = level + 1;
+    this.onSideNodeChanged(tab, id);
     this.arena.recordMasteryStat('upgrades', 1);
     this.floatText(player.x, player.y - 30, `${def.name} ${level + 1}/3`, '#ff8899');
   }
 
-  private sellSickNode(id: string): void {
+  private sellSideNode(tab: SideTab, id: string): void {
     const { player } = this.arena;
-    const def = GROWTH_SICK_NODES.find((n) => n.id === id);
+    const tree = this.sideTree(tab);
+    const def = tree.nodes.find((n) => n.id === id);
     if (!def) return;
     if (def.isUltimate) {
       this.floatText(player.x, player.y - 30, 'Permanent — cannot sell', '#ff6666');
@@ -3482,13 +3655,22 @@ export class GrowthKit {
       this.floatText(player.x, player.y - 30, 'Need Fast Evolution', '#ff6666');
       return;
     }
-    const level = this.sickLevels[id] ?? 0;
+    const level = tree.levels[id] ?? 0;
     if (level <= 0) return;
     const cost = growthEvolveNodeCost(level - 1, def.row, fastTier, this.apexOwned());
     const refund = Math.floor(cost * growthEvolveSellRefundFraction(fastTier));
-    this.sickLevels[id] = level - 1;
+    tree.levels[id] = level - 1;
+    this.onSideNodeChanged(tab, id);
     this.playerDna = Math.min(DNA_CAP, this.playerDna + refund);
     this.floatText(player.x, player.y - 30, `Sold, +${refund} \u{1F9EC}`, '#ffdd66');
+  }
+
+  /** Immediate side effects of a Pal-tree change. */
+  private onSideNodeChanged(tab: SideTab, id: string): void {
+    if (tab !== 'pal') return;
+    if (id === 'symbiosis') this.syncFighterMods();
+    // Big Brain 3 can bank a second charge; selling it back drops any extra.
+    if (id === 'big-brain') this.palCharge = Math.min(this.palCharge, this.palMaxCharges());
   }
 
   private buyEvolveNode(id: string): void {

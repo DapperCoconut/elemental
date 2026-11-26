@@ -78,8 +78,8 @@ const growth: ElementCodex = {
         ],
       },
       notes: [
-        'With the Claws ultimate the click stops being a projectile at close range: inside 90px it becomes a 35-damage swipe across a 120° arc instead.',
-        'The Brood secret upgrade launches two bacteria per click, split 0.1 radians apart.',
+        'With the Swarm ultimate every click launches 3 bacteria in a fan, 0.16 radians apart.',
+        'The Brood secret upgrade turns your bacteria red: 40% slower, double damage, and with Chemotaxis they home from 220px instead of 70px.',
       ],
     },
 
@@ -107,13 +107,13 @@ const growth: ElementCodex = {
       upgrade: {
         basics:
           'Unlocks one ultimate per body per match, at a flat 6 DNA — 5 with any Fast Evolution, 4 with '
-          + 'Apex, 3 with both — and only after that path\'s row-4 node is maxed. Claws replaces the click '
-          + 'inside 90px with a 35-damage swipe across a 120° arc. Chitin Shell is a 75 HP carapace that '
+          + 'Apex, 3 with both — and only after that path\'s row-4 node is maxed. Swarm makes every click '
+          + 'launch 3 bacteria in a fan. Chitin Shell is a 75 HP carapace that '
           + 'regrows in full 15 seconds after every break, indefinitely. Sweating banks up to 3 charges '
           + 'each of Virus and Spore Spray.',
         effects: [
           { tag: 'utility', label: 'One per body', detail: 'Ultimates cost a flat 6 DNA (5 with any Fast Evolution, 4 with Apex, 3 with both), need that path\'s row-4 node maxed first, and only one can be owned per body per match.', requiresUpgrade: 'e' },
-          { tag: 'damage', label: 'Claws (Offensive)', detail: 'Clicking within 90px swipes for 35 damage across a 120° arc instead of launching a bacterium.', requiresUpgrade: 'e' },
+          { tag: 'damage', label: 'Swarm (Offensive)', detail: 'Every click launches 3 bacteria in a fan, 0.16 radians apart, instead of 1.', requiresUpgrade: 'e' },
           { tag: 'shield', label: 'Chitin Shell (Defensive)', detail: 'A brown carapace worth 75 shield HP. Once broken it regrows in full 15s later, indefinitely.', requiresUpgrade: 'e' },
           { tag: 'resource', label: 'Sweating (Efficiency)', detail: 'Bank up to 3 charges each of Virus and Spore Spray.', requiresUpgrade: 'e' },
         ],
@@ -240,7 +240,7 @@ const growth: ElementCodex = {
     'secret-upgrades': {
       basics:
         'Two of nine secret nodes are rolled per load-in, at a flat 8 DNA each, single-tier and '
-        + 'unsellable. Brood splits your click into two bacteria 0.1 radians apart. Ruler lets you keep 2 '
+        + 'unsellable. Brood turns your bacteria red — 40% slower, double damage, homing from 220px with Chemotaxis. Ruler lets you keep 2 '
         + 'clones at once with SPACE cycling all your bodies. Viral Consumption makes a green virus grant '
         + '+20% speed and damage for 3s. Mitosis gives DNA drops a 20% chance to pay out two. Crawling '
         + 'Spores creep toward the enemy at 26 px/s, shoving each other apart at 90 px/s. Pandemic makes '
@@ -249,7 +249,7 @@ const growth: ElementCodex = {
         + 'off Ultimates — a 6 DNA ultimate becomes 4, or 3 alongside Fast Evolution.',
       effects: [
         { tag: 'resource', label: 'The offer', detail: '2 of the 9 rolled per load-in, at a flat 8 DNA each, single-tier and unsellable.' },
-        { tag: 'damage', label: 'Brood', detail: 'Your click launches two bacteria instead of one, split 0.1 radians apart.' },
+        { tag: 'damage', label: 'Brood', detail: 'Red bacteria: 40% slower and 2× damage. With Chemotaxis they start homing from 220px instead of 70px.' },
         { tag: 'summon', label: 'Ruler', detail: 'Keep up to 2 clones at once; SPACE cycles between all your bodies.' },
         { tag: 'buff', label: 'Viral Consumption', detail: 'Eating a green virus grants +20% speed and damage for 3s.' },
         { tag: 'resource', label: 'Mitosis', detail: '20% chance for a DNA drop to split and pay out 2.' },
@@ -263,34 +263,34 @@ const growth: ElementCodex = {
         'Passive — no bind and no key. The roll is per load-in, so the same profile sees a different pair of options every session.',
       ],
     },
-    'syringe-shot': {
+    'plague-pal': {
       basics:
-        'A bindable syringe — R, F or Q, never E, because E is the tree — that deals no impact damage '
-        + 'at all and applies Sickness instead: 10 seconds at 2 damage a second, 20 baseline, on an 8s '
-        + 'cooldown. Equipping it adds a whole second tree to the Evolve screen on the same DNA wallet '
-        + 'and cost curve. Lethality: Deadly +1 damage/s a tier, Weakening +1% vulnerability a second a '
-        + 'tier, Brutal ticking 0.8s→0.6s→0.5s, Crippling +1 damage/s with every fifth tick hitting for '
-        + '+2 more a tier, and the ultimate Fatal killing any sick enemy at 10% health or less outright. '
-        + 'Transmission: Quick-Fire −1s cooldown a tier, Sneeze cone-infecting every 4s for 6s, Contact '
-        + 'infecting anyone they touch for 3s, Blood Spread leaving a sickening 5s blood puddle every 50 '
-        + 'damage they take, and the ultimate Syringe Shatter bursting syringes to spray half their '
-        + 'duration over nearby enemies. Severity: Remaining +2s a tier, Slowing 12% a tier, Weakening '
-        + '10% less damage dealt a tier, Compromising erupting 10% more of their damage onto other '
-        + 'enemies, and the ultimate Carrier keeping anyone who shakes it off as a permanent carrier at 1 '
-        + 'damage/s, 5% slower and 5% weaker.',
-      cast: 'Bindable to R, F or Q — never E, because E is the tree. Fires straight ahead.',
+        'A bindable virus pet — R, F or Q, never E — that follows a step behind you. Casting sends it '
+        + 'dashing up to 150px ahead (toward the cursor), where it throws all its tentacles out for 18 '
+        + 'damage to every enemy within 85px, on a 7s cooldown. Equipping it adds a Plague Pal tab to the '
+        + 'Evolve screen on the same DNA wallet and cost curve. Offensive: Beak +5 damage a tier, Viral '
+        + 'Rage (touching your own virus enrages it for 6s: +15% damage and its cooldown runs 25% faster a '
+        + 'tier), Hardened Beak +7 a tier, Spore Blast (dashing through your spores pops them for 8 +4 a '
+        + 'tier and flings 2 +1 a tier new ones), and the ultimate Zoochosis (it fires a bacterium every '
+        + '2s). Defensive: Shell (blocks projectiles; 20% bigger per tier past the first), Blood Drink '
+        + '(heal 15/25/35% of its damage), Helping Hand (1 HP/s a tier after 2s unhurt), Mouth (eats what '
+        + 'it blocks and heals you 30/45/60% of it 3s later), and the ultimate Symbiosis (you merge: 25% '
+        + 'less damage taken, and casting dashes you and lashes from your body). Efficiency: Reflexes −12% '
+        + 'cooldown a tier, Assistance +5% speed and −5% cooldowns a tier, Jelly Membrane +4% dodge and +8% '
+        + 'double-DNA chance a tier, Big Brain (auto-aim, +40px dash, +15px reach, faster; 2 charges at '
+        + 'tier 3), and the ultimate Mitosis (two Pals).',
+      cast: 'Bindable to R, F or Q — never E, because E is the tree. Dashes toward the cursor (or the nearest enemy with Big Brain).',
       effects: [
-        { tag: 'damage', label: 'No impact damage', detail: 'The syringe deals 0 on hit. All of its value is in the status it applies.' },
-        { tag: 'dot', label: 'Sickness', detail: '10s at 2 damage a second — 20 damage baseline, before any Sickness tier is bought.' },
-        { tag: 'utility', label: 'Availability', detail: '8s cooldown, reduced 1s per tier of Quick-Fire.' },
-        { tag: 'utility', label: 'The second tree', detail: 'Equipping it adds Lethality, Transmission and Severity to the Evolve screen, on the same DNA wallet and the same 1/2/3 cost curve, with the same one-ultimate-per-path rule.' },
-        { tag: 'damage', label: 'Lethality path', detail: 'Deadly +1 damage/s per tier; Weakening +1% damage vulnerability per second per tier; Brutal ticks at 0.8s → 0.6s → 0.5s; Crippling +1 damage/s per tier and every 5th tick hits for +2 more per tier. Ultimate — Fatal: a sick enemy at 10% health or less dies instantly.' },
-        { tag: 'debuff', label: 'Transmission path', detail: 'Quick-Fire −1s cooldown per tier; Sneeze makes sick enemies cone-infect every 4s for 6s (+2s per tier); Contact infects anyone they touch for 3s (+2s per tier); Blood Spread drops a 5s blood puddle every 50 damage they take that sickens for 3s (+2s per tier). Ultimate — Syringe Shatter: syringes burst on impact, spraying half their duration over nearby enemies.' },
-        { tag: 'debuff', label: 'Severity path', detail: 'Remaining +2s sickness per tier; Slowing 12% slow per tier; Weakening 10% less damage dealt per tier; Compromising makes damage they take erupt onto other enemies for 10% more per tier. Ultimate — Carrier: enemies who shake off sickness stay carriers forever at 1 damage/s, 5% slower and 5% weaker.' },
+        { tag: 'damage', label: 'Lash', detail: '18 damage to every enemy within 85px of the Pal at the end of a dash of up to 150px.' },
+        { tag: 'utility', label: 'Availability', detail: '7s cooldown; Reflexes −12% a tier, Assistance −5% a tier, Viral Rage +25% recharge speed a tier while enraged. Never below 1.5s.' },
+        { tag: 'damage', label: 'Offensive path', detail: 'Beak +5 damage per tier; Viral Rage 6s of +15% damage and +25% recharge per tier after touching your own virus; Hardened Beak +7 per tier; Spore Blast pops spores it dashes through for 8 (+4 per tier) and flings 2 (+1 per tier) new spores. Ultimate — Zoochosis: a bacterium at the nearest enemy within 520px every 2s.' },
+        { tag: 'shield', label: 'Defensive path', detail: 'Shell blocks enemy projectiles, +20% size per tier past the first; Blood Drink heals 15% (+10% per tier) of lash damage; Helping Hand heals 1 HP/s per tier after 2s unhurt; Mouth eats blocked shots and heals 30% (+15% per tier) of their damage after 3s. Ultimate — Symbiosis: merge for 25% less damage taken; casting dashes you and lashes from you.' },
+        { tag: 'buff', label: 'Efficiency path', detail: 'Reflexes −12% Pal cooldown per tier; Assistance +5% speed and −5% cooldowns per tier; Jelly Membrane +4% dodge and +8% double-DNA chance per tier; Big Brain auto-aims, +40px dash, +15px reach and +25% speed per tier, 2 charges at tier 3. Ultimate — Mitosis: 2 Pals.' },
       ],
       notes: [
-        'It cannot be bound over E. E opens the tree, and the tree is where this enhancement lives.',
-        'A fully invested Sickness build is where Growth\'s damage actually comes from at mastery — the syringe itself never deals a point.',
+        'The ultimates need E+ and their path\'s row-4 node maxed, and only one can be owned per match.',
+        'While merged by Symbiosis the Pal no longer blocks shots, so Shell and Mouth go quiet.',
+        'On the Monkey skin the Pal is a Tack Shooter: it fires a ring of tacks instead of lashing, and its tree uses Tack Shooter upgrade names.',
       ],
     },
   },

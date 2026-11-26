@@ -5701,8 +5701,8 @@ export class ArenaScene extends Phaser.Scene {
       case 'overload':
         if (this.npcElement.id === 'gunpowder') this.gunpowderKit.doNpcOverload();
         break;
-      case 'syringe-shot':
-        if (this.npcElement.id === 'growth') this.growthKit.doNpcSyringeShot(tx, ty);
+      case 'plague-pal':
+        if (this.npcElement.id === 'growth') this.growthKit.doNpcPlaguePal(tx, ty);
         break;
       // Smoke Break is two signals: lighting up, then flicking the butt away.
       case 'smoke-break':
@@ -11246,11 +11246,6 @@ export class ArenaScene extends Phaser.Scene {
     // spears. Pulled here for the same reason the two above are.
     this.playerSpeedMult *= this.savorKit.getPlayerSpeedMult();
     this.npcSpeedMult *= this.savorKit.getNpcSpeedMult();
-    // Growth Mastery — Sickness/Carrier slows on whoever is carrying the plague
-    if (this.playerIs('growth') || this.npcElement.id === 'growth') {
-      this.playerSpeedMult *= this.growthKit.getSickSpeedMult(this.player);
-      this.npcSpeedMult *= this.growthKit.getSickSpeedMult(this.npc);
-    }
     // Ice: frost/permafrost slow, block-up slow, own-trail boost, Rink perk (NPC)
     this.npcSpeedMult *= this.iceKit.getNpcSpeedMultContribution(time);
     // Ice: frost/permafrost slow, block-up slow, skate-trail boost, Rink perk (player)
@@ -12868,8 +12863,8 @@ export class ArenaScene extends Phaser.Scene {
         entry.fill.setSize(entry.maxWidth * this.rubberKit.getAtomNhilegoCooldownRatio(time), entry.fill.height);
       } else if (entry.abilityId === 'overload') {
         entry.fill.setSize(entry.maxWidth * this.gunpowderKit.getOverloadCooldownRatio(time), entry.fill.height);
-      } else if (entry.abilityId === 'syringe-shot') {
-        entry.fill.setSize(entry.maxWidth * this.growthKit.getSyringeCooldownRatio(time), entry.fill.height);
+      } else if (entry.abilityId === 'plague-pal') {
+        entry.fill.setSize(entry.maxWidth * this.growthKit.getPalCooldownRatio(), entry.fill.height);
       } else if (entry.abilityId === 'hijack' || entry.abilityId === 'sub-cutter') {
         entry.fill.setSize(entry.maxWidth * this.subterfugeKit.getBarRatio(entry.abilityId, time), entry.fill.height);
       } else if (entry.abilityId === 'smoke-break') {

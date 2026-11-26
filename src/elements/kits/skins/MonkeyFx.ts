@@ -112,6 +112,73 @@ function tack(g: Phaser.GameObjects.Graphics, x: number, y: number, ang: number,
   g.fillPoints([P(x - s * 1.4, y + c * 1.4), P(x + c * len, y + s * len), P(x, y)], true);
 }
 
+/** One loose tack, exported for the Tack Shooter's ring (Plague Pal). */
+export function drawTack(g: Phaser.GameObjects.Graphics, x: number, y: number, ang: number, len: number, alpha: number): void {
+  tack(g, x, y, ang, len, alpha);
+}
+
+/**
+ * The Tack Shooter (Monkey skin's Plague Pal): a squat pink-red octagonal drum on a steel
+ * base, with a nozzle at each of its eight faces and a domed steel lid. `heat` (0–1) glows
+ * the lid orange — Ring of Fire / rage. `recoil` (0–1) pulls the nozzles in just after a volley.
+ * `nozzles` grows with More Tacks-style upgrades (8 → 12 → 16 look).
+ */
+export function drawTackShooter(
+  g: Phaser.GameObjects.Graphics, x: number, y: number, s: number, alpha: number,
+  spin: number, heat = 0, recoil = 0, nozzles = 8,
+): void {
+  g.fillStyle(MON.ink, 0.3 * alpha);
+  g.fillEllipse(x + 1.5 * s, y + 9 * s, 26 * s, 9 * s);
+  // Steel foot-plate.
+  g.fillStyle(MON.steelDark, alpha);
+  g.fillCircle(x, y + 2 * s, 12.5 * s);
+  // Nozzles, one per face, pointing straight out.
+  const nl = (6.5 - 2.5 * recoil) * s;
+  for (let i = 0; i < nozzles; i++) {
+    const a = spin + (i / nozzles) * TAU;
+    const c = Math.cos(a), sn = Math.sin(a);
+    const bx = x + c * 9 * s, by = y + sn * 9 * s;
+    g.lineStyle(3.4 * s, MON.steelDark, alpha);
+    g.lineBetween(bx, by, bx + c * nl, by + sn * nl);
+    g.lineStyle(1.6 * s, MON.steel, alpha);
+    g.lineBetween(bx, by, bx + c * nl, by + sn * nl);
+    g.fillStyle(MON.steelLit, alpha);
+    g.fillCircle(bx + c * nl, by + sn * nl, 1.1 * s);
+  }
+  // Octagonal drum.
+  const oct = (r: number): Pt[] => {
+    const pts: Pt[] = [];
+    for (let i = 0; i < 8; i++) {
+      const a = spin + (i / 8) * TAU + TAU / 16;
+      pts.push(P(x + Math.cos(a) * r, y + Math.sin(a) * r));
+    }
+    return pts;
+  };
+  g.fillStyle(MON.flightDark, alpha);
+  g.fillPoints(oct(10.5 * s), true);
+  g.fillStyle(MON.bloonPink, alpha);
+  g.fillPoints(oct(9 * s), true);
+  g.lineStyle(1, MON.ink, 0.6 * alpha);
+  g.strokePoints(oct(10.5 * s), true);
+  // Domed lid, glowing when hot.
+  const lid = heat > 0 ? lerpHex(MON.steel, 0xff7a1a, Math.min(1, heat)) : MON.steel;
+  if (heat > 0) {
+    g.fillStyle(0xff9a2a, 0.3 * heat * alpha);
+    g.fillCircle(x, y, 15 * s);
+  }
+  g.fillStyle(MON.steelDark, alpha);
+  g.fillCircle(x, y, 5.6 * s);
+  g.fillStyle(lid, alpha);
+  g.fillCircle(x, y - 0.6 * s, 4.6 * s);
+  g.fillStyle(MON.white, 0.65 * alpha);
+  g.fillCircle(x - 1.6 * s, y - 2.2 * s, 1.5 * s);
+}
+
+function lerpHex(a: number, b: number, t: number): number {
+  const ch = (sh: number) => Math.round(((a >> sh) & 0xff) + ((((b >> sh) & 0xff) - ((a >> sh) & 0xff)) * t));
+  return (ch(16) << 16) | (ch(8) << 8) | ch(0);
+}
+
 /** A cluster of eight tacks around a hub, for the in-flight virus. Local origin. */
 export function buildTacks(scene: Phaser.Scene): Phaser.GameObjects.Graphics {
   const g = scene.add.graphics();
@@ -323,7 +390,7 @@ export const MONKEY_NODES: Record<string, { name: string; desc: string }> = {
   'viral-spikes': { name: 'Razor Sharp Shots', desc: 'Tack clusters hit for +2 and floor spikes +2 per tier' },
   'more-teeth': { name: 'Spike-o-pult', desc: '+4 dart damage per tier' },
   'spiked-spores': { name: 'Juggernaut', desc: 'Every 20 damage your bloons soak, the enemy takes 2 per tier' },
-  'claws': { name: 'Ultra-Juggernaut', desc: 'Clicking near an enemy smashes them for 35 instead of throwing a dart.' },
+  'swarm': { name: 'Ultra-Juggernaut', desc: 'Every throw lets loose 3 darts in a fan instead of one.' },
   // Middle path — Quick Shots → Plasma Monkey Fan Club (efficiency)
   'enhanced-flagellum': { name: 'Quick Shots', desc: 'Darts fly 20% faster and throw 15% sooner per tier' },
   'system-efficiency': { name: 'Very Quick Shots', desc: 'All cooldowns 10% shorter per tier' },
@@ -341,6 +408,34 @@ export const MONKEY_NODES: Record<string, { name: string; desc: string }> = {
 /** The order the panel shows Growth's paths in, top to bottom. */
 export const MONKEY_PATH_ORDER = ['offense', 'efficiency', 'defense'] as const;
 export const MONKEY_PATH_LABEL: Record<string, string> = { offense: 'TOP', efficiency: 'MIDDLE', defense: 'BOTTOM' };
+
+/**
+ * The Tack Shooter's fifteen upgrades, standing over the Plague Pal tree's fifteen nodes —
+ * Growth's effects, reworded in the skin's nouns. Top path is offense (Faster Shooting →
+ * Inferno Ring), middle is defense (Long Range Tacks → Super Maelstrom), bottom is
+ * efficiency (More Tacks → The Tack Zone).
+ */
+export const TACK_NODES: Record<string, { name: string; desc: string }> = {
+  // Top — offense
+  'beak': { name: 'Faster Shooting', desc: 'Tacks deal +5 damage per tier' },
+  'viral-rage': { name: 'Even Faster Shooting', desc: 'Rolling over your tack piles overheats it for 6s: +15% damage, reloads 25% faster per tier' },
+  'hardened-beak': { name: 'Hot Shots', desc: 'Tacks deal +7 damage per tier' },
+  'spore-blast': { name: 'Ring of Fire', desc: 'Charging through your bloons pops them for 8 (+4 per tier) and flings 2 (+1 per tier) new ones out' },
+  'zoochosis': { name: 'Inferno Ring', desc: 'The shooter throws a dart at the nearest enemy every 2 seconds.' },
+  // Middle — defense
+  'shell': { name: 'Long Range Tacks', desc: 'The shooter blocks enemy shots; each tier past the first makes it 20% bigger' },
+  'blood-drink': { name: 'Super Range Tacks', desc: 'Tack hits heal you 15% (+10% per tier) of the damage' },
+  'helping-hand': { name: 'Blade Shooter', desc: 'After 2s without being hurt, it patches you up 1 HP/s per tier' },
+  'mouth': { name: 'Blade Maelstrom', desc: 'Shots it blocks are ground up over 3s, then heal you 30% (+15% per tier) of their damage' },
+  'symbiosis': { name: 'Super Maelstrom', desc: 'You climb inside: 25% less damage taken. The ability launches you forward and sprays tacks out of you.' },
+  // Bottom — efficiency
+  'reflexes': { name: 'More Tacks', desc: 'Tack Shooter cooldown -12% per tier' },
+  'assistance': { name: 'Even More Tacks', desc: '+5% move speed and -5% cooldowns per tier' },
+  'jelly-membrane': { name: 'Tack Sprayer', desc: '+4% dodge chance and +8% chance Bloontonium pays double, per tier' },
+  'big-brain': { name: 'Overdrive', desc: 'Auto-targets enemies, charges faster and farther per tier; Tier 3 stores 2 charges' },
+  'pal-mitosis': { name: 'The Tack Zone', desc: 'You now have two Tack Shooters instead of one.' },
+};
+export const TACK_PATH_ORDER = ['offense', 'defense', 'efficiency'] as const;
 
 export interface MonkeyTierView {
   id: string;
@@ -457,6 +552,21 @@ function glyph(g: Phaser.GameObjects.Graphics, key: string, tier: number, cx: nu
       g.lineBetween(cx, cy + 5, cx, cy + 17);
     } else {
       drawCrossbow(g, cx, cy, -0.5, tier === 5 ? 1.25 : 1, a, tier === 5);
+    }
+  } else if (key.startsWith('tack-')) {
+    // Plague Pal tree on the Monkey skin: a Tack Shooter that gets meaner with each tier.
+    const heat = key === 'tack-offense' ? Math.max(0, (tier - 2) / 3) : 0;
+    const nozzles = key === 'tack-efficiency' ? 8 + Math.min(8, (tier - 1) * 2) : 8;
+    drawTackShooter(g, cx, cy, 0.9 + tier * 0.05, a, 0, heat, 0, nozzles);
+    if (key === 'tack-defense' && tier >= 3) {
+      // Blade Shooter onward: blades instead of tacks.
+      for (let i = 0; i < 4; i++) {
+        const ang = (i / 4) * TAU + 0.4;
+        g.fillStyle(MON.steelLit, a);
+        g.fillTriangle(cx + Math.cos(ang) * 13, cy + Math.sin(ang) * 13,
+          cx + Math.cos(ang + 0.35) * 18, cy + Math.sin(ang + 0.35) * 18,
+          cx + Math.cos(ang - 0.2) * 19, cy + Math.sin(ang - 0.2) * 19);
+      }
     }
   } else {
     // A non-monkey tree on the same panel (the sickness tab): a plain bloon in the path colour.

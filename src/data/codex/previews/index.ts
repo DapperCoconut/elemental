@@ -991,7 +991,7 @@ export const PREVIEWS: Record<string, PreviewScript> = {
   'oil:mastery:drone-array': oil.masteryDroneArray,
   'oil:mastery:turret': oil.masteryTurret,
   'growth:mastery:secret-upgrades': growth.masterySecretUpgrades,
-  'growth:mastery:syringe-shot': growth.masterySyringeShot,
+  'growth:mastery:plague-pal': growth.masteryPlaguePal,
   'crystal:mastery:resonance': crystal.masteryResonance,
   'crystal:mastery:crystal-shredder': crystal.masteryCrystalShredder,
   'soul:mastery:corpse-prince': soul.masteryCorpsePrince,

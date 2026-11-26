@@ -31,8 +31,8 @@ export const GROWTH_EVOLVE_NODES: GrowthEvolveNodeDef[] = [
   { id: 'more-teeth', path: 'offense', row: 3, name: 'More Teeth', description: '+4 bacterium damage per tier' },
   { id: 'spiked-spores', path: 'offense', row: 4, name: 'Spiked Spores', description: 'Every 20 damage your spores soak, the enemy takes 2 damage per tier' },
   {
-    id: 'claws', path: 'offense', row: 5, isUltimate: true, name: 'Claws',
-    description: 'Clicking near an enemy swipes with a claw for 35 damage instead of launching a bacterium.',
+    id: 'swarm', path: 'offense', row: 5, isUltimate: true, name: 'Swarm',
+    description: 'Your click launches 3 bacteria in a fan instead of one.',
   },
   // ── Path 2: Defensive ───────────────────────────────────────
   { id: 'thick-flesh', path: 'defense', row: 1, name: 'Thick Flesh', description: '10% damage resistance per tier' },
@@ -110,7 +110,7 @@ export const GROWTH_SECRET_COST = 8;
 export const GROWTH_SECRET_ROLL_COUNT = 2;
 
 export const GROWTH_SECRET_UPGRADES: GrowthSecretDef[] = [
-  { id: 'brood', name: 'Brood', description: 'Your click launches two bacteria instead of one.' },
+  { id: 'brood', name: 'Brood', description: 'Your bacteria are red: 40% slower but hit twice as hard. With Chemotaxis they home in from much farther away.' },
   { id: 'ruler', name: 'Ruler', description: 'Keep up to 2 clones at once. SPACE cycles between them.' },
   { id: 'viral-consumption', name: 'Viral Consumption', description: 'Eating a healthy virus grants +20% speed and damage for 3s.' },
   { id: 'mitosis', name: 'Mitosis', description: 'DNA has a 20% chance to split, paying out 2 instead of 1.' },
@@ -121,56 +121,56 @@ export const GROWTH_SECRET_UPGRADES: GrowthSecretDef[] = [
   { id: 'apex', name: 'Apex', description: 'Tier 3 upgrades cost 1 less DNA; Ultimate upgrades cost 2 less.' },
 ];
 
-// ── Growth Mastery: Sickness tree (Syringe Shot) ───────────────────────────
-// A second, independently-purchased tree that only exists while Syringe Shot is
-// bound. Same DNA wallet, same cost curve, same one-ultimate-per-path rules.
+// ── Growth Mastery: Plague Pal tree ────────────────────────────────────────
+// A second tree that only exists while Plague Pal is bound. Same DNA wallet, same cost
+// curve, same rules: 3 tiers per node, ultimates need E+ and that path's row-4 node maxed,
+// and only one ultimate per match. Levels are the player's, shared across bodies — the pet
+// follows you, not your flesh.
 
-export type GrowthSickPathId = 'lethality' | 'transmission' | 'severity';
-export type GrowthSickNodeDef = GrowthNodeDef<GrowthSickPathId>;
+export type GrowthPalNodeDef = GrowthNodeDef<GrowthEvolvePathId>;
 
-export const GROWTH_SICK_PATHS: { id: GrowthSickPathId; name: string; color: number }[] = [
-  { id: 'lethality', name: 'Lethality', color: 0xff3344 },
-  { id: 'transmission', name: 'Transmission', color: 0xdd8844 },
-  { id: 'severity', name: 'Severity', color: 0xaa4466 },
+export const GROWTH_PAL_PATHS: { id: GrowthEvolvePathId; name: string; color: number }[] = [
+  { id: 'offense', name: 'Offensive', color: 0xd04a9a },
+  { id: 'defense', name: 'Defensive', color: 0x7a6ae0 },
+  { id: 'efficiency', name: 'Efficiency', color: 0xc9a0ff },
 ];
 
-export const GROWTH_SICK_NODES: GrowthSickNodeDef[] = [
-  // ── Path 1: Lethality ───────────────────────────────────────
-  { id: 'deadly', path: 'lethality', row: 1, name: 'Deadly', description: 'Sickness deals +1 damage per second, per tier' },
-  { id: 'sick-vuln', path: 'lethality', row: 2, name: 'Weakening', description: 'Sickness builds +1% damage vulnerability per second, per tier' },
-  { id: 'brutal', path: 'lethality', row: 3, name: 'Brutal', description: 'Sickness ticks every 0.8s, then 0.6s, then 0.5s' },
-  { id: 'crippling', path: 'lethality', row: 4, name: 'Crippling', description: '+1 sickness damage per second per tier; every 5th tick hits for +2 more per tier' },
+export const GROWTH_PAL_NODES: GrowthPalNodeDef[] = [
+  // ── Offensive ───────────────────────────────────────────────
+  { id: 'beak', path: 'offense', row: 1, name: 'Beak', description: 'Tentacles deal +5 damage per tier' },
+  { id: 'viral-rage', path: 'offense', row: 2, name: 'Viral Rage', description: 'Passing through your virus enrages the Pal for 6s: +15% damage and its cooldown runs 25% faster per tier' },
+  { id: 'hardened-beak', path: 'offense', row: 3, name: 'Hardened Beak', description: 'Tentacles deal +7 damage per tier' },
+  { id: 'spore-blast', path: 'offense', row: 4, name: 'Spore Blast', description: 'Dashing through your spores blows them up for 8 (+4 per tier) and flings 2 (+1 per tier) new spores outward' },
   {
-    id: 'fatal', path: 'lethality', row: 5, isUltimate: true, name: 'Fatal',
-    description: 'A sick enemy at 10% health or less dies instantly.',
+    id: 'zoochosis', path: 'offense', row: 5, isUltimate: true, name: 'Zoochosis',
+    description: 'Your Pal launches a bacterium at the nearest enemy every 2 seconds.',
   },
-  // ── Path 2: Transmission ────────────────────────────────────
-  { id: 'quick-fire', path: 'transmission', row: 1, name: 'Quick-Fire', description: 'Syringe Shot cooldown -1s per tier' },
-  { id: 'sneeze', path: 'transmission', row: 2, name: 'Sneeze', description: 'Sick enemies sneeze a cone every 4s, infecting others for 6s (+2s per tier)' },
-  { id: 'contact', path: 'transmission', row: 3, name: 'Contact', description: 'Sick enemies infect anyone they touch for 3s (+2s per tier)' },
-  { id: 'blood-spread', path: 'transmission', row: 4, name: 'Blood Spread', description: 'Every 50 damage a sick enemy takes leaves a 5s blood puddle that sickens for 3s (+2s per tier)' },
+  // ── Defensive ───────────────────────────────────────────────
+  { id: 'shell', path: 'defense', row: 1, name: 'Shell', description: 'The Pal\'s body blocks enemy projectiles; each tier past the first makes it 20% bigger' },
+  { id: 'blood-drink', path: 'defense', row: 2, name: 'Blood Drink', description: 'Tentacle hits heal you 15% (+10% per tier) of the damage' },
+  { id: 'helping-hand', path: 'defense', row: 3, name: 'Helping Hand', description: 'After 2s without being hurt, the Pal heals you 1 HP/s per tier' },
+  { id: 'mouth', path: 'defense', row: 4, name: 'Mouth', description: 'Projectiles that hit the Pal are eaten over 3s, then heal you 30% (+15% per tier) of their damage' },
   {
-    id: 'syringe-shatter', path: 'transmission', row: 5, isUltimate: true, name: 'Syringe Shatter',
-    description: 'Syringes burst on impact, spraying half their sickness duration over nearby enemies.',
+    id: 'symbiosis', path: 'defense', row: 5, isUltimate: true, name: 'Symbiosis',
+    description: 'You and your Pal become one: 25% less damage taken. The ability launches you forward and lashes tentacles out of you.',
   },
-  // ── Path 3: Severity ────────────────────────────────────────
-  { id: 'remaining', path: 'severity', row: 1, name: 'Remaining', description: 'Syringe sickness lasts +2s per tier (spread infections are unaffected)' },
-  { id: 'slowing', path: 'severity', row: 2, name: 'Slowing', description: 'Sick enemies are slowed 12% per tier' },
-  { id: 'sick-weaken', path: 'severity', row: 3, name: 'Weakening', description: 'Sick enemies deal 10% less damage per tier' },
-  { id: 'compromising', path: 'severity', row: 4, name: 'Compromising', description: 'Damage a sick enemy takes erupts around them, hitting other enemies for 10% more per tier' },
+  // ── Efficiency ──────────────────────────────────────────────
+  { id: 'reflexes', path: 'efficiency', row: 1, name: 'Reflexes', description: 'Plague Pal cooldown -12% per tier' },
+  { id: 'assistance', path: 'efficiency', row: 2, name: 'Assistance', description: 'The Pal speeds you up: +5% move speed and -5% cooldowns per tier' },
+  { id: 'jelly-membrane', path: 'efficiency', row: 3, name: 'Jelly Membrane', description: '+4% dodge chance and +8% chance DNA pays out double, per tier' },
+  { id: 'big-brain', path: 'efficiency', row: 4, name: 'Big Brain', description: 'The Pal auto-targets enemies, dashes faster and farther per tier; Tier 3 stores 2 charges' },
   {
-    id: 'carrier', path: 'severity', row: 5, isUltimate: true, name: 'Carrier',
-    description: 'Enemies who shake off sickness stay carriers forever: 1 damage/s, 5% slower, 5% weaker.',
+    id: 'pal-mitosis', path: 'efficiency', row: 5, isUltimate: true, name: 'Mitosis',
+    description: 'You now have two Pals instead of one.',
   },
 ];
 
-/** One row-4 node per sickness path must be maxed before that path's ultimate can be bought. */
-export const GROWTH_SICK_ULTIMATE_PREREQ: Record<GrowthSickPathId, string> = {
-  lethality: 'crippling',
-  transmission: 'blood-spread',
-  severity: 'compromising',
+export const GROWTH_PAL_ULTIMATE_PREREQ: Record<GrowthEvolvePathId, string> = {
+  offense: 'spore-blast',
+  defense: 'mouth',
+  efficiency: 'big-brain',
 };
 
-export const GROWTH_SICK_ULTIMATE_IDS: string[] = GROWTH_SICK_NODES
+export const GROWTH_PAL_ULTIMATE_IDS: string[] = GROWTH_PAL_NODES
   .filter((n) => n.isUltimate)
   .map((n) => n.id);

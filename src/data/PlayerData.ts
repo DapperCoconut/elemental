@@ -823,6 +823,12 @@ export function getMasteryBinds(elementId: string): Record<string, string> {
   for (const s of Object.keys(binds)) if (binds[s] === 'second-skin') binds[s] = 'screeching-steel';
   // Subterfuge's bindable was redone: an old Smoke Break bind reads as its replacement, Hijack.
   for (const s of Object.keys(binds)) if (binds[s] === 'smoke-break') binds[s] = 'hijack';
+  // Growth's Syringe Shot was replaced by Plague Pal: an old bind reads as it (unless Pal is already bound).
+  for (const s of Object.keys(binds)) {
+    if (binds[s] !== 'syringe-shot') continue;
+    if (Object.values(binds).includes('plague-pal')) delete binds[s];
+    else binds[s] = 'plague-pal';
+  }
   // Technology's bindable (Byte-Bomb) was replaced by a passive, Glitch Abuse: an old bind is
   // ignored, not deleted, so the slot simply keeps its own ability.
   for (const s of Object.keys(binds)) if (binds[s] === 'byte-bomb') delete binds[s];

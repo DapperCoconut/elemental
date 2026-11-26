@@ -230,35 +230,22 @@ export const growthEvolve: PreviewScript = {
 
 export const growthEvolveUpgraded: PreviewScript = {
   duration: 5600,
-  caption: 'Ultimate Evolutions — a 5th row, 6 DNA, one per body: Claws, Chitin Shell or Sweating',
+  caption: 'Ultimate Evolutions — a 5th row, 6 DNA, one per body: Swarm, Chitin Shell or Sweating',
   run(ctx) {
     const { fx, av } = stage(ctx);
     // Each capstone shown for what it actually does, in turn.
     ctx.at(400, () => {
-      // Claws — the click stops being a projectile inside 90px.
-      av.play('sweep', ctx.aim);
-      const claw = ctx.adopt(ctx.scene.add.graphics().setDepth(7));
-      ctx.onFrame((_dt, elapsed) => {
-        const t = Phaser.Math.Clamp((elapsed - 400) / 320, 0, 1);
-        claw.clear();
-        if (t >= 1) return;
-        claw.fillStyle(ctx.tint(GROWTH.pollen), 0.5 * (1 - t));
-        claw.slice(ctx.cx, ctx.cy, 90 * (0.4 + 0.6 * t), ctx.aim - Math.PI / 3, ctx.aim + Math.PI / 3, false);
-        claw.fillPath();
-        for (let i = 0; i < 3; i++) {
-          claw.lineStyle(3, ctx.tint(GROWTH.white), 0.85 * (1 - t));
-          const a = ctx.aim + (i - 1) * 0.35;
-          claw.lineBetween(ctx.cx + Math.cos(a) * 30, ctx.cy + Math.sin(a) * 30,
-            ctx.cx + Math.cos(a) * 90 * (0.4 + 0.6 * t), ctx.cy + Math.sin(a) * 90 * (0.4 + 0.6 * t));
-        }
-      });
-      ctx.at(220, () => {
-        fx.burst(ctx.tx, ctx.ty, 40);
-        const t = ctx.adopt(ctx.scene.add.text(ctx.tx, ctx.ty - 34, '35', {
-          fontSize: '13px', fontFamily: 'Arial Black', color: '#ccee88',
-        }).setOrigin(0.5).setDepth(12));
-        ctx.scene.tweens.add({ targets: t, y: t.y - 20, alpha: 0, duration: 1100 });
-      });
+      // Swarm — every click is a fan of three.
+      av.play('punch', ctx.aim);
+      const from = { x: ctx.cx + 20, y: ctx.cy };
+      const dist = Phaser.Math.Distance.Between(from.x, from.y, ctx.tx, ctx.ty);
+      for (const off of [-0.16, 0, 0.16]) {
+        const a = ctx.aim + off;
+        bacterium(ctx, {
+          from, to: { x: from.x + Math.cos(a) * dist, y: from.y + Math.sin(a) * dist },
+          onHit: off === 0 ? () => fx.burst(ctx.tx, ctx.ty, 30) : undefined,
+        });
+      }
     });
     // Chitin Shell — 75 shield HP, broken, then back in full 15s later.
     ctx.at(2000, () => {
@@ -700,61 +687,81 @@ export const masterySecretUpgrades: PreviewScript = {
   },
 };
 
-export const masterySyringeShot: PreviewScript = {
-  duration: 6400,
-  caption: 'Mastery — no impact damage: 10s of Sickness at 2 dmg/s, and a whole second tree',
+
+/** The Pal, drawn the way the kit draws it: a wobbling violet capsid with stalked knobs and tentacles. */
+function drawPalBlob(g: Phaser.GameObjects.Graphics, ctx: PreviewCtx, x: number, y: number, t: number, lash: number, reach: number): void {
+  const r = 13;
+  for (let i = 0; i < 7; i++) {
+    const base = (i / 7) * Math.PI * 2 + t * 0.4;
+    const len = lash >= 0
+      ? r + (reach - r) * (lash < 0.3 ? lash / 0.3 : 1 - ((lash - 0.3) / 0.7) * 0.85)
+      : r * 1.75 + Math.sin(t * 3 + i) * 3;
+    const curl = lash >= 0 ? 0.12 : 0.55;
+    let px = x + Math.cos(base) * r * 0.7, py = y + Math.sin(base) * r * 0.7;
+    for (let k = 1; k <= 8; k++) {
+      const f = k / 8;
+      const a = base + Math.sin(t * 4 + i * 1.7 + f * 3) * curl * f;
+      const d = r * 0.7 + (len - r * 0.7) * f;
+      const nx = x + Math.cos(a) * d, ny = y + Math.sin(a) * d;
+      g.lineStyle(Math.max(1, (1 - f * 0.8) * 4.2), ctx.tint(f < 0.5 ? 0x6a3a8a : 0x9a5fc4), 0.95);
+      g.lineBetween(px, py, nx, ny);
+      px = nx; py = ny;
+    }
+  }
+  g.fillStyle(ctx.tint(0x2a1438), 1);
+  g.fillCircle(x, y, r * 1.13);
+  g.fillStyle(ctx.tint(0x6a3a8a), 1);
+  g.fillCircle(x, y, r);
+  for (let k = 0; k < 9; k++) {
+    const a = (k / 9) * Math.PI * 2 - t * 0.3;
+    g.fillStyle(ctx.tint(0xd8ffb0), 0.95);
+    g.fillCircle(x + Math.cos(a) * r * 1.42, y + Math.sin(a) * r * 1.42, 2.1);
+  }
+  for (const side of [-1, 1]) {
+    g.fillStyle(0xffffff, 1);
+    g.fillCircle(x + side * r * 0.32 + 2, y - r * 0.12, r * 0.26);
+    g.fillStyle(0x140a1a, 1);
+    g.fillCircle(x + side * r * 0.32 + 3.3, y - r * 0.12, r * 0.13);
+  }
+}
+
+export const masteryPlaguePal: PreviewScript = {
+  duration: 5200,
+  caption: 'Mastery — a pet virus: dashes 150px ahead and lashes everything within 85px for 18, every 7s',
   run(ctx) {
     const { fx, av } = stage(ctx);
-    ctx.at(400, () => {
-      av.play('punch', ctx.aim);
-      // Small and very fast — and it does nothing at all when it lands.
-      const g = ctx.adopt(ctx.scene.add.graphics().setDepth(7));
-      const from = { x: ctx.cx + 26, y: ctx.cy };
-      let landed = false;
-      ctx.onFrame((_dt, elapsed) => {
-        const t = Phaser.Math.Clamp((elapsed - 400) / 160, 0, 1);
-        g.clear();
-        if (t >= 1) {
-          if (!landed) { landed = true; fx.flash(ctx.tx, ctx.ty, 18, 7, SICK_TONES); }
-          return;
-        }
-        const x = from.x + (ctx.tx - from.x) * t;
-        g.lineStyle(3, ctx.tint(GROWTH.white), 0.95);
-        g.lineBetween(x - 12, ctx.cy, x + 6, ctx.cy);
-        g.fillStyle(ctx.tint(GROWTH.gore), 1);
-        g.fillRect(x - 12, ctx.cy - 3, 9, 6);
-      });
-      // Then 10 seconds of illness, ticking twice the rate the box has room for.
-      ctx.at(200, () => {
-        fx.film(ctx.tx, ctx.ty, 26, 1, SICK_TONES);
-        const label = ctx.adopt(ctx.scene.add.text(ctx.tx, ctx.ty - 40, '', {
-          fontSize: '11px', fontFamily: 'Arial Black', color: '#ff5566',
+    const g = ctx.adopt(ctx.scene.add.graphics().setDepth(7));
+    const rest = { x: ctx.cx - 34, y: ctx.cy + 14 };
+    const end = { x: ctx.tx - 30, y: ctx.ty };
+    const cycle = 2600;
+    ctx.onFrame((_dt, elapsed) => {
+      g.clear();
+      const local = elapsed % cycle;
+      const t = elapsed / 1000;
+      let x = rest.x, y = rest.y + Math.sin(t * 2.6) * 4, lash = -1;
+      if (local > 600 && local < 900) {
+        const k = (local - 600) / 300;
+        const e = 1 - (1 - k) * (1 - k);
+        x = rest.x + (end.x - rest.x) * e;
+        y = rest.y + (end.y - rest.y) * e;
+      } else if (local >= 900 && local < 1280) {
+        x = end.x; y = end.y; lash = (local - 900) / 380;
+      } else if (local >= 1280 && local < 1800) {
+        const k = (local - 1280) / 520;
+        x = end.x + (rest.x - end.x) * k;
+        y = end.y + (rest.y - end.y) * k;
+      }
+      drawPalBlob(g, ctx, x, y, t, lash, 85);
+    });
+    for (const at of [900, 900 + cycle]) {
+      ctx.at(at, () => {
+        fx.ring(end.x, end.y, 8, 85, 0xc9a0ff, 300, 3, 5);
+        const n = ctx.adopt(ctx.scene.add.text(ctx.tx, ctx.ty - 34, '18', {
+          fontSize: '13px', fontFamily: 'Arial Black', color: '#d9a8ff',
         }).setOrigin(0.5).setDepth(12));
-        ctx.onFrame((_dt, elapsed) => {
-          const left = Math.max(0, 10 - (elapsed - 600) / 1000 * 2);
-          label.setText(left > 0 ? `🤢 SICK ${left.toFixed(1)}s` : '');
-        });
-        for (let i = 1; i <= 10; i++) {
-          ctx.at(i * 500, () => {
-            fx.haze(ctx.tx, ctx.ty, 2, 22, 5, SICK_TONES);
-            const t = ctx.adopt(ctx.scene.add.text(ctx.tx + ((i % 3) - 1) * 12, ctx.ty - 22, '2', {
-              fontSize: '10px', fontFamily: 'Arial', color: '#ff5566',
-            }).setOrigin(0.5).setDepth(12));
-            ctx.scene.tweens.add({ targets: t, y: t.y - 14, alpha: 0, duration: 700 });
-          });
-        }
+        ctx.scene.tweens.add({ targets: n, y: n.y - 20, alpha: 0, duration: 1000 });
       });
-    });
-    // The second tree it opens: Lethality, Transmission, Severity.
-    ctx.at(2600, () => {
-      const names = ['LETHALITY', 'TRANSMISSION', 'SEVERITY'];
-      const cols = [0xff3344, 0xdd8844, 0xaa4466];
-      names.forEach((n, i) => {
-        const t = ctx.adopt(ctx.scene.add.text(ctx.cx - 10, ctx.cy - 54 + i * 16, n, {
-          fontSize: '9px', fontFamily: 'Arial Black', color: `#${cols[i].toString(16).padStart(6, '0')}`,
-        }).setOrigin(0.5).setDepth(11));
-        ctx.scene.tweens.add({ targets: t, alpha: { from: 0, to: 1 }, duration: 400, delay: i * 200 });
-      });
-    });
+      ctx.at(at - 300, () => av.play('punch', ctx.aim));
+    }
   },
 };
